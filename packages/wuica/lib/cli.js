@@ -14,6 +14,8 @@ Input:
   -hex                   the input is machine code as hex digits (spaces, commas, 0x prefixes allowed)
   -raw FILE              read the machine code from a binary file that contains only the code
   -att                   the assembly is in AT&T syntax (default: Intel, noprefix)
+  -loop L                what of the assembly is analyzed: auto (default: the innermost loop of a whole function,
+                         gcc -S or objdump -d output, else the text as it is), whole, or the index of a loop
 
 Output:
   -arch NAME             microarchitecture (default: SKL); "all" prints a throughput table for every one, and a
@@ -48,7 +50,7 @@ prototype models (from the fork jtl06/uiCA), less validated than the Intel model
 class UsageError extends Error {}
 
 function parseArgs(argv) {
-  const o = { arch: 'SKL', options: {}, hex: false, att: false, tpOnly: false, json: false, list: false, input: null, raw: null, data: null, threads: undefined };
+  const o = { arch: 'SKL', options: {}, hex: false, att: false, tpOnly: false, json: false, list: false, input: null, raw: null, data: null, threads: undefined, loop: undefined };
   const value = (i, name) => {
     if (i >= argv.length) throw new UsageError(`${name} needs a value`);
     return argv[i];
@@ -65,6 +67,7 @@ function parseArgs(argv) {
       case '-list': o.list = true; break;
       case '-hex': o.hex = true; break;
       case '-att': o.att = true; break;
+      case '-loop': { const v = value(++i, a); o.loop = /^\d+$/.test(v) ? Number(v) : v; if (!['auto', 'whole'].includes(o.loop) && typeof o.loop !== 'number') throw new UsageError(`${a}: auto, whole or a number: ${v}`); break; }
       case '-raw': o.raw = value(++i, a); break;
       case '-data': o.data = value(++i, a); break;
       case '-threads': o.threads = int(value(++i, a), a); if (o.threads < 1) throw new UsageError(`${a}: at least 1`); break;
@@ -120,7 +123,7 @@ async function readInput(o, io) {
   } else {
     throw new UsageError(`${o.input}: no such file`);
   }
-  return o.hex ? { hex: text } : { source: text, syntax: o.att ? 'att' : 'intel' };
+  return o.hex ? { hex: text } : { source: text, syntax: o.att ? 'att' : 'intel', ...(o.loop !== undefined ? { loop: o.loop } : {}) };
 }
 
 const fmt = (tp) => tp.toFixed(2);
@@ -134,8 +137,12 @@ function printList(w, o, out) {
   }
 }
 
-function printStderr(r, err) {
+function printStderr(r, err, o = null) {
   for (const l of r.stderr ?? []) err.write(l.text + '\n');
+  // what of the text was analyzed, if not all of it
+  const p = r.loop;
+  if (p && p.line) err.write(`analyzed: ${p.name} (lines ${p.line}-${p.endLine}${p.address !== undefined ? `, address 0x${p.address.toString(16)}` : ''}); -loop whole for the whole text\n`);
+  if (p && p.alignmentOffset !== undefined && o?.options.alignmentOffset === undefined) err.write(`alignment offset ${p.alignmentOffset} (from the addresses)\n`);
 }
 
 // argv: the arguments after the program name. io: {stdin, stdout, stderr}. Returns the exit code: the result's
@@ -154,7 +161,7 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
     if (o.archs) {
       const c = await w.compare({ ...input, ...(o.archs.length ? { archs: o.archs } : {}), options: o.options });
       if (o.json) { out.write(JSON.stringify(c) + '\n'); return c.code || Math.max(0, ...(c.results ?? []).map((r) => r.code)); }
-      printStderr(c, err);
+      printStderr(c, err, o);
       if (c.code) return c.code;
       const kw = Math.max(4, ...c.results.map((r) => r.arch.length));
       const nw = Math.max(5, ...c.results.map((r) => r.name.length));
@@ -171,7 +178,7 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
 
     const r = await w.analyze(o.arch, { ...input, options: o.options });
     if (o.json) { out.write(JSON.stringify(r) + '\n'); return r.code; }
-    printStderr(r, err);
+    printStderr(r, err, o);
     if (r.code) return r.code;
     out.write(o.tpOnly ? fmt(r.tp) + '\n' : r.text);
     return 0;

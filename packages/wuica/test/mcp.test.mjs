@@ -123,6 +123,19 @@ test('analyze formats and options', async () => {
   assert.ok('ALU0' in r.json.instructions[0].ports);
 });
 
+test('analyze: a whole function with loop (auto, whole), and ; comments', async () => {
+  const fn = 'f:\n  mov ecx, 100\n.L1:\n  add rax, rbx ; sum\n  dec rcx\n  jnz .L1\n  ret\n';
+  const r = await call('analyze', { source: fn, format: 'json' });
+  assert.equal(r.json.code, 0);
+  assert.equal(r.json.loop.name, 'loop .L1');
+  assert.equal(r.json.instructions.length, 3);
+  const w = await call('analyze', { source: fn, loop: 'whole', format: 'json' });
+  assert.equal(w.json.loop, undefined);
+  assert.equal((await call('analyze', { source: fn, loop: 'inner' })).isError, true);
+  const { tools } = await client.listTools();
+  for (const t of ['analyze', 'what_if', 'compare_archs']) assert.ok(tools.find((x) => x.name === t).inputSchema.properties.loop, t);
+});
+
 test('analyze errors are tool errors', async () => {
   const r = await call('analyze', { source: 'frobnicate rax', arch: 'SKL' });
   assert.equal(r.isError, true);

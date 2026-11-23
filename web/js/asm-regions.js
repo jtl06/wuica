@@ -286,7 +286,7 @@ async function assembleOnce(assemble, text, prep) {
 
 // A ';' whose rest the assembler rejected is a comment, unless that rest looks like an instruction (operands with a
 // comma, brackets or AT&T prefixes): a typo after a separator stays an error.
-function commentFixes(diagnostics, text) {
+export function commentFixes(diagnostics, text) {
   const fixes = semicolonFixes(diagnostics, text);
   for (const [line, fixed] of fixes) {
     const after = fixed.slice(fixed.lastIndexOf('#') + 1);

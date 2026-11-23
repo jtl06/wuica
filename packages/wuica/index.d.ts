@@ -23,11 +23,32 @@ export interface AnalysisOptions {
 
 export type Syntax = 'intel' | 'att';
 
+/** What of `source` is analyzed: "auto" (default: the innermost loop of a whole function, or its body if it has no
+ * loop; else the text as it is), "whole", or the index of a loop (innermost first, in code order). */
+export type LoopChoice = 'auto' | 'whole' | number;
+
+/** What was analyzed when it is not the whole text as given (AnalyzeResult.loop). */
+export interface LoopInfo {
+  /** The loop's index; null for a function's body or the whole text. */
+  index: number | null;
+  /** The number of loops in the text. */
+  count: number;
+  /** "loop .L3", "loop 0x10" (objdump), "body" or "whole". */
+  name: string;
+  /** Its first and last line in the source (null: the whole text). */
+  line: number | null;
+  endLine: number | null;
+  /** Its address (objdump input). */
+  address?: number;
+  /** The alignment offset from the addresses (objdump input): used unless options.alignmentOffset is given. */
+  alignmentOffset?: number;
+}
+
 /** The code: exactly one of `source` (assembly; `asm` is accepted as an alias) and `hex` (machine code). */
 export type CodeRequest =
-  | { source: string; asm?: undefined; hex?: undefined; syntax?: Syntax }
-  | { asm: string; source?: undefined; hex?: undefined; syntax?: Syntax }
-  | { hex: string | Uint8Array; source?: undefined; asm?: undefined; syntax?: Syntax };
+  | { source: string; asm?: undefined; hex?: undefined; syntax?: Syntax; loop?: LoopChoice }
+  | { asm: string; source?: undefined; hex?: undefined; syntax?: Syntax; loop?: LoopChoice }
+  | { hex: string | Uint8Array; source?: undefined; asm?: undefined; syntax?: Syntax; loop?: LoopChoice };
 
 /** Body of POST /api/analyze/<arch>. */
 export type AnalyzeRequest = CodeRequest & { options?: AnalysisOptions };
@@ -94,7 +115,9 @@ export interface AnalyzeResult {
   };
   /** The assembled machine code (lower-case hex), when `source` was given. */
   hex?: string;
-  /** Assembler warnings and the decode warning. */
+  /** What of `source` was analyzed, when not the whole text as given (request.loop). */
+  loop?: LoopInfo;
+  /** Assembler warnings, notes (exits taken as not taken), and the decode warning. */
   stderr: StderrLine[];
 }
 
@@ -112,6 +135,7 @@ export interface AnalyzeSummary {
   limits: Limit[];
   decodeErrors: number;
   hex?: string;
+  loop?: LoopInfo;
   stderr: StderrLine[];
   instructions: Array<{
     instr: string;
@@ -186,6 +210,7 @@ export interface CompareResult {
   code: 0;
   /** The assembled machine code, when `source` was given. */
   hex?: string;
+  loop?: LoopInfo;
   stderr: StderrLine[];
   results: CompareRow[];
 }

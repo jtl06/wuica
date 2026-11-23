@@ -170,6 +170,23 @@ Request:
 
 - Give exactly one of `source` (assembly; the library also accepts `asm`) and `hex` (machine code; spaces, commas and
   `0x` are allowed).
+- `source` is read as the web page reads pasted assembly. `loop` (optional) says what of it is analyzed:
+  - `"auto"` (the default): a whole function (`gcc -S`, `clang -S`, `objdump -d` lines with addresses, with or
+    without the bytes, Intel or AT&T) is analyzed at its innermost loop (the first in the code: a compiler puts the
+    main loop before its remainder loop); a function without a loop at its body, without prologue and epilogue (it
+    ends in `ret`). A text that is one loop already, or has region markers, is analyzed as it is.
+  - `"whole"`: the whole text; a number: that loop (innermost first, in code order).
+
+  Conditional branches to a symbol the text does not define (a loop's exits, `jae .Lout`, `.L` or not) are taken as
+  not taken: the symbol is defined right after the analyzed code, so they assemble as short jumps; a note says so in
+  `stderr`. An undefined target of a `jmp` gives a warning (it is encoded as a 32-bit jump to an external symbol).
+  objdump lines with their bytes are assembled as those bytes. With addresses, the alignment offset is the analyzed
+  code's address modulo 64, unless `options.alignmentOffset` is given. When something other than the whole text was
+  analyzed, the response has `loop`: `{index, count, name, line, endLine, address?, alignmentOffset?}` (`name`:
+  `"loop .L3"`, `"loop 0x10"`, `"body"`).
+  Region markers (`# LLVM-MCA-BEGIN` … `# LLVM-MCA-END`, `# wuica-begin` … `# wuica-end`, IACA's byte markers) select
+  the first marked region. A `;` that starts a line is a comment; after a statement, it separates statements unless
+  the assembler rejects what follows it as an instruction (then it is a comment).
 - `syntax` is `intel` (noprefix, the default) or `att`. The source may also switch syntax itself with
   `.intel_syntax noprefix` / `.att_syntax`.
 - Every field of `options` is optional; the defaults are shown. Unknown options and unknown request fields are an
@@ -217,7 +234,7 @@ Response (JSON), on success:
 The fields from `arch` to `trace` are the analysis response of the WebAssembly module (`docs/WASM-API.md` in the wuica
 repository: `rows[].values[i]` belongs to `columns[i]`, and `notes` is `M` macro-fused, `J` JCC erratum or `X`
 unsupported). `hex` is present when `source` was given and holds the assembled bytes. `stderr` holds the assembler's
-warnings and the warning "N position(s) could not be decoded". `insights` (REST only; the library's `analyze()` result
+warnings, the notes on exits taken as not taken, and the warning "N position(s) could not be decoded". `insights` (REST only; the library's `analyze()` result
 does not have it, `insights(r)` computes it) is the diagnosis described under the compact form below, with `portSet`
 and `issueSlots` when `options.details` is true.
 
@@ -281,7 +298,8 @@ reported in its row.
 
 ### Assemble: `POST /api/assemble`
 
-Request: `{"source": "...", "syntax": "intel"}`. Response: `{"code": 0, "hex": "4801d8", "length": 3, "stderr": []}`;
+Request: `{"source": "...", "syntax": "intel"}`. The whole text is assembled as it is (no loop finding, no region
+markers; `;` comments as above). Response: `{"code": 0, "hex": "4801d8", "length": 3, "stderr": []}`;
 the library also returns `bytes` (a `Uint8Array`). On failure: `{code: 2, error, stderr}` as above. The assembler is
 LLVM 22.1.2's (the same bytes as `llvm-mc`). Only `.text` is returned. `.include`/`.incbin` always fail. GNU as's
 `{load}`/`{store}` hints, which LLVM rejects, are removed at the start of a line.

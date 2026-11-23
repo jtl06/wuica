@@ -259,6 +259,8 @@ task({
   }),
 });
 const PKG = path.join(ROOT, 'packages/wuica');
+// the web page's modules that packages/wuica/build.sh copies into dist/web (its WEB_MODULES)
+const NPM_WEB_MODULES = (/^WEB_MODULES="([^"]*)"/m.exec(fs.readFileSync(path.join(PKG, 'build.sh'), 'utf8'))?.[1] ?? '').split(/\s+/).filter(Boolean).map((f) => `web/js/${f}`);
 if (!QUICK) {
   task({
     name: 'build:npm', kind: 'build', deps: ['build:wasm'],
@@ -267,7 +269,7 @@ if (!QUICK) {
         const code = await exec('npm', ['ci', '--no-audit', '--no-fund'], { cwd: PKG, log });
         if (code) return { status: 'fail', count: `npm ci: exit ${code}` };
       }
-      return stamped('npm', () => hashInputs(['packages/wuica/build.sh', 'data', 'assembler/dist/wuica_asm.wasm', ...LICENSES, WASM]), [path.join(PKG, 'dist/manifest.json')], async (log) => {
+      return stamped('npm', () => hashInputs(['packages/wuica/build.sh', ...NPM_WEB_MODULES, 'data', 'assembler/dist/wuica_asm.wasm', ...LICENSES, WASM]), [path.join(PKG, 'dist/manifest.json')], async (log) => {
         const code = await exec('./build.sh', [], { cwd: PKG, env: { WUICA_WASM: WASM }, log });
         return { status: code ? 'fail' : 'pass', count: code ? `exit ${code}` : 'rebuilt' };
       })(log);
