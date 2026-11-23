@@ -1,0 +1,23 @@
+/* The keyboard shortcuts (js/keys.js): the ? button in the footer and the overlay that lists the keys. */
+
+.keys-btn { padding: 0 0.3em; }
+
+dialog.keys {
+  padding: 0; border: 0; background: transparent; color: var(--text);
+  max-width: calc(100vw - 2rem); max-height: calc(100vh - 2rem); overflow: auto;
+}
+dialog.keys::backdrop { background: rgb(0 0 0 / 0.5); }
+.keys-inner {
+  background: var(--surface); border: 1px solid var(--border); border-top: 2px solid var(--accent);
+  padding: 0.5rem 0.85rem 0.75rem; min-width: 0;
+}
+.keys-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 0.4rem; }
+.keys-head h2 { margin: 0; font-size: 1em; }
+.keys-close { font-size: 1.1em; line-height: 1; }
+.keys-list { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.3rem 0.9rem; margin: 0; align-items: baseline; }
+.keys-list dt { white-space: nowrap; }
+.keys-list dd { margin: 0; color: var(--description); overflow-wrap: anywhere; }
+.keys kbd {
+  font: inherit; font-size: 0.9em; padding: 0 0.3em;
+  border: 1px solid var(--control-border, var(--border)); color: var(--code); background: var(--background);
+}

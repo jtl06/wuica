@@ -23,6 +23,7 @@ import { createConverter } from './asm-text.js';  // hex <-> asm
 import { createViews } from './views.js';         // the opt-in views below the result
 import { withRegions } from './asm-regions.js';     // marked regions and .loc lines of pasted assembly
 import { createRegionChip } from './region-chip.js';
+import { createKeys } from './keys.js';           // keyboard shortcuts, the ? overlay
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -1159,6 +1160,7 @@ async function start() {
   writeControls();
   fillExamples();
   bind();
+  createKeys({ button: $('keys-btn') });
   setupFeatures();
 
   manifest = await fetchManifest();
