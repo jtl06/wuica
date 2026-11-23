@@ -79,7 +79,11 @@ fn py_sum(mut values: impl Iterator<Item = f64>) -> f64 {
 
 /// `getURL`
 pub fn get_url(instr_str: &str) -> String {
-    format!("https://www.uops.info/html-instr/{}.html", canonicalize_instr_string(instr_str))
+    let mut url = String::with_capacity(40 + instr_str.len());
+    url.push_str("https://www.uops.info/html-instr/");
+    canonicalize_into(instr_str, &mut url);
+    url.push_str(".html");
+    url
 }
 
 /// `getTerminalHyperlink`

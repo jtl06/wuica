@@ -233,27 +233,6 @@ pub fn strip_hyperlinks(s: &str) -> String {
     out
 }
 
-/// The bottlenecks and limits from the text of `facile::format_bottlenecks` (the text is the reference's output format, so
-/// that there is one implementation of the rules).
-fn parse_bottleneck_report(report: &str) -> (Vec<String>, Vec<Limit>) {
-    let mut bottlenecks = Vec::new();
-    let mut limits = Vec::new();
-    for line in report.lines() {
-        if let Some(rest) = line.strip_prefix("Bottlenecks: ").or_else(|| line.strip_prefix("Bottleneck: ")) {
-            if rest != "unknown" {
-                bottlenecks = rest.split(", ").map(str::to_string).collect();
-            }
-        } else if let Some(rest) = line.strip_prefix("  - ") {
-            if let Some((name, value)) = rest.split_once(": ") {
-                if let Ok(tp) = value.parse() {
-                    limits.push(Limit { name: name.to_string(), tp });
-                }
-            }
-        }
-    }
-    (bottlenecks, limits)
-}
-
 /// Runs an analysis of decoded instructions. `decode_errors` is passed through to the response. `data` must be the instruction
 /// table of the configuration (`uarch.configs[request.arch].name`).
 pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, uarch: &UArch, data: &ArchData) -> Result<Response, String> {
@@ -281,13 +260,15 @@ pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, 
         let instrs = build_instructions(decoded, config, uarch, data, request.alignment_offset, request.no_micro_fusion, request.no_macro_fusion);
         let r = simulate(&instrs, config, uarch, &options).map_err(|e| e.to_string())?;
         let dep_limit = facile::compute_dependency_limit(&instrs, config, &request.init_policy);
-        let report =
-            facile::format_bottlenecks(&facile::bottleneck_values_for(&instrs, decoded, config, request.alignment_offset, dep_limit, &r));
+        let facile::BottleneckText { text: report, bottlenecks, limits } = facile::format_bottlenecks_with_limits(
+            &facile::bottleneck_values_for(&instrs, decoded, config, request.alignment_offset, dep_limit, &r),
+        );
+        let bottlenecks: Vec<String> = bottlenecks.iter().map(|b| b.to_string()).collect();
+        let limits: Vec<Limit> = limits.iter().map(|&(name, tp)| Limit { name: name.to_string(), tp }).collect();
         // the uop table: its text and its lines, from one computation of its values
         let table_data = r.uops_table_data();
         let table = r.format_uops_table(&table_data);
         let text_with_hyperlinks = format!("Throughput (in cycles per iteration): {:.2}\n{report}\n{table}\n", r.tp);
-        let (bottlenecks, limits) = parse_bottleneck_report(&report);
 
         let kinds: Vec<(&'static str, Option<usize>)> = (0..table_data.rows.len()).map(|line| table_data.line(line)).collect();
         let columns = table_data.columns;

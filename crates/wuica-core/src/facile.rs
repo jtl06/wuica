@@ -1151,32 +1151,67 @@ pub struct BottleneckValues {
 
 /// The text that `printBottlenecks` prints for the given numbers (each line with its newline).
 pub fn format_bottlenecks(v: &BottleneckValues) -> String {
+    format_bottlenecks_with_limits(v).text
+}
+
+/// The text of `printBottlenecks` (see [`format_bottlenecks`]) and what it lists.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BottleneckText {
+    /// the text, each line with its newline
+    pub text: String,
+    /// the bottlenecks (sorted; empty for "unknown")
+    pub bottlenecks: Vec<&'static str>,
+    /// the listed limits: (name, the number as printed)
+    pub limits: Vec<(&'static str, f64)>,
+}
+
+/// [`format_bottlenecks`], with the bottlenecks and the limits that the text lists
+pub fn format_bottlenecks_with_limits(v: &BottleneckValues) -> BottleneckText {
     let tp = v.tp;
-    let mut output: Vec<String> = Vec::new();
-    let mut bottlenecks: Vec<&str> = Vec::new();
+    let mut text = String::new();
+    let mut output = String::new();
+    let mut limits: Vec<(&'static str, f64)> = Vec::new();
+    let mut bottlenecks: Vec<&'static str> = Vec::new();
+
+    // a line "  - name: value" of the list (the lines are joined with "\n")
+    let mut list_entry = |name: &'static str, limit: f64| {
+        use std::fmt::Write;
+        if !output.is_empty() {
+            output.push('\n');
+        }
+        output.push_str("  - ");
+        output.push_str(name);
+        output.push_str(": ");
+        let start = output.len();
+        write!(output, "{limit:.2}").unwrap();
+        // the number as printed, read back
+        if let Ok(value) = output[start..].parse() {
+            limits.push((name, value));
+        }
+    };
 
     // Front End, Issue: round(limit, 2); listed if it is not 0
-    let mut rounded_limit = |name: &'static str, limit: Option<f64>| {
+    let mut rounded_limit = |name: &'static str, limit: Option<f64>, list_entry: &mut dyn FnMut(&'static str, f64)| {
         if let Some(limit) = limit {
             let limit = py_round2(limit);
             if limit != 0.0 {
-                output.push(format!("  - {name}: {}", py_format2(limit)));
+                list_entry(name, limit);
                 if limit >= 0.98 * tp {
                     bottlenecks.push(name);
                 }
             }
         }
     };
-    rounded_limit("Predecoder", v.predec_limit);
-    rounded_limit("Decoder", v.dec_limit);
-    rounded_limit("DSB", v.dsb_limit);
-    rounded_limit("LSD", v.lsd_limit);
-    rounded_limit("Issue", Some(v.issue_limit));
+    rounded_limit("Predecoder", v.predec_limit, &mut list_entry);
+    rounded_limit("Decoder", v.dec_limit, &mut list_entry);
+    rounded_limit("DSB", v.dsb_limit, &mut list_entry);
+    rounded_limit("LSD", v.lsd_limit, &mut list_entry);
+    rounded_limit("Issue", Some(v.issue_limit), &mut list_entry);
 
     // Port Usage
     let port_usage_limit = py_round2(v.port_usage_limit);
     if port_usage_limit != 0.0 {
-        output.push(format!("  - Ports: {}", py_format2(port_usage_limit)));
+        list_entry("Ports", port_usage_limit);
         if port_usage_limit >= 0.98 * tp {
             bottlenecks.push("Ports");
         } else {
@@ -1194,24 +1229,31 @@ pub fn format_bottlenecks(v: &BottleneckValues) -> String {
 
     // Dependencies
     if v.dep_limit != 0.0 {
-        output.push(format!("  - Dependencies: {}", py_format2(v.dep_limit)));
+        list_entry("Dependencies", v.dep_limit);
         if v.dep_limit >= 0.98 * tp {
             bottlenecks.push("Dependencies");
         }
     }
 
     bottlenecks.sort();
-    let mut text = format!(
-        "Bottleneck{}: {}\n",
-        if bottlenecks.len() > 1 { "s" } else { "" },
-        if bottlenecks.is_empty() { "unknown".to_string() } else { bottlenecks.join(", ") }
-    );
+    text.push_str(if bottlenecks.len() > 1 { "Bottlenecks: " } else { "Bottleneck: " });
+    if bottlenecks.is_empty() {
+        text.push_str("unknown");
+    } else {
+        for (i, b) in bottlenecks.iter().enumerate() {
+            if i > 0 {
+                text.push_str(", ");
+            }
+            text.push_str(b);
+        }
+    }
+    text.push('\n');
     if !output.is_empty() {
         text.push_str("\nThe following throughputs could be achieved if the given property were the only bottleneck:\n\n");
-        text.push_str(&output.join("\n"));
+        text.push_str(&output);
         text.push('\n');
     }
-    text
+    BottleneckText { text, bottlenecks, limits }
 }
 
 /// The numbers of `printBottlenecks(TP, instructions, instrInstancesForInstr, disas, alignmentOffset, loop, depLimit,
