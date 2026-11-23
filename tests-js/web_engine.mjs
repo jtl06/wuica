@@ -183,6 +183,14 @@ class FakeWorker {
   check(await outcome(p3) === 'cancelled' && !e.hasArch('HSW'), 'worker: a cancelled load is not recorded');
   const [x, y] = await Promise.all([e.analyze(makeRequest('90', 'SKL')), e.analyze(makeRequest('c3', 'SKL'))]); // both wait for the same restart
   check(x.tp === 1.25 && y.tp === 1.25 && FakeWorker.made.length === 3, 'worker: concurrent calls share one restart');
+  // recycle: a new worker with only the tables kept
+  await e.loadArch('HSW', '{"hsw": 1}');
+  const p4 = e.analyze(makeRequest('90', 'SKL'));
+  e.recycle(['HSW']);
+  check(await outcome(p4) === 'cancelled' && e.hasArch('HSW') && !e.hasArch('SKL'), 'worker: recycle forgets the other tables and stops the worker');
+  const h = await e.analyze(makeRequest('90', 'HSW'));
+  check(h.arch === 'HSW' && FakeWorker.made.length === 4 && FakeWorker.made[3].posted.join() === 'init,loadUarch,loadArch,analyze', 'worker: the new worker gets only the kept table', FakeWorker.made[3].posted.join());
+  check((await e.analyze(makeRequest('90', 'SKL'))).error !== undefined, 'worker: a forgotten table is not loaded');
   // a worker that cannot start
   await throws(() => WorkerEngine.create(source, () => { throw new Error('no workers'); }), 'worker: create rejects if the worker cannot be made');
   await throws(() => WorkerEngine.create(source, () => { const w = { postMessage() { setTimeout(() => w.onerror({ message: 'script error' }), 0); }, terminate() {} }; return w; }), 'worker: create rejects if the worker fails to load');

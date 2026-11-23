@@ -16,7 +16,7 @@ import { createTracePanel } from './trace.js';
 import { createAB } from './ab.js';                 // A–B comparison
 import { createCeImport } from './godbolt-ui.js';   // import from Compiler Explorer
 import { createInsight } from './insight-view.js';
-import { createPool, poolSize } from './pool.js';  // workers for the views with many analyses
+import { createPool, poolSize, tableCap } from './pool.js';  // workers for the views with many analyses
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -499,6 +499,7 @@ function getPool() {
   if (pool || !ready || POOL_SIZE === 0 || !wasmModule || !(engine instanceof WorkerEngine)) return pool;
   pool = createPool({
     size: POOL_SIZE,
+    maxTables: tableCap(new Set([...archItems.values()].map((i) => i.table)).size, POOL_SIZE),
     tableOf: (arch) => archItems.get(arch)?.table ?? arch,
     tableBytes,
     async spawn() {
