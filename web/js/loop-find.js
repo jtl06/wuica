@@ -275,7 +275,7 @@ function targetLine(s, target, line) {
 }
 
 // The loops: [{begin, end, label, inner}] (begin: the label's line, end: the last branch back to it; 1-based), innermost first,
-// in the order of the code (a compiler puts the main loop before its remainder loop), then the outer ones.
+// then the deepest, then in the order of the code (which may put a remainder loop first: clang often does).
 export function findLoops(s) {
   const loops = [];
   for (const ins of s.instrs) {

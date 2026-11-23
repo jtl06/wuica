@@ -21,11 +21,35 @@ export interface AnalysisOptions {
   details?: boolean;
 }
 
-export type Syntax = 'intel' | 'att';
+/** "auto" (the default): detected from the text (%registers, $immediates: AT&T; else Intel noprefix). */
+export type Syntax = 'auto' | 'intel' | 'att';
 
 /** What of `source` is analyzed: "auto" (default: the innermost loop of a whole function, or its body if it has no
  * loop; else the text as it is), "whole", or the index of a loop (innermost first, in code order). */
-export type LoopChoice = 'auto' | 'whole' | number;
+export type LoopChoice = 'auto' | 'whole' | number | string;
+/** The named loop choices ('auto', 'whole'); a number is a loop's index (0-based), any other string its label. */
+export declare const LOOP_CHOICES: readonly ['auto', 'whole'];
+/** A loop of assembly text (listLoops; the CLI's -loops). */
+export interface LoopListing {
+  /** Its index for `loop` (0-based): the deepest loops first, then in code order. */
+  index: number;
+  label: string;
+  /** The function it is in (the last non-local label before it), or null. */
+  function: string | null;
+  line: number;
+  endLine: number;
+  instructions: number;
+  /** 1 for a loop in no other loop (clang's Depth when its notes say). */
+  depth: number;
+  /** The loop "auto" analyzes. */
+  auto: boolean;
+}
+/** The loops of assembly text, as `loop` and `func` choose among them (no assembling). */
+export function listLoops(source: string, options?: { func?: string | null }): LoopListing[] | { error: string };
+/** 'att' or 'intel' from the text's signs, or null. */
+export function detectSyntax(source: string): 'att' | 'intel' | null;
+/** Per instruction details and the port set / issue slots of an analysis with options.details (the MCP summary's). */
+export function detailInsights(result: AnalyzeResult): Partial<Insights>;
 
 /** What was analyzed when it is not the whole text as given (AnalyzeResult.loop). */
 export interface LoopInfo {
@@ -38,6 +62,10 @@ export interface LoopInfo {
   /** Its first and last line in the source (null: the whole text). */
   line: number | null;
   endLine: number | null;
+  /** The function it is in, its nesting depth and its instruction count (for a loop). */
+  function?: string | null;
+  depth?: number;
+  instructions?: number;
   /** Its address (objdump input). */
   address?: number;
   /** The alignment offset from the addresses (objdump input): used unless options.alignmentOffset is given. */
@@ -46,8 +74,8 @@ export interface LoopInfo {
 
 /** The code: exactly one of `source` (assembly; `asm` is accepted as an alias) and `hex` (machine code). */
 export type CodeRequest =
-  | { source: string; asm?: undefined; hex?: undefined; syntax?: Syntax; loop?: LoopChoice }
-  | { asm: string; source?: undefined; hex?: undefined; syntax?: Syntax; loop?: LoopChoice }
+  | { source: string; asm?: undefined; hex?: undefined; syntax?: Syntax; loop?: LoopChoice; func?: string }
+  | { asm: string; source?: undefined; hex?: undefined; syntax?: Syntax; loop?: LoopChoice; func?: string }
   | { hex: string | Uint8Array; source?: undefined; asm?: undefined; syntax?: Syntax; loop?: LoopChoice };
 
 /** Body of POST /api/analyze/<arch>. */
@@ -113,10 +141,15 @@ export interface AnalyzeResult {
     ratio: number;
     edges: { from: number; to: number; operand: string; latency: number; carried: boolean }[];
   };
+  /** With options.details: per row its allowed ports, latencies, front-end facts; the port set and issue slots
+   * (docs/WASM-API.md, "Details"). */
+  details?: { rows: unknown[]; ports?: unknown; slots?: unknown };
   /** The assembled machine code (lower-case hex), when `source` was given. */
   hex?: string;
   /** What of `source` was analyzed, when not the whole text as given (request.loop). */
   loop?: LoopInfo;
+  /** The syntax `source` was read in (detected unless the request said). */
+  syntax?: 'intel' | 'att';
   /** Assembler warnings, notes (exits taken as not taken), and the decode warning. */
   stderr: StderrLine[];
 }
@@ -208,7 +241,7 @@ export interface AssembleResult {
 }
 
 export type CompareRow =
-  | { arch: string; name: string; year: number | null; prototype: boolean; code: 0; tp: number; mode: 'loop' | 'unroll'; bottlenecks: string[]; decodeErrors: number }
+  | { arch: string; name: string; year: number | null; prototype: boolean; code: 0; tp: number; mode: 'loop' | 'unroll'; bottlenecks: string[]; limits: Limit[]; decodeErrors: number }
   | { arch: string; name: string; year: number | null; prototype: boolean; code: 1 | 2 | 3; error: string };
 
 export interface CompareResult {

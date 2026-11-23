@@ -18,6 +18,43 @@ Everything runs offline. The two WebAssembly modules (the analyzer, and LLVM's x
 instruction tables are shipped brotli-compressed. A table is loaded the first time its microarchitecture is used.
 Requirements: Node.js 20 or later.
 
+## The CLI in five minutes
+
+```
+clang -O3 -march=haswell -S dot.c -o dot.s     # AT&T, as clang and gcc write it: detected, no flag needed
+npx wuica dot.s                                # uiCA's report for SKL, of the loop wuica picked
+npx wuica dot.s -arch SKL,ZEN3,ADL-P           # one table for several CPUs ("all": every one)
+npx wuica dot.s -per 8                         # the loop does 8 elements per iteration: cycles per element too
+npx wuica dot.s -loops                         # the loops in the file; -loop N or -loop .LBB0_12 picks one
+npx wuica dot.s -whatif                        # unrolled, N accumulators, front end and fusion variants
+objdump -d dot.o | npx wuica                   # objdump output: the loop's real alignment from its address
+```
+
+- **Syntax.** Intel (noprefix) or AT&T is detected from the text (`%rdx`, `$8`, `(%rdi,%rcx,4)` are AT&T);
+  stderr says which (`analyzed: loop .LBB0_9 (lines 28-47, in dot), AT&T syntax (detected)`). `-att` or `-intel`
+  force one.
+- **Per iteration.** `tp` is cycles per iteration of the loop as the compiler wrote it. Compilers unroll and vectorize
+  (×8, ×16, ×32 elements per iteration), so compare per element: `-per N` prints `Per element: … cycles` (JSON
+  `perElement`); without it, stderr shows the loop's step when it can (`step: rcx += 8 per iteration`).
+- **Which loop.** A whole function or file is analyzed at one loop: the deepest one (clang's
+  `# =>This Inner Loop Header` notes count), among equals the first in the code. That can be a remainder loop: clang
+  often emits it before the main loop, gcc after it. Stderr says what was picked and how many others there are;
+  `-loops` lists them (index, label, function, lines, instructions, depth, auto), `-loop N` (0-based) or
+  `-loop LABEL` picks one, `-func NAME` keeps one function's loops, `-loop whole` analyzes the whole text.
+- **One input per run**: a file, `-` or nothing for stdin, a hex argument, `-hex` or `-raw FILE` (bare machine code:
+  for an object file, `objdump -d file.o | wuica`).
+- **Tables.** `-arch A,B,C` prints one row per CPU; `-` means unknown (uiCA names no single bottleneck; the notes
+  give the nearest limit), `5.00*` that the CPU could not decode some instructions (they are left out), and the notes
+  column the caveats (what the model does not simulate, such as store forwarding through an indexed address).
+- **After the report** come what uiCA's text leaves out: the nearest limit when the bottleneck is unknown, the next
+  limit, and `Not modelled:` lines.
+- **Exit status**: 0 ok, 1 bad request or usage, 2 assembler error, 3 the analysis failed; with several CPUs, the
+  largest of their codes, which is also the JSON's `code`. A reader that closes the pipe (`| head`) does not change it.
+- **JSON** (`-json`): one CPU gives the analyze response (`tp`, `bottlenecks`, `limits`, `rows`, `criticalPath`,
+  `insights`, `loop`, `syntax`, and `perElement` / `whatIf` when asked); several give `{code, hex, loop, stderr,
+  results: [{arch, tp, bottlenecks, limits, decodeErrors, perElement?, caveats?}]}` and `whatIf: {ARCH: …}`.
+- No colours and no links, on a terminal or not.
+
 ## What the numbers mean
 
 `tp` is the predicted steady-state throughput in **core cycles per iteration** of the block (lower is faster). How the
@@ -72,10 +109,10 @@ Inputs on which the original uiCA fails can make the WebAssembly module trap. In
 ## Command line
 
 ```
-npx wuica loop.s                     # assembly file (Intel syntax), uiCA's report for SKL
+npx wuica loop.s                     # assembly file (syntax detected), uiCA's report for SKL
 npx wuica loop.s -arch ICL -TPonly   # only the throughput
 cat loop.s | npx wuica -arch ZEN3    # stdin (or "-")
-npx wuica -att loop_att.s            # AT&T syntax
+npx wuica -att loop_att.s            # AT&T syntax, forced (-intel forces Intel)
 npx wuica 4801d84801c349ffcf75f5     # a hex argument (as in the Rust CLI)
 npx wuica -hex code.txt              # hex from a file or stdin ("48 01 d8", "0x48,0x01" are fine)
 npx wuica -raw code.bin              # raw machine code
@@ -84,10 +121,14 @@ npx wuica loop.s -arch SKL,ICL,ZEN3  # throughput table for these
 npx wuica -list                      # the microarchitectures
 npx wuica loop.s -json               # the JSON result (the contract's analyze response)
 npx wuica psum.s -loop whole         # the whole text, not the loop found in it (-loop auto, the default, or -loop N)
+npx wuica psum.s -loops              # list the loops; -loop .LBB0_12 or -func psum to choose
+npx wuica psum.s -whatif -per 8      # what-if variants; cycles per element (8 elements per iteration)
+npx wuica --version
 ```
 
 The simulation options are uiCA's: `-alignmentOffset N`, `-initPolicy diff|same|stack`, `-simpleFrontEnd`,
-`-noMicroFusion`, `-noMacroFusion`, `-minIterations N`, `-minCycles N`, and `-trace` (with `-json`). With several
+`-noMicroFusion`, `-noMacroFusion`, `-minIterations N`, `-minCycles N`, and `-trace` (with `-json`). Every flag also
+takes `--flag` and `--flag=value`, in any case (`--tponly`, `--arch=zen3`). With several
 microarchitectures, `-threads N` analyzes them on at most N threads at a time (`-threads 1`: one after another).
 Diagnostics go to stderr. The exit status is the result code: 0 ok, 1 bad request or usage, 2 assembler error, 3 analysis failed.
 `npx wuica -h` lists everything.
@@ -174,13 +215,16 @@ Request:
   `0x` are allowed).
 - `source` is read as the web page reads pasted assembly. `loop` (optional) says what of it is analyzed:
   - `"auto"` (the default): a whole function (`gcc -S`, `clang -S`, `objdump -d` lines with addresses, with or
-    without the bytes, Intel or AT&T) is analyzed at its innermost loop (the first in the code: a compiler puts the
-    main loop before its remainder loop). A span that holds a `ret` or another function's label is not a loop (a tail
+    without the bytes, Intel or AT&T) is analyzed at its deepest loop (clang's `Inner Loop Header` notes count;
+    among equals the first in the code, which may be a remainder loop: clang often emits it first). A span that holds a `ret` or another function's label is not a loop (a tail
     call jumping back). A compiler's function without a loop (it has a function label, directives or a
     prologue/epilogue, and ends in `ret`) is analyzed at its body, without prologue, epilogue and `ret`; a bare snippet
     such as `add rax, 1` / `ret` is analyzed as typed. A text that is one loop already, or has region markers, is
     analyzed as it is.
-  - `"whole"`: the whole text, never a pick; a number: that loop (innermost first, in code order).
+  - `"whole"`: the whole text, never a pick; a number: that loop (0-based: deepest first, then in code order); any
+    other string: the loop with that label (`".LBB0_12"`, `"0x10"`). `func` (optional) keeps one function's loops.
+- `syntax` is `"auto"` (the default: detected from the text), `"intel"` or `"att"`; the response's `syntax` says
+  which was used.
 
   objdump text is recognised by a header line (`0000… <f>:`), a byte column or `<sym+off>` branch targets; without
   those, only when every line is address-prefixed, there are at least three, and the steps between the addresses fit
@@ -204,7 +248,7 @@ Request:
   valid line an error; a note says so when it starts with a mnemonic (`add the next element`), and nothing when it does
   not (`sum += a[i]`). A line the assembler rejects inside the analyzed code is an error with its line number (objdump
   lines outside the picked loop that the assembler rejects, such as padding, are left out).
-- `syntax` is `intel` (noprefix, the default) or `att`. The source may also switch syntax itself with
+- `syntax` is `auto` (the default), `intel` (noprefix) or `att`. The source may also switch syntax itself with
   `.intel_syntax noprefix` / `.att_syntax`.
 - Every field of `options` is optional; the defaults are shown. Unknown options and unknown request fields are an
   error (code 1), not ignored. The library also accepts the options at the top level of the request

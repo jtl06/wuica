@@ -5,7 +5,7 @@
 // tests-js/fixtures/loop-find are from the 0.1.4 dogfood run (gcc 16.2 -O3 -march=native).
 // Usage: node tests-js/web_loop_find.mjs
 import fs from 'node:fs';
-import { preparePaste, fromObjdump, leadingSemicolons, findLoops, scan, replacesText } from '../web/js/loop-find.js';
+import { preparePaste, fromObjdump, leadingSemicolons, findLoops, scan, replacesText, detectSyntax } from '../web/js/loop-find.js';
 import { withRegions } from '../web/js/asm-regions.js';
 import { WasmAssembler } from '../web/js/assembler.js';
 import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
@@ -44,6 +44,14 @@ const j = JSON.stringify;
   check(preparePaste('  add rax, 1\n  ret\n').choice === null && !preparePaste('  add rax, 1\n  ret\n').choosable, 'a bare snippet ending in ret: as typed (no trim)');
   check(preparePaste('f:\n  add rax, 1\n  ret\n').choice === 'body' && preparePaste('\t.text\n  add rax, 1\n  ret\n').choice === 'body' && preparePaste('  push rbx\n  add rax, 1\n  pop rbx\n  ret\n').choice === 'body', 'a function label, a directive or a prologue: the body');
   check(preparePaste('.L5:\n  add rax, 1\n  ret\n').choice === null, 'a local label alone is not a function');
+  // clang's loop notes: the blocks of one header are one loop at clang's depth; the deepest first (as the CLI's -loops)
+  const cli = (n) => fs.readFileSync(new URL(`tests-js/fixtures/cli/${n}`, root), 'utf8');
+  const u8 = preparePaste(cli('count_u8.hsw.s'));
+  check(u8.loops.map((l) => `${l.label}:${l.depth}`).join() === '.LBB0_12:2,.LBB0_16:2,.LBB0_8:2,.LBB0_4:1' && u8.choice === 0, 'clang count_u8: the inner loops (Depth=2) first, the outer one (its blocks merged) last', j(u8.loops));
+  const dm = preparePaste(cli('divmod.hsw.s'));
+  check(dm.loops.map((l) => `${l.label}:${l.begin}-${l.end}`).join() === '.LBB0_7:34-55,.LBB0_13:78-152', 'clang divmod: two loops, each with its slow-path blocks merged into it', j(dm.loops));
+  check(preparePaste(cli('divmod.hsw.s'), { loop: '.LBB0_13' }).choice === 1 && preparePaste(cli('divmod.hsw.s'), { func: 'sum_mod', loop: 1 }).pick.begin === 78, 'loop by label; func');
+  check(detectSyntax(cli('dot.hsw.s')) === 'att' && detectSyntax(cli('dot.hsw.intel.s')) === 'intel' && detectSyntax('nop\n') === null, 'detectSyntax: clang -S AT&T, -masm=intel, nothing to tell');
   // replacing vs editing a text (the page's pick goes back to auto when the text is replaced)
   check(replacesText('.L1:\n add rax, 1\n jnz .L1\n', 'f:\n mov ecx, 2\n ret\n') && !replacesText('.L1:\n add rax, 1\n jnz .L1\n', '.L1:\n add rax, 2\n jnz .L1\n') && !replacesText('abc', 'abc'), 'replacesText: a new text vs an edit');
   check(preparePaste('  add rax, 1\n  imul rax, rbx\n').choice === null, 'straight-line code without ret: as it is');

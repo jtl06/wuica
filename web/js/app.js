@@ -1291,7 +1291,7 @@ function bind() {
   });
   el.code.addEventListener('input', (e) => {
     buffers[state.mode] = el.code.value;
-    if (state.mode === 'asm' && replacesText(textA, el.code.value)) {
+    if (state.mode === 'asm' && (textA.trim() === '' || replacesText(textA, el.code.value))) {
       newTextA();
       // a pasted text in the other syntax (clang -S, objdump: AT&T) switches the select, unless the user chose it
       const syn = detectSyntax(el.code.value);
