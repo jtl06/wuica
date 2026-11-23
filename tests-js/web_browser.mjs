@@ -208,7 +208,7 @@ try {
       && r.arch[0] === 'SKL' && r.arch[1] === 'SKL', 'mock: the CPU checkboxes (in order of release; prototypes marked; names in the accessible name); SKL checked', JSON.stringify([r.groups, r.arch]));
     check(r.start[0] && r.start[1] === '  add rax, 1', 'mock: assembly is the default input, with the first example', JSON.stringify(r.start));
     check(r.examples === ',chain,loadstore,avx,stack,saxpy,dot1,dot4,popcnt,ptrchase,strlen,crc32,memcpy,gemm,sha256,synthetic,error' && r.exGroups === 'basics,classic loops,showcase,mock', 'mock: the examples menu', JSON.stringify([r.examples, r.exGroups]));
-    check(/^unofficial port of uiCA by Andreas Abel and Jan Reineke\. data from uops\.info\. repo at jtl06\/wuica v\d+\.\d+\.\d+(-\S+)? · LLVM 22\.1\.2 · Intel XED · build \S+ · \?$/.test(r.footer[0])
+    check(/^unofficial port of uiCA · data from uops\.info · repo at jtl06\/wuica v\d+\.\d+\.\d+(-\S+)? · LLVM 22\.1\.2 · Intel XED · build \S+ · \?$/.test(r.footer[0])
       && r.footer[1] === 'https://github.com/andreas-abel/uiCA https://www.uops.info/ https://github.com/jtl06/wuica' && r.footer[2] === 'Source on GitHub https://github.com/jtl06/wuica' && r.footer[3] === '', 'mock: the footer (credit, the repository, versions; no license or font text); GitHub at the right end of the top bar', JSON.stringify(r.footer));
     check(r.focusable && r.labelled.length === 0, 'mock: controls are focusable and labelled', JSON.stringify(r.labelled));
     check(r.empty[0] === '2.00' && r.empty[1] === '1', 'mock: a fresh visit analyzes the first example once', JSON.stringify(r.empty));

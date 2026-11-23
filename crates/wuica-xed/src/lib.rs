@@ -43,11 +43,18 @@ pub struct Decoded {
     pub errors: u32,
 }
 
+/// Initializes XED's tables, once per process. One `Once` for every entry point: `xed_tables_init` marks itself done before it
+/// has built the tables (with a plain flag), so a second caller would decode with tables that are still being written, and
+/// `wuica_xed_init` also rewrites the format options that decoding reads.
+fn init() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| unsafe { wuica_xed_init() });
+}
+
 /// Decodes machine code as JSON (an array of objects with the fields of [`DecodedInstr`]). `chip` is an XED chip name such as
 /// `SKYLAKE` or `ALL`; an empty string disables the chip check.
 pub fn decode_json(code: &[u8], chip: &str) -> Result<(String, u32), DecodeError> {
-    static INIT: Once = Once::new();
-    INIT.call_once(|| unsafe { wuica_xed_init() });
+    init();
 
     let chip_c = CString::new(chip).map_err(|_| DecodeError::UnknownChip(chip.to_string()))?;
     // an instruction needs well under 1 kB of JSON; the buffer grows if that is not enough
@@ -75,8 +82,7 @@ pub fn decode_json(code: &[u8], chip: &str) -> Result<(String, u32), DecodeError
 /// Decodes machine code: the records of [`decode_json`], filled from the compact binary form that the decoder also writes
 /// (described in `shim/wuica_xed.c`) instead of from JSON.
 pub fn decode(code: &[u8], chip: &str) -> Result<Decoded, DecodeError> {
-    static INIT: Once = Once::new();
-    INIT.call_once(|| unsafe { wuica_xed_init() });
+    init();
 
     let chip_c = CString::new(chip).map_err(|_| DecodeError::UnknownChip(chip.to_string()))?;
     // a record needs well under 300 bytes; the buffer grows if that is not enough
