@@ -7,7 +7,7 @@ the test corpus are identical before and after), and they are not measured here;
 uiCA with its own instruction data, used as a reference.
 
 "Before" is the fork at `adf62ae` (the model of the previous wuica data), "after" is `improve-r6` at `9bed908` (the model of
-the branch `model-r6`). Percentages are the share of loops whose predicted throughput is within 5, 10 or 20% of the measured
+the branch `model-r6`; its merge with the crash fixes, `21b0b17`, gives the same predictions on all these loops). Percentages are the share of loops whose predicted throughput is within 5, 10 or 20% of the measured
 one; MAPE is the mean absolute percentage error.
 
 ## ZEN3 — measured on a Ryzen 7 7735U (Zen 3+)
