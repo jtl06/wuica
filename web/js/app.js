@@ -13,6 +13,7 @@ import { renderResult, renderEmpty, renderFailure, copyText, h } from './render.
 import { latestWins } from './compare.js';
 import { createComparePanels } from './compare-view.js';
 import { createTracePanel } from './trace.js';
+import { createInsight } from './insight-view.js';
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -91,6 +92,11 @@ const panels = createComparePanels({
   },
   wantResult: () => { if (ready && !lastView && el.code.value.trim() !== '') run(); },
 });
+// The critical chain and the cost column on the result (insight-view.js).
+const insight = createInsight({
+  engine: () => engine,
+  onToggle: () => { const o = insight.open(); state.cost = o.cost; state.costNop = o.cost && o.nop; syncUrl(true); },
+});
 const tracePanel = createTracePanel({ analyze: (request) => engine.analyze(request), config: (v) => uarch?.configs?.[v.archKey] });
 
 // ---- status line and progress ----------------------------------------------------------------------------------
@@ -162,6 +168,7 @@ function writeControls() {
   el.iter.value = state.minIterations;
   el.cycles.value = state.minCycles;
   panels.setOpen({ cpus: state.cmpCpus, sweep: state.cmpSweep });
+  insight.setOpen({ cost: state.cost, nop: state.costNop });
   paintDerived();
 }
 
@@ -400,6 +407,7 @@ function draw() {
   if (!lastView) return;
   const trace = lastView.response && !lastView.response.error ? tracePanel.update(lastView) : null;
   renderResult(el.body, { ...lastView, trace, ui, onUi: (k, v) => { ui[k] = v; if (k === 'hideEmpty') draw(); } });
+  insight.decorate(el.body, lastView);
   paintStale();
 }
 

@@ -6,6 +6,7 @@ use crate::data::ArchData;
 use crate::decoded::DecodedInstr;
 use crate::facile::{self, InstrInstanceSummary, InstrSource, SimSummary, UopSummary};
 use crate::instr_builder::build_instructions;
+use crate::model::{InstrList, OpId, Operand};
 use crate::sim::{simulate, InitPolicy, SimOptions, SimResult, TableValue, UopSource};
 use serde::{Deserialize, Serialize};
 
@@ -101,6 +102,64 @@ pub struct Response {
     #[serde(skip)]
     pub text_with_hyperlinks: String,
     pub trace: Option<serde_json::Value>,
+    /// the loop-carried dependency cycle that gives the "Dependencies" limit; only if that limit is not 0
+    #[serde(rename = "criticalPath", skip_serializing_if = "Option::is_none")]
+    pub critical_path: Option<CriticalPath>,
+}
+
+/// The cycle of the latency graph with the maximum latency per iteration (`edgesOnMaxCycle` of `computeMaximumLatencyForGraph`),
+/// in terms of the rows of the uop table.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CriticalPath {
+    /// latency per iteration: the sum of the edges' latencies divided by the number of carried edges (the "Dependencies" limit,
+    /// not rounded)
+    pub ratio: f64,
+    /// the edges in the order of the cycle (`edges[k].to == edges[k + 1].from`, and the last one leads to the first one);
+    /// it starts after a carried edge
+    pub edges: Vec<CriticalEdge>,
+}
+
+/// An edge of the critical cycle: the instruction in row `from` produces a value that the instruction in row `to` reads.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CriticalEdge {
+    pub from: usize,
+    pub to: usize,
+    /// what `to` reads: a register as written in the instruction (e.g. "RAX", "EAX"), "mem" or "flags"
+    pub operand: String,
+    /// cycles from the input of `from` on the cycle to the input of `to`
+    pub latency: i64,
+    /// the reading instruction is in the next iteration
+    pub carried: bool,
+}
+
+/// The critical cycle in terms of rows (`row_of_instr`: the row of each instruction). `None` if there is no cycle or an operand
+/// on it does not belong to an instruction.
+pub fn critical_path(instrs: &InstrList, graph: &facile::LatencyGraph, maximum: &facile::MaximumLatency, row_of_instr: &[usize]) -> Option<CriticalPath> {
+    if maximum.max_cycle_ratio == 0.0 || maximum.edges_on_max_cycle.is_empty() {
+        return None;
+    }
+    let mut owner: Vec<Option<usize>> = vec![None; instrs.operands.len()];
+    for (i, nodes) in graph.nodes_for_instr.iter().enumerate() {
+        for &op in nodes {
+            owner[op as usize].get_or_insert(i);
+        }
+    }
+    let row = |op: OpId| owner.get(op as usize).copied().flatten().and_then(|i| row_of_instr.get(i).copied());
+    let mut edges = Vec::with_capacity(maximum.edges_on_max_cycle.len());
+    for e in &maximum.edges_on_max_cycle {
+        let operand = match &instrs.operands[e.target as usize] {
+            Operand::Reg { reg, .. } => reg.clone(),
+            Operand::Flag { .. } => "flags".to_string(),
+            Operand::Mem { .. } => "mem".to_string(),
+            Operand::Pseudo => "pseudo".to_string(),
+        };
+        edges.push(CriticalEdge { from: row(e.source)?, to: row(e.target)?, operand, latency: e.cost, carried: e.time != 0 });
+    }
+    // start after a carried edge, at the earliest row (reads in program order)
+    let n = edges.len();
+    let start = (0..n).filter(|&k| edges[(k + n - 1) % n].carried).min_by_key(|&k| (edges[k].from, k)).unwrap_or(0);
+    edges.rotate_left(start);
+    Some(CriticalPath { ratio: maximum.max_cycle_ratio, edges })
 }
 
 /// `facile::SimSummary` from the result of the simulation
@@ -214,7 +273,8 @@ pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, 
         let instrs = build_instructions(decoded, config, uarch, data, request.alignment_offset, request.no_micro_fusion, request.no_macro_fusion);
         let r = simulate(&instrs, config, uarch, &options).map_err(|e| e.to_string())?;
         let summary = sim_summary(&r);
-        let dep_limit = facile::compute_dependency_limit(&instrs, config, &request.init_policy);
+        let (dep_maximum, dep_graph) = facile::compute_dependency_cycle(&instrs, config, &request.init_policy);
+        let dep_limit = dep_maximum.max_cycle_ratio;
         let report = facile::bottleneck_report(&instrs, decoded, config, request.alignment_offset, dep_limit, &summary);
         let table = r.uops_table();
         let text_with_hyperlinks = format!("Throughput (in cycles per iteration): {:.2}\n{report}\n{table}\n", r.tp);
@@ -242,6 +302,7 @@ pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, 
             None => vec![String::new(); meta.len()],
         };
         let number_columns: Vec<&(String, Vec<TableValue>)> = table_columns.iter().filter(|(name, _)| name != "Notes").collect();
+        let row_of_instr: Vec<usize> = meta.iter().enumerate().filter_map(|(line, m)| m.2.map(|_| line)).collect();
         let rows = meta
             .into_iter()
             .enumerate()
@@ -271,6 +332,7 @@ pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, 
             text: strip_hyperlinks(&text_with_hyperlinks),
             text_with_hyperlinks,
             trace: request.include_trace.then(|| r.to_json()),
+            critical_path: critical_path(&instrs, &dep_graph, &dep_maximum, &row_of_instr),
         })
     }));
     match result {
