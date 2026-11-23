@@ -29,31 +29,57 @@ another branch works on it tonight; **next** = not started.
 | 2 | **Blame**: per instruction, its share of the bound resource (busiest ports, issue slots, DSB/MITE/MS uops, chain latency), shaded in the table, with jump to the largest | VTune locator metrics, perf annotate `H`/TAB | tells which instructions to change without running N analyses (the cost column does, but slowly on large blocks) | uop table values, `criticalPath` edge latencies | S | low; port share uses the simulated assignment, not the allowed port set | **r1** |
 | 3 | **What-if experiments**: one-click re-analyses of the whole block: unroll ×2/×4/×8 (per original iteration), ideal front end, no macro/micro-fusion, best alignment, other options; with Δ and speedup | Facile counterfactuals, CQA "if fully vectorized / if no dependencies", MAQAO UFS | the follow-up question after every result; wuica's speed makes it instant | the analyzer (new requests); `simpleFrontEnd`, fusion flags, alignment are options | M | low; unroll keeps the branch, copies the rest (dependencies kept, loop overhead removed) | **r1** |
 | 4 | **Export**: copy the result as a Markdown table (issue/PR ready), CSV of the uop table, JSON of the response | CE "copy", llvm-mca `-json`, VTune report export | results go into reviews and issues; today only the text report can be copied | the response | S | low | **r1** |
-| 5 | **API/MCP: derived analysis** (`bound`, `blame`, `unroll` what-if) in the HTTP API and the MCP `analyze` tool | — | agents get the same diagnosis as the page | the response | S–M | low; needs the module shared with packages/wuica | next |
-| 6 | Code layout map: the block's bytes on 16 B (predecode) / 32 B (DSB) / 64 B lines, instruction boxes, JCC-erratum and line crossings marked, at the chosen alignment | Intel optimization manual, Agner's microarchitecture manual | explains front-end limits and alignment effects that numbers do not | opcode lengths, `alignmentOffset`, notes `J`, `DSBBlockSize`, `preDecodeBlockSize` | M | low | next |
+| 5 | **API/MCP: derived analysis**: `insights` in the MCP `analyze` JSON (utilization, binding, next limit, chain, hot instructions); a `what_if` tool is next | — | agents get the same diagnosis as the page | the response | S–M | low; packages/wuica/lib/insights.js mirrors bound.js (a test checks they agree) | **r1** (insights); next (what_if tool, REST) |
+| 6 | Code layout map: the block's bytes on 16 B (predecode) / 32 B (DSB) / 64 B lines, instruction boxes, JCC-erratum and line crossings marked, at the chosen alignment | Intel optimization manual, Agner's microarchitecture manual | explains front-end limits and alignment effects that numbers do not | opcode lengths, `alignmentOffset`, notes `J`, `DSBBlockSize`, `preDecodeBlockSize` | M | low | **r1** |
 | 7 | Front-end hazard badges: LCP prefixes, MS-microcoded instructions, 32 B DSB windows with too many uops, broken macro-fusion | Intel manual, Agner | names the cause of a front-end limit | bytes (LCP), MS column, notes | M | medium: must agree with uiCA's model, or it misleads | next |
 | 8 | Exact top-down slot accounting from the trace (Retiring / FE-bound / BE-bound per issue slot, steady state) | VTune TMA, Apple CPU Bottlenecks, Arm top-down | VTune-identical vocabulary, per cycle | trace has issue cycles, IDQ in/out; **missing**: why issue stalled in a cycle (IDQ empty vs ROB/RS full vs uiCA's loop-boundary issue rule), and IDQ residency of LSD-issued uops; the simulator would have to emit a per-cycle issue-stall cause | M (with sim data) | high without the sim data (misattribution) | next (needs sim) |
 | 9 | Wait-time table per instruction (in queue / ready-not-dispatched / executed-not-retired) | llvm-mca average wait times | separates port contention from latency | trace | S | low | other (trace wait breakdown) |
 | 10 | Trace ↔ table linking, A–B trace alignment | Superluminal range filter, Konata overlay | | trace | | | other |
 | 11 | Source-line mapping and per-source-line cost for Compiler Explorer imports | CE colour linking, VTune source view | C++ users think in source lines | CE API `asm[].source.line` | M | medium: depends on the asm import work | next (after asm-import lands) |
-| 12 | Interactive dependency graph (SVG) of one iteration, chain highlighted, click → table/trace | OSACA `--export-graph`, uiCA `-depGraph` | shows parallelism and every chain, not only the critical one | trace `dependsOn` gives uop edges; **missing**: the static latency of each edge (only critical-path edges have it) and edges through flags/memory by name | M–L | medium | next (needs sim for latencies) |
+| 12 | Dependency graph of one iteration, chain highlighted, keys → table row | OSACA `--export-graph`, uiCA `-depGraph`, perf annotate arrows | shows parallelism and every chain, not only the critical one | trace `dependsOn` (register, flag, address edges); memory edges only where `criticalPath` has them. **Missing** for a full graph: the static latency and the operand of every edge (only the critical path has them), and store→load edges in general | M | medium | **r1** (arcs, no latencies); next (latencies need sim data) |
 | 13 | Instruction cards on hover: latency per operand, allowed ports (`1*p23+1*p015`), MITE/MS uops, fusion | uops.info, CE asm docs | saves the trip to uops.info | **missing**: allowed ports and latencies per instruction are in the tables but not in the response; would need a `wuica_instr_info` export or fields per row | S (with sim data) | low | next (needs sim) |
 | 14 | Exact port-set bottleneck: the port combination behind the `Ports` limit and the uops that can only go there | Facile port model | "p23 is full" instead of "Port 2 and 3 are busy" | **missing**: Facile's maximizing port set; the response has only the limit value | S (with sim data) | low | next (needs sim) |
 | 15 | Memory-carried dependencies (store→load through the same address) | staticdeps / CesASMe (cut uiCA's error from 29.6 % to 19.2 %) | accuracy on real code | needs simulator changes | L | high | not tonight |
 | 16 | Region markers (LLVM-MCA-BEGIN/END, IACA, OSACA), auto-detect the loop in compiler output | llvm-mca, IACA, OSACA | paste a whole function | assembler output + labels | M | medium | next |
-| 17 | Keyboard: jump to worst row, next/previous hot row, `?` shortcut list | perf annotate, Perfetto | large blocks | the DOM | S | low | partly r1 (blame: worst) |
+| 17 | Keyboard: jump to worst row, next/previous hot row, `?` shortcut list | perf annotate, Perfetto | large blocks | the DOM | S | low | partly r1 (top rows jump; arrow keys in the code map and the arcs) |
 | 18 | Short links (server-stored state) | CE `/z/`, Firefox Profiler uploads | long fragments of large blocks | needs storage on api.wuica | M | low | next |
 
 Not applicable (wuica does not model them): cache misses and memory roofs, bad speculation and branch mispredictions,
 false sharing (perf c2c), sampling confidence, call trees and flame graphs.
 
-## Built in this round (see the commits on `features-r1`)
+## Built in this round (branch `features-r1`)
 
-The page stays as lean as before: every new view is opt-in and computed only when opened.
+Every new view is opt-in (closed by default, computed only when opened, its open state in the URL); the default result
+is unchanged except for three small copy buttons next to the cost toggle. The views are rows of the "more" section below
+the panes (hidden in A–B mode, like the sweep and the trace). Shared files touched: app.js (an import, one createViews()
+call, one line in writeControls, one in draw), url-state.js (five flags), index.html (five stylesheet links).
 
-1. **bound** (web/js/bound.js, web/css/bound.css): a details row under the limits; ideas 1 and 2.
-2. **what if** (web/js/whatif.js): a details row; idea 3.
-3. **export** (web/js/export.js): next to the text views; idea 4.
+| View | Row | Module | URL | What |
+|---|---|---|---|---|
+| bound | `bound` | web/js/bound.js | `bound=1` | ideas 1, 2: utilization bars (front end, issue, each port, chain, unexplained), next limit and the speedup at most in the summary, the selected resource's share shaded on the uop table rows, top 5 rows jump to the table |
+| what if | `try` | web/js/whatif.js | `whatif=1` | idea 3: unroll ×2/×4/×8, ideal front end, macro-/micro-fusion switched, no-chain estimate; cycles per original iteration, Δ, speedup; ↗ opens the variant |
+| code map | `bytes` | web/js/codemap.js | `codemap=1` | idea 6: cache lines, 16/32-byte boundaries, split and JCC-erratum instructions, ◂ ▸ alignment |
+| dependency arcs | `deps` | web/js/deps.js | `deps=1` | idea 12: arcs from the trace, critical chain highlighted |
+| copy | (tools above the uop table) | web/js/export.js | — | idea 4: Markdown, CSV, JSON |
+| MCP insights | — | packages/wuica/lib/insights.js | — | idea 5: `insights` in the `analyze` JSON |
+
+## Data the simulator does not give yet (for later rounds; crates/ unchanged tonight)
+
+- Per-cycle issue-stall cause (IDQ empty, ROB full, RS full, loop-boundary rule; LSD residency): exact top-down slot
+  accounting (idea 8).
+- Per instruction: allowed port set (`1*p23+1*p015`), latency per operand pair, MITE/MS uop counts as in the tables:
+  instruction cards (idea 13) and a port-set blame instead of the simulated assignment.
+- Facile's maximizing port combination behind the `Ports` limit (idea 14).
+- Every dependency edge with operand and static latency (not only the critical path), including store→load: a full
+  dependency graph with latencies and a per-instruction slack view.
+
+## Next ideas
+
+1. MCP `what_if` tool (unroll, fusion, front end, alignment best/worst) and `insights` in the REST `analyze` response.
+2. Instruction cards and front-end hazard badges, once the simulator exports the per-instruction data above.
+3. Source-line cost for Compiler Explorer imports, after the asm-import branch lands (CE's `asm[].source.line`).
+4. Range selection in the trace that drives the bound view (steady state vs warm-up), after the trace work lands.
+5. Region markers (LLVM-MCA-BEGIN/END) and loop detection in pasted compiler output.
 
 ## Sources
 
