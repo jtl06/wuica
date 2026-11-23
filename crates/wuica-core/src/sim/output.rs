@@ -1,8 +1,8 @@
 //! The results of a simulation: the uop table (`getUopsTableColumns`, `printUopsTable`) and the `-json` output
 //! (`generateJSONOutput`).
 
-use super::prep::NONE;
-use super::{InstrSummary, Sim, SimResult, UopSource};
+use super::prep::{pf, NONE};
+use super::{opt, FusedUop, InstrInstance, InstrSummary, LaminatedUop, Sim, SimResult, Uop, UopSource, NO_PORT};
 use serde_json::{json, Map, Value};
 
 /// `canonicalizeInstrString`: `re.sub('[(){}, ]+', '_', instrString).strip('_')`
@@ -164,7 +164,7 @@ impl UopsTableData {
     }
 }
 
-pub(crate) fn build_result(sim: Sim, tp: f64, first_relevant_round: i64, last_relevant_round: i64, max_cycle: i64) -> SimResult {
+pub(crate) fn build_result(mut sim: Sim, tp: f64, first_relevant_round: i64, last_relevant_round: i64, max_cycle: i64) -> SimResult {
     let cfg = sim.cfg;
     let ports: Vec<String> = sim.prep.ports.iter().map(|&c| (c as char).to_string()).collect();
     // getPortColumnName
@@ -190,16 +190,89 @@ pub(crate) fn build_result(sim: Sim, tp: f64, first_relevant_round: i64, last_re
         "LSDUnrollCount": sim.fe.lsd_unroll_count,
         "mode": if sim.fe.unroll { "unroll" } else { "loop" },
     });
+    // the public form of the entities
+    let props = &sim.prep.props;
+    let uops: Vec<Uop> = sim
+        .uops
+        .iter()
+        .map(|u| {
+            let p = &props[u.prop as usize];
+            Uop {
+                instr_instance: u.instr_instance,
+                fused_uop: u.fused_uop,
+                actual_port: (u.actual_port != NO_PORT).then_some(u.actual_port),
+                eliminated: u.eliminated,
+                ren_in: (u.ren, u.n_in as u32),
+                ready_for_dispatch: opt(u.ready_for_dispatch),
+                dispatched: opt(u.dispatched),
+                executed: (!u.executed.is_nan()).then_some(u.executed),
+                div_cycles: p.div_cycles,
+                is_stack_sync_uop: p.has(pf::STACK_SYNC),
+                is_reg_merge_uop: p.has(pf::REG_MERGE),
+            }
+        })
+        .collect();
+    // (each internal array is freed as soon as it is converted: a lower peak of memory)
+    sim.uops = Vec::new();
+    let fused_uops: Vec<FusedUop> = sim
+        .fused
+        .iter()
+        .map(|f| FusedUop {
+            first_uop: f.first_uop,
+            n_uops: f.n_uops,
+            laminated_uop: f.laminated_uop,
+            issued: opt(f.issued),
+            retired: opt(f.retired),
+            retire_idx: opt(f.retire_idx),
+        })
+        .collect();
+    sim.fused = Vec::new();
+    let laminated_uops: Vec<LaminatedUop> = sim
+        .lams
+        .iter()
+        .map(|l| LaminatedUop {
+            first_fused_uop: l.first_fused_uop,
+            n_fused_uops: l.n_fused_uops,
+            first_uop: l.first_uop,
+            n_uops: l.n_uops,
+            added_to_idq: opt(l.added_to_idq),
+            uop_source: l.uop_source,
+        })
+        .collect();
+    sim.lams = Vec::new();
+    let mut instr_instances: Vec<InstrInstance> = sim
+        .insts
+        .iter()
+        .map(|i| InstrInstance {
+            instr: i.instr,
+            address: i.address,
+            rnd: i.rnd,
+            first_uop: i.first_uop,
+            n_uops: i.n_uops,
+            reg_merge_uops: Vec::new(),
+            stack_sync_uops: Vec::new(),
+            source: i.source,
+            predecoded: opt(i.predecoded),
+            removed_from_iq: opt(i.removed_from_iq),
+        })
+        .collect();
+    sim.insts = Vec::new();
+    for &(inst, lam) in &sim.reg_merge_uops {
+        instr_instances[inst as usize].reg_merge_uops.push(lam);
+    }
+    for &(inst, lam) in &sim.stack_sync_uops {
+        instr_instances[inst as usize].stack_sync_uops.push(lam);
+    }
     SimResult {
         tp,
         first_relevant_round,
         last_relevant_round,
         unroll: sim.fe.unroll,
         max_cycle,
-        uops: sim.uops,
-        fused_uops: sim.fused,
-        laminated_uops: sim.lams,
-        instr_instances: sim.insts,
+        uops,
+        fused_uops,
+        laminated_uops,
+        instr_instances,
         all_generated_instr_instances: sim.fe.all_generated_instr_instances,
         relevant_instr_instances_for_instr: relevant,
         ports,

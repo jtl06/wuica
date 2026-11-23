@@ -632,6 +632,8 @@ impl GraphSink for LatencyGraph {
 /// group in the order in which its edges were added).
 struct DenseGraph {
     nodes: Vec<OpId>,
+    /// the nodes of instruction `i` are `nodes[instr_start[i]..]` (up to the start of the next one)
+    instr_start: Vec<u32>,
     /// the edges in the order in which they were added; after [`DenseGraph::finish`], grouped by their source
     edges: Vec<LatGraphEdge>,
     /// after [`DenseGraph::finish`]: the edges of node `n` are `edges[start[n]..start[n + 1]]`
@@ -639,7 +641,9 @@ struct DenseGraph {
 }
 
 impl GraphSink for DenseGraph {
-    fn begin_instr(&mut self) {}
+    fn begin_instr(&mut self) {
+        self.instr_start.push(self.nodes.len() as u32);
+    }
     fn node(&mut self, op: OpId) {
         self.nodes.push(op);
     }
@@ -1151,11 +1155,43 @@ fn maximum_latency<'g>(
 /// The limit that `_runSimulation` passes to `printBottlenecks` as `depLimit`:
 /// `computeMaximumLatencyForGraph(instructions, *generateLatencyGraph(instructions, uArchConfig, initPolicy))[0]`
 pub fn compute_dependency_limit(instrs: &InstrList, config: &UArchConfig, init_policy: &str) -> f64 {
+    dense_dependency_cycle(instrs, config, init_policy).0
+}
+
+/// The dense graph and the result of `computeMaximumLatencyForGraph` for it: (maxCycleRatio, edgesOnMaxCycle)
+fn dense_dependency_cycle(instrs: &InstrList, config: &UArchConfig, init_policy: &str) -> (f64, Vec<LatGraphEdge>, DenseGraph) {
     let n_operands = instrs.operands.len();
-    let mut graph = DenseGraph { nodes: Vec::new(), edges: Vec::new(), start: Vec::new() };
+    let mut graph = DenseGraph { nodes: Vec::new(), instr_start: Vec::new(), edges: Vec::new(), start: Vec::new() };
     build_latency_graph(instrs, config, init_policy, &mut graph);
     graph.finish(n_operands);
-    maximum_latency(n_operands, graph.nodes.iter().copied(), |n| graph.edges(n), |_| {}).0
+    let (ratio, edges) = maximum_latency(n_operands, graph.nodes.iter().copied(), |n| graph.edges(n), |_| {});
+    (ratio, edges, graph)
+}
+
+/// The loop-carried dependency cycle with the maximum latency per iteration, from the compact graph of
+/// [`compute_dependency_limit`] (in the same time): `max_cycle_ratio` and `edges_on_max_cycle` are those of
+/// [`compute_dependency_cycle`].
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct DependencyCycle {
+    /// the Dependencies limit (`maxCycleRatio`)
+    pub max_cycle_ratio: f64,
+    pub edges_on_max_cycle: Vec<LatGraphEdge>,
+    /// for each operand, the first instruction whose nodes (`nodesForInstr`) contain it
+    pub instr_of_node: Vec<Option<u32>>,
+}
+
+/// [`compute_dependency_limit`] with the cycle that gives the limit (see [`DependencyCycle`])
+pub fn compute_dependency_limit_with_cycle(instrs: &InstrList, config: &UArchConfig, init_policy: &str) -> DependencyCycle {
+    let (max_cycle_ratio, edges_on_max_cycle, graph) = dense_dependency_cycle(instrs, config, init_policy);
+    let mut instr_of_node: Vec<Option<u32>> = vec![None; instrs.operands.len()];
+    let n = graph.instr_start.len();
+    for i in 0..n {
+        let end = if i + 1 < n { graph.instr_start[i + 1] as usize } else { graph.nodes.len() };
+        for &op in &graph.nodes[graph.instr_start[i] as usize..end] {
+            instr_of_node[op as usize].get_or_insert(i as u32);
+        }
+    }
+    DependencyCycle { max_cycle_ratio, edges_on_max_cycle, instr_of_node }
 }
 
 /// As [`compute_dependency_limit`] (`maximum.max_cycle_ratio` is that limit), with the cycle that gives it and the graph, whose

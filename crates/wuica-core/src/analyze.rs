@@ -138,15 +138,34 @@ pub fn critical_path(instrs: &InstrList, graph: &facile::LatencyGraph, maximum: 
     if maximum.max_cycle_ratio == 0.0 || maximum.edges_on_max_cycle.is_empty() {
         return None;
     }
-    let mut owner: Vec<Option<usize>> = vec![None; instrs.operands.len()];
+    let mut owner: Vec<Option<u32>> = vec![None; instrs.operands.len()];
     for (i, nodes) in graph.nodes_for_instr.iter().enumerate() {
         for &op in nodes {
-            owner[op as usize].get_or_insert(i);
+            owner[op as usize].get_or_insert(i as u32);
         }
     }
-    let row = |op: OpId| owner.get(op as usize).copied().flatten().and_then(|i| row_of_instr.get(i).copied());
-    let mut edges = Vec::with_capacity(maximum.edges_on_max_cycle.len());
-    for e in &maximum.edges_on_max_cycle {
+    critical_path_of(instrs, maximum.max_cycle_ratio, &maximum.edges_on_max_cycle, &owner, row_of_instr)
+}
+
+/// [`critical_path`] from the result of [`facile::compute_dependency_limit_with_cycle`]
+pub fn critical_path_for(instrs: &InstrList, cycle: &facile::DependencyCycle, row_of_instr: &[usize]) -> Option<CriticalPath> {
+    if cycle.max_cycle_ratio == 0.0 || cycle.edges_on_max_cycle.is_empty() {
+        return None;
+    }
+    critical_path_of(instrs, cycle.max_cycle_ratio, &cycle.edges_on_max_cycle, &cycle.instr_of_node, row_of_instr)
+}
+
+/// the critical path for the edges of the cycle; `owner`: the instruction of each node
+fn critical_path_of(
+    instrs: &InstrList,
+    max_cycle_ratio: f64,
+    edges_on_max_cycle: &[facile::LatGraphEdge],
+    owner: &[Option<u32>],
+    row_of_instr: &[usize],
+) -> Option<CriticalPath> {
+    let row = |op: OpId| owner.get(op as usize).copied().flatten().and_then(|i| row_of_instr.get(i as usize).copied());
+    let mut edges = Vec::with_capacity(edges_on_max_cycle.len());
+    for e in edges_on_max_cycle {
         let operand = match &instrs.operands[e.target as usize] {
             Operand::Reg { reg, .. } => reg.clone(),
             Operand::Flag { .. } => "flags".to_string(),
@@ -159,7 +178,7 @@ pub fn critical_path(instrs: &InstrList, graph: &facile::LatencyGraph, maximum: 
     let n = edges.len();
     let start = (0..n).filter(|&k| edges[(k + n - 1) % n].carried).min_by_key(|&k| (edges[k].from, k)).unwrap_or(0);
     edges.rotate_left(start);
-    Some(CriticalPath { ratio: maximum.max_cycle_ratio, edges })
+    Some(CriticalPath { ratio: max_cycle_ratio, edges })
 }
 
 /// `facile::SimSummary` from the result of the simulation
@@ -319,9 +338,9 @@ pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, 
         let instrs = build_instructions(decoded, config, uarch, data, request.alignment_offset, request.no_micro_fusion, request.no_macro_fusion);
         let r = simulate(&instrs, config, uarch, &options).map_err(|e| e.to_string())?;
         // the dependency cycle with the maximum latency ratio: its ratio is the Dependencies limit, and the cycle itself is the
-        // critical path of the response (compute_dependency_limit computes the same ratio without the cycle)
-        let (dep_maximum, dep_graph) = facile::compute_dependency_cycle(&instrs, config, &request.init_policy);
-        let dep_limit = dep_maximum.max_cycle_ratio;
+        // critical path of the response
+        let dep_cycle = facile::compute_dependency_limit_with_cycle(&instrs, config, &request.init_policy);
+        let dep_limit = dep_cycle.max_cycle_ratio;
         let facile::BottleneckText { text: report, bottlenecks, limits } = facile::format_bottlenecks_with_limits(
             &facile::bottleneck_values_for(&instrs, decoded, config, request.alignment_offset, dep_limit, &r),
         );
@@ -369,7 +388,7 @@ pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, 
             text: strip_hyperlinks(&text_with_hyperlinks),
             text_with_hyperlinks,
             trace: request.include_trace.then(|| r.to_json()),
-            critical_path: critical_path(&instrs, &dep_graph, &dep_maximum, &row_of_instr),
+            critical_path: critical_path_for(&instrs, &dep_cycle, &row_of_instr),
         })
     }));
     match result {

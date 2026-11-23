@@ -1,7 +1,7 @@
 //! `Renamer`, `StoreBufferEntry`, and `AbstractValueGenerator` (from `utils.py`).
 
-use super::prep::{AvKind, Key, MemAddrInfo, KEY_NONE, NONE};
-use super::{crash, FusedUop, FxHashMap, InitPolicy, LaminatedUop, RenamedOperand, Sim, SimError, READY_UNSET};
+use super::prep::{inf, pf, AvKind, Key, MemAddrInfo, KEY_NONE, NONE};
+use super::{crash, FxHashMap, InitPolicy, RenamedOperand, SFused, SLam, Sim, SimError, READY_UNSET, UNSET};
 use crate::config::Slots;
 
 /// `AbstractValue`
@@ -14,9 +14,56 @@ pub(crate) struct AbstractValue {
 /// (base, index, scale, disp)
 pub(crate) type AbstractAddress = (Option<AbstractValue>, Option<AbstractValue>, Option<i64>, Option<i64>);
 
+/// The abstract addresses (the keys of `storeBufferEntryDict` and `memValueDict`), interned: each distinct key (including
+/// `None`) gets a number, and the two dicts become arrays indexed by it. They are only looked up, never iterated.
+#[derive(Default)]
+pub(crate) struct AddressTable {
+    ids: FxHashMap<Option<AbstractAddress>, u32>,
+    /// id -> abstract address
+    pub values: Vec<Option<AbstractAddress>>,
+    /// id -> `storeBufferEntryDict[key]` (NONE if not in the dict)
+    sbe: Vec<u32>,
+    /// id -> `memValueDict[key]`: (width, abstract value)
+    mem_value: Vec<Option<(i64, AbstractValue)>>,
+    /// for each address expression (`Prep::mem_addrs`, and one more for none), the last key computed for it and its id (NONE:
+    /// none yet): the key of an expression only changes when one of its registers gets a new abstract value
+    last: Vec<(Option<AbstractAddress>, u32)>,
+}
+
+impl AddressTable {
+    fn new(n_mem_addrs: usize) -> AddressTable {
+        AddressTable { last: vec![(None, NONE); n_mem_addrs + 1], ..Default::default() }
+    }
+
+    /// [`AddressTable::intern`] of the key of the address expression `site` (NONE: none)
+    #[inline]
+    fn intern_at(&mut self, site: u32, key: Option<AbstractAddress>) -> u32 {
+        let slot = (site as usize).min(self.last.len() - 1);
+        let (k, id) = self.last[slot];
+        if id != NONE && k == key {
+            return id;
+        }
+        let id = self.intern(key);
+        self.last[slot] = (key, id);
+        id
+    }
+
+    fn intern(&mut self, key: Option<AbstractAddress>) -> u32 {
+        let next = self.values.len() as u32;
+        let id = *self.ids.entry(key).or_insert(next);
+        if id == next {
+            self.values.push(key);
+            self.sbe.push(NONE);
+            self.mem_value.push(None);
+        }
+        id
+    }
+}
+
 /// `StoreBufferEntry`
 pub(crate) struct StoreBufferEntry {
-    pub abstract_address: Option<AbstractAddress>,
+    /// the abstract address: an id of `Renamer::addrs`
+    pub abstract_address: u32,
     /// uops that write to this entry
     pub uops: SmallU32List,
     pub address_ready_cycle: Option<i64>,
@@ -137,8 +184,7 @@ struct RenameDictEntry {
 struct AbstractValueGenerator {
     init_policy: InitPolicy,
     load_value_numbering: bool,
-    /// abstract address -> (width, abstract value)
-    mem_value_dict: FxHashMap<Option<AbstractAddress>, (i64, AbstractValue)>,
+    // (memValueDict is in Renamer::addrs)
     next_base: u32,
     init_value: AbstractValue,
     abstract_value_dict: Vec<Option<AbstractValue>>,
@@ -183,16 +229,17 @@ pub(crate) struct Renamer {
     // renamed operands written by the current instruction
     cur_instr_rnd_rename_dict: Vec<(Key, RenameDictEntry)>,
     cur_instr_pseudo_op_dict: Vec<(u32, u32)>,
-    n_gpr_move_elim_in_cycle: Vec<i64>,
+    n_gpr_move_elim_in_cycle: CycleCounter,
     /// renamed operand -> registers
     multi_use_gpr_dict: Vec<(u32, SmallKeys)>,
-    multi_use_gpr_dict_use_in_cycle: Vec<i64>,
-    n_simd_move_elim_in_cycle: Vec<i64>,
+    multi_use_gpr_dict_use_in_cycle: CycleCounter,
+    n_simd_move_elim_in_cycle: CycleCounter,
     multi_use_simd_dict: Vec<(u32, SmallKeys)>,
-    multi_use_simd_dict_use_in_cycle: Vec<i64>,
+    multi_use_simd_dict_use_in_cycle: CycleCounter,
     renamer_active_cycle: i64,
     cur_store_buffer_entry: u32,
-    store_buffer_entry_dict: FxHashMap<Option<AbstractAddress>, u32>,
+    /// the abstract addresses, with `storeBufferEntryDict` and `memValueDict`
+    pub addrs: AddressTable,
     /// register -> width of the operation if its value was computed by the renamer
     folded_width: Vec<Option<i64>>,
     cur_instr_folded_width: Vec<(Key, i64)>,
@@ -202,11 +249,12 @@ pub(crate) struct Renamer {
 }
 
 impl Renamer {
-    pub fn new(init_policy: InitPolicy, load_value_numbering: bool, n_keys: usize) -> Renamer {
+    /// `window`: `moveEliminationPipelineLength`
+    /// `n_mem_addrs`: the number of address expressions (`Prep::mem_addrs`)
+    pub fn new(init_policy: InitPolicy, load_value_numbering: bool, n_keys: usize, window: i64, n_mem_addrs: usize) -> Renamer {
         let mut g = AbstractValueGenerator {
             init_policy,
             load_value_numbering,
-            mem_value_dict: FxHashMap::default(),
             next_base: 0,
             init_value: AbstractValue { base: 0, offset: 0 },
             abstract_value_dict: vec![None; n_keys],
@@ -218,15 +266,15 @@ impl Renamer {
             rename_dict: vec![None; n_keys],
             cur_instr_rnd_rename_dict: Vec::new(),
             cur_instr_pseudo_op_dict: Vec::new(),
-            n_gpr_move_elim_in_cycle: vec![0],
+            n_gpr_move_elim_in_cycle: CycleCounter::new(window),
             multi_use_gpr_dict: Vec::new(),
-            multi_use_gpr_dict_use_in_cycle: vec![0],
-            n_simd_move_elim_in_cycle: vec![0],
+            multi_use_gpr_dict_use_in_cycle: CycleCounter::new(window),
+            n_simd_move_elim_in_cycle: CycleCounter::new(window),
             multi_use_simd_dict: Vec::new(),
-            multi_use_simd_dict_use_in_cycle: vec![0],
+            multi_use_simd_dict_use_in_cycle: CycleCounter::new(window),
             renamer_active_cycle: 0,
             cur_store_buffer_entry: NONE,
-            store_buffer_entry_dict: FxHashMap::default(),
+            addrs: AddressTable::new(n_mem_addrs),
             folded_width: vec![None; n_keys],
             cur_instr_folded_width: Vec::new(),
             last_reg_merge_issued: NONE,
@@ -235,12 +283,46 @@ impl Renamer {
     }
 }
 
-/// `d.get(cycle, 0)` for the per-cycle counters
-fn get_or_0(v: &[i64], cycle: i64) -> i64 {
-    if cycle >= 0 {
-        v.get(cycle as usize).copied().unwrap_or(0)
-    } else {
-        0
+/// A per-cycle counter of the renamer (`nGPRMoveElimInCycle` etc.): one value for each of the cycles 0, 1, ... (cycle 0 is 0),
+/// of which only the last `window` are read (`moveEliminationPipelineLength`): they are kept in a ring (all of them if the
+/// window is large).
+struct CycleCounter {
+    ring: Vec<i64>,
+    /// the length of the ring; 0: no ring, `ring` holds all values
+    len: i64,
+    /// the number of values pushed (the cycle of the next value)
+    n: i64,
+}
+
+impl CycleCounter {
+    fn new(window: i64) -> CycleCounter {
+        // (a power of two, so that the position is a mask)
+        let len = if window <= 4096 { (window.max(1) as u64).next_power_of_two() as i64 } else { 0 };
+        let mut c = CycleCounter { ring: vec![0; len as usize], len, n: 0 };
+        c.push(0);
+        c
+    }
+
+    fn push(&mut self, v: i64) {
+        if self.len == 0 {
+            self.ring.push(v);
+        } else {
+            self.ring[(self.n & (self.len - 1)) as usize] = v;
+        }
+        self.n += 1;
+    }
+
+    /// `d.get(cycle, 0)`, for cycles in the window `n - window .. n`; 0 for cycles that are not set yet or negative
+    #[inline]
+    fn get_or_0(&self, cycle: i64) -> i64 {
+        if cycle < 0 || cycle >= self.n {
+            0
+        } else if self.len == 0 {
+            self.ring[cycle as usize]
+        } else {
+            debug_assert!(cycle >= self.n - self.len);
+            self.ring[(cycle & (self.len - 1)) as usize]
+        }
     }
 }
 
@@ -273,14 +355,14 @@ impl<'a> Sim<'a> {
     fn compute_abstract_value(&mut self, instr: usize) -> AbstractValue {
         let info = &self.prep.info[instr];
         let g = &mut self.rn.abs_val_gen;
-        if g.load_value_numbering && info.has_input_mem && !info.has_output_mem {
-            if let (Some(width), Some(mem)) = (info.mov_load_width, info.in_mem0.as_ref()) {
-                let key = Some(g.get_address_key(mem));
-                if g.mem_value_dict.get(&key).map(|v| v.0) != Some(width) {
+        if g.load_value_numbering && info.has(inf::HAS_INPUT_MEM) && !info.has(inf::HAS_OUTPUT_MEM) {
+            if let (Some(width), Some(mem)) = (info.mov_load_width, self.prep.mem_addr(info.in_mem0)) {
+                let id = self.rn.addrs.intern_at(info.in_mem0, Some(g.get_address_key(mem)));
+                if self.rn.addrs.mem_value[id as usize].map(|v| v.0) != Some(width) {
                     let fresh = g.generate_fresh_abstract_value();
-                    g.mem_value_dict.insert(key, (width, fresh));
+                    self.rn.addrs.mem_value[id as usize] = Some((width, fresh));
                 }
-                return g.mem_value_dict[&key].1;
+                return self.rn.addrs.mem_value[id as usize].unwrap().1;
             }
         }
         if let Some(in_reg0) = info.in_reg0 {
@@ -304,9 +386,11 @@ impl<'a> Sim<'a> {
         dict_set(&mut self.rn.abs_val_gen.cur_instr_rnd_abstract_value_dict, key, v);
     }
 
-    /// `Renamer.getStoreBufferKey`
-    fn get_store_buffer_key(&mut self, mem_addr: &Option<MemAddrInfo>) -> Option<AbstractAddress> {
-        mem_addr.as_ref().map(|m| self.rn.abs_val_gen.get_address_key(m))
+    /// `Renamer.getStoreBufferKey`, interned
+    /// (`site`: the index of `mem_addr` in `Prep::mem_addrs`, or NONE)
+    fn get_store_buffer_key(&mut self, site: u32, mem_addr: Option<&MemAddrInfo>) -> u32 {
+        let key = mem_addr.map(|m| self.rn.abs_val_gen.get_address_key(m));
+        self.rn.addrs.intern_at(site, key)
     }
 
     /// `Renamer.cycle`: writes the fused uops that are issued in this cycle to `renamer_uops` (which must be empty)
@@ -319,9 +403,9 @@ impl<'a> Sim<'a> {
         while let Some(&lam) = self.idq.front() {
             let first_unfused_uop = self.lams[lam as usize].first_uop;
             let prop = &self.prep.props[self.uops[first_unfused_uop as usize].prop as usize];
-            let (is_first, ii) = (prop.is_first, prop.instr as usize);
-            let (first_merge_prop, n_merge_props) = (self.prep.info[ii].first_merge_prop, self.prep.info[ii].n_merge_props);
-            if is_first && n_merge_props > 0 {
+            let (flags, ii) = (prop.flags, prop.instr as usize);
+            if flags & pf::FIRST_MERGE != 0 {
+                let (first_merge_prop, n_merge_props) = (self.prep.info[ii].first_merge_prop, self.prep.info[ii].n_merge_props);
                 if !renamer_uops.is_empty() {
                     break;
                 }
@@ -331,25 +415,25 @@ impl<'a> Sim<'a> {
                         let u = self.new_uop(merge_prop, inst);
                         let merge_lam = self.lams.len() as u32;
                         let merge_uop = self.fused.len() as u32;
-                        self.fused.push(FusedUop { first_uop: u, n_uops: 1, laminated_uop: merge_lam, issued: None, retired: None, retire_idx: None });
+                        self.fused.push(SFused { first_uop: u, n_uops: 1, laminated_uop: merge_lam, issued: UNSET, retired: UNSET, retire_idx: UNSET });
                         self.uops[u as usize].fused_uop = merge_uop;
                         renamer_uops.push(merge_uop);
-                        self.lams.push(LaminatedUop {
+                        self.lams.push(SLam {
                             first_fused_uop: merge_uop,
                             n_fused_uops: 1,
                             first_uop: u,
                             n_uops: 1,
-                            added_to_idq: None,
+                            added_to_idq: UNSET,
                             uop_source: None,
                         });
-                        self.insts[inst as usize].reg_merge_uops.push(merge_lam);
+                        self.reg_merge_uops.push((inst, merge_lam));
                     }
                     self.rn.last_reg_merge_issued = first_unfused_uop;
                     break;
                 }
             }
 
-            if is_first && self.instrs[ii].is_serializing_instr && !self.rob.is_empty() {
+            if flags & pf::FIRST_SERIALIZING != 0 && !self.rob.is_empty() {
                 break;
             }
             let fused_uops = self.lams[lam as usize].fused_uops();
@@ -368,7 +452,7 @@ impl<'a> Sim<'a> {
             for u in self.fused[fused as usize].unfused_uops() {
                 let prop = &self.prep.props[self.uops[u as usize].prop as usize];
                 let ii = prop.instr as usize;
-                if self.instrs[ii].may_be_eliminated && !prop.is_reg_merge && !prop.is_stack_sync {
+                if prop.has(pf::ELIM_CANDIDATE) {
                     let Some(canonical_inp_reg) = self.prep.info[ii].in_reg0 else {
                         return Err(crash("IndexError: list index out of range (inputRegOperands)"));
                     };
@@ -379,8 +463,8 @@ impl<'a> Sim<'a> {
                             Slots::Limited(slots) => {
                                 slots
                                     - n_gpr_move_elim
-                                    - (1..pipeline_length).map(|i| get_or_0(&self.rn.n_gpr_move_elim_in_cycle, active_cycle - i)).sum::<i64>()
-                                    - get_or_0(&self.rn.multi_use_gpr_dict_use_in_cycle, active_cycle - pipeline_length)
+                                    - (1..pipeline_length).map(|i| self.rn.n_gpr_move_elim_in_cycle.get_or_0(active_cycle - i)).sum::<i64>()
+                                    - self.rn.multi_use_gpr_dict_use_in_cycle.get_or_0(active_cycle - pipeline_length)
                             }
                         };
                         if n_possible > 0 {
@@ -393,8 +477,8 @@ impl<'a> Sim<'a> {
                             Slots::Limited(slots) => {
                                 slots
                                     - n_simd_move_elim
-                                    - (1..pipeline_length).map(|i| get_or_0(&self.rn.n_simd_move_elim_in_cycle, active_cycle - i)).sum::<i64>()
-                                    - get_or_0(&self.rn.multi_use_simd_dict_use_in_cycle, active_cycle - pipeline_length)
+                                    - (1..pipeline_length).map(|i| self.rn.n_simd_move_elim_in_cycle.get_or_0(active_cycle - i)).sum::<i64>()
+                                    - self.rn.multi_use_simd_dict_use_in_cycle.get_or_0(active_cycle - pipeline_length)
                             }
                         };
                         if n_possible > 0 {
@@ -438,13 +522,16 @@ impl<'a> Sim<'a> {
         let cfg = self.cfg;
         let prop_id = self.uops[u as usize].prop as usize;
         let ii = self.prep.props[prop_id].instr as usize;
-        let is_stack_sync = self.prep.props[prop_id].is_stack_sync;
+        let prop_flags = self.prep.props[prop_id].flags;
 
         if self.uops[u as usize].eliminated {
             let info = &self.prep.info[ii];
-            let is_32bit_move = info.out_reg0_is_32;
+            let is_32bit_move = info.has(inf::OUT_REG0_IS_32);
             let canonical_inp_reg = info.in_reg0.ok_or_else(|| crash("IndexError: list index out of range (inputRegOperands)"))?;
-            let canonical_out_reg = info.out_regs.first().ok_or_else(|| crash("IndexError: list index out of range (outputRegOperands)"))?.0;
+            if info.out_regs.1 == 0 {
+                return Err(crash("IndexError: list index out of range (outputRegOperands)"));
+            }
+            let canonical_out_reg = self.prep.out_reg_list[info.out_regs.0 as usize].0;
             let is_gpr = self.prep.keys.info[canonical_inp_reg as usize].is_gpr;
 
             let entry = self.rename_dict_setdefault(canonical_inp_reg);
@@ -470,14 +557,13 @@ impl<'a> Sim<'a> {
                 }
             }
             self.set_abstract_value_for_cur_instr(canonical_out_reg, ii);
-        } else if self.instrs[ii].uops != 0 || is_stack_sync {
-            let (is_store_addr, is_store_data, is_load, mem_addr) = {
-                let p = &self.prep.props[prop_id];
-                (p.is_store_addr, p.is_store_data, p.is_load, p.mem_addr)
-            };
+        } else if prop_flags & pf::RENAMED != 0 {
+            let (is_store_addr, is_store_data, is_load, mem_addr_id) =
+                (prop_flags & pf::STORE_ADDR != 0, prop_flags & pf::STORE_DATA != 0, prop_flags & pf::LOAD != 0, self.prep.props[prop_id].mem_addr);
+            let mem_addr = self.prep.mem_addr(mem_addr_id).copied();
             let instr_mem_width = self.prep.info[ii].mem_width;
             if is_store_addr {
-                let key = self.get_store_buffer_key(&mem_addr);
+                let key = self.get_store_buffer_key(mem_addr_id, mem_addr.as_ref());
                 let sbe_id = self.rn.sbes.len() as u32;
                 let mut sbe = StoreBufferEntry {
                     abstract_address: key,
@@ -488,17 +574,17 @@ impl<'a> Sim<'a> {
                     renamable: true,
                 };
                 self.rn.cur_store_buffer_entry = sbe_id;
-                self.rn.store_buffer_entry_dict.insert(key, sbe_id);
+                self.rn.addrs.sbe[key as usize] = sbe_id;
                 // recordStore
                 if self.rn.abs_val_gen.load_value_numbering {
                     let info = &self.prep.info[ii];
                     match (info.mov_store_width, info.in_reg0) {
                         (Some(width), Some(in_reg0)) => {
                             let v = self.rn.abs_val_gen.get_abstract_value_for_reg(in_reg0);
-                            self.rn.abs_val_gen.mem_value_dict.insert(key, (width, v));
+                            self.rn.addrs.mem_value[key as usize] = Some((width, v));
                         }
                         _ => {
-                            self.rn.abs_val_gen.mem_value_dict.remove(&key);
+                            self.rn.addrs.mem_value[key as usize] = None;
                         }
                     }
                 }
@@ -509,7 +595,8 @@ impl<'a> Sim<'a> {
                 }
                 if cfg.mem_renaming_folded_check {
                     if let Some(width) = sbe.width.filter(|&w| w != 0) {
-                        if self.prep.info[ii].in_regs.iter().any(|&k| self.rn.folded_width[k as usize].unwrap_or(0) > width) {
+                        let (s, n) = self.prep.info[ii].in_regs;
+                        if self.prep.in_reg_list[s as usize..(s + n) as usize].iter().any(|&k| self.rn.folded_width[k as usize].unwrap_or(0) > width) {
                             sbe.renamable = false;
                         }
                     }
@@ -525,7 +612,7 @@ impl<'a> Sim<'a> {
                 self.rn.sbes[sbe as usize].uops.push(u);
             }
             if is_load {
-                let key = self.get_store_buffer_key(&mem_addr);
+                let key = self.get_store_buffer_key(mem_addr_id, mem_addr.as_ref());
                 let Some(mem_addr) = mem_addr else {
                     return Err(crash("AttributeError: 'NoneType' object has no attribute 'get'"));
                 };
@@ -545,9 +632,9 @@ impl<'a> Sim<'a> {
                 let lat_reduced = cfg.fast_pointer_chasing
                     && (0..2048).contains(&mem_addr.disp.unwrap_or(0))
                     && !base_entry.is_some_and(|e| e.renamed_by_elim_32bit_move)
-                    && base_instr.is_some_and(|i| self.prep.info[i].fast_ptr_chasing_source)
-                    && (mem_addr.index.is_none() || index_instr.is_some_and(|i| self.instrs[i].uops == 0));
-                let sbe = self.rn.store_buffer_entry_dict.get(&key).copied().unwrap_or(NONE);
+                    && base_instr.is_some_and(|i| self.prep.info[i].has(inf::FAST_PTR_CHASING_SOURCE))
+                    && (mem_addr.index.is_none() || index_instr.is_some_and(|i| self.prep.info[i].has(inf::NO_UOPS)));
+                let sbe = self.rn.addrs.sbe[key as usize];
                 let uop = &mut self.uops[u as usize];
                 uop.lat_reduced_due_to_fast_ptr_chasing = lat_reduced;
                 uop.store_buffer_entry = sbe;
@@ -579,7 +666,9 @@ impl<'a> Sim<'a> {
                 self.ren_lists.push(ren_op);
             }
             let ren_out_start = self.ren_lists.len() as u32;
-            self.uops[u as usize].ren_in = (ren_in_start, ren_out_start - ren_in_start);
+            // (at most 255 operands: checked in Prep::new)
+            self.uops[u as usize].ren = ren_in_start;
+            self.uops[u as usize].n_in = (ren_out_start - ren_in_start) as u8;
             let (out_start, n_out) = self.prep.props[prop_id].out_keys;
             for i in out_start..out_start + n_out {
                 let k = &self.prep.out_key_list[i as usize];
@@ -595,11 +684,12 @@ impl<'a> Sim<'a> {
                     }
                 }
             }
-            self.uops[u as usize].ren_out = (ren_out_start, self.ren_lists.len() as u32 - ren_out_start);
+            self.uops[u as usize].n_out = (self.ren_lists.len() as u32 - ren_out_start) as u8;
         } else {
             // e.g., xor rax, rax
-            for i in 0..self.prep.info[ii].out_regs.len() {
-                let (out_key, out_size) = self.prep.info[ii].out_regs[i];
+            let (out_start, n_out) = self.prep.info[ii].out_regs;
+            for i in out_start..out_start + n_out {
+                let (out_key, out_size) = self.prep.out_reg_list[i as usize];
                 if let Some(folded_input_reg) = self.prep.info[ii].folded_input_reg {
                     // e.g., add rax, 1 on Golden Cove: the result is available as soon as the input is
                     let entry = self.rename_dict_setdefault(folded_input_reg);
@@ -618,10 +708,11 @@ impl<'a> Sim<'a> {
             }
         }
 
-        let prop = &self.prep.props[prop_id];
-        if prop.is_last || prop.is_reg_merge || is_stack_sync {
+        if prop_flags & pf::ENDS_INSTR != 0 {
             let eliminated = self.uops[u as usize].eliminated;
-            for i in 0..self.rn.cur_instr_rnd_rename_dict.len() {
+            // (nothing to discard if both dicts are empty)
+            let n_multi_use = self.rn.multi_use_gpr_dict.len() + self.rn.multi_use_simd_dict.len();
+            for i in 0..if n_multi_use == 0 { 0 } else { self.rn.cur_instr_rnd_rename_dict.len() } {
                 let (key, cur_entry) = self.rn.cur_instr_rnd_rename_dict[i];
                 if let Some(prev) = self.rn.rename_dict[key as usize] {
                     let prev_ren_op = prev.renamed_op;
@@ -648,15 +739,13 @@ impl<'a> Sim<'a> {
                 }
             }
 
-            for i in 0..self.rn.cur_instr_rnd_rename_dict.len() {
-                let key = self.rn.cur_instr_rnd_rename_dict[i].0;
-                self.rn.folded_width[key as usize] = self.rn.cur_instr_folded_width.iter().find(|e| e.0 == key).map(|e| e.1);
+            // foldedWidth and renameDict.update(curInstrRndRenameDict) (independent for each key: one loop)
+            let rn = &mut self.rn;
+            for &(key, entry) in &rn.cur_instr_rnd_rename_dict {
+                rn.folded_width[key as usize] = rn.cur_instr_folded_width.iter().find(|e| e.0 == key).map(|e| e.1);
+                rn.rename_dict[key as usize] = Some(entry);
             }
-            self.rn.cur_instr_folded_width.clear();
-            for i in 0..self.rn.cur_instr_rnd_rename_dict.len() {
-                let (key, entry) = self.rn.cur_instr_rnd_rename_dict[i];
-                self.rn.rename_dict[key as usize] = Some(entry);
-            }
+            rn.cur_instr_folded_width.clear();
             self.rn.abs_val_gen.finish_cur_instr();
             self.rn.cur_instr_rnd_rename_dict.clear();
             self.rn.cur_instr_pseudo_op_dict.clear();
