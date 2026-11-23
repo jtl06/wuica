@@ -60,6 +60,7 @@ function fake({ analyze = true } = {}) {
       if (req.hex === 'ff') return result('not json');
       if (req.hex === 'cc') throw new WebAssembly.RuntimeError('unreachable');
       if (req.hex === 'cd') throw new RangeError('Maximum call stack size exceeded');
+      if (req.hex === 'ce') { x.memory = { buffer: { byteLength: 3.5 * 2 ** 30 } }; throw new WebAssembly.RuntimeError('unreachable'); } // as if out of memory
       const cfg = state.uarch?.configs?.[req.arch];
       if (!cfg) return result({ error: `unknown configuration: ${req.arch}` });
       if (!state.archs.has(cfg.name)) return result({ error: 'table not loaded' });
@@ -141,8 +142,12 @@ await throws(() => WasmEngine.create(() => ({ memory: new WebAssembly.Memory({ i
   check(made.length === 3 && [...made[2].state.archs.keys()].join() === 'SKL,HSW' && (await e.analyze(makeRequest('90', 'HSW'))).arch === 'HSW', 'trap: loading another table after a trap');
   await e.analyze(makeRequest('cc', 'SKL'));
   check((await e.decode('90', 'SKYLAKE')).length === 1 && made.length === 4, 'trap: decode after a trap');
+  const oom = await e.analyze(makeRequest('ce', 'SKL'));
+  check(oom.trapped === true && oom.detail === 'unreachable: out of memory, 3.5 GB in use; try a smaller block or fewer iterations' && t.detail === 'unreachable',
+    'trap: a trap with more than 1 GiB in use says that the memory ran out (a small one does not)', JSON.stringify([oom, t]));
+  check((await e.analyze(makeRequest('90', 'SKL'))).tp === 1.25, 'trap: the analyzer works after running out of memory');
   await throws(() => e.analyze(makeRequest('ff', 'SKL')), 'trap: invalid JSON is still an exception, not a trap');
-  check(made.length === 4, 'trap: and does not restart the module');
+  check(made.length === 5, 'trap: and does not restart the module');
 }
 
 // --- the engine in a worker (engine-rpc.js), with a worker that runs in this thread -------------------------------------

@@ -17,6 +17,7 @@ test('trap recovery', async () => {
   assert.equal(r.code, 3);
   assert.equal(typeof r.error, 'string');
   if (r.trapped) assert.equal(w.restarts, 0); // restarted lazily, on the next call
+  if (r.trapped) assert.match(r.error, /trapped: unreachable: out of memory, \d\.\d GB in use/); // it runs out of memory
 
   for (const arch of ['SKL', 'ZEN3']) { // ZEN3 was loaded before the trap and must be loaded again
     const ok = await w.analyze(arch, { hex: HEX });
