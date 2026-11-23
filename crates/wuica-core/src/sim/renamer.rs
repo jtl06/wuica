@@ -25,9 +25,29 @@ pub(crate) struct AddressTable {
     sbe: Vec<u32>,
     /// id -> `memValueDict[key]`: (width, abstract value)
     mem_value: Vec<Option<(i64, AbstractValue)>>,
+    /// for each address expression (`Prep::mem_addrs`, and one more for none), the last key computed for it and its id (NONE:
+    /// none yet): the key of an expression only changes when one of its registers gets a new abstract value
+    last: Vec<(Option<AbstractAddress>, u32)>,
 }
 
 impl AddressTable {
+    fn new(n_mem_addrs: usize) -> AddressTable {
+        AddressTable { last: vec![(None, NONE); n_mem_addrs + 1], ..Default::default() }
+    }
+
+    /// [`AddressTable::intern`] of the key of the address expression `site` (NONE: none)
+    #[inline]
+    fn intern_at(&mut self, site: u32, key: Option<AbstractAddress>) -> u32 {
+        let slot = (site as usize).min(self.last.len() - 1);
+        let (k, id) = self.last[slot];
+        if id != NONE && k == key {
+            return id;
+        }
+        let id = self.intern(key);
+        self.last[slot] = (key, id);
+        id
+    }
+
     fn intern(&mut self, key: Option<AbstractAddress>) -> u32 {
         let next = self.values.len() as u32;
         let id = *self.ids.entry(key).or_insert(next);
@@ -230,7 +250,8 @@ pub(crate) struct Renamer {
 
 impl Renamer {
     /// `window`: `moveEliminationPipelineLength`
-    pub fn new(init_policy: InitPolicy, load_value_numbering: bool, n_keys: usize, window: i64) -> Renamer {
+    /// `n_mem_addrs`: the number of address expressions (`Prep::mem_addrs`)
+    pub fn new(init_policy: InitPolicy, load_value_numbering: bool, n_keys: usize, window: i64, n_mem_addrs: usize) -> Renamer {
         let mut g = AbstractValueGenerator {
             init_policy,
             load_value_numbering,
@@ -253,7 +274,7 @@ impl Renamer {
             multi_use_simd_dict_use_in_cycle: CycleCounter::new(window),
             renamer_active_cycle: 0,
             cur_store_buffer_entry: NONE,
-            addrs: AddressTable::default(),
+            addrs: AddressTable::new(n_mem_addrs),
             folded_width: vec![None; n_keys],
             cur_instr_folded_width: Vec::new(),
             last_reg_merge_issued: NONE,
@@ -275,7 +296,8 @@ struct CycleCounter {
 
 impl CycleCounter {
     fn new(window: i64) -> CycleCounter {
-        let len = if window <= 4096 { window.max(1) } else { 0 };
+        // (a power of two, so that the position is a mask)
+        let len = if window <= 4096 { (window.max(1) as u64).next_power_of_two() as i64 } else { 0 };
         let mut c = CycleCounter { ring: vec![0; len as usize], len, n: 0 };
         c.push(0);
         c
@@ -285,7 +307,7 @@ impl CycleCounter {
         if self.len == 0 {
             self.ring.push(v);
         } else {
-            self.ring[self.n.rem_euclid(self.len) as usize] = v;
+            self.ring[(self.n & (self.len - 1)) as usize] = v;
         }
         self.n += 1;
     }
@@ -299,7 +321,7 @@ impl CycleCounter {
             self.ring[cycle as usize]
         } else {
             debug_assert!(cycle >= self.n - self.len);
-            self.ring[cycle.rem_euclid(self.len) as usize]
+            self.ring[(cycle & (self.len - 1)) as usize]
         }
     }
 }
@@ -335,7 +357,7 @@ impl<'a> Sim<'a> {
         let g = &mut self.rn.abs_val_gen;
         if g.load_value_numbering && info.has(inf::HAS_INPUT_MEM) && !info.has(inf::HAS_OUTPUT_MEM) {
             if let (Some(width), Some(mem)) = (info.mov_load_width, self.prep.mem_addr(info.in_mem0)) {
-                let id = self.rn.addrs.intern(Some(g.get_address_key(mem)));
+                let id = self.rn.addrs.intern_at(info.in_mem0, Some(g.get_address_key(mem)));
                 if self.rn.addrs.mem_value[id as usize].map(|v| v.0) != Some(width) {
                     let fresh = g.generate_fresh_abstract_value();
                     self.rn.addrs.mem_value[id as usize] = Some((width, fresh));
@@ -365,9 +387,10 @@ impl<'a> Sim<'a> {
     }
 
     /// `Renamer.getStoreBufferKey`, interned
-    fn get_store_buffer_key(&mut self, mem_addr: Option<&MemAddrInfo>) -> u32 {
+    /// (`site`: the index of `mem_addr` in `Prep::mem_addrs`, or NONE)
+    fn get_store_buffer_key(&mut self, site: u32, mem_addr: Option<&MemAddrInfo>) -> u32 {
         let key = mem_addr.map(|m| self.rn.abs_val_gen.get_address_key(m));
-        self.rn.addrs.intern(key)
+        self.rn.addrs.intern_at(site, key)
     }
 
     /// `Renamer.cycle`: writes the fused uops that are issued in this cycle to `renamer_uops` (which must be empty)
@@ -540,7 +563,7 @@ impl<'a> Sim<'a> {
             let mem_addr = self.prep.mem_addr(mem_addr_id).copied();
             let instr_mem_width = self.prep.info[ii].mem_width;
             if is_store_addr {
-                let key = self.get_store_buffer_key(mem_addr.as_ref());
+                let key = self.get_store_buffer_key(mem_addr_id, mem_addr.as_ref());
                 let sbe_id = self.rn.sbes.len() as u32;
                 let mut sbe = StoreBufferEntry {
                     abstract_address: key,
@@ -589,7 +612,7 @@ impl<'a> Sim<'a> {
                 self.rn.sbes[sbe as usize].uops.push(u);
             }
             if is_load {
-                let key = self.get_store_buffer_key(mem_addr.as_ref());
+                let key = self.get_store_buffer_key(mem_addr_id, mem_addr.as_ref());
                 let Some(mem_addr) = mem_addr else {
                     return Err(crash("AttributeError: 'NoneType' object has no attribute 'get'"));
                 };

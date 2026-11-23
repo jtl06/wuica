@@ -13,6 +13,26 @@ use std::collections::VecDeque;
 /// a cache block: the instruction instances `.0 .. .1`
 pub(crate) type Block = (u32, u32);
 
+/// `a % m` (Python's, which rounds toward negative infinity); without a division for the block sizes (powers of two)
+#[inline(always)]
+fn py_mod(a: i64, m: i64) -> i64 {
+    if m > 0 && m & (m - 1) == 0 {
+        a & (m - 1)
+    } else {
+        a.rem_euclid(m)
+    }
+}
+
+/// `a // m` (Python's); a shift for powers of two
+#[inline(always)]
+fn py_div(a: i64, m: i64) -> i64 {
+    if m > 0 && m & (m - 1) == 0 {
+        a >> m.trailing_zeros()
+    } else {
+        a.div_euclid(m)
+    }
+}
+
 fn block_vec(b: Block) -> Vec<u32> {
     (b.0..b.1).collect()
 }
@@ -255,7 +275,7 @@ impl<'a> Sim<'a> {
     fn split_part(&self, block: &[u32], modulus: i64, size: i64, b: i64, out: &mut Vec<u32>) {
         out.clear();
         for &ii in block {
-            let a = self.inst_addr(ii).rem_euclid(modulus);
+            let a = py_mod(self.inst_addr(ii), modulus);
             if b * size <= a && a < (b + 1) * size {
                 out.push(ii);
             }
@@ -283,7 +303,7 @@ impl<'a> Sim<'a> {
 
     /// `instrInstanceCrossesPredecBlockBoundary`
     fn crosses_predec_block_boundary(&self, inst: u32, block_size: i64) -> bool {
-        self.inst_addr(inst).rem_euclid(block_size) + self.inst_len(inst) > block_size
+        py_mod(self.inst_addr(inst), block_size) + self.inst_len(inst) > block_size
     }
 
     // ---- generators ----
@@ -862,7 +882,7 @@ impl<'a> Sim<'a> {
                         return Err(crash("IndexError: deque index out of range (DSBBlock)"));
                     };
                     let next_instr_addr = self.inst_addr(next.inst);
-                    let next_instr_in_same_memory_block = next_instr_addr.div_euclid(bs) == self.inst_addr(entry.inst).div_euclid(bs);
+                    let next_instr_in_same_memory_block = py_div(next_instr_addr, bs) == py_div(self.inst_addr(entry.inst), bs);
                     let is_last_decoded = self.prep.info[self.inst_instr(entry.inst)].has(inf::LAST_DECODED);
                     if bs == 32 && next_instr_in_same_memory_block && is_last_decoded && !delay_in_prev_cycle {
                         remaining_slots = 0;
