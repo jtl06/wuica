@@ -8,22 +8,18 @@
 // The request/response shapes follow Compiler Explorer's API style and are the contract for a REST server with the
 // same shape (README.md, "API contract"): list = archs(), POST /api/analyze/<arch> = analyze(arch, request), etc.
 
-import fs from 'node:fs/promises';
 import path from 'node:path';
-import zlib from 'node:zlib';
-import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { Analyzer, Assembler, parseDiagnostics, codeModeError } from './wasm.js';
 import { archList, DEFAULT_ARCH, ARCH_INFO, ARCH_ORDER } from './archs.js';
 import { insights } from './insights.js';
+import { readMaybeCompressed } from './files.js';
+import { CODES, failure, tableFailure, analysisResult, compareFields } from './core.js';
+import { ThreadPool, threadLimit } from './threads.js';
 
-export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, parseDiagnostics };
+export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, CODES, parseDiagnostics };
 
-const brotli = promisify(zlib.brotliDecompress);
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
-
-/** Result codes (`code`), like an exit status: 0 = success. */
-export const CODES = Object.freeze({ OK: 0, REQUEST: 1, ASSEMBLER: 2, ANALYSIS: 3 });
 
 export const OPTION_DEFAULTS = Object.freeze({
   alignmentOffset: 0,
@@ -38,17 +34,6 @@ export const OPTION_DEFAULTS = Object.freeze({
 
 export const ARCH_FIELDS = Object.freeze(['id', 'name', 'year', 'prototype', 'table', 'xedChip']);
 
-// Reads a file; `.br` files are decompressed. For a path without `.br`, `<path>.br` is tried first.
-async function readMaybeCompressed(file) {
-  if (file.endsWith('.br')) return new Uint8Array(await brotli(await fs.readFile(file)));
-  try {
-    return new Uint8Array(await brotli(await fs.readFile(file + '.br')));
-  } catch (e) {
-    if (e.code !== 'ENOENT') throw e;
-  }
-  return new Uint8Array(await fs.readFile(file));
-}
-
 // Accepts "4801d8", "48 01 d8", "0x48, 0x01, 0xd8", "\x48\x01\xd8". Returns lower-case hex or null.
 export function normalizeHex(input) {
   if (input instanceof Uint8Array) return Buffer.from(input).toString('hex');
@@ -60,11 +45,6 @@ function syntaxCode(syntax) {
   if (syntax === undefined || syntax === null || syntax === 'intel' || syntax === 0) return 0;
   if (syntax === 'att' || syntax === 1) return 1;
   return -1;
-}
-
-// A failed call: {code, error, stderr}, stderr as in Compiler Explorer (one entry per line, `tag` on positioned ones).
-function failure(code, error, stderr = [{ text: error }], extra = {}) {
-  return { code, error, stderr, ...extra };
 }
 
 // llvm-mc's diagnostics as stderr lines; lines with a position carry a tag {line, column, severity, text}.
@@ -108,13 +88,20 @@ class Wuica {
   #asmWasm;
   #assembler = null;    // promise of an Assembler
   #loading = new Map(); // table name -> promise
+  #wasm;                // bytes of the analyzer module (the threads compile it with a memory limit of their own)
+  #uarch;               // bytes of uarch.json
+  #threads;             // the most threads compare() uses (1: none)
+  #pool = null;         // ThreadPool, started by the first compare() that uses threads
 
-  constructor(analyzer, configs, dataDir, asmWasm) {
+  constructor(analyzer, configs, dataDir, asmWasm, { wasm, uarch, threads }) {
     this.#analyzer = analyzer;
     this.#configs = configs;
     this.#archs = archList(configs);
     this.#dataDir = dataDir;
     this.#asmWasm = asmWasm;
+    this.#wasm = wasm;
+    this.#uarch = uarch;
+    this.#threads = threads;
   }
 
   // The microarchitectures in order of release (like CE's /api/compilers); `fields` selects fields (default: all).
@@ -204,11 +191,9 @@ class Wuica {
     try {
       await this.#ensureTable(this.#configs[id].name);
     } catch (e) {
-      return failure(CODES.ANALYSIS, `could not load the instruction table for ${id}: ${e.message}`);
+      return tableFailure(id, e);
     }
-    const r = this.#analyzer.analyze({ hex, arch: id, ...options });
-    if (r.error) return failure(CODES.ANALYSIS, r.error, undefined, r.trapped ? { trapped: true } : {});
-    return r;
+    return analysisResult(this.#analyzer.analyze({ hex, arch: id, ...options }));
   }
 
   // POST /api/analyze/<arch> {source | hex, syntax, options}. Also analyze({arch, source | hex, ...}).
@@ -237,17 +222,36 @@ class Wuica {
     if (request.archs !== undefined && !Array.isArray(request.archs)) return failure(CODES.REQUEST, '`archs` must be an array of ids');
     const ids = request.archs?.length ? request.archs : this.#archs.map((a) => a.id);
     const options = { ...opts.options, includeTrace: false };
+    const resolved = ids.map((arch) => this.resolveArch(arch));
+    // the microarchitectures in threads (when there are tables of at least two), each as #run() would on this thread;
+    // whatever the threads do not do (unknown ids, a thread that failed) is done here, one after another
+    const fields = new Array(ids.length).fill(null);
+    const known = resolved.flatMap((id, i) => (id ? [{ i, table: this.#configs[id].name, request: { hex: code.hex, arch: id, ...options } }] : []));
+    if (this.#threads > 1 && new Set(known.map((j) => j.table)).size > 1) {
+      this.#pool ??= new ThreadPool({ wasm: this.#wasm, uarch: this.#uarch, dataDir: this.#dataDir, limit: this.#threads });
+      if (!this.#pool.broken) {
+        const done = await this.#pool.run(known);
+        known.forEach((j, k) => { fields[j.i] = done[k]; });
+      }
+    }
     const results = [];
-    for (const arch of ids) {
-      const id = this.resolveArch(arch);
+    for (const [i, arch] of ids.entries()) {
+      const id = resolved[i];
       const { name, year, prototype } = id ? this.#info(id) : { name: String(arch), year: null, prototype: false };
       const row = { arch: id ?? String(arch), name, year, prototype };
-      const r = await this.#run(code.hex, arch, options);
-      if (r.code !== undefined) results.push({ ...row, code: r.code, error: r.error });
-      else results.push({ ...row, code: CODES.OK, tp: r.tp, mode: r.mode, bottlenecks: r.bottlenecks, decodeErrors: r.decodeErrors });
+      results.push({ ...row, ...(fields[i] ?? compareFields(await this.#run(code.hex, arch, options))) });
     }
     return { code: CODES.OK, ...(code.assembled ? { hex: code.hex } : {}), stderr: code.stderr, results };
   }
+
+  // Stops compare()'s threads, if any (they also stop by themselves when idle, and never keep the process alive while
+  // idle). The instance stays usable: the next compare() starts them again.
+  async close() {
+    await this.#pool?.close();
+  }
+
+  // The number of threads compare() has running now (0 if none).
+  get threads() { return this.#pool?.threads ?? 0; }
 
   // The compact form of an analyze() response (used by the MCP server): uop table reduced to non-zero values, plus the
   // derived diagnosis of the web page's bound view (insights.js).
@@ -288,7 +292,10 @@ class Wuica {
 
 // options.dataDir: directory with uarch.json and arch/<NAME>.json (plain or .br); default: the package's tables.
 // options.analyzerWasm / options.assemblerWasm: paths of the modules (plain or .br).
+// options.threads: the most worker threads compare() uses (default: the environment variable WUICA_THREADS, else
+// os.availableParallelism(); 1 = none, every microarchitecture one after another on this thread).
 export async function createWuica(options = {}) {
+  const threads = threadLimit(options.threads);
   const dataDir = options.dataDir ?? path.join(DIST, 'data');
   const analyzerWasm = options.analyzerWasm ?? path.join(DIST, 'wuica_wasm.wasm.br');
   const asmWasm = options.assemblerWasm ?? path.join(DIST, 'wuica_asm.wasm.br');
@@ -296,5 +303,5 @@ export async function createWuica(options = {}) {
   const analyzer = new Analyzer(await WebAssembly.compile(wasm));
   analyzer.loadUarch(uarchBytes);
   const configs = JSON.parse(new TextDecoder().decode(uarchBytes)).configs;
-  return new Wuica(analyzer, configs, dataDir, asmWasm);
+  return new Wuica(analyzer, configs, dataDir, asmWasm, { wasm, uarch: uarchBytes, threads });
 }

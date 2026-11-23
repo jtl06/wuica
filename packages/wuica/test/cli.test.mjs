@@ -17,8 +17,8 @@ fs.writeFileSync(hexFile, '48 01 d8 48 01 c3\n49 ff cf 75 f5\n');
 const rawFile = path.join(tmp, 'block.bin');
 fs.writeFileSync(rawFile, Buffer.from(HEX, 'hex'));
 
-function run(args, input) {
-  const r = spawnSync(process.execPath, [BIN, ...args], { input: input ?? '', encoding: 'utf8' });
+function run(args, input, env) {
+  const r = spawnSync(process.execPath, [BIN, ...args], { input: input ?? '', encoding: 'utf8', ...(env ? { env: { ...process.env, ...env } } : {}) });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
 
@@ -75,6 +75,42 @@ test('-arch all prints a table', () => {
   const j = JSON.parse(run([HEX, '-arch', 'all', '-json']).out);
   assert.equal(j.code, 0);
   assert.equal(j.results.length, 15);
+});
+
+test('-arch all and lists: the same output on threads as one after another (-threads 1, WUICA_THREADS=1)', () => {
+  const big = path.join(tmp, 'big.hex');
+  fs.writeFileSync(big, '48 01 d8 48 01 c3 c5 fc 10 0c 87 c4 e2 7d a8 0c 86 f3 48 0f b8 0c c7 '.repeat(20) + '49 ff cf 75 f5\n');
+  for (const [args, input] of [
+    [['-hex', big, '-arch', 'all']], [['-hex', big, '-arch', 'all', '-TPonly']], [['-hex', big, '-arch', 'all', '-json']],
+    [[asmFile, '-arch', 'all', '-noMacroFusion']], [[], '.warning "careful"\n' + ASM],
+    [[HEX, '-arch', 'skl,ZEN3,adlp,K8,CLX_noLSD']], [[HEX, '-arch', 'ICL,TGL', '-json']], [['-arch', 'all'], 'frob'],
+  ]) {
+    const all = args.length ? args : ['-arch', 'all'];
+    const seq = run([...all, '-threads', '1'], input);
+    const env = run(all, input, { WUICA_THREADS: '1' });
+    const par = run([...all, '-threads', '4'], input);
+    const auto = run(all, input);
+    for (const r of [env, par, auto]) assert.deepEqual(r, seq, String(all));
+  }
+});
+
+test('-arch with a list of microarchitectures', () => {
+  const r = run([HEX, '-arch', 'skl,ZEN3, adlp,K8']);
+  assert.equal(r.code, 1); // K8: unknown
+  const lines = r.out.split('\n');
+  assert.match(lines[0], /^Arch\s+Model\s+Year\s+TP\s+Bottlenecks$/);
+  assert.deepEqual(lines.slice(1, 5).map((l) => l.split(/\s+/)[0]), ['SKL', 'ZEN3', 'ADL-P', 'K8']);
+  assert.match(lines[4], /error: unknown microarchitecture: K8/);
+  const tp = run([HEX, '-arch', 'ICL,SKL,', '-TPonly']);
+  assert.equal(tp.code, 0);
+  assert.equal(tp.out, 'ICL   2.00\nSKL   2.00\n');
+  for (const [args, re] of [[['-arch', ','], /no microarchitecture/], [['-arch', 'SKL,all'], /"all" cannot be part of a list/],
+    [['-threads', '0'], /-threads: at least 1/], [['-threads', 'x'], /not an integer/]]) {
+    const e = run([HEX, ...args]);
+    assert.equal(e.code, 1, String(args));
+    assert.match(e.err, re);
+  }
+  assert.match(run([HEX, '-arch', 'all'], '', { WUICA_THREADS: 'x' }).err, /WUICA_THREADS: expected a non-negative integer/);
 });
 
 test('-list and -arch list', () => {

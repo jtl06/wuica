@@ -72,6 +72,9 @@ export class Analyzer {
 
   hasArch(name) { return this.#tables.has(name); }
 
+  // The size of the instance's memory in bytes (0 after a trap, until the next call).
+  get memoryBytes() { return this.#x?.memory.buffer.byteLength ?? 0; }
+
   // Returns the response object; a trap becomes {error, trapped: true}.
   analyze(request) {
     try {
@@ -93,6 +96,43 @@ export class Analyzer {
       };
     }
   }
+}
+
+// The module bytes with the maximum of every (32-bit, unshared) memory set to at most `maxPages` (64 KiB each): an
+// instance of it traps where an allocation would grow the memory beyond that.
+export function capMemory(bytes, maxPages) {
+  const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const readLeb = (p) => { let r = 0, s = 0, x; do { x = b[p++]; r += (x & 0x7f) * 2 ** s; s += 7; } while (x & 0x80); return [r, p]; };
+  const leb = (n) => { const out = []; do { let x = n % 128; n = Math.floor(n / 128); if (n) x |= 0x80; out.push(x); } while (n); return out; };
+  let p = 8;
+  while (p < b.length) {
+    const start = p;
+    const id = b[p++];
+    let size;
+    [size, p] = readLeb(p);
+    const end = p + size;
+    if (id === 5) { // the memory section
+      let q = p, n;
+      [n, q] = readLeb(q);
+      const body = [...leb(n)];
+      for (let i = 0; i < n; i++) {
+        const flags = b[q++];
+        if (flags > 1) return b; // shared or 64-bit memory: left as it is
+        let min, max = Infinity;
+        [min, q] = readLeb(q);
+        if (flags & 1) [max, q] = readLeb(q);
+        body.push(1, ...leb(min), ...leb(Math.max(min, Math.min(max, maxPages))));
+      }
+      const section = [5, ...leb(body.length), ...body];
+      const out = new Uint8Array(b.length - (end - start) + section.length);
+      out.set(b.subarray(0, start), 0);
+      out.set(section, start);
+      out.set(b.subarray(end), start + section.length);
+      return out;
+    }
+    p = end;
+  }
+  return b;
 }
 
 // llvm-mc's diagnostics: "<input>:LINE:COL: error: MESSAGE", followed by the source line and a caret line.

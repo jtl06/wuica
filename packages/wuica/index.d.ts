@@ -181,7 +181,8 @@ export interface Wuica {
   analyze(arch: string, request: AnalyzeRequest): Promise<AnalyzeResult | Failure>;
   /** Single-object form: `arch` in the request (default "SKL"). */
   analyze(request: AnalyzeRequest & { arch?: string }): Promise<AnalyzeResult | Failure>;
-  /** POST /api/compare: one block on several microarchitectures (default: all of archs()); assembled once. */
+  /** POST /api/compare: one block on several microarchitectures (default: all of archs()); assembled once. The
+   * microarchitectures are analyzed on worker threads (CreateOptions.threads); the response is the same either way. */
   compare(request: CompareRequest): Promise<CompareResult | Failure>;
   /** GET /api/archs: in order of release (uiCA's ablation variants, ids with "_", are left out). */
   archs(): ArchInfo[];
@@ -195,6 +196,10 @@ export interface Wuica {
   resolveArch(arch?: string | null): string | null;
   /** How many times the analyzer was restarted after a trap. */
   readonly restarts: number;
+  /** The number of compare()'s worker threads running now (they stop after 30 s without work). */
+  readonly threads: number;
+  /** Stops compare()'s worker threads now (idle threads never keep the process alive). The instance stays usable. */
+  close(): Promise<void>;
 }
 
 export interface CreateOptions {
@@ -204,6 +209,10 @@ export interface CreateOptions {
   analyzerWasm?: string;
   /** Path of wuica_asm.wasm (plain or .br). */
   assemblerWasm?: string;
+  /** The most worker threads compare() uses, one microarchitecture per thread at a time. 1: none (one after another
+   * on the calling thread). Default: the environment variable WUICA_THREADS, else os.availableParallelism() (1 inside
+   * a worker thread). */
+  threads?: number | 'auto';
 }
 
 export function createWuica(options?: CreateOptions): Promise<Wuica>;

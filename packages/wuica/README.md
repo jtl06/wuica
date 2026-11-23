@@ -57,6 +57,13 @@ Methods never throw for bad input: they resolve to a failure `{code, error, stde
 `createWuica({ dataDir })` reads the tables from another directory (`uarch.json` and `arch/<NAME>.json`, plain or
 `.br`). TypeScript declarations are included (`index.d.ts`).
 
+`compare` analyzes the microarchitectures in parallel on worker threads: one thread per microarchitecture, at most
+`os.availableParallelism()` (`createWuica({ threads: N })` or the environment variable `WUICA_THREADS` sets the most;
+1 runs them one after another on the calling thread). The response is the same either way. Each thread loads only the
+tables of the microarchitectures it analyzes and keeps them for the next `compare`; idle threads do not keep the process
+alive and stop after 30 s (`w.close()` stops them at once). A thread's WebAssembly memory has a lower limit (a quarter
+of the RAM shared by the threads, 256 MB to 1 GB each); an analysis that exceeds it is done again on the calling thread.
+
 Inputs on which the original uiCA fails can make the WebAssembly module trap. In that case the call resolves to
 `{code: 3, error, trapped: true}`. The module is then re-instantiated and its tables are reloaded, so the next call works.
 
@@ -70,14 +77,16 @@ npx wuica -att loop_att.s            # AT&T syntax
 npx wuica 4801d84801c349ffcf75f5     # a hex argument (as in the Rust CLI)
 npx wuica -hex code.txt              # hex from a file or stdin ("48 01 d8", "0x48,0x01" are fine)
 npx wuica -raw code.bin              # raw machine code
-npx wuica loop.s -arch all           # throughput table for every microarchitecture
+npx wuica loop.s -arch all           # throughput table for every microarchitecture (in parallel)
+npx wuica loop.s -arch SKL,ICL,ZEN3  # throughput table for these
 npx wuica -list                      # the microarchitectures
 npx wuica loop.s -json               # the JSON result (the contract's analyze response)
 ```
 
 The simulation options are uiCA's: `-alignmentOffset N`, `-initPolicy diff|same|stack`, `-simpleFrontEnd`,
-`-noMicroFusion`, `-noMacroFusion`, `-minIterations N`, `-minCycles N`, and `-trace` (with `-json`). Diagnostics go to
-stderr. The exit status is the result code: 0 ok, 1 bad request or usage, 2 assembler error, 3 analysis failed.
+`-noMicroFusion`, `-noMacroFusion`, `-minIterations N`, `-minCycles N`, and `-trace` (with `-json`). With several
+microarchitectures, `-threads N` analyzes them on at most N threads at a time (`-threads 1`: one after another).
+Diagnostics go to stderr. The exit status is the result code: 0 ok, 1 bad request or usage, 2 assembler error, 3 analysis failed.
 `npx wuica -h` lists everything.
 
 ## MCP server

@@ -16,7 +16,8 @@ Input:
   -att                   the assembly is in AT&T syntax (default: Intel, noprefix)
 
 Output:
-  -arch NAME             microarchitecture (default: SKL); "all" prints a throughput table for every one
+  -arch NAME             microarchitecture (default: SKL); "all" prints a throughput table for every one, and a
+                         comma-separated list (e.g. SKL,ICL,ZEN3) a table for those
   -list                  list the microarchitectures (same as -arch list)
   -TPonly                print only the throughput
   -json                  print the response as JSON
@@ -31,6 +32,8 @@ Simulation (as in uiCA):
   -minCycles N           simulate at least N cycles (default: 500)
 
 Other:
+  -threads N             with several microarchitectures: analyze them on at most N threads at a time (default: the
+                         environment variable WUICA_THREADS, else the number of CPU threads; 1 = one after another)
   -data DIR              directory with uarch.json and arch/*.json (default: the tables in the package)
   -h, --help             this text
 
@@ -43,7 +46,7 @@ prototype models (from the fork jtl06/uiCA), less validated than the Intel model
 class UsageError extends Error {}
 
 function parseArgs(argv) {
-  const o = { arch: 'SKL', options: {}, hex: false, att: false, tpOnly: false, json: false, list: false, input: null, raw: null, data: null };
+  const o = { arch: 'SKL', options: {}, hex: false, att: false, tpOnly: false, json: false, list: false, input: null, raw: null, data: null, threads: undefined };
   const value = (i, name) => {
     if (i >= argv.length) throw new UsageError(`${name} needs a value`);
     return argv[i];
@@ -62,6 +65,7 @@ function parseArgs(argv) {
       case '-att': o.att = true; break;
       case '-raw': o.raw = value(++i, a); break;
       case '-data': o.data = value(++i, a); break;
+      case '-threads': o.threads = int(value(++i, a), a); if (o.threads < 1) throw new UsageError(`${a}: at least 1`); break;
       case '-TPonly': o.tpOnly = true; break;
       case '-json': o.json = true; break;
       case '-trace': o.options.includeTrace = true; break;
@@ -79,6 +83,13 @@ function parseArgs(argv) {
     }
   }
   if (o.arch === 'list') o.list = true;
+  // several microarchitectures: all, or a comma-separated list
+  if (o.arch.toLowerCase() === 'all') o.archs = [];
+  else if (o.arch.includes(',')) {
+    o.archs = o.arch.split(',').map((x) => x.trim()).filter((x) => x !== '');
+    if (o.archs.length === 0) throw new UsageError(`-arch: no microarchitecture in "${o.arch}"`);
+    if (o.archs.some((x) => x.toLowerCase() === 'all')) throw new UsageError('-arch: "all" cannot be part of a list');
+  }
   return o;
 }
 
@@ -131,12 +142,12 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
   try {
     o = parseArgs(argv);
     if (o.help) { out.write(USAGE + '\n'); return 0; }
-    const w = await createWuica(o.data ? { dataDir: o.data } : {});
+    const w = await createWuica({ ...(o.data ? { dataDir: o.data } : {}), ...(o.threads ? { threads: o.threads } : {}) });
     if (o.list) { printList(w, o, out); return 0; }
     const input = await readInput(o, io);
 
-    if (o.arch.toLowerCase() === 'all') {
-      const c = await w.compare({ ...input, options: o.options });
+    if (o.archs) {
+      const c = await w.compare({ ...input, ...(o.archs.length ? { archs: o.archs } : {}), options: o.options });
       if (o.json) { out.write(JSON.stringify(c) + '\n'); return c.code || Math.max(0, ...(c.results ?? []).map((r) => r.code)); }
       printStderr(c, err);
       if (c.code) return c.code;
