@@ -162,15 +162,18 @@ export interface AnalyzeSummary {
 export interface Insights {
   /** Each limit (by name) and execution port (by column name): cycles / tp. 1 = busy every cycle. */
   utilization: Record<string, number>;
-  /** The bottleneck(s), or the largest limit if uiCA names none. */
+  /** The bottleneck(s) uiCA names: the same as the response's `bottlenecks` (limits only). [] when it names none (no
+   * single limit explains tp; the web page says "unknown"): then see `largest`. */
   binding: string[];
-  /** The largest limit below the binding one; maxSpeedup = tp / next.tp (an upper bound). */
+  /** Only when `binding` is []: the largest limit(s), the nearest bound, which alone does not reach tp. */
+  largest?: string[];
+  /** The largest limit below the binding (or largest) one; maxSpeedup = tp / next.tp (an upper bound). */
   next?: { limit: string; tp: number; maxSpeedup: number | null };
   /** Cycles per iteration that no single limit explains. */
   unexplained?: number;
   /** The critical loop-carried dependency chain (index: into `instructions`). */
   chain?: { index: number; instr: string; operand: string; latency: number; carried: boolean }[];
-  /** The instructions with the largest share of the binding resource (top 5). */
+  /** The instructions with the largest share of the binding resource, or of the largest limit (top 5). */
   hot?: { resource: string; ports?: string[]; instructions: { index: number; instr: string; share: number }[] };
   /** With options.details: the ports behind the Ports limit (cycles = uops / ports) and the instructions that load them. */
   portSet?: { ports: string[]; uops: number; cycles: number; instructions: { index: number; instr: string; uops: number }[] };

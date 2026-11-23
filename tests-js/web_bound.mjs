@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import { boundModel, blame, topRows, shortPort, defaultResource } from '../web/js/bound.js';
 import { insights } from '../packages/wuica/lib/insights.js';
+import { nearestLimit } from '../web/js/render.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
 
@@ -69,6 +70,11 @@ const CHAIN = {
   // several bottlenecks
   const two = boundModel({ ...CHAIN, bottlenecks: ['Dependencies', 'Ports'] });
   check(two.binding.join() === 'Dependencies,Ports' && two.next.name === 'DSB', 'several bottlenecks: next below the largest');
+  // the headline when uiCA names no bottleneck: "unknown · nearest Ports 1.50" (the package's insights.largest)
+  check(nearestLimit({ limits: [{ name: 'Issue', tp: 0.83 }, { name: 'Ports', tp: 1.5 }, { name: 'Dependencies', tp: 1 }] }) === 'Ports 1.50', 'nearest limit: the largest');
+  check(nearestLimit({ limits: [{ name: 'Ports', tp: 1 }, { name: 'Dependencies', tp: 1 }] }) === 'Ports, Dependencies 1.00' && nearestLimit({ limits: [] }) === '', 'nearest limit: ties, none');
+  const dv = boundModel({ tp: 6, bottlenecks: ['Divider'], limits: [{ name: 'Ports', tp: 2 }], columns: ['Div', 'Port 0'], rows: [{ kind: 'instr', values: [6, 2] }] });
+  check(dv.binding.join() === 'col:Div' && dv.next.name === 'Ports', 'the Divider bottleneck: the Div column is the binding resource', JSON.stringify(dv.binding));
   check(boundModel({ error: 'x' }) === null && boundModel({ ...CHAIN, tp: 0 }) === null, 'no model for errors');
   // a divider column
   const div = boundModel({ ...CHAIN, columns: [...COLS, 'Div'], rows: CHAIN.rows.map((x, i) => ({ ...x, values: [...x.values, i === 2 ? 3 : 0] })) });
@@ -125,7 +131,9 @@ if (!fs.existsSync(wasm) || !fs.existsSync(new URL('data/uarch.json', root))) {
       const ins = insights(r);
       const r2 = (x) => Math.round(x * 100) / 100;
       const same = m.items.filter((x) => x.id !== 'other').every((x) => ins.utilization[x.id.startsWith('col:') ? x.id.slice(4) : x.id] === r2(x.util))
-        && JSON.stringify(ins.binding) === JSON.stringify(m.binding)
+        && JSON.stringify([...ins.binding, ...(ins.largest ?? [])].map((b) => (b === 'Divider' ? 'col:Div' : b))) === JSON.stringify(m.binding)
+        && JSON.stringify(ins.binding) === JSON.stringify(r.bottlenecks)
+        && (ins.binding.length ? ins.largest === undefined : ins.largest.length > 0)
         && (m.next ? ins.next.limit === m.next.name && ins.next.maxSpeedup === r2(m.next.speedup) : !ins.next)
         && (m.gap ? ins.unexplained === r2(m.gap) : ins.unexplained === undefined);
       const pageTop = topRows(blame(r, m.binding[0]), 5);

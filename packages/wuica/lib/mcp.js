@@ -105,7 +105,8 @@ export function createServer(w) {
         'cacheable in the DSB because of the JCC erratum, X = instruction not supported by the model (no data: the ' +
         'result is unreliable); `stderr` = assembler warnings and decode warnings (`decodeErrors` > 0: some bytes could ' +
         'not be decoded); `insights` = a derived diagnosis: `utilization` (each limit and execution port as a fraction ' +
-        'of tp; 1 = saturated), `binding` (the limiting component), `next` (the next limit and `maxSpeedup`, an upper ' +
+        'of tp; 1 = saturated), `binding` (the limiting component: the same as `bottlenecks`; [] when uiCA names none, then ' +
+        '`largest` is the largest limit, the nearest bound, which alone does not reach tp), `next` (the next limit and `maxSpeedup`, an upper ' +
         'bound of the speedup if the binding component were removed), `unexplained` (cycles no single limit explains), ' +
         '`chain` (the loop-carried critical dependency chain: `index` into `instructions`, operand, latency, carried ' +
         'into the next iteration), `hot` (the instructions with the largest share of the binding resource: fix these ' +

@@ -102,3 +102,21 @@ test('CLI: -loop', () => {
   assert.equal(json('-loop', '0', file).loop.index, 0);
   assert.throws(() => run('-loop', 'inner', file), /auto, whole or a number/);
 });
+
+test('insights.binding is the response\'s bottlenecks; with none, `largest` is the nearest limit', async () => {
+  // the dogfood scan loop on ZEN3: uiCA names no bottleneck (the page says "unknown · nearest Ports 1.50")
+  const scan = '.L:\n add rdx, 32\n cmp rdx, rsi\n jae .Lout\n vpcmpeqb ymm0, ymm1, [rdi+rdx]\n vpmovmskb ecx, ymm0\n test ecx, ecx\n je .L\n';
+  const a = w.summarize(await w.analyze('ZEN3', { source: scan }));
+  assert.deepEqual(a.bottlenecks, []);
+  assert.deepEqual(a.insights.binding, []);
+  assert.deepEqual(a.insights.largest, ['Ports']);
+  assert.equal(a.insights.hot.resource, 'Ports');
+  // div on ZEN3: the Divider (a bottleneck without a limit of its own) is the binding one, its share from the Div column
+  const d = w.summarize(await w.analyze('ZEN3', { source: '.L2:\n mov eax, [rdi]\n xor edx, edx\n div ecx\n mov [rsi], eax\n add rdi, 4\n add rsi, 4\n cmp rdi, r8\n jne .L2\n' }));
+  assert.deepEqual(d.bottlenecks, ['Divider']);
+  assert.deepEqual(d.insights.binding, ['Divider']);
+  assert.equal(d.insights.largest, undefined);
+  assert.equal(d.insights.hot.resource, 'Divider');
+  assert.equal(d.insights.hot.instructions[0].instr, 'div ecx');
+  assert.equal(d.insights.next.limit, 'Ports');
+});

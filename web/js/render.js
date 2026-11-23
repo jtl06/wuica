@@ -180,6 +180,15 @@ function mockLine(m, archKey) {
 //   elapsedMs,                (the cycle-by-cycle trace is drawn by app.js below the result, full width)
 //   ui: { hideEmpty, reportOpen, listingOpen: {asm, hex} (null: closed), allRows }, onUi(name, value)
 // }
+// When uiCA names no bottleneck: the largest limit(s) and their value ("Ports 4.00"), the nearest bound (the npm
+// package's insights.largest), or '' if there are no limits.
+export function nearestLimit(r) {
+  const lims = (r?.limits ?? []).map((l) => ({ name: l.name, tp: Number(l.tp) })).filter((l) => Number.isFinite(l.tp));
+  if (!lims.length) return '';
+  const max = Math.max(...lims.map((l) => l.tp));
+  return `${lims.filter((l) => l.tp >= max - 0.005).map((l) => l.name).join(', ')} ${max.toFixed(2)}`;
+}
+
 export function renderResult(root, view) {
   const r = view.response;
   const out = [];
@@ -213,7 +222,8 @@ export function renderResult(root, view) {
         h('span', { class: 'meta', title: details }, mode, sep(), h('span', { class: view.experimental ? 'caveat' : null, text: view.archTitle })),
         h('span', { class: 'bn-line' }, h('span', { class: 'k', text: bnKey }), ' ',
           r.bottlenecks.length ? h('span', { class: 'bn', text: r.bottlenecks.join(', ') })
-            : h('span', { class: 'hint', title: 'no single limit explains the throughput', text: 'unknown' }))),
+            : h('span', { class: 'hint', title: `no single limit explains the throughput${nearestLimit(r) ? `; the nearest is ${nearestLimit(r)} (the API's insights.largest)` : ''}`,
+              text: nearestLimit(r) ? `unknown · nearest ${nearestLimit(r)}` : 'unknown' }))),
       mock ? h('div', { class: 'mock-tag', text: mockLine(mock, view.archKey) }) : null,
       r.decodeErrors > 0 ? h('div', { class: 'caveat', role: 'alert',
         text: `${r.decodeErrors} undecodable position${r.decodeErrors === 1 ? '' : 's'} skipped` }) : null));

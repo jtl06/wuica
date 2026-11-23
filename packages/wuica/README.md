@@ -242,13 +242,16 @@ and `issueSlots` when `options.details` is true.
 In the library this is `r.text`; the MCP tool takes `format: "text"`.
 
 **Compact form** (the MCP `analyze` JSON, `w.summarize(r)`): `{code, arch, name, year, prototype, tp, unit, mode,
-bottlenecks, limits, decodeErrors, hex?, stderr, instructions, insights}`. Each entry of `instructions` is
+bottlenecks, limits, decodeErrors, hex?, loop?, stderr, instructions, insights}`. Each entry of `instructions` is
 `{instr, bytes, issued, executed, uopSource: {MITE|DSB|LSD|MS: n}, ports: {"Port 0": n, ...}, notes, uopsInfo}`
 (zero values omitted, numbers rounded to 2 decimals). `insights` is a diagnosis derived from the analysis (as the web
-page's "bound" view): `utilization` (each limit and port: cycles / tp), `binding`, `next` (`{limit, tp, maxSpeedup}`:
-the next limit, and the speedup at most if the binding one went away), `unexplained` (cycles no single limit explains),
+page's "bound" view): `utilization` (each limit and port: cycles / tp), `binding` (the bottlenecks uiCA names: always
+the same as `bottlenecks`, `[]` when it names none), `largest` (only when `binding` is `[]`: the largest limit, the
+nearest bound, which alone does not reach tp; the web page shows "unknown · nearest Ports"), `next` (`{limit, tp,
+maxSpeedup}`: the next limit, and the speedup at most if the binding one went away), `unexplained` (cycles no single
+limit explains),
 `chain` (the critical loop-carried chain: `{index, instr, operand, latency, carried}`) and `hot` (`{resource, ports?,
-instructions: [{index, instr, share}]}`: the largest shares of the binding resource). With `options.details` (MCP:
+instructions: [{index, instr, share}]}`: the largest shares of the binding resource, or of the largest limit). With `options.details` (MCP:
 `details: true`), each instruction also has `allowedPorts` (`1*p0156+1*p23`), `uops`, `fusedUops`, `latencies`
 (`"RAX->RAX:1"`) and `frontEnd` (`length`, `offset`, `crosses`, `lcp`, `microcoded`, fusion), and `insights` has `portSet`
 (the ports behind the Ports limit, `cycles` = uops / ports, and the instructions that load them) and `issueSlots` (per
