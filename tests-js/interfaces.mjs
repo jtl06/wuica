@@ -55,7 +55,9 @@ await engine.loadUarch(fs.readFileSync(path.join(ROOT, 'data/uarch.json')));
 async function wasm(c) {
   const table = uarch.configs[c.arch].name;
   if (!engine.hasArch(table)) await engine.loadArch(table, fs.readFileSync(path.join(ROOT, 'data/arch', `${table}.json`)));
-  return engine.analyze(makeRequest(c.hex, c.arch, c.options));
+  const req = makeRequest(c.hex, c.arch, c.options);
+  if (c.options.details) req.details = true; // as the page asks for them (web/js/details.js)
+  return engine.analyze(req);
 }
 
 const cliArgs = (c) => {
@@ -198,6 +200,121 @@ for (const [arch, hex, id] of [['adlp', '0x48,0x01,0xd8,0x48,0x01,0xc3', 'ADL-P'
   const m = await Promise.all([mcpHttp, mcpStdio].map(async (client) => JSON.parse((await client.callTool({ name: 'analyze', arguments: { arch: 'SKL', source } })).content[0].text)));
   check(l.code === 1 && r.code === 1 && res.status === 400 && m.every((x) => x.code === 1) && [r, ...m].every((x) => x.error === l.error) && /\.code32: only 64-bit code/.test(l.error),
     '.code32: code 1 from the library, REST (400) and both MCP servers', JSON.stringify([l, r.code, res.status, m.map((x) => x.code)]));
+}
+
+// ---- features of round 2 (qa-r2): details, compare with arch lists and threads, what_if, REST insights
+{
+  const { whatIf, insights, detailInsights } = await import(pathToFileURL(path.join(PKG, 'lib/index.js')).href);
+  // details: every 5th case (and the examples' kinds of blocks) with options.details through every interface
+  const dcases = cases.filter((_, i) => i % 5 === 0).map((c) => ({ ...c, id: `${c.id}+details`, options: { ...c.options, details: true } }));
+  dcases.push({ id: 'details:ptrchase', arch: 'ADL-P', hex: '488b0048ffc975f8', options: { details: true } },
+    { id: 'details:zen3', arch: 'ZEN3', hex: '48030649ffcf75f9', options: { details: true, includeTrace: true } });
+  let nd = 0;
+  for (const [i, c] of dcases.entries()) {
+    const ref = await lib.analyze(c.arch, { hex: c.hex, options: c.options });
+    const plain = await lib.analyze(c.arch, { hex: c.hex, options: { ...c.options, details: false } });
+    // with details, the rest of the response is the same as without
+    if (ref.code === 0) {
+      check(ref.details && Array.isArray(ref.details.rows) && ref.details.rows.length === ref.rows.length, `the library gives details (case ${c.id})`);
+      const { details, ...rest } = ref;
+      compared('lib details', c, firstDiff(JSON.parse(JSON.stringify(plain)), JSON.parse(JSON.stringify(rest))) ?? (details ? null : { path: 'details', a: 'present', b: details }));
+    }
+    const want = { ...essence(ref), details: ref.details ?? null };
+    const [w, n, r, nc] = await Promise.all([wasm(c), native(c), rest(c), i % 3 === 0 ? npmcli(c) : null]);
+    for (const [name, got] of [['wasm', w], ['native', n], ['rest', r], ['npmcli', nc]]) {
+      if (got === null) continue;
+      let e = { ...essence(got), details: got.details ?? null };
+      if (want.failed) e = { failed: !!e.failed, trapped: want.trapped };
+      compared(`${name} details`, c, firstDiff(want.failed ? { failed: true, trapped: want.trapped } : want, e));
+    }
+    // REST insights: the library's insights(), with portSet and issueSlots
+    if (ref.code === 0) compared('rest insights', c, firstDiff({ ...insights(ref), ...detailInsights(ref) }, r.insights));
+    // the MCP tools with details: true: the library's summarize()
+    const { details: _d, includeTrace: _t, ...mreq } = c.options; // (the MCP tools have no trace)
+    for (const [name, client] of [['mcp-http', mcpHttp], ['mcp-stdio', mcpStdio]]) {
+      const got = await client.callTool({ name: 'analyze', arguments: { arch: c.arch, hex: c.hex, options: mreq, details: true, format: 'json' } });
+      let s;
+      try { s = JSON.parse(got.content[0].text); } catch { s = { error: got.content[0].text }; }
+      compared(`${name} details`, c, ref.code === 0 ? firstDiff(lib.summarize(ref), s) : (s.code === ref.code ? null : { path: 'code', a: ref.code, b: s.code }));
+    }
+    nd++;
+  }
+  console.log(`details: ${nd} cases through the library, module, native and npm CLIs, REST (with insights) and both MCP servers`);
+
+  // compare: a list of archs and all, through the library with 1 and 4 threads, the npm CLI (-arch LIST, -threads), REST (split
+  // into parts and not), both MCP servers; every row is the single analysis
+  const lib1 = await createWuica({ threads: 1 });
+  const lib4 = await createWuica({ threads: 4 });
+  const server2 = spawn(process.execPath, [path.join(ROOT, 'server/bin/wuica-server.js')], {
+    cwd: ROOT, env: { ...process.env, WUICA_PORT: '0', WUICA_WORKERS: '3', WUICA_RATE_BURST: '0', WUICA_LOG: '0', WUICA_SPLIT_COMPARE: '0' }, stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  process.on('exit', () => { try { server2.kill('SIGTERM'); } catch { /* gone */ } });
+  const base2 = await new Promise((resolve, reject) => {
+    let buf = '';
+    server2.stdout.on('data', (d) => { buf += d; const m = /"address":"([^"]+)"/.exec(buf); if (m) resolve(`http://${m[1]}`); });
+    server2.on('exit', (code) => reject(new Error(`the second server exited (${code})`)));
+  });
+  const row = (x) => x && ({ arch: x.arch, code: x.code, tp: x.tp, mode: x.mode, bottlenecks: x.bottlenecks, decodeErrors: x.decodeErrors });
+  const rows = (c) => c?.code === 0 ? c.results.map(row) : { code: c?.code };
+  const ccases = [
+    { hex: '4801d84801c349ffcf75f5', archs: ['SKL', 'ICL'], options: {} },
+    { hex: '488b0048ffc975f8', archs: undefined, options: { noMacroFusion: true } },
+    { hex: '0f2801c5f458c1c4e2f9a90248ffc975f0', archs: ['ZEN3', 'ADL-P', 'ICX', 'SNB'], options: { alignmentOffset: 5 } },
+    ...cases.filter((_, i) => i % 25 === 3).map((c) => ({ hex: c.hex, archs: ['HSW', 'SKX', 'TGL', 'RKL', c.arch], options: c.options })),
+  ];
+  for (const [i, cc] of ccases.entries()) {
+    const c = { id: `compare:${i}`, arch: (cc.archs ?? ['all']).join(','), hex: cc.hex, options: cc.options };
+    const req = { hex: cc.hex, options: cc.options, ...(cc.archs ? { archs: cc.archs } : {}) };
+    const want = rows(await lib1.compare(req));
+    // each row is the single analysis
+    if (Array.isArray(want)) {
+      for (const x of want) {
+        const single = await lib.analyze(x.arch, { hex: cc.hex, options: cc.options });
+        compared('compare row', c, firstDiff(row({ ...single, arch: x.arch }), x));
+      }
+    }
+    compared('lib threads 4', c, firstDiff(want, rows(await lib4.compare(req))));
+    for (const [name, b] of [['rest compare', base], ['rest compare unsplit', base2]]) {
+      const res = await fetch(`${b}/api/compare`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req) });
+      compared(name, c, firstDiff(want, rows(await res.json())));
+    }
+    for (const [name, client] of [['mcp-http compare', mcpHttp], ['mcp-stdio compare', mcpStdio]]) {
+      const got = await client.callTool({ name: 'compare_archs', arguments: req });
+      compared(name, c, firstDiff(want, rows(JSON.parse(got.content[0].text))));
+    }
+    for (const t of ['1', '3']) {
+      const a = cliArgs({ hex: cc.hex, arch: cc.archs ? cc.archs.join(',') : 'all', options: cc.options });
+      const r = await runProc(process.execPath, [path.join(PKG, 'bin/wuica.js'), ...a, '-threads', t]);
+      let got;
+      try { got = rows(JSON.parse(r.out)); } catch { got = { error: r.err || r.out }; }
+      compared(`npmcli -threads ${t}`, c, firstDiff(want, got));
+    }
+    // WUICA_THREADS for the npm CLI
+    const r = await runProc(process.execPath, [path.join(PKG, 'bin/wuica.js'), ...cliArgs({ hex: cc.hex, arch: cc.archs ? cc.archs.join(',') : 'all', options: cc.options })], { WUICA_THREADS: '2' });
+    let got;
+    try { got = rows(JSON.parse(r.out)); } catch { got = { error: r.err || r.out }; }
+    compared('npmcli WUICA_THREADS=2', c, firstDiff(want, got));
+  }
+  console.log(`compare: ${ccases.length} requests through the library (1 and 4 threads), the npm CLI (-threads 1, 3, WUICA_THREADS), REST (split and not) and both MCP servers`);
+
+  // what_if: the library's whatIf against both MCP servers
+  const wcases = [
+    { arch: 'SKL', hex: '4801d84801c349ffcf75f5', options: {} }, { arch: 'ADL-P', hex: '488b0048ffc975f8', options: {} },
+    { arch: 'ZEN3', hex: '4801d8', options: { alignmentOffset: 3 } },
+    ...cases.filter((_, i) => i % 30 === 7).map((c) => ({ arch: c.arch, hex: c.hex, options: c.options })),
+  ];
+  for (const [i, wc] of wcases.entries()) {
+    const c = { id: `what_if:${i}`, ...wc };
+    const want = JSON.parse(JSON.stringify(await whatIf((a, r) => lib.analyze(a, r), wc.arch, { hex: wc.hex, options: wc.options })));
+    for (const [name, client] of [['mcp-http what_if', mcpHttp], ['mcp-stdio what_if', mcpStdio]]) {
+      const got = await client.callTool({ name: 'what_if', arguments: { arch: wc.arch, hex: wc.hex, options: wc.options } });
+      compared(name, c, firstDiff(want, JSON.parse(got.content[0].text)));
+    }
+  }
+  console.log(`what_if: ${wcases.length} requests through the library and both MCP servers`);
+  await lib1.close?.();
+  await lib4.close?.();
+  server2.kill('SIGTERM');
 }
 
 console.log(`results of the library: ${tally.ok} ok, ${tally.failed} failed, ${tally.trapped} trapped; differences: ${diffs.size ? JSON.stringify(Object.fromEntries(diffs)) : 'none'} (${Math.round((Date.now() - t0) / 1000)} s)`);

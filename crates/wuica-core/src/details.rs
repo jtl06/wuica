@@ -305,6 +305,72 @@ fn issue_summary(log: &IssueLog) -> Option<IssueSummary> {
     })
 }
 
+/// Whether the issue log's window is in the steady state: its cycles per iteration are the throughput (measured at retirement
+/// over the same rounds). Issue runs ahead of retirement until the reorder buffer or the scheduler is full; a simulation of
+/// minCycles often ends before (about a quarter of random blocks), and then the window is warm-up (docs/plans/qa-r2.md, D1).
+pub fn issue_log_is_steady(log: &IssueLog, tp: f64) -> bool {
+    window_is_steady(log.last_cycle - log.first_cycle, log.last_round - log.first_round, tp)
+}
+
+/// the same for a window of `cycles` and `iterations` (IssueSummary): within 3 % of the throughput and two cycles (the window
+/// starts and ends at the cycles that issued the ends of rounds)
+pub fn window_is_steady(cycles: i64, iterations: i64, tp: f64) -> bool {
+    if iterations <= 0 || !(tp > 0.0) {
+        return true;
+    }
+    let cpi = cycles as f64 / iterations as f64;
+    (cpi - tp).abs() <= 0.03 * tp + 2.0 / iterations as f64
+}
+
+/// the most instructions (instructions × iterations) a longer simulation for the issue log may simulate (a few tens of ms natively; the first result is kept meanwhile, so it also bounds the memory)
+const STEADY_BUDGET: f64 = 2.5e5;
+
+/// With details (and no trace, whose cycles the issue log must match): if the issue log of `sim` is not in the steady state, the
+/// log of a longer simulation (8 and 64 times minCycles) that is; the main result is not changed (`sim` keeps its throughput
+/// and table; only its `issue_log` is replaced). Nothing is replaced if the longer simulations fail, are not steady either, or
+/// would be too large.
+pub fn steady_issue_log(instrs: &InstrList, config: &UArchConfig, uarch: &crate::config::UArch, options: &crate::sim::SimOptions, sim: &mut SimResult) {
+    let Some(log) = sim.issue_log.as_ref() else { return };
+    if issue_log_is_steady(log, sim.tp) {
+        return;
+    }
+    // how far the window's cycles per iteration are from the throughput, relative
+    let off = |l: &IssueLog, tp: f64| {
+        let it = (l.last_round - l.first_round).max(1) as f64;
+        ((l.last_cycle - l.first_cycle) as f64 / it - tp).abs() / tp.max(1e-9)
+    };
+    let mut best = off(log, sim.tp);
+    let n = instrs.instrs.len().max(1) as f64;
+    let base = options.min_cycles.max(500);
+    // the cycles simulated already (the simulation also runs until minIterations are done)
+    let simulated = log.issued.len() as i64;
+    for factor in [8, 64] {
+        let min_cycles = base * factor;
+        if min_cycles <= simulated {
+            continue; // the same simulation again
+        }
+        // the instructions a simulation of min_cycles runs: at least minIterations iterations, else (min_cycles / tp), of n
+        let iterations = (options.min_iterations.max(1) as f64).max(min_cycles as f64 / sim.tp.max(0.25));
+        if n * iterations > STEADY_BUDGET {
+            return;
+        }
+        let longer = crate::sim::SimOptions { min_cycles, ..options.clone() };
+        let Ok(r) = crate::sim::simulate_with_issue_log(instrs, config, uarch, &longer) else { return };
+        if let Some(l) = r.issue_log {
+            // against the response's throughput (that of the longer simulation can differ a little)
+            let steady = issue_log_is_steady(&l, sim.tp);
+            let d = off(&l, sim.tp);
+            if steady || d < best {
+                best = d;
+                sim.issue_log = Some(l);
+            }
+            if steady {
+                return;
+            }
+        }
+    }
+}
+
 /// The details of an analysis. `row_of_instr`: the row of the uop table of each instruction; `n_rows`: the number of rows.
 pub fn details(instrs: &InstrList, config: &UArchConfig, sim: &SimResult, alignment_offset: i64, row_of_instr: &[usize], n_rows: usize) -> Details {
     let mut rows: Vec<Option<InstrDetails>> = vec![None; n_rows];

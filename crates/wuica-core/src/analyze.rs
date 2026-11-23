@@ -354,8 +354,11 @@ pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, 
     // error or panics. A panic is turned into an error here (not in WebAssembly, where a panic aborts the call).
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Response, String> {
         let instrs = build_instructions(decoded, config, uarch, data, request.alignment_offset, request.no_micro_fusion, request.no_macro_fusion);
-        let r = if request.details { simulate_with_issue_log(&instrs, config, uarch, &options) } else { simulate(&instrs, config, uarch, &options) }
+        let mut r = if request.details { simulate_with_issue_log(&instrs, config, uarch, &options) } else { simulate(&instrs, config, uarch, &options) }
             .map_err(|e| e.to_string())?;
+        if request.details && !request.include_trace {
+            crate::details::steady_issue_log(&instrs, config, uarch, &options, &mut r); // the issue slots of the steady state (qa-r2)
+        }
         // the dependency cycle with the maximum latency ratio: its ratio is the Dependencies limit, and the cycle itself is the
         // critical path of the response
         let dep_cycle = facile::compute_dependency_limit_with_cycle(&instrs, config, &request.init_policy);
