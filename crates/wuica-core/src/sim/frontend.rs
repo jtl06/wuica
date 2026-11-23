@@ -6,7 +6,7 @@
 //! as one queue of entries and a queue of block lengths, and the lists that the Python methods return are written to buffers
 //! that are reused from cycle to cycle.
 
-use super::prep::NONE;
+use super::prep::{inf, pf, NONE};
 use super::{crash, FxHashSet, Sim, SimError, UopSource};
 use std::collections::VecDeque;
 
@@ -298,14 +298,14 @@ impl<'a> Sim<'a> {
         let mut started = false;
         for &inst in cache_block {
             let ii = self.inst_instr(inst);
-            let instr = &self.instrs[ii];
             let info = &self.prep.info[ii];
-            if instr.macro_fused_with_prev_instr {
+            if info.has(inf::MACRO_FUSED_PREV) {
                 continue;
             }
+            let (uops_mite, uops_ms) = (info.uops_mite, info.uops_ms);
             let n_required_entries = info.dsb_required_entries;
-            let requires_extra_entry = info.dsb_requires_extra_entry;
-            if instr.uops_ms != 0 || n_required_entries + requires_extra_entry as i64 > remaining_entries_in_cur_block {
+            let requires_extra_entry = info.has(inf::DSB_EXTRA_ENTRY);
+            if uops_ms != 0 || n_required_entries + requires_extra_entry as i64 > remaining_entries_in_cur_block {
                 remaining_entries_in_cur_block = 6;
                 dsb_blocks.start_block();
                 started = true;
@@ -313,19 +313,19 @@ impl<'a> Sim<'a> {
             assert!(started, "getDSBBlocks: no current block");
             let i = &self.insts[inst as usize];
             let (first_uop, n_uops) = (i.first_uop, i.n_uops);
-            let n_mite = (instr.uops_mite.max(0) as u32).min(n_uops);
-            if instr.uops_mite != 0 {
+            let n_mite = (uops_mite.max(0) as u32).min(n_uops);
+            if uops_mite != 0 {
                 for k in 0..n_mite {
                     let lam = first_uop + k;
                     let slot = dsb_blocks.last_block_len();
-                    if k as i64 == instr.uops_mite - 1 {
+                    if k as i64 == uops_mite - 1 {
                         dsb_blocks.push(DsbEntry { slot, inst, uop: lam, ms_uops: (first_uop + n_mite, n_uops - n_mite), requires_extra_entry });
                     } else {
                         dsb_blocks.push(DsbEntry { slot, inst, uop: lam, ms_uops: (0, 0), requires_extra_entry: false });
                     }
                     remaining_entries_in_cur_block -= 1;
                 }
-            } else if instr.uops_ms != 0 {
+            } else if uops_ms != 0 {
                 let slot = dsb_blocks.last_block_len();
                 dsb_blocks.push(DsbEntry { slot, inst, uop: NONE, ms_uops: (first_uop, n_uops), requires_extra_entry: false });
             } else {
@@ -336,7 +336,7 @@ impl<'a> Sim<'a> {
             if requires_extra_entry {
                 remaining_entries_in_cur_block -= 1;
             }
-            if instr.uops_ms != 0 {
+            if uops_ms != 0 {
                 remaining_entries_in_cur_block = 0;
             }
         }
@@ -357,7 +357,7 @@ impl<'a> Sim<'a> {
         if dsb_block_size == 64 && self.n_dsb_blocks(block) > 6 {
             return false;
         }
-        if self.instrs[self.inst_instr(*block.last().unwrap())].cannot_be_in_dsb_due_to_jcc_erratum {
+        if self.prep.info[self.inst_instr(*block.last().unwrap())].has(inf::JCC_ERRATUM) {
             return false;
         }
         let b32_blocks = if dsb_block_size == 32 { vec![block.to_vec()] } else { self.split_64_to_32(block) };
@@ -367,13 +367,13 @@ impl<'a> Sim<'a> {
             let mut b16_1 = b16.pop().unwrap();
             if !b16_1.is_empty() && !b16_2.is_empty() {
                 let last = *b16_1.last().unwrap();
-                if self.inst_addr(last).rem_euclid(16) + self.instrs[self.inst_instr(last)].pos_nominal_opcode >= 16 {
+                if self.inst_addr(last).rem_euclid(16) + self.prep.info[self.inst_instr(last)].pos_nominal_opcode >= 16 {
                     b16_2.insert(0, b16_1.pop().unwrap());
                 }
             }
             let lcp_and_fusible = |inst: u32| {
-                let ii = self.inst_instr(inst);
-                self.instrs[ii].lcp_stall && self.prep.info[ii].has_macro_fusible
+                let f = self.prep.info[self.inst_instr(inst)].flags;
+                f & inf::LCP_STALL != 0 && f & inf::MACRO_FUSIBLE != 0
             };
             if !b16_1.is_empty() && lcp_and_fusible(*b16_1.last().unwrap()) && b16_2.iter().filter(|&&i| lcp_and_fusible(i)).count() >= 2 {
                 // if there are too many instructions with an lcpStall, the block cannot be cached
@@ -404,8 +404,10 @@ impl<'a> Sim<'a> {
         } else {
             cache_blocks_for_first_round.iter().all(|&b| self.can_be_in_dsb(&block_vec(b), bs))
         };
-        let all_instrs_can_be_used_by_lsd =
-            cache_blocks_for_first_round.iter().flat_map(|&b| b.0..b.1).all(|ii| self.prep.info[self.inst_instr(ii)].can_be_used_by_lsd);
+        let all_instrs_can_be_used_by_lsd = cache_blocks_for_first_round
+            .iter()
+            .flat_map(|&b| b.0..b.1)
+            .all(|ii| self.prep.info[self.inst_instr(ii)].has(inf::CAN_BE_USED_BY_LSD));
         let n_uops: i64 = cache_blocks_for_first_round.iter().flat_map(|&b| b.0..b.1).map(|ii| self.insts[ii as usize].n_uops as i64).sum();
         if all_blocks_can_be_cached && self.cfg.lsd_enabled && all_instrs_can_be_used_by_lsd && n_uops <= self.cfg.idq_width {
             self.fe.uop_source = Some(UopSource::Lsd);
@@ -462,9 +464,9 @@ impl<'a> Sim<'a> {
                     }
                     let inst = self.fe.op_cache_round.0;
                     let ii = self.inst_instr(inst);
-                    let slots = self.insts[inst as usize].n_uops as i64 + self.prep.info[ii].has_i64 as i64;
+                    let slots = self.insts[inst as usize].n_uops as i64 + self.prep.info[ii].has(inf::I64) as i64;
                     let window = (self.inst_addr(inst) + self.inst_len(inst) - 1).div_euclid(64);
-                    let fields = self.instrs[ii].op_cache_fields;
+                    let fields = self.prep.info[ii].op_cache_fields;
                     if let Some(w) = entry_window {
                         if n_ops + slots > cfg.op_cache_entry_ops
                             || window != w
@@ -551,10 +553,9 @@ impl<'a> Sim<'a> {
                 new_uops.extend(new_instr_i_uops.iter().filter(|x| x.1 != NONE).map(|x| x.1));
                 if !self.fe.unroll {
                     if let Some(&(cur_inst, _)) = new_instr_i_uops.last() {
-                        let ii = self.inst_instr(cur_inst);
-                        let instr = &self.instrs[ii];
-                        if self.prep.info[ii].is_last_decoded
-                            && (instr.is_branch_instr || instr.macro_fused_with_next_instr)
+                        let info = &self.prep.info[self.inst_instr(cur_inst)];
+                        if info.has(inf::LAST_DECODED)
+                            && info.has(inf::BRANCH | inf::MACRO_FUSED_NEXT)
                             && self.fe.addresses_in_dsb.contains(&self.fe.alignment_offset)
                         {
                             self.fe.uop_source = Some(UopSource::Dsb);
@@ -570,9 +571,9 @@ impl<'a> Sim<'a> {
                 if let Some(&last_lam) = new_uops.last() {
                     let l = &self.lams[last_lam as usize];
                     let last_uop = l.first_uop + l.n_uops - 1;
-                    if self.prep.props[self.uops[last_uop as usize].prop as usize].is_last {
+                    if self.prep.props[self.uops[last_uop as usize].prop as usize].has(pf::LAST) {
                         let cur_inst = new_instr_i_uops.last().unwrap().0;
-                        let next_addr = if self.prep.info[self.inst_instr(cur_inst)].is_last_decoded {
+                        let next_addr = if self.prep.info[self.inst_instr(cur_inst)].has(inf::LAST_DECODED) {
                             self.fe.alignment_offset
                         } else {
                             self.inst_addr(cur_inst) + self.inst_len(cur_inst)
@@ -695,7 +696,7 @@ impl<'a> Sim<'a> {
                     let last = *b16_block.last().unwrap();
                     self.fe.b16_entries.extend(b16_block.iter().copied());
                     self.fe.b16_block_lens.push_back(b16_block.len() as u32);
-                    if self.instrs[self.inst_instr(last)].is_branch_instr && self.inst_addr(last).rem_euclid(16) + self.inst_len(last) > 16 {
+                    if self.prep.info[self.inst_instr(last)].has(inf::BRANCH) && self.inst_addr(last).rem_euclid(16) + self.inst_len(last) > 16 {
                         // branch instr. ends in next block
                         self.fe.b16_block_lens.push_back(0);
                     }
@@ -710,23 +711,23 @@ impl<'a> Sim<'a> {
     /// `FrontEnd.addStackSyncUop`
     fn add_stack_sync_uop(&mut self, clock: i64, uop: u32) {
         let prop = &self.prep.props[self.uops[uop as usize].prop as usize];
-        if !prop.is_first {
+        if !prop.has(pf::FIRST) {
             return;
         }
         let ii = prop.instr as usize;
         let info = &self.prep.info[ii];
         let mut requires_sync_uop = false;
 
-        if self.fe.rsp_offset != 0 && info.reads_rsp_explicitly {
+        if self.fe.rsp_offset != 0 && info.has(inf::READS_RSP_EXPLICITLY) {
             requires_sync_uop = true;
             self.fe.rsp_offset = 0;
         }
-        self.fe.rsp_offset += self.instrs[ii].implicit_rsp_change;
+        self.fe.rsp_offset += info.implicit_rsp_change;
         if self.fe.rsp_offset > 192 {
             requires_sync_uop = true;
             self.fe.rsp_offset = 0;
         }
-        if info.writes_rsp {
+        if info.has(inf::WRITES_RSP) {
             self.fe.rsp_offset = 0;
         }
 
@@ -777,7 +778,7 @@ impl<'a> Sim<'a> {
                     };
                     let next_inst = next.inst;
                     if self.inst_addr(prev_inst) + self.inst_len(prev_inst) != self.inst_addr(next_inst)
-                        && !self.prep.info[self.inst_instr(prev_inst)].is_last_decoded
+                        && !self.prep.info[self.inst_instr(prev_inst)].has(inf::LAST_DECODED)
                     {
                         // next instr not in DSB
                         return Ok(());
@@ -820,7 +821,7 @@ impl<'a> Sim<'a> {
                     };
                     let next_instr_addr = self.inst_addr(next.inst);
                     let next_instr_in_same_memory_block = next_instr_addr.div_euclid(bs) == self.inst_addr(entry.inst).div_euclid(bs);
-                    let is_last_decoded = self.prep.info[self.inst_instr(entry.inst)].is_last_decoded;
+                    let is_last_decoded = self.prep.info[self.inst_instr(entry.inst)].has(inf::LAST_DECODED);
                     if bs == 32 && next_instr_in_same_memory_block && is_last_decoded && !delay_in_prev_cycle {
                         remaining_slots = 0;
                     } else if !next_instr_in_same_memory_block {
@@ -894,9 +895,9 @@ impl<'a> Sim<'a> {
         let mut remaining_decoder_slots = cfg.n_decoders;
         let predecoded = |sim: &Sim, inst: u32| sim.insts[inst as usize].predecoded.ok_or_else(|| crash("TypeError: predecoded is None"));
         while let Some(&inst) = self.fe.instruction_queue.front() {
-            let ii = self.inst_instr(inst);
-            let instr = &self.instrs[ii];
-            if instr.macro_fused_with_prev_instr {
+            let info = &self.prep.info[self.inst_instr(inst)];
+            let (flags, uops_mite, uops_ms, n_available_simple_decoders) = (info.flags, info.uops_mite, info.uops_ms, info.n_available_simple_decoders);
+            if flags & inf::MACRO_FUSED_PREV != 0 {
                 self.fe.instruction_queue.pop_front();
                 self.insts[inst as usize].removed_from_iq = Some(clock);
                 continue;
@@ -904,10 +905,10 @@ impl<'a> Sim<'a> {
             if predecoded(self, inst)? + cfg.predecode_decode_delay > clock {
                 break;
             }
-            if !uops_list.is_empty() && instr.complex_decoder {
+            if !uops_list.is_empty() && flags & inf::COMPLEX_DECODER != 0 {
                 break;
             }
-            if self.prep.info[ii].has_macro_fusible {
+            if flags & inf::MACRO_FUSIBLE != 0 {
                 if !cfg.macro_fusible_instr_can_be_decoded_as_last_instr && n_decoded_instrs == cfg.n_decoders - 1 {
                     break;
                 }
@@ -919,8 +920,8 @@ impl<'a> Sim<'a> {
             self.insts[inst as usize].removed_from_iq = Some(clock);
 
             let (first_uop, n_uops) = (self.insts[inst as usize].first_uop, self.insts[inst as usize].n_uops);
-            let n_mite = (instr.uops_mite.max(0) as u32).min(n_uops);
-            if instr.uops_mite != 0 {
+            let n_mite = (uops_mite.max(0) as u32).min(n_uops);
+            if uops_mite != 0 {
                 for lam in first_uop..first_uop + n_mite {
                     uops_list.push((inst, lam));
                     self.lams[lam as usize].uop_source = Some(UopSource::Mite);
@@ -929,13 +930,13 @@ impl<'a> Sim<'a> {
                 uops_list.push((inst, NONE));
             }
 
-            if instr.uops_ms != 0 {
+            if uops_ms != 0 {
                 self.ms_add_uops((first_uop + n_mite, n_uops - n_mite), UopSource::Mite);
                 break;
             }
 
-            if instr.complex_decoder {
-                let Some(n) = instr.n_available_simple_decoders else {
+            if flags & inf::COMPLEX_DECODER != 0 {
+                let Some(n) = n_available_simple_decoders else {
                     return Err(crash("TypeError: nAvailableSimpleDecoders is None"));
                 };
                 remaining_decoder_slots = (remaining_decoder_slots - 1).min(n);
@@ -946,7 +947,7 @@ impl<'a> Sim<'a> {
             if remaining_decoder_slots <= 0 {
                 break;
             }
-            if instr.is_branch_instr || instr.macro_fused_with_next_instr {
+            if flags & (inf::BRANCH | inf::MACRO_FUSED_NEXT) != 0 {
                 break;
             }
         }
@@ -980,7 +981,7 @@ impl<'a> Sim<'a> {
                             self.fe.cur_block.push_back(ii);
                         }
                     }
-                    let lcp: i64 = self.fe.cur_block.iter().filter(|&&ii| self.instrs[self.inst_instr(ii)].lcp_stall).count() as i64 * 3;
+                    let lcp: i64 = self.fe.cur_block.iter().filter(|&&ii| self.prep.info[self.inst_instr(ii)].has(inf::LCP_STALL)).count() as i64 * 3;
                     self.fe.predec_stalled = (lcp - (self.fe.non_stalled_predec_cycles_for_cur_block - 1).max(0)).max(0);
                     self.fe.non_stalled_predec_cycles_for_cur_block = 0;
                 }
@@ -996,7 +997,7 @@ impl<'a> Sim<'a> {
                 if self.fe.cur_block.len() == 1 {
                     let inst = self.fe.cur_block[0];
                     if self.crosses_predec_block_boundary(inst, block_size) {
-                        let offset_of_nominal_opcode = self.inst_addr(inst).rem_euclid(16) + self.instrs[self.inst_instr(inst)].pos_nominal_opcode;
+                        let offset_of_nominal_opcode = self.inst_addr(inst).rem_euclid(16) + self.prep.info[self.inst_instr(inst)].pos_nominal_opcode;
                         if (self.fe.pre_dec_queue.len() as i64) < cfg.pre_decode_width || offset_of_nominal_opcode >= 16 {
                             self.fe.partial_instr_i = inst;
                             self.fe.cur_block.pop_front();
@@ -1049,7 +1050,7 @@ impl<'a> Sim<'a> {
             self.rob.push_back(fused);
             for u in self.fused[fused as usize].unfused_uops() {
                 let uop = &mut self.uops[u as usize];
-                if self.prep.props[uop.prop as usize].ports.1 == 0 || uop.eliminated {
+                if !self.prep.props[uop.prop as usize].has(pf::HAS_PORTS) || uop.eliminated {
                     uop.executed = Some(clock as f64);
                 }
             }

@@ -1,6 +1,6 @@
 //! `Scheduler`: port assignment, dispatch, and the tracking of when uops become ready and finish.
 
-use super::prep::{PortList, NONE};
+use super::prep::{pf, PortList, NONE};
 use super::{crash, Sim, SimError};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
@@ -219,8 +219,8 @@ impl<'a> Sim<'a> {
         if cfg.slow_256bit_mem_acc {
             let (Some(p2), Some(p3)) = (self.port(b'2'), self.port(b'3')) else { return Err(crash("KeyError: '2'")) };
             if let (Some(&Reverse(uop2)), Some(&Reverse(uop3))) = (self.sched.ready_queue[p2].peek(), self.sched.ready_queue[p3].peek()) {
-                let is_load = |u: u32| self.prep.props[self.uops[u as usize].prop as usize].is_load;
-                let m256 = |u: u32| self.prep.info[self.insts[self.uops[u as usize].instr_instance as usize].instr as usize].has_m256;
+                let is_load = |u: u32| self.prep.props[self.uops[u as usize].prop as usize].has(pf::LOAD);
+                let m256 = |u: u32| self.prep.props[self.uops[u as usize].prop as usize].has(pf::M256);
                 if is_load(uop2) && is_load(uop3) && (m256(uop2) || m256(uop3)) {
                     applicable[if uop2 < uop3 { p3 } else { p2 }] = false;
                 }
@@ -258,7 +258,7 @@ impl<'a> Sim<'a> {
             s.blocked_resources[RES_DIV] += self.uops[u as usize].div_cycles as f64;
             if cfg.slow_256bit_mem_acc
                 && Some(port) == port4
-                && self.prep.info[self.insts[self.uops[u as usize].instr_instance as usize].instr as usize].has_m256
+                && self.prep.props[self.uops[u as usize].prop as usize].has(pf::M256)
             {
                 s.blocked_resources[1 + port] = 2.0;
             }
@@ -301,15 +301,14 @@ impl<'a> Sim<'a> {
         still_pending.clear();
         for &u in &pending {
             let prop = &self.prep.props[self.uops[u as usize].prop as usize];
-            let (is_first, is_store_addr, is_store_data, ii) = (prop.is_first, prop.is_store_addr, prop.is_store_data, prop.instr as usize);
+            let (flags, tp) = (prop.flags, prop.tp);
+            let (is_store_addr, is_store_data) = (flags & pf::STORE_ADDR != 0, flags & pf::STORE_DATA != 0);
             let dispatched = self.uops[u as usize].dispatched.unwrap();
             let mut finish_time = (dispatched + 2) as f64;
-            if is_first {
-                if let Some(tp) = self.instrs[ii].tp {
-                    let t = dispatched as f64 + tp;
-                    if t > finish_time {
-                        finish_time = t;
-                    }
+            if flags & pf::FIRST_TP != 0 {
+                let t = dispatched as f64 + tp;
+                if t > finish_time {
+                    finish_time = t;
                 }
             }
 
@@ -412,11 +411,11 @@ impl<'a> Sim<'a> {
             return Ok(true);
         }
         let prop = &self.prep.props[self.uops[u as usize].prop as usize];
-        let (is_first, is_load, is_store, ii) = (prop.is_first, prop.is_load, prop.is_store_data || prop.is_store_addr, prop.instr as usize);
-        let instr = &self.instrs[ii];
+        let (flags, tp_res, tp) = (prop.flags, prop.tp_res as usize, prop.tp);
+        let (is_first, is_load, is_store) = (flags & pf::FIRST != 0, flags & pf::LOAD != 0, flags & pf::STORE != 0);
         let not_executed = |sim: &Sim, uops: &[u32]| uops.iter().any(|&u2| !sim.uops[u2 as usize].executed.is_some_and(|e| e <= clock as f64));
 
-        if instr.is_load_serializing {
+        if flags & pf::LOAD_SERIALIZING != 0 {
             if is_first {
                 let Some(&front) = self.sched.pending_load_fence_uops.front() else {
                     return Err(crash("IndexError: deque index out of range (pendingLoadFenceUops)"));
@@ -425,7 +424,7 @@ impl<'a> Sim<'a> {
                     return Ok(false);
                 }
             }
-        } else if instr.is_store_serializing {
+        } else if flags & pf::STORE_SERIALIZING != 0 {
             if is_first {
                 let Some(&front) = self.sched.pending_store_fence_uops.front() else {
                     return Err(crash("IndexError: deque index out of range (pendingStoreFenceUops)"));
@@ -444,7 +443,6 @@ impl<'a> Sim<'a> {
         }
 
         // the limit may be a fraction of a cycle; for integers, this is the same as checking for '> 0'
-        let tp_res = self.prep.info[ii].tp_res;
         if is_first && self.sched.blocked_resources[tp_res] >= 1.0 {
             return Ok(false);
         }
@@ -454,10 +452,8 @@ impl<'a> Sim<'a> {
         self.uops[u as usize].ready_for_dispatch = Some(ready_for_dispatch_cycle);
         self.sched.uops_ready_in_cycle.push(clock, ready_for_dispatch_cycle, u);
 
-        if is_first {
-            if let Some(tp) = instr.tp {
-                self.sched.blocked_resources[tp_res] += tp;
-            }
+        if flags & pf::FIRST_TP != 0 {
+            self.sched.blocked_resources[tp_res] += tp;
         }
         if is_load {
             self.sched.load_uops_since_last_load_fence.push(u);
@@ -490,7 +486,7 @@ impl<'a> Sim<'a> {
         for (issue_slot, &fused) in new_uops.iter().enumerate() {
             for u in self.fused[fused as usize].unfused_uops() {
                 let prop = &self.prep.props[self.uops[u as usize].prop as usize];
-                if prop.ports.1 == 0 || self.uops[u as usize].eliminated {
+                if !prop.has(pf::HAS_PORTS) || self.uops[u as usize].eliminated {
                     continue;
                 }
                 let s = &mut self.sched;
@@ -501,12 +497,12 @@ impl<'a> Sim<'a> {
                     p
                 };
                 let port: usize;
-                if prop.ports.1 == 1 {
+                if prop.n_ports == 1 {
                     port = prop.port0 as usize;
                 } else if cfg.is_amd {
                     // least-loaded applicable port; ties are broken in favor of the port that was not used for the longest time
                     let mut best = prop.port0 as usize;
-                    let (start, n) = prop.ports;
+                    let (start, n) = (prop.ports_start, prop.n_ports as u32);
                     for &p in &self.prep.port_lists[start as usize + 1..(start + n) as usize] {
                         let p = p as usize;
                         if (s.port_usage[p], s.port_last_assigned[p]) < (s.port_usage[best], s.port_last_assigned[best]) {
@@ -638,13 +634,12 @@ impl<'a> Sim<'a> {
 
                 self.check_depending_uops_executed(u);
 
-                let prop = &self.prep.props[self.uops[u as usize].prop as usize];
-                if prop.is_first {
-                    let instr = &self.instrs[prop.instr as usize];
-                    if instr.is_store_serializing {
+                let flags = self.prep.props[self.uops[u as usize].prop as usize].flags;
+                if flags & pf::FIRST != 0 {
+                    if flags & pf::STORE_SERIALIZING != 0 {
                         self.sched.pending_store_fence_uops.push_back(u);
                     }
-                    if instr.is_load_serializing {
+                    if flags & pf::LOAD_SERIALIZING != 0 {
                         self.sched.pending_load_fence_uops.push_back(u);
                     }
                 }

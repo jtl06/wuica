@@ -1,6 +1,9 @@
 //! Static data derived from the instructions before the simulation starts: interned rename keys, uop properties with port
 //! indices, the grouping of uops into fused and laminated uops (`computeUopGrouping`), and the string tests of the Python code
 //! evaluated once per instruction.
+//!
+//! The simulation loop reads only this compact form (one small struct of plain integers per uop property and per instruction,
+//! with the boolean attributes as bits), never the [`Instr`] objects, which are only used to build it and for the outputs.
 
 use super::{FusedUop, FxHashMap, LaminatedUop, SimError, Uop};
 use crate::config::{UArch, UArchConfig};
@@ -89,31 +92,78 @@ pub(crate) struct OutKey {
     pub lat: i64,
 }
 
-/// `UopProperties`
+/// The attributes of a uop property ([`PropInfo::flags`]); the ones below `HAS_PORTS` are those of `UopProperties`, the
+/// others combine them with attributes of the instruction.
+pub(crate) mod pf {
+    pub const LOAD: u32 = 1 << 0;
+    pub const STORE_ADDR: u32 = 1 << 1;
+    pub const STORE_DATA: u32 = 1 << 2;
+    /// `isFirstUopOfInstr`
+    pub const FIRST: u32 = 1 << 3;
+    /// `isLastUopOfInstr`
+    pub const LAST: u32 = 1 << 4;
+    pub const REG_MERGE: u32 = 1 << 5;
+    /// the property of a `StackSyncUop`
+    pub const STACK_SYNC: u32 = 1 << 6;
+    /// `possiblePorts` is not empty
+    pub const HAS_PORTS: u32 = 1 << 7;
+    /// `instr.isLoadSerializing`
+    pub const LOAD_SERIALIZING: u32 = 1 << 8;
+    /// `instr.isStoreSerializing`
+    pub const STORE_SERIALIZING: u32 = 1 << 9;
+    /// `instr.memRenaming`
+    pub const MEM_RENAMING: u32 = 1 << 10;
+    /// `instr.mayBeEliminated and not isRegMergeUop and not StackSyncUop`
+    pub const ELIM_CANDIDATE: u32 = 1 << 11;
+    /// `instr.uops or StackSyncUop`: renamed through its operand lists
+    pub const RENAMED: u32 = 1 << 12;
+    /// `isFirstUopOfInstr and instr.TP is not None`
+    pub const FIRST_TP: u32 = 1 << 13;
+    /// `isFirstUopOfInstr and instr.isSerializingInstr`
+    pub const FIRST_SERIALIZING: u32 = 1 << 14;
+    /// `isFirstUopOfInstr and instr.regMergeUopPropertiesList`
+    pub const FIRST_MERGE: u32 = 1 << 15;
+    /// `isLastUopOfInstr or isRegMergeUop or StackSyncUop`: the end of the renaming of an instruction
+    pub const ENDS_INSTR: u32 = 1 << 16;
+    /// `'M256' in instr.instrStr`
+    pub const M256: u32 = 1 << 17;
+    pub const STORE: u32 = STORE_ADDR | STORE_DATA;
+}
+
+/// `UopProperties`, with what the simulation needs to know about its instruction
 pub(crate) struct PropInfo {
+    /// [`pf`] bits
+    pub flags: u32,
     pub instr: u32,
-    /// the ports (indices into the list of all ports, in the order of `possiblePorts`): `Prep::port_lists[ports.0 ..
-    /// ports.0 + ports.1]`
-    pub ports: (u32, u32),
-    /// the first of `ports` (if there is one)
-    pub port0: u8,
+    /// the ports as a mask of port indices
     pub port_mask: u32,
+    /// the ports in the order of `possiblePorts` (indices into the list of all ports): `Prep::port_lists[ports_start ..
+    /// ports_start + n_ports]`
+    pub ports_start: u32,
+    pub n_ports: u8,
+    /// the first of the ports (if there is one)
+    pub port0: u8,
     pub port_list: PortList,
     /// `Prep::in_key_list[in_keys.0 .. in_keys.0 + in_keys.1]`
     pub in_keys: (u32, u32),
     /// `Prep::out_key_list[out_keys.0 .. out_keys.0 + out_keys.1]`
     pub out_keys: (u32, u32),
+    /// index into `blockedResources` of `instr.TPKey`
+    pub tp_res: u32,
+    /// `instr.TP` (if `FIRST_TP`)
+    pub tp: f64,
     pub div_cycles: i64,
-    pub is_load: bool,
     pub forward_delay: i64,
     pub forward_fail_delay: i64,
-    pub is_store_addr: bool,
-    pub mem_addr: Option<MemAddrInfo>,
-    pub is_store_data: bool,
-    pub is_first: bool,
-    pub is_last: bool,
-    pub is_reg_merge: bool,
-    pub is_stack_sync: bool,
+    /// `memAddr`: index into `Prep::mem_addrs` or NONE
+    pub mem_addr: u32,
+}
+
+impl PropInfo {
+    #[inline(always)]
+    pub fn has(&self, flag: u32) -> bool {
+        self.flags & flag != 0
+    }
 }
 
 /// `__computeAbstractValue`: what an instruction does to the abstract value of its first input register
@@ -127,9 +177,48 @@ pub(crate) enum AvKind {
     Fresh,
 }
 
+/// The attributes of an instruction ([`InstrInfo::flags`]).
+pub(crate) mod inf {
+    pub const MACRO_FUSED_PREV: u32 = 1 << 0;
+    pub const MACRO_FUSED_NEXT: u32 = 1 << 1;
+    pub const BRANCH: u32 = 1 << 2;
+    pub const JCC_ERRATUM: u32 = 1 << 3;
+    pub const LCP_STALL: u32 = 1 << 4;
+    pub const COMPLEX_DECODER: u32 = 1 << 5;
+    /// `isLastDecodedInstr()`
+    pub const LAST_DECODED: u32 = 1 << 6;
+    /// `macroFusibleWith` is not empty
+    pub const MACRO_FUSIBLE: u32 = 1 << 7;
+    /// `canBeUsedByLSD()`
+    pub const CAN_BE_USED_BY_LSD: u32 = 1 << 8;
+    /// `getDSBBlocks`: the immediate requires an extra entry
+    pub const DSB_EXTRA_ENTRY: u32 = 1 << 9;
+    /// the instruction string is in the list of `latReducedDueToFastPtrChasing`
+    pub const FAST_PTR_CHASING_SOURCE: u32 = 1 << 10;
+    /// `'I64' in instrStr`
+    pub const I64: u32 = 1 << 11;
+    /// `instr.uops == 0`
+    pub const NO_UOPS: u32 = 1 << 12;
+    /// `getRegSize(outputRegOperands[0].reg) == 32`
+    pub const OUT_REG0_IS_32: u32 = 1 << 13;
+    /// an explicit input or address register is RSP
+    pub const READS_RSP_EXPLICITLY: u32 = 1 << 14;
+    pub const WRITES_RSP: u32 = 1 << 15;
+    pub const HAS_INPUT_MEM: u32 = 1 << 16;
+    pub const HAS_OUTPUT_MEM: u32 = 1 << 17;
+}
+
 pub(crate) struct InstrInfo {
+    /// [`inf`] bits
+    pub flags: u32,
     /// length in bytes
     pub len: i64,
+    pub uops_mite: i64,
+    pub uops_ms: i64,
+    pub pos_nominal_opcode: i64,
+    pub op_cache_fields: i64,
+    pub n_available_simple_decoders: Option<i64>,
+    pub implicit_rsp_change: i64,
     pub first_prop: u32,
     pub n_props: u32,
     pub first_merge_prop: u32,
@@ -145,36 +234,26 @@ pub(crate) struct InstrInfo {
     pub tmpl_lams: (u32, u32),
     /// key of `inputRegOperands[0]`
     pub in_reg0: Option<Key>,
-    /// (key, `getRegSize`) of `outputRegOperands`
-    pub out_regs: Vec<(Key, i64)>,
-    /// `getRegSize(outputRegOperands[0].reg) == 32`
-    pub out_reg0_is_32: bool,
-    /// keys of `inputRegOperands`
-    pub in_regs: Vec<Key>,
+    /// (key, `getRegSize`) of `outputRegOperands`: `Prep::out_reg_list[out_regs.0 .. out_regs.0 + out_regs.1]`
+    pub out_regs: (u32, u32),
+    /// keys of `inputRegOperands`: `Prep::in_reg_list[in_regs.0 .. in_regs.0 + in_regs.1]`
+    pub in_regs: (u32, u32),
     pub folded_input_reg: Option<Key>,
     pub mem_width: Option<i64>,
     pub mov_store_width: Option<i64>,
     pub mov_load_width: Option<i64>,
-    pub has_input_mem: bool,
-    pub has_output_mem: bool,
-    /// `inputMemOperands[0].memAddr`
-    pub in_mem0: Option<MemAddrInfo>,
+    /// `inputMemOperands[0].memAddr`: index into `Prep::mem_addrs` or NONE
+    pub in_mem0: u32,
     pub av_kind: AvKind,
-    /// an explicit input or address register is RSP
-    pub reads_rsp_explicitly: bool,
-    pub writes_rsp: bool,
-    pub can_be_used_by_lsd: bool,
-    pub is_last_decoded: bool,
-    /// the instruction string is in the list of `latReducedDueToFastPtrChasing`
-    pub fast_ptr_chasing_source: bool,
-    pub has_m256: bool,
-    pub has_i64: bool,
-    /// index into `blockedResources` of `TPKey`
-    pub tp_res: usize,
-    pub has_macro_fusible: bool,
     /// `getDSBBlocks`
     pub dsb_required_entries: i64,
-    pub dsb_requires_extra_entry: bool,
+}
+
+impl InstrInfo {
+    #[inline(always)]
+    pub fn has(&self, flag: u32) -> bool {
+        self.flags & flag != 0
+    }
 }
 
 /// `possiblePorts == [...]` tests
@@ -201,6 +280,11 @@ pub(crate) struct Prep {
     pub port_lists: Vec<u8>,
     pub in_key_list: Vec<InKey>,
     pub out_key_list: Vec<OutKey>,
+    /// see `InstrInfo::out_regs` and `InstrInfo::in_regs`
+    pub out_reg_list: Vec<(Key, i64)>,
+    pub in_reg_list: Vec<Key>,
+    /// the address expressions of the uop properties and instructions
+    pub mem_addrs: Vec<MemAddrInfo>,
     pub keys: Keys,
     pub props: Vec<PropInfo>,
     pub info: Vec<InstrInfo>,
@@ -274,6 +358,43 @@ fn compute_uop_grouping(instr: &Instr, props: &[UopProperties], config: &UArchCo
     fused_sizes.extend(fused.iter().map(|f| f.1 as u32));
 }
 
+/// the [`pf`] bits of a property that come from its instruction
+fn instr_prop_flags(instr: &Instr, flags: u32) -> u32 {
+    let mut f = flags;
+    let first = flags & pf::FIRST != 0;
+    if instr.is_load_serializing {
+        f |= pf::LOAD_SERIALIZING;
+    }
+    if instr.is_store_serializing {
+        f |= pf::STORE_SERIALIZING;
+    }
+    if instr.mem_renaming {
+        f |= pf::MEM_RENAMING;
+    }
+    if instr.may_be_eliminated && flags & (pf::REG_MERGE | pf::STACK_SYNC) == 0 {
+        f |= pf::ELIM_CANDIDATE;
+    }
+    if instr.uops != 0 || flags & pf::STACK_SYNC != 0 {
+        f |= pf::RENAMED;
+    }
+    if first && instr.tp.is_some() {
+        f |= pf::FIRST_TP;
+    }
+    if first && instr.is_serializing_instr {
+        f |= pf::FIRST_SERIALIZING;
+    }
+    if first && !instr.reg_merge_uop_properties_list.is_empty() {
+        f |= pf::FIRST_MERGE;
+    }
+    if flags & (pf::LAST | pf::REG_MERGE | pf::STACK_SYNC) != 0 {
+        f |= pf::ENDS_INSTR;
+    }
+    if instr.instr_str.contains("M256") {
+        f |= pf::M256;
+    }
+    f
+}
+
 impl Prep {
     /// a new `Uop(prop, instrI)` (without `instr_instance`)
     pub fn new_uop(&self, prop: u32) -> Uop {
@@ -294,8 +415,8 @@ impl Prep {
             dispatched: None,
             executed: None,
             div_cycles: p.div_cycles,
-            is_stack_sync_uop: p.is_stack_sync,
-            is_reg_merge_uop: p.is_reg_merge,
+            is_stack_sync_uop: p.has(pf::STACK_SYNC),
+            is_reg_merge_uop: p.has(pf::REG_MERGE),
         }
     }
 
@@ -360,6 +481,12 @@ impl Prep {
         (n_uops.max(1), n_ops.max(1))
     }
 
+    /// the address expression `i` (an index from `PropInfo::mem_addr` or `InstrInfo::in_mem0`), if it is not NONE
+    #[inline]
+    pub fn mem_addr(&self, i: u32) -> Option<&MemAddrInfo> {
+        self.mem_addrs.get(i as usize)
+    }
+
     pub fn new(list: &InstrList, config: &UArchConfig, uarch: &UArch) -> Result<Prep, SimError> {
         let all_ports = uarch.all_ports.get(&config.name).ok_or_else(|| invalid("no ports for this configuration"))?;
         let alu_ports = uarch.alu_ports.get(&config.name).ok_or_else(|| invalid("no ALU ports for this configuration"))?;
@@ -397,12 +524,19 @@ impl Prep {
         let mut group_fused: Vec<u32> = Vec::new();
         let mut in_key_list: Vec<InKey> = Vec::new();
         let mut out_key_list: Vec<OutKey> = Vec::new();
+        let mut out_reg_list: Vec<(Key, i64)> = Vec::new();
+        let mut in_reg_list: Vec<Key> = Vec::new();
+        let mut mem_addrs: Vec<MemAddrInfo> = Vec::new();
+        #[allow(clippy::too_many_arguments)]
         let convert = |p: &UopProperties,
-                       instr: u32,
+                       instr: &Instr,
+                       ii: u32,
+                       res: usize,
                        keys: &mut Keys,
                        port_lists: &mut Vec<u8>,
                        in_key_list: &mut Vec<InKey>,
-                       out_key_list: &mut Vec<OutKey>|
+                       out_key_list: &mut Vec<OutKey>,
+                       mem_addrs: &mut Vec<MemAddrInfo>|
          -> Result<PropInfo, SimError> {
             let ports_start = port_lists.len() as u32;
             let mut mask = 0u32;
@@ -412,6 +546,9 @@ impl Prep {
                 mask |= 1 << i;
             }
             let n_ports = port_lists.len() as u32 - ports_start;
+            if n_ports > u8::MAX as u32 {
+                return Err(invalid("too many ports"));
+            }
             let port0 = if n_ports > 0 { port_lists[ports_start as usize] } else { 0 };
             let port_list = port_list_of(p.possible_ports.as_deref().unwrap_or(&[]));
             let mut key_of = |op: OpId| -> Result<(bool, Key, bool), SimError> {
@@ -434,25 +571,43 @@ impl Prep {
                 let lat = p.latencies.iter().find(|(o, _)| *o == op).map_or(1, |(_, l)| *l);
                 out_key_list.push(OutKey { op, is_pseudo, key, is_reg, lat });
             }
+            let mem_addr = match &p.mem_addr {
+                Some(m) => {
+                    mem_addrs.push(mem_addr_info(keys, m));
+                    mem_addrs.len() as u32 - 1
+                }
+                None => NONE,
+            };
+            let mut flags = 0;
+            for (b, f) in [
+                (p.is_load_uop, pf::LOAD),
+                (p.is_store_address_uop, pf::STORE_ADDR),
+                (p.is_store_data_uop, pf::STORE_DATA),
+                (p.is_first_uop_of_instr, pf::FIRST),
+                (p.is_last_uop_of_instr, pf::LAST),
+                (p.is_reg_merge_uop, pf::REG_MERGE),
+                (n_ports > 0, pf::HAS_PORTS),
+            ] {
+                if b {
+                    flags |= f;
+                }
+            }
             Ok(PropInfo {
-                instr,
-                ports: (ports_start, n_ports),
-                port0,
+                flags: instr_prop_flags(instr, flags),
+                instr: ii,
                 port_mask: mask,
+                ports_start,
+                n_ports: n_ports as u8,
+                port0,
                 port_list,
                 in_keys: (in_start, in_key_list.len() as u32 - in_start),
                 out_keys: (out_start, out_key_list.len() as u32 - out_start),
+                tp_res: res as u32,
+                tp: instr.tp.unwrap_or(0.0),
                 div_cycles: p.div_cycles,
-                is_load: p.is_load_uop,
                 forward_delay: p.forward_delay,
                 forward_fail_delay: p.forward_fail_delay,
-                is_store_addr: p.is_store_address_uop,
-                mem_addr: p.mem_addr.as_ref().map(|m| mem_addr_info(keys, m)),
-                is_store_data: p.is_store_data_uop,
-                is_first: p.is_first_uop_of_instr,
-                is_last: p.is_last_uop_of_instr,
-                is_reg_merge: p.is_reg_merge_uop,
-                is_stack_sync: false,
+                mem_addr,
             })
         };
 
@@ -465,6 +620,9 @@ impl Prep {
             alu_mask |= 1 << i;
         }
         let n_alu_ports = port_lists.len() as u32 - alu_ports_start;
+        if n_alu_ports > u8::MAX as u32 {
+            return Err(invalid("too many ports"));
+        }
         let alu_port0 = if n_alu_ports > 0 { port_lists[alu_ports_start as usize] } else { 0 };
         let alu_port_list = port_list_of(alu_ports);
         let rsp_in = in_key_list.len() as u32;
@@ -473,34 +631,39 @@ impl Prep {
         out_key_list.push(OutKey { op: NONE, is_pseudo: false, key: rsp, is_reg: true, lat: 1 });
 
         for (ii, instr) in list.instrs.iter().enumerate() {
+            let n = tp_res.len();
+            let res = *tp_res.entry(&instr.tp_key).or_insert(1 + ports.len() + n);
+            n_resources = n_resources.max(res + 1);
+
             let first_prop = props.len() as u32;
             for p in &instr.uop_properties_list {
-                props.push(convert(p, ii as u32, &mut keys, &mut port_lists, &mut in_key_list, &mut out_key_list)?);
+                props.push(convert(p, instr, ii as u32, res, &mut keys, &mut port_lists, &mut in_key_list, &mut out_key_list, &mut mem_addrs)?);
             }
             let first_merge_prop = props.len() as u32;
             for p in &instr.reg_merge_uop_properties_list {
-                props.push(convert(p, ii as u32, &mut keys, &mut port_lists, &mut in_key_list, &mut out_key_list)?);
+                props.push(convert(p, instr, ii as u32, res, &mut keys, &mut port_lists, &mut in_key_list, &mut out_key_list, &mut mem_addrs)?);
             }
             let stack_sync_prop = props.len() as u32;
+            let mut ss_flags = pf::FIRST | pf::STACK_SYNC;
+            if n_alu_ports > 0 {
+                ss_flags |= pf::HAS_PORTS;
+            }
             props.push(PropInfo {
+                flags: instr_prop_flags(instr, ss_flags),
                 instr: ii as u32,
-                ports: (alu_ports_start, n_alu_ports),
-                port0: alu_port0,
                 port_mask: alu_mask,
+                ports_start: alu_ports_start,
+                n_ports: n_alu_ports as u8,
+                port0: alu_port0,
                 port_list: alu_port_list,
                 in_keys: (rsp_in, 1),
                 out_keys: (rsp_out, 1),
+                tp_res: res as u32,
+                tp: instr.tp.unwrap_or(0.0),
                 div_cycles: 0,
-                is_load: false,
                 forward_delay: 0,
                 forward_fail_delay: 0,
-                is_store_addr: false,
-                mem_addr: None,
-                is_store_data: false,
-                is_first: true,
-                is_last: false,
-                is_reg_merge: false,
-                is_stack_sync: true,
+                mem_addr: NONE,
             });
 
             let (lam_start, fused_start) = (group_lams.len() as u32, group_fused.len() as u32);
@@ -553,13 +716,13 @@ impl Prep {
                 None
             };
             let in_mem0 = match instr.input_mem_operands.first().map(|&op| list.operands.get(op as usize)) {
-                Some(Some(Operand::Mem { mem_addr })) => Some(mem_addr_info(&mut keys, mem_addr)),
+                Some(Some(Operand::Mem { mem_addr })) => {
+                    mem_addrs.push(mem_addr_info(&mut keys, mem_addr));
+                    mem_addrs.len() as u32 - 1
+                }
                 Some(_) => return Err(invalid("memory operand expected")),
-                None => None,
+                None => NONE,
             };
-            let n = tp_res.len();
-            let res = *tp_res.entry(&instr.tp_key).or_insert(1 + ports.len() + n);
-            n_resources = n_resources.max(res + 1);
             let requires_extra_entry = match instr.immediate {
                 Some(imm) => {
                     !(-(1i64 << 31)..(1i64 << 31)).contains(&imm)
@@ -567,51 +730,88 @@ impl Prep {
                 }
                 None => false,
             };
+            let mut flags = 0;
+            for (b, f) in [
+                (instr.macro_fused_with_prev_instr, inf::MACRO_FUSED_PREV),
+                (instr.macro_fused_with_next_instr, inf::MACRO_FUSED_NEXT),
+                (instr.is_branch_instr, inf::BRANCH),
+                (instr.cannot_be_in_dsb_due_to_jcc_erratum, inf::JCC_ERRATUM),
+                (instr.lcp_stall, inf::LCP_STALL),
+                (instr.complex_decoder, inf::COMPLEX_DECODER),
+                (instr.is_last_decoded_instr(), inf::LAST_DECODED),
+                (!instr.macro_fusible_with.is_empty(), inf::MACRO_FUSIBLE),
+                (!(instr.uops_ms != 0 || instr.implicit_rsp_change != 0 || out_regs.iter().any(|r| r.3)), inf::CAN_BE_USED_BY_LSD),
+                (requires_extra_entry, inf::DSB_EXTRA_ENTRY),
+                (
+                    ["MOV (R64, M64)", "MOV (RAX, M64)", "MOV (R32, M32)", "MOV (EAX, M32)", "MOVSXD (R64, M32)", "POP (R64)"].contains(&s),
+                    inf::FAST_PTR_CHASING_SOURCE,
+                ),
+                (s.contains("I64"), inf::I64),
+                (instr.uops == 0, inf::NO_UOPS),
+                (out_regs.first().is_some_and(|r| r.1 == 32), inf::OUT_REG0_IS_32),
+                (in_regs.iter().chain(addr_regs.iter()).any(|r| r.0 == rsp && !r.2), inf::READS_RSP_EXPLICITLY),
+                (out_regs.iter().any(|r| r.0 == rsp), inf::WRITES_RSP),
+                (!instr.input_mem_operands.is_empty(), inf::HAS_INPUT_MEM),
+                (!instr.output_mem_operands.is_empty(), inf::HAS_OUTPUT_MEM),
+            ] {
+                if b {
+                    flags |= f;
+                }
+            }
+            let out_regs_start = out_reg_list.len() as u32;
+            out_reg_list.extend(out_regs.iter().map(|r| (r.0, r.1)));
+            let in_regs_start = in_reg_list.len() as u32;
+            in_reg_list.extend(in_regs.iter().map(|r| r.0));
             info.push(InstrInfo {
+                flags,
                 len: (instr.opcode.len() / 2) as i64,
+                uops_mite: instr.uops_mite,
+                uops_ms: instr.uops_ms,
+                pos_nominal_opcode: instr.pos_nominal_opcode,
+                op_cache_fields: instr.op_cache_fields,
+                n_available_simple_decoders: instr.n_available_simple_decoders,
+                implicit_rsp_change: instr.implicit_rsp_change,
                 first_prop,
                 n_props: instr.uop_properties_list.len() as u32,
                 first_merge_prop,
                 n_merge_props: instr.reg_merge_uop_properties_list.len() as u32,
                 stack_sync_prop,
                 grouping,
+                tmpl_uops: (0, 0),
+                tmpl_fused: (0, 0),
+                tmpl_lams: (0, 0),
                 in_reg0: in_regs.first().map(|r| r.0),
-                out_reg0_is_32: out_regs.first().is_some_and(|r| r.1 == 32),
-                in_regs: in_regs.iter().map(|r| r.0).collect(),
+                out_regs: (out_regs_start, out_regs.len() as u32),
+                in_regs: (in_regs_start, in_regs.len() as u32),
                 folded_input_reg: instr.folded_input_reg.as_deref().map(|r| keys.intern(r)),
                 mem_width: mem_width(s),
                 mov_store_width,
                 mov_load_width,
-                has_input_mem: !instr.input_mem_operands.is_empty(),
-                has_output_mem: !instr.output_mem_operands.is_empty(),
                 in_mem0,
                 av_kind,
-                reads_rsp_explicitly: in_regs.iter().chain(addr_regs.iter()).any(|r| r.0 == rsp && !r.2),
-                writes_rsp: out_regs.iter().any(|r| r.0 == rsp),
-                can_be_used_by_lsd: !(instr.uops_ms != 0 || instr.implicit_rsp_change != 0 || out_regs.iter().any(|r| r.3)),
-                is_last_decoded: instr.is_last_decoded_instr(),
-                fast_ptr_chasing_source: [
-                    "MOV (R64, M64)",
-                    "MOV (RAX, M64)",
-                    "MOV (R32, M32)",
-                    "MOV (EAX, M32)",
-                    "MOVSXD (R64, M32)",
-                    "POP (R64)",
-                ]
-                .contains(&s),
-                has_m256: s.contains("M256"),
-                has_i64: s.contains("I64"),
-                tp_res: res,
-                tmpl_uops: (0, 0),
-                tmpl_fused: (0, 0),
-                tmpl_lams: (0, 0),
-                has_macro_fusible: !instr.macro_fusible_with.is_empty(),
                 dsb_required_entries: instr.uops_mite.max(1),
-                dsb_requires_extra_entry: requires_extra_entry,
-                out_regs: out_regs.iter().map(|r| (r.0, r.1)).collect(),
             });
         }
-        let mut prep = Prep { group_lams, group_fused, port_lists, in_key_list, out_key_list, keys, props, info, ports, port_idx, port_hex, n_resources, tmpl_uops: Vec::new(), tmpl_fused: Vec::new(), tmpl_lams: Vec::new() };
+        let mut prep = Prep {
+            group_lams,
+            group_fused,
+            port_lists,
+            in_key_list,
+            out_key_list,
+            out_reg_list,
+            in_reg_list,
+            mem_addrs,
+            keys,
+            props,
+            info,
+            ports,
+            port_idx,
+            port_hex,
+            n_resources,
+            tmpl_uops: Vec::new(),
+            tmpl_fused: Vec::new(),
+            tmpl_lams: Vec::new(),
+        };
         prep.build_templates();
         Ok(prep)
     }

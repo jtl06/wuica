@@ -15,7 +15,7 @@ pub use output::{canonicalize_instr_string, get_terminal_hyperlink, get_url, Tab
 
 use crate::config::{UArch, UArchConfig};
 use crate::model::{Instr, InstrList};
-use prep::{Prep, NONE};
+use prep::{pf, Prep, NONE};
 use std::collections::VecDeque;
 
 /// `-initPolicy`: the initial values of the registers
@@ -404,10 +404,11 @@ impl<'a> Sim<'a> {
         let ro = self.ren_ops[ren_op as usize];
         let u = ro.uop as usize;
         let prop = &self.prep.props[self.uops[u].prop as usize];
-        let (is_load, forward_delay, forward_fail_delay, instr) = (prop.is_load, prop.forward_delay, prop.forward_fail_delay, prop.instr);
+        let (is_load, forward_delay, forward_fail_delay, mem_renaming) =
+            (prop.has(pf::LOAD), prop.forward_delay, prop.forward_fail_delay, prop.has(pf::MEM_RENAMING));
         let sbe = self.uops[u].store_buffer_entry;
 
-        if is_load && sbe != NONE && self.instrs[instr as usize].mem_renaming && !self.uops[u].mem_renaming_blocked {
+        if is_load && sbe != NONE && mem_renaming && !self.uops[u].mem_renaming_blocked {
             // memory renaming: the load gets its value directly from the register that was stored
             let mut any_none = false;
             let mut ready = self.fused[self.uops[u].fused_uop as usize].issued.unwrap_or(0);
@@ -415,7 +416,7 @@ impl<'a> Sim<'a> {
             let mut max_ready = 0;
             for i in 0..self.rn.sbes[sbe as usize].uops.len() {
                 let su = self.rn.sbes[sbe as usize].uops.get(i) as usize;
-                if self.prep.props[self.uops[su].prop as usize].is_store_data {
+                if self.prep.props[self.uops[su].prop as usize].has(pf::STORE_DATA) {
                     let (start, n) = self.uops[su].ren_in;
                     for j in start..start + n {
                         let r = self.ren_lists[j as usize];
