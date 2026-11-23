@@ -24,7 +24,7 @@ export CFLAGS_wasm32_unknown_unknown="-ffile-prefix-map=$PWD=/wuica"
 # ~1.5% faster and ~20 kB smaller (gzip) than the default 16 units. Measured and not kept: opt-level 2 (no gain), "s" (25%
 # slower), +simd128 (no gain; measured again in round 3: within 0.5%), wasm-opt -O3/-O4 (no gain on the fixture run, a few %
 # worse on the real-code blocks; its size reduction is the name section it drops, which llvm-objcopy --remove-section=name does
-# too: 4.24 -> 3.03 MB, 616 -> 556 kB with brotli; no change in compile time; the names are kept for readable stack traces).
+# too: 4.24 -> 3.03 MB, 616 -> 556 kB with brotli, no change in compile time; not done: the names are kept).
 export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
 cargo build -p wuica-wasm --target wasm32-unknown-unknown --release
 if strings target/wasm32-unknown-unknown/release/wuica_wasm.wasm | grep -q "$HOME"; then
