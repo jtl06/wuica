@@ -1,32 +1,55 @@
 // Tests of the shown branch targets (web/js/branch-label.js) and of the A–B table per CPU (web/js/ab-cpus.js,
 // abCpuRows). Usage: node tests-js/web_branch_label.mjs
-import { startLabel, branchLabels } from '../web/js/branch-label.js';
+import { branchLabels, codeStatements, analyzedLines } from '../web/js/branch-label.js';
 import { abCpuRows } from '../web/js/ab-cpus.js';
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
 const j = JSON.stringify;
 
-// ---- startLabel ------------------------------------------------------------------------------------------------------------
-check(startLabel('loop:\n  add rax, 1\n  jnz loop\n') === 'loop', 'startLabel: the label in front');
-check(startLabel('# comment\n  .p2align 4\n.L3:   # body\n  add rax, 1\n') === '.L3', 'startLabel: after comments and directives');
-check(startLabel('; x\n// y\n\n  x1: add rax, 1') === 'x1', 'startLabel: ; and // comments, a label on the instruction\'s line');
-check(startLabel('  add rax, 1\nloop:\n  jnz loop') === null, 'startLabel: an instruction first: none');
-check(startLabel('') === null && startLabel(null) === null, 'startLabel: no text');
-
 // ---- branchLabels ------------------------------------------------------------------------------------------------------------
+// rows as the analyzer gives them: the target relative to the instruction (disassembled at address 0)
 const instr = (label, opcode) => ({ kind: 'instr', label, opcode });
-// the chain example: 48 83 c0 01 | 48 83 c0 01 | 49 ff cf | 75 f3 (jnz at 11, to 0)
+const rel = (n) => `0x${(n < 0 ? (1n << 64n) + BigInt(n) : BigInt(n)).toString(16)}`;
+const src = (text) => ({ text, from: 1, to: Infinity });
+// machine code (the chain example, jnz at 11 to 0): the offset in the block, no invented name
 const chain = [instr('add rax, 0x1', '4883C001'), instr('add rax, 0x1', '4883C001'), instr('dec r15', '49FFCF'), instr('jnz 0xfffffffffffffff5', '75F3')];
-check(j(branchLabels(chain)) === j([null, null, null, 'jnz loop']), 'branchLabels: the loop branch shows the block\'s label', j(branchLabels(chain)));
-check(branchLabels(chain, '.L3')[3] === 'jnz .L3', 'branchLabels: the label of pasted assembly');
-// a renamer row does not count as bytes; a branch into the block; one out of it keeps its address
+check(j(branchLabels(chain)) === j([null, null, null, 'jnz 0x0']), 'machine code: the offset in the block', j(branchLabels(chain)));
+// the target at a label of the text, not at the block's start
+const mid = [instr('add rax, 0x1', '4883C001'), instr('dec rcx', '48FFC9'), instr(`jnz ${rel(-3)}`, '75FB')];
+check(branchLabels(mid, src('  add rax, 1\nloop:\n  dec rcx\n  jnz loop\n'))[2] === 'jnz loop', 'a label in the middle: that label', j(branchLabels(mid, src('  add rax, 1\nloop:\n  dec rcx\n  jnz loop\n'))));
+// two loops: each branch its own label
+const nest = [instr('add rax, 0x1', '4883C001'), instr('dec rcx', '48FFC9'), instr(`jnz ${rel(-3)}`, '75FB'), instr('dec rdx', '48FFCA'), instr(`jnz ${rel(-12)}`, '75F2')];
+const nestText = 'outer:\n  add rax, 1\ninner:\n  dec rcx\n  jnz inner\n  dec rdx\n  jnz outer\n';
+check(j(branchLabels(nest, src(nestText))) === j([null, null, 'jnz inner', null, 'jnz outer']), 'nested: inner and outer', j(branchLabels(nest, src(nestText))));
+// GNU numeric labels, as written
+const num = [instr('dec rcx', '48FFC9'), instr(`jnz ${rel(-3)}`, '75FB')];
+check(branchLabels(num, src('1:\n  dec rcx\n  jnz 1b\n'))[1] === 'jnz 1b', 'GNU numeric label: as written');
+// no symbol written: the label at the target, else the nearest one before it plus the offset; outside: unchanged
 const rows = [{ kind: 'regMerge', label: '<Register Merge Uop>' }, instr('add rax, 0x1', '4883C001'), instr('jz 0x2', '7402'), instr('add rax, 0x1', '4883C001'),
-  instr('jmp 0x40', 'EB40'), instr('jb 0xfffffffffffffff4', '72F2')];
-const got = branchLabels(rows, 'top');
-check(j(got) === j([null, null, 'jz top+0x6', null, null, 'jb top']), 'branchLabels: inside the block as label+offset, outside unchanged', j(got));
-check(j(branchLabels([instr('call 0x10', 'E80B000000')])) === j([null]), 'branchLabels: calls unchanged');
-check(j(branchLabels(null)) === '[]', 'branchLabels: no rows');
+  instr('jmp 0x40', 'EB40'), instr(`jb ${rel(-12)}`, '72F2')];
+const t1 = 'top:\n  add rax, 1\n  jz .+4\n  add rax, 1\n  jmp far\n  jb .-12\n';
+check(j(branchLabels(rows, src(t1))) === j([null, null, 'jz top+0x6', null, null, 'jb top']), 'the nearest label before plus the offset; a label exactly at the target; outside unchanged', j(branchLabels(rows, src(t1))));
+// before the first label: the offset, not a name
+check(branchLabels(mid, src('  add rax, 1\nx:\n  dec rcx\n  jnz .-7\n'))[2] === 'jnz x', 'at a label (written as an expression): the label');
+const before = [instr('add rax, 0x1', '4883C001'), instr('dec rcx', '48FFC9'), instr(`jnz ${rel(-7)}`, '75F7')];
+check(branchLabels(before, src('  add rax, 1\nx:\n  dec rcx\n  jnz .-7\n'))[2] === 'jnz 0x0', 'before the first label: the offset in the block');
+// the end of the block: a loop's exit (defined right after the picked code), or a label defined there
+const exit = [instr('dec rcx', '48FFC9'), instr('jz 0x4', '7402'), instr(`jmp ${rel(-5)}`, 'EBF9')];
+check(j(branchLabels(exit, src('loop:\n  dec rcx\n  jz .Lout\n  jmp loop\n'))) === j([null, 'jz .Lout', 'jmp loop']), 'an exit of the loop: its label', j(branchLabels(exit, src('loop:\n  dec rcx\n  jz .Lout\n  jmp loop\n'))));
+check(branchLabels(exit, src('loop:\n  dec rcx\n  jz .+4\n  jmp loop\ndone:\n'))[1] === 'jz done', 'the end of the block: the label defined there');
+check(branchLabels(exit, src('loop:\n  dec rcx\n  jz .+4\n  jmp loop\n'))[1] === 'jz loop+0x7', 'the end of the block, no label there: the nearest one before');
+// statements that do not match the rows one to one: offsets only
+check(branchLabels(mid, src('  add rax, 1\n  .p2align 4\nloop:\n  dec rcx\n  jnz loop\n'))[2] === 'jnz 0x4', 'an alignment directive in the code: offsets only');
+check(branchLabels(mid, src('loop:\n  dec rcx\n  jnz loop\n'))[2] === 'jnz 0x4', 'more rows than statements: offsets only');
+check(j(branchLabels([instr('call 0x10', 'E80B000000')])) === j([null]), 'calls unchanged');
+check(j(branchLabels(null)) === '[]', 'no rows');
+// the statements of the text: comments, ';' lines, labels on an instruction's line, directives without code
+check(j(codeStatements('# c\n; d\nx: y: add rax, 1 # e\n  .loc 1 2 3\n  lock add [rax], 1\n')) === j([{ kind: 'label', name: 'x' }, { kind: 'label', name: 'y' }, { kind: 'instr', operand: 'rax, 1' }, { kind: 'instr', operand: '[rax], 1' }]),
+  'codeStatements', j(codeStatements('# c\n; d\nx: y: add rax, 1 # e\n  .loc 1 2 3\n  lock add [rax], 1\n')));
+// the analyzed lines: the picked loop, a marked region, the whole text
+check(j(analyzedLines('a\nb\nc\nd', { loop: { line: 2, endLine: 3 } })) === j({ text: 'a\nb\nc\nd', from: 2, to: 3 }), 'analyzedLines: the picked loop');
+check(j(analyzedLines('a\n# wuica-begin\nb\nc\n# wuica-end\nd', { region: { line: 2 } })) === j({ text: 'a\n# wuica-begin\nb\nc\n# wuica-end\nd', from: 3, to: 4 }), 'analyzedLines: a marked region');
 
 // ---- abCpuRows ---------------------------------------------------------------------------------------------------------------
 const items = [{ key: 'SKL', title: 'Skylake' }, { key: 'ZEN3', title: 'Zen 3', experimental: true }, { key: 'ADL-P' }, { key: 'ICL' }];

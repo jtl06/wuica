@@ -20,7 +20,7 @@ import { compareResponses, signed } from './ab-diff.js';
 import { parseHexInput, toHex } from './hex-input.js';
 import { MAX_CODE_BYTES, tooMuchCode } from './assembler.js';
 import { LIMITS } from './url-state.js';
-import { branchLabels } from './branch-label.js';
+import { branchLabels, analyzedLines } from './branch-label.js';
 
 const PLACEHOLDERS = {
   hex: '48 83 c0 02 49 ff cf 75 f7',
@@ -46,8 +46,7 @@ const WORK_TITLE = 'elements per iteration: the elements (or bytes) one iteratio
 //   state, el: {code, body, toolbar}, archItems() -> Map, archTitle(key, experimental), ensureAssembler(), ensureTable(key),
 //   machineCodeA(runId) -> bytes | null (shows A's messages), getA() / setA({mode, syntax, text}, {run}),
 //   changed({rerun}), toggled() (the mode changed), writeControls(), watchLinks(textarea, side, messages), demo() -> {a, b} | null,
-//   replaced(inputEvent) -> true for a paste rather than typing, redraw() (the shown comparison again: the counts changed), cpusBox (the table per CPU, ab-cpus.js), labels(side) -> the
-//   label of the block's start for its branch targets (branch-label.js)
+//   srcA() -> side A's analyzed assembly lines (branch-label.js), replaced(inputEvent) -> true for a paste rather than typing, redraw() (the shown comparison again: the counts changed), cpusBox (the table per CPU, ab-cpus.js)
 export function createAB(api) {
   const { state } = api;
   const buffers = { hex: '', asm: '' }; // B's text of each input mode
@@ -275,10 +274,10 @@ export function createAB(api) {
   }
 
   // The messages are replaced only when there are new ones (no flicker while live mode re-runs).
-  let regionB = null; // the marked region of B's last assembly (its branch targets' label)
+  let srcB = null; // the lines of B's analyzed assembly (its labels for the branch targets: branch-label.js)
   async function machineCodeB(current) {
     const text = bCode.value;
-    regionB = null;
+    srcB = null;
     if (state.bMode === 'hex') {
       const p = parseHexInput(text);
       if (!p.ok) { showB([{ line: p.line ?? null, severity: 'error', message: p.message }]); return null; }
@@ -292,7 +291,7 @@ export function createAB(api) {
     if (!assembler) { showB([{ severity: 'error', message: 'No assembler: use hex' }]); return null; }
     const r = await assembler.assemble(text, state.bSyntax);
     if (!current()) return null;
-    regionB = r.ok ? r.region ?? null : null;
+    srcB = r.ok ? analyzedLines(text, r) : null;
     const items = [...r.diagnostics];
     if (r.ok && r.bytes.length === 0) items.push({ severity: 'error', message: 'No machine code' });
     if (r.ok && r.bytes.length && assembler.mock) items.push({ severity: 'note', message: 'mock assembler' });
@@ -336,10 +335,10 @@ export function createAB(api) {
         response = { error: e?.message ?? String(e) };
       }
       const item = api.archItems().get(x.arch);
-      const start = api.labels?.(s, s === 'b' ? regionB : undefined) ?? null;
-      return { side: s, response, shown: ok(response) ? branchLabels(response.rows, start ?? 'loop') : null, elapsedMs: performance.now() - t0, hex, byteCount: x.bytes.length, archKey: x.arch,
+      const src = s === 'b' ? srcB : api.srcA?.() ?? null;
+      return { side: s, response, shown: ok(response) ? branchLabels(response.rows, src) : null, elapsedMs: performance.now() - t0, hex, byteCount: x.bytes.length, archKey: x.arch,
         archTitle: api.archTitle(x.arch, !!item?.experimental), experimental: !!item?.experimental,
-        inputMode: s === 'a' ? state.mode : state.bMode, start };
+        inputMode: s === 'a' ? state.mode : state.bMode };
     };
     const a = await side(input.a, 'a');
     if (!current()) return null;

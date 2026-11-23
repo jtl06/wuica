@@ -28,7 +28,7 @@ import { createRegionChip, createLoopChip } from './region-chip.js';
 import { replacesText } from './loop-find.js';
 import { createKeys } from './keys.js';           // keyboard shortcuts, the ? overlay
 import { createABCpus } from './ab-cpus.js';       // A–B on every checked CPU
-import { branchLabels, startLabel } from './branch-label.js'; // branch targets as labels in the uop table
+import { branchLabels, analyzedLines } from './branch-label.js'; // branch targets as labels in the uop table
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -727,7 +727,7 @@ function draw() {
 
 async function machineCode(id) {
   const text = el.code.value;
-  pastedSource = null; regionChip.show(null); loopChip.show(null); regionA = null;
+  pastedSource = null; regionChip.show(null); loopChip.show(null); srcA = null;
   if (state.mode === 'hex') {
     const p = parseHexInput(text);
     if (!p.ok) {
@@ -775,7 +775,7 @@ async function machineCode(id) {
   if (r.ok && r.bytes.length === 0) items.push({ line: null, column: null, severity: 'error', message: 'No machine code' });
   if (r.ok && r.bytes.length && assembler.mock) items.push({ line: null, column: null, severity: 'note', message: 'mock assembler' });
   if (items.length) showMessages(items); else clearMessages();
-  if (r.ok && r.bytes.length) { regionChip.show(r.region ?? null, text); loopChip.show(r, text); pastedSource = r.source ? { ...r.source, hex: toHex(r.bytes) } : null; regionA = r.region ?? null; }
+  if (r.ok && r.bytes.length) { regionChip.show(r.region ?? null, text); loopChip.show(r, text); pastedSource = r.source ? { ...r.source, hex: toHex(r.bytes) } : null; srcA = analyzedLines(text, r); }
   else if (r.choosable) loopChip.show(r, text); // the pick does not assemble: "whole" (or another loop) stays reachable
   return r.ok && r.bytes.length ? r.bytes : null;
 }
@@ -834,7 +834,6 @@ async function run({ auto = false } = {}) {
   const archKey = state.arch;
   let opts = options();
   const item = archItems.get(archKey);
-  const text0 = el.code.value; // (the label of the block's start, for its branch targets)
   let bytes;
   inflight = { id, key };
   if (state.mode === 'asm') setBusy(true, { defer: true }); // a long assembly can be cancelled
@@ -877,7 +876,7 @@ async function run({ auto = false } = {}) {
     lastView = {
       response, request, elapsedMs, hex, byteCount: bytes.length, inputMode: state.mode,
       archKey, archTitle: archTitle(archKey, item.experimental), experimental: item.experimental,
-      shown: response && !response.error && Array.isArray(response.rows) ? branchLabels(response.rows, blockLabel('a', text0) ?? 'loop') : null,
+      shown: response && !response.error && Array.isArray(response.rows) ? branchLabels(response.rows, srcA) : null,
     };
     lastRunKey = key;
     draw();
@@ -993,15 +992,8 @@ function sweepSide({ auto = true } = {}) {
   const sv = abView();
   if (sv) panels.update({ hex: sv.hex, arch: sv.archKey, options: options(), elapsedMs: sv.elapsedMs, response: sv.response }, { auto });
 }
-// the label of a block's start in the code of side s (assembly), for its branch targets; null for machine code
-// region: the marked region the block is (asm-regions.js), or null: then the label in front of the region's code
-function blockLabel(s, text, region = s === 'a' ? regionA : null) {
-  const asm = s === 'b' ? state.bMode === 'asm' : state.mode === 'asm';
-  const t = text ?? (s === 'b' ? ab?.getB().text : el.code.value);
-  if (!asm) return null;
-  return startLabel(region?.line ? t.split('\n').slice(region.line).join('\n') : t);
-}
-let regionA = null; // the marked region of side A's last assembly (a block's start label is the region's)
+// the lines of side A's analyzed assembly (branch-label.js: its labels for the branch targets), or null (machine code)
+let srcA = null;
 document.addEventListener('wuica:ab-side', (e) => {
   const s = e.detail === 'b' ? 'b' : 'a';
   if (s === abSide) return;
@@ -1114,7 +1106,7 @@ function setupFeatures() {
     replaced,
     drawn: (body, view) => abSlots.decorate(body, view),
     cpusBox: abCpus.box, redraw: () => { if (lastView?.ab) { draw(); updateABCpus(lastView.ab, { auto: true }); } },
-    labels: (s, region) => blockLabel(s, undefined, region),
+    srcA: () => srcA,
     state, el: { code: el.code, body: el.body, toolbar: el.toolbar }, archItems: () => archItems, archTitle, ensureAssembler: assemblerForRun, ensureTable,
     machineCodeA: machineCode, changed, writeControls,
     getA: () => ({ mode: state.mode, syntax: state.syntax, text: el.code.value }),
