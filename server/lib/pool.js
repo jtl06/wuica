@@ -18,6 +18,11 @@ function failure(error, extra = {}) {
   return { code: 3, error, stderr: [{ text: error }], ...extra };
 }
 
+// The failure of a job that ran out of the server's time budget (limitMs).
+export function timeoutFailure(limitMs) {
+  return failure(`the analysis took longer than ${(limitMs / 1000).toString()} s, the limit of this server`, { timedOut: true });
+}
+
 export class Pool {
   #size; #maxQueue; #timeoutMs; #workerData; #log;
   #slots = [];          // {worker, ready, job, timer, started}
@@ -41,6 +46,7 @@ export class Pool {
   get queued() { return this.#queue.length; }
   get busy() { return this.#slots.filter((s) => s?.job).length; }
   get ready() { return this.#slots.filter((s) => s?.ready).length; }
+  get idle() { return this.#slots.filter((s) => s?.ready && !s.job).length; }
 
   #spawn(i) {
     return new Promise((resolve, reject) => {
@@ -95,14 +101,15 @@ export class Pool {
   }
 
   // Resolves to the job's message {result, meta}; never rejects except with BusyError (queue full) or when closed.
-  run(op, args) {
+  // timeoutMs: this job's budget, if less than the server's (a part of a compare gets what is left of the whole one's).
+  run(op, args, { timeoutMs = this.#timeoutMs } = {}) {
     if (this.#closed) return Promise.reject(new BusyError(5));
     if (this.#queue.length >= this.#maxQueue) {
       this.stats.rejected++;
       return Promise.reject(new BusyError(Math.min(30, Math.max(1, Math.ceil((this.#queue.length * this.#avgRunMs) / this.#size / 1000)))));
     }
     return new Promise((resolve) => {
-      this.#queue.push({ id: this.#nextId++, op, args, resolve, enqueued: performance.now() });
+      this.#queue.push({ id: this.#nextId++, op, args, resolve, enqueued: performance.now(), timeoutMs: Math.min(timeoutMs, this.#timeoutMs) });
       this.#pump();
     });
   }
@@ -114,7 +121,7 @@ export class Pool {
       const job = this.#queue.shift();
       slot.job = job;
       slot.started = performance.now();
-      slot.timer = setTimeout(() => this.#timeout(i, slot), this.#timeoutMs);
+      slot.timer = setTimeout(() => this.#timeout(i, slot), Math.max(1, job.timeoutMs));
       slot.worker.postMessage({ id: job.id, op: job.op, args: job.args });
     }
   }
@@ -149,8 +156,7 @@ export class Pool {
   #timeout(i, slot) {
     if (this.#slots[i] !== slot || !slot.job) return;
     this.stats.timeouts++;
-    const s = (this.#timeoutMs / 1000).toString();
-    this.#finish(slot, failure(`the analysis took longer than ${s} s, the limit of this server`, { timedOut: true }), {}, { timedOut: true });
+    this.#finish(slot, timeoutFailure(this.#timeoutMs), {}, { timedOut: true });
     slot.ready = false;
     this.#slots[i] = null;
     slot.worker.terminate().catch(() => {});

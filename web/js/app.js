@@ -62,6 +62,7 @@ let wasmModule = null;  // the compiled analyzer, shared by every worker
 let uarchBytes = null;
 let pool = null;        // the worker pool (pool.js): made when a view with many analyses first needs it
 let ready = false;
+let warmedUp = false; // the analyzer's worker ran its warm-up block (once, after the first result: engine-rpc.js)
 let runSeq = 0;
 let busy = false;
 let lastView = null;
@@ -753,6 +754,7 @@ async function run({ auto = false } = {}) {
       const n = checked.length > 1 && !state.ab ? ` · ${checked.length} CPUs` : '';
       if (tell) flash(`${Number(response.tp).toFixed(2)} cycles/iteration · ${archKey}${n}${response.mock ? ' (mock data)' : ` · ${elapsedMs < 10 ? elapsedMs.toFixed(1) : Math.round(elapsedMs)} ms`}`, { ms: 6000 });
       panels.update({ hex, arch: archKey, options: opts, elapsedMs, response }, { auto });
+      if (!warmedUp && engine.warmUp) { warmedUp = true; setTimeout(() => engine.warmUp(archKey), 0); }
     } else if (tell) {
       flash('analysis failed', { error: true });
     }

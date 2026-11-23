@@ -16,6 +16,7 @@ export const DEFAULTS = Object.freeze({
   analyzerMemoryMb: 2048,     // maximum memory of the analyzer's WebAssembly instance (the module itself has none: 4 GB)
   recycleMemoryMb: 256,       // a worker whose analyzer grew by more than this (wasm memory never shrinks) is replaced
   warm: true,                 // load every instruction table and the assembler before a worker takes jobs
+  splitCompare: true,         // spread a compare over idle workers (lib/facade.js); false: a compare is one job
   rateBurst: 60,              // token bucket per client IP (0 = no rate limit)
   ratePerMinute: 120,
   compareCost: 3,             // tokens a /api/compare (or compare_archs call) costs; everything else costs 1
@@ -28,7 +29,7 @@ const ENV = {
   host: 'WUICA_HOST', port: 'WUICA_PORT', workers: 'WUICA_WORKERS', maxQueue: 'WUICA_MAX_QUEUE', timeoutMs: 'WUICA_TIMEOUT_MS',
   maxBodyBytes: 'WUICA_MAX_BODY_BYTES', maxSourceBytes: 'WUICA_MAX_SOURCE_BYTES', maxInstructions: 'WUICA_MAX_INSTRUCTIONS',
   maxMinIterations: 'WUICA_MAX_MIN_ITERATIONS', maxMinCycles: 'WUICA_MAX_MIN_CYCLES', analyzerMemoryMb: 'WUICA_ANALYZER_MEMORY_MB',
-  recycleMemoryMb: 'WUICA_RECYCLE_MEMORY_MB', warm: 'WUICA_WARM', rateBurst: 'WUICA_RATE_BURST', ratePerMinute: 'WUICA_RATE_PER_MINUTE',
+  recycleMemoryMb: 'WUICA_RECYCLE_MEMORY_MB', warm: 'WUICA_WARM', splitCompare: 'WUICA_SPLIT_COMPARE', rateBurst: 'WUICA_RATE_BURST', ratePerMinute: 'WUICA_RATE_PER_MINUTE',
   compareCost: 'WUICA_COMPARE_COST', trustCfHeader: 'WUICA_TRUST_CF_HEADER', shutdownGraceMs: 'WUICA_SHUTDOWN_GRACE_MS', log: 'WUICA_LOG',
 };
 

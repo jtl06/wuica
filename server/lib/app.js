@@ -86,7 +86,7 @@ function index() {
 export async function createApp(options = {}) {
   const cfg = resolveConfig(options);
   const log = cfg.log ? (o) => process.stdout.write(JSON.stringify({ time: new Date().toISOString(), ...o }) + '\n') : () => {};
-  const local = await createWuica(cfg.dataDir ? { dataDir: cfg.dataDir } : {});
+  const local = await createWuica({ threads: 1, ...(cfg.dataDir ? { dataDir: cfg.dataDir } : {}) });
   const pool = new Pool({
     size: cfg.workers, maxQueue: cfg.maxQueue, timeoutMs: cfg.timeoutMs, log,
     workerData: {
@@ -298,7 +298,7 @@ export async function createApp(options = {}) {
     }
     res.on('finish', () => {
       const entry = { method: req.method, path: url.pathname.slice(0, 200), status: res.statusCode, ms: Math.round((performance.now() - t0) * 10) / 10 };
-      for (const k of ['arch', 'instructions', 'bytes', 'code', 'tool', 'rpc', 'queueMs', 'runMs', 'timedOut', 'rateLimited', 'busy', 'error']) {
+      for (const k of ['arch', 'instructions', 'bytes', 'code', 'tool', 'rpc', 'queueMs', 'runMs', 'parts', 'timedOut', 'rateLimited', 'busy', 'error']) {
         if (ctx[k] !== undefined) entry[k] = typeof ctx[k] === 'number' && k.endsWith('Ms') ? Math.round(ctx[k] * 10) / 10 : ctx[k];
       }
       log(entry);

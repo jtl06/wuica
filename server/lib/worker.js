@@ -10,7 +10,7 @@ import { installWasmLimits, getAnalyzerModule, RawInstance, wasmMemoryBytes } fr
 
 const cfg = workerData;
 installWasmLimits(cfg.analyzerMemoryMb * 2 ** 20);
-const { createWuica, normalizeHex } = await import('wuica');
+const { createWuica, normalizeHex, WARM_HEX } = await import('wuica');
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -18,12 +18,18 @@ const MAX_INSTR_LEN = 15; // bytes
 
 let w;
 try {
-  w = await createWuica(cfg.dataDir ? { dataDir: cfg.dataDir } : {});
+  // one thread: the pool's workers are the server's parallelism (a compare is spread over them by the facade)
+  w = await createWuica({ threads: 1, ...(cfg.dataDir ? { dataDir: cfg.dataDir } : {}) });
   if (cfg.warm) {
     for (const a of w.archs()) {
       const r = await w.analyze(a.id, { hex: '90' });
       if (r.code !== 0) throw new Error(`warm-up on ${a.id} failed: ${r.error}`);
     }
+    // V8 compiles the module's functions when first called and optimizes the hot ones later: one analysis of a
+    // 482-instruction block (~10 ms) gets the simulator optimized before the first large block (docs/PORTING.md, "Speed")
+    // (not required: a data directory without SKL, or a failure, only leaves the worker cold)
+    const first = w.archs()[0]?.id;
+    if (first) await w.analyze(w.resolveArch('SKL') ? 'SKL' : first, { hex: WARM_HEX }).catch(() => {});
     const a = await w.assemble('nop');
     if (a.code !== 0) throw new Error(`warm-up of the assembler failed: ${a.error}`);
   }
@@ -124,8 +130,10 @@ const ops = {
     const bytes = r.code === 0 ? (r.hex ?? normalizeHex(req.hex) ?? '').length / 2 : s.bytes ?? null;
     return { result: r, meta: { instructions, bytes } };
   },
-  async compare({ req }) {
-    const first = Array.isArray(req?.archs) && req.archs.length ? req.archs[0] : undefined;
+  // sizeArch (a part of a compare that the facade spread over several workers): the microarchitecture whose decoder
+  // counts the instructions for the limit, the same for every part (that of the whole request's first one)
+  async compare({ req, ...rest }) {
+    const first = 'sizeArch' in rest ? rest.sizeArch : Array.isArray(req?.archs) && req.archs.length ? req.archs[0] : undefined;
     const chip = first === undefined ? defaultChip : chipOf(first);
     const s = await checkSize(req, chip);
     if (s.failure) return { result: s.failure, meta: { instructions: s.instructions ?? null, bytes: s.bytes ?? null, limit: true } };
