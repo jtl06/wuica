@@ -10,7 +10,7 @@ before it. Legend as in [qa-r1.md](qa-r1.md): **ok**, **fixed** (commit), **open
 |---|---|
 | `wuica:details_fuzz` (crates/wuica/tests/details_fuzz.rs, new) | `"details": true` against the rest of the response: 3,000 random blocks of the fuzzer (all 15 CPUs, random options, 3 % with a trace; `WUICA_DETAILS_FUZZ_SEED`, `_BLOCKS`) and 10 odd inputs × 15 CPUs (empty, undecodable, one instruction, `minIterations` 0 and 1 with `minCycles` 0, `jmp $`, a divide, pointer chasing with a trace, 9,000 bytes, the SHA-256 showcase). Invariants: the response without `details` is byte-identical; one detail row per row, `null` exactly for merge/sync rows; offsets are the alignment offset plus the lengths before; the port set is the one an independent computation from the rows' `portData` finds (Facile's unions of two sets), `uops / ports = tp` = the `Ports` limit, its per-row uops sum to its uops and equal each row's `portData` uops inside the set; a row's uops in the uop table run only on the allowed ports of its `uopList` (with the macro-fused branch's), `Exec.` = its uops (fewer only for eliminated moves), `Div` = its uops' `divCycles`; the issue slots add up to width × cycles, the per-cycle lists agree with the slots and with `"."`, the issued uops per iteration are the table's `Issued`, and the window's cycles per iteration are the throughput (at most 1 % of blocks without a trace may miss, see D1); plus the pointer-chasing test of D1 |
 | `interfaces` (tests-js/interfaces.mjs, extended) | every 5th random case also with `details: true` through the library, the module (web/js/engine.js), the native CLI and the npm CLI (`-details`), REST (with `insights` against the library's `insights()` + `detailInsights()`) and both MCP servers (`details: true`, against `summarize()`); `compare` with arch lists and all CPUs through the library with 1 and 4 threads, the npm CLI (`-arch A,B`, `-threads 1`, `-threads 3`, `WUICA_THREADS=2`), REST with the split compare and with `WUICA_SPLIT_COMPARE=0` (a second server), and both MCP servers, every row equal to the single analysis; `what_if` through the library and both MCP servers |
-| `web_qa2_browser` (tests-js/web_qa2_browser.mjs, new; 53 checks) | the URL state with each view open (bound, try, bytes, deps, trace, a selected row and its card) and all at once on SKL, ADL-P, ZEN3, ICX: after a reload and in a new tab (the copied link) the same result, views, selection, card and texts; an old link (`cmpcpu=1`) with two views; the bound view's slots against the module in Node; A–B mode with every view open, and back; keyboard only (Enter/Space on each view's summary, ArrowDown + Enter on the uop table for the card, Escape); both themes × 9 widths 320–2560 with every view and a card open; SHA-256 with every view, the trace and a card: no long task ≥ 100 ms; the links (only the site, GitHub repositories of the project and of uiCA, uops.info; the accuracy page) and the page text (no personal website, nothing about a permission); a Compiler Explorer import from the recorded responses: cost per source line, `src=1` in the link, asm → hex → asm keeps text and lines, the link reopened in a new tab |
+| `web_qa2_browser` (tests-js/web_qa2_browser.mjs, new; 55 checks; passes with three copies at once) | the trace's issue strip against the module's log of the trace's cycles (pointer chasing on ADL-P, chain on SKL); the URL state with each view open (bound, try, bytes, deps, trace, a selected row and its card) and all at once on SKL, ADL-P, ZEN3, ICX: after a reload and in a new tab (the copied link) the same result, views, selection, card and texts; an old link (`cmpcpu=1`) with two views; the bound view's slots against the module in Node; A–B mode with every view open, and back; keyboard only (Enter/Space on each view's summary, ArrowDown + Enter on the uop table for the card, Escape); both themes × 9 widths 320–2560 with every view and a card open; SHA-256 with every view, the trace and a card: no long task ≥ 100 ms; the links (only the site, GitHub repositories of the project and of uiCA, uops.info; the accuracy page) and the page text (no personal website, nothing about a permission); a Compiler Explorer import from the recorded responses: cost per source line, `src=1` in the link, asm → hex → asm keeps text and lines, the link reopened in a new tab |
 
 ## Counts
 
@@ -22,11 +22,13 @@ before it. Legend as in [qa-r1.md](qa-r1.md): **ok**, **fixed** (commit), **open
   throughput by more than two cycles over the window, 14 % by more than 10 %; after it 0.7 % without a trace (142 of 20,000,
   seed 7, by the 3 % criterion).
 - The page's examples (14) × 15 CPUs with details: 63 of 210 off by more than 10 % before D1's fix, 0 after.
-- Interfaces: 600 cases (seed 20261124): 5,194 checks, 0 differences, of them 122 with details through 7 interfaces, 27
-  compares through 9 paths, 23 what-ifs through 3. `check.sh full` runs 150 cases (seed 1).
+- Interfaces: 600 cases (seed 20261124), on the final tree: 5,194 checks, 0 differences, of them 122 with details through 7
+  interfaces, 27 compares through 9 paths, 23 what-ifs through 3. `check.sh full` runs 150 cases (seed 1): 2,649 checks.
 - SHA-256 compare (2,949 instructions, all 15 CPUs): library with 1 and 6 threads, a second compare on warm threads,
   REST split (3 workers) and unsplit: identical; 483 / 221 / 239 / 369 ms.
-- Page: 53 checks in `web_qa2_browser`, 0 failed; the existing browser suites pass unchanged (`check.sh full`).
+- Page: 55 checks in `web_qa2_browser`, 0 failed; the existing browser suites pass unchanged.
+- `scripts/check.sh full --chrome-jobs 2` on the final tree: 61 suites passed (the 59 of main, plus `wuica:details_fuzz`
+  and `web_qa2_browser`), 2 min 23 s.
 
 ## Inventory
 
@@ -38,7 +40,7 @@ before it. Legend as in [qa-r1.md](qa-r1.md): **ok**, **fixed** (commit), **open
 | per-uop ports vs uop table | details_fuzz | ok; note D3 (`portData` vs `uopList`) |
 | instruction card, Notes badges | web_qa2_browser (keyboard, URL `sel`, reload, merge/sync and `X` rows by hand: no card for merge uops, a card from the response for `X`) | ok |
 | bound view: port set, slots bar | web_qa2_browser (slots vs Node; ptrchase on ADL-P: 100 % issued before D1's fix) | ok after D1 |
-| trace issue strip | details_fuzz (with a trace, the log is within the trace's cycles) | ok |
+| trace issue strip | details_fuzz (with a trace, the log is within the trace's cycles); web_qa2_browser (the page's strip is the module's log); web_details (the log against the fused uops the trace issues) | ok; by design it can disagree with the bound view's slots (D1) |
 | cost per source line (`src=1`) | web_qa2_browser with the recorded Compiler Explorer responses | ok; note N5 |
 | asm ↔ hex of an import | web_qa2_browser | ok |
 | REST `insights` | interfaces (122 cases with details) | ok |
@@ -67,18 +69,26 @@ Two candidate fixes were tried: (1) the retirement cycles of the same rounds as 
 equal the throughput, but the issued uops per iteration are too many (the issue is still in warm-up inside the window;
 1,706 of 20,000 blocks off): rejected. (2) Kept: with details and without a trace, if the window is not steady (its cycles
 per iteration are not within 3 % and two cycles of the throughput), the issue log comes from a longer simulation (8, then
-64 times `minCycles`, bounded at about 10^6 instructions); the response's other fields are those of the normal
+64 times `minCycles`, bounded at 250,000 instructions simulated, and skipped when `minIterations` already ran that long); the response's other fields are those of the normal
 simulation, byte for byte (tested). With `includeTrace` the log stays that of the trace's cycles (the trace's issue strip
 needs them), so a trace's strip can show warm-up while the bound view shows the steady state. Cost: only for those blocks,
-one or two more simulations (the page's examples: under 2 ms; at most about 0.25 s natively). Shared code touched:
-`crates/wuica-core/src/analyze.rs` (3 lines after the simulation), `details.rs` (two functions).
+one or two more simulations (the page's examples: under 2 ms; a few tens of ms natively at most). Shared code touched:
+`crates/wuica-core/src/analyze.rs` (3 lines after the simulation), `details.rs` (two functions); a854a21 bounds its cost
+(counts `minIterations`, skips a rerun that would be the same simulation, 250,000 instructions; the first result stays in
+memory during the rerun). The test fails without the fix (checked by disabling the `if`: SKL pointer chasing 65 cycles / 60
+iterations for a throughput of 4; 587 of 3,000 random blocks not steady).
+
+A judgment call, for the owner to confirm: it changes `details.issue` values (never the default analysis, which is
+byte-identical with and without details) and touches `analyze.rs` in model-r8's crate. To revert: drop the `if
+request.details && !request.include_trace { ... }` after the simulation in `analyze.rs` (the functions in details.rs are
+then unused), and the 1 % assertion and `issue_slots_are_of_the_steady_state` in details_fuzz.rs.
 
 ### Open findings and notes
 
 - **D2 (note, documented in WASM-API.md).** With `simpleFrontEnd`, `details.issue.slots.issued` counts unfused uops (the
-  simple front end delivers them one by one, as uiCA), so it can exceed the uop table's `Issued` (fused). 199 of 3,000 random
-  blocks before the doc said "fused-domain uops". The page's slot shares are right; the absolute "issued per iteration" is
-  of a different unit than the table. Reproduction: `wuica -json -details -simpleFrontEnd 4C0397B0010000C5A059E9488B9F9800000049C7C599000000`:
+  simple front end delivers them one by one, as uiCA), so it can exceed the uop table's `Issued` (fused): in 199 of 3,000
+  random blocks. WASM-API.md said "fused-domain uops"; it now says so. The page's slot shares are right; only the absolute
+  "issued per iteration" is in a different unit than the table's. Reproduction: `wuica -json -details -simpleFrontEnd 4C0397B0010000C5A059E9488B9F9800000049C7C599000000`:
   issued 5.0, table 4.
 - **D3 (note, documented).** For cpuid, `ret imm16`, in/out/ins, enter and wrmsr, `portData` (the table's, shown on the card
   as `1*p..` and used by the `Ports` limit, as in uiCA) lists uops that `uopList` and the simulation do not have: uiCA's
