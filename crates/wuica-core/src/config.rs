@@ -141,6 +141,13 @@ pub struct UArchConfig {
     pub same_reg_move_eliminated: bool,
     #[serde(rename = "rmwForwardDelay")]
     pub rmw_forward_delay: i64,
+    /// AMD op cache: an instruction with more macro-ops than this (if > 0) is microcoded (`microcodeOps`; 0 in data exported
+    /// before the field existed)
+    #[serde(rename = "microcodeOps", default)]
+    pub microcode_ops: i64,
+    /// macro-ops that the microcode sequencer delivers per cycle (`microcodeWidth`)
+    #[serde(rename = "microcodeWidth", default)]
+    pub microcode_width: i64,
 }
 
 impl UArchConfig {

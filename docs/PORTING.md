@@ -100,15 +100,17 @@ added to the list in `ci/make-data-asset.sh`.
 
 ## The reference
 
-The reference is [jtl06/uiCA](https://github.com/jtl06/uiCA), branch `crash-fixes`, commit `f85fcbd`: branch `perf` (`adf62ae`,
-whose output is identical to that of `8f24bd3`) plus the fixes of the inputs on which uiCA raised an exception
-(`docs/DEVIATIONS.md`). All fixtures in `fixtures/generated` are exported from it.
+The reference is [jtl06/uiCA](https://github.com/jtl06/uiCA), branch `improve-r6`, commit `21b0b17`: the model changes of
+round 6 (`9bed908`, see `docs/ACCURACY.md`) merged with branch `crash-fixes` (`f85fcbd`: branch `perf` (`adf62ae`, whose output
+is identical to that of `8f24bd3`) plus the fixes of the inputs on which uiCA raised an exception, `docs/DEVIATIONS.md`). All
+fixtures in `fixtures/generated` are exported from it (`tools/export_all.sh`, and the set `more` with `REPLAY=`).
 
 - Read: `reference/uiCA/*.py` is still `8f24bd3`; the fixed code differs from it by the commits listed in `docs/DEVIATIONS.md`
   (`git diff adf62ae f85fcbd -- uiCA.py` in the fork). The decoder's C code that produces the decoded records is mirrored in
   `crates/wuica-xed/shim/wuica_xed.c`.
 - Run: on the host `aethia` (`ssh aethia`), the fixed reference is installed in `~/uica-zen/uiCA-crashfix` (branch `crash-fixes`;
-  the unfixed one in `~/uica-zen/uiCA-perf`; never modify either), with the Python interpreter `~/uica-zen/venv/bin/python`. To add debug output, copy the directory (e.g. to `~/uicaspeed/<name>/uiCA`, 60 MB) and
+  the unfixed one in `~/uica-zen/uiCA-perf`; the reference of this branch, `improve-r6`, in `~/uica-zen/uiCA-r6`; never modify
+  any of them), with the Python interpreter `~/uica-zen/venv/bin/python`. To add debug output, copy the directory (e.g. to `~/uicaspeed/<name>/uiCA`, 60 MB) and
   edit the copy. Example: `cd ~/uica-zen/uiCA-perf && ~/uica-zen/venv/bin/python -c "import xed, uiCA; ..."`; the functions take
   the list returned by `xed.disasHex(hexString, chip=config.XEDName)`.
 - aethia is also a measurement machine. A single short Python run is fine. Anything CPU-heavy (more than a few seconds, or
