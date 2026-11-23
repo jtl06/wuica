@@ -38,7 +38,7 @@ problems"); **note** works as designed but worth knowing.
 | NUL characters | page | ok (replaced by spaces) |
 | `.code16` / `.code32` | page | note: assembled in that mode, analyzed as 64-bit code without a warning |
 | huge blocks: `.rept 100000 nop`, 70,000 instructions as hex | page | ok (about 1 s; the page stays responsive except for the assembly itself) |
-| `.rept 1000000` and larger | page | **fixed** (de1676d, c0b28f2): the analyzer runs out of memory (wasm32, about 3.7 GB) and said only "crashed (unreachable)"; it now says out of memory. The page assembled up to 64 MiB in a second run on its own thread (7 s frozen for 10 MB); it now stops at 1 MiB (as the npm package) with "Too much machine code" |
+| `.rept 1000000` and larger | page | **fixed** (de1676d, c0b28f2): the analyzer runs out of memory (wasm32, about 3.7 GB) and said only "crashed (unreachable)"; it now says out of memory. The page assembled up to 64 MiB in a second run on its own thread (measured: 8.2 s without a frame for `.rept 10000000`, then the analyzer ran out of memory on the 10 MB); it now stops after the first run at 1 MiB (as the npm package) with "Too much machine code" (the first run alone is estimated at half of that; not measured in the page) |
 | `.zero 1000000000`, `.p2align 30`, `.skip 1e8` | page, npm | ok: "the assembler failed: Allocation failed", the assembler restarts |
 | bad hex (`zz`, odd digits, `0x` alone, unicode) | page | ok: message with the line |
 | bytes that do not decode (`ff ff ff ff`, `48`) | page, all interfaces | ok: "no instructions found" |
@@ -53,7 +53,7 @@ problems"); **note** works as designed but worth knowing.
 | "N changed" summary, reset | page (existing web_browser suite) | ok |
 | out-of-range values in the page | url-state fuzz; clamped (0–63, 1–10000, 1–100000) | ok |
 | extreme values in the library/CLI/REST (negative, 2^62, 2^31 iterations) | npm library, native CLI, REST | ok: no hang; huge iteration counts end in an out-of-memory trap (now named as such) after 2–4 s; REST caps minIterations 1000, minCycles 20000 |
-| wrong option types / unknown initPolicy | library, REST, npm CLI | **fixed** (e229cf7): were code 3 ("invalid request: invalid type...", REST 200), now code 1 (REST 400) as the contract's table says for bad requests |
+| wrong option types / unknown initPolicy | library, REST, npm CLI | **changed** (e229cf7, a decision: see below): were code 3 ("invalid request: invalid type...", REST 200), now code 1 (REST 400) |
 | loop / unroll mode | every result shows the tag; differential tests compare `mode` | ok |
 
 ### CPUs and results
@@ -83,6 +83,9 @@ problems"); **note** works as designed but worth knowing.
 | widths 320–2560 | page: 11 widths × both themes with a result, the CPU table and the text views open: no horizontal scrolling | ok |
 | keyboard | page: Ctrl/⌘+Enter, space on a CPU box (focus moves, keyboard focus stays), Escape closes the options | ok |
 | errors leave the page usable | page: bad hex, bad asm, empty, undecodable, huge | ok |
+| live mode toggle; Cancel of a running analysis | existing `web_browser.mjs` (live typing, Cancel); `web_qa_browser.mjs` and `web_interfaces_browser.mjs` run with live off, `web_layout_browser.mjs` with live on | ok |
+| hide empty columns, show all rows, copy buttons of the text views | existing `web_browser.mjs`, `web_layout_browser.mjs` (showcase rows) | ok |
+| 404 page, `/index.html` redirect, update note after a new deploy | existing `web_host_browser.mjs`, `web_browser.mjs` (second deploy, update note) | ok |
 | Compiler Explorer import | mocked: existing `web_godbolt.mjs`, `web_browser_ab.mjs` (recorded responses); one real import on the local build (a full-state link, gcc 8.2: 3 requests to godbolt.org; plus one short-link paste that showed the function picker) | ok |
 | service worker: first visit, reloads, `/index.html`, offline, a new deploy | existing `web_host_browser.mjs`, `web_browser.mjs` | ok; **fixed** a race in `web_host_browser.mjs` (6288a0c) that failed `check.sh full` under load: the test clicked Analyze while the run restored from the fragment was going, which cancels it (reproduced with CPU throttling ×15) |
 | worker pool | existing `web_pool*.mjs`; the cost column and the CPU table above | ok |
@@ -95,7 +98,8 @@ problems"); **note** works as designed but worth knowing.
 | npm CLI odd inputs: empty/blank/comment/label files, non-UTF-8, BOM, CRLF, `-raw` empty/missing, two inputs, bad numbers | by hand | ok, except: BOM **fixed** (ac191fa); empty machine code said "expected an even number of hex digits", **fixed** (6f1fcdf) |
 | native CLI odd inputs: no input, empty, `zz`, odd digits, `0x`, unknown arch/option, missing value, missing data dir, overflowing numbers | by hand | ok: one clear line on stderr, exit 1 |
 | server odd requests: invalid JSON, non-object bodies, wrong content type, 300 KB body, 64 KB hex, 20,000 instructions, `.rept 1000000`, unknown paths and methods, OPTIONS, text/plain errors, compare with bad/too many archs, MCP schema errors, unknown tool, 40-message batch | local server, about 60 requests | ok: no 500, no hang; limits answered with 400/413 |
-| server's own tests | `npm:server` (46 tests) | ok; they were not part of `check.sh` before |
+| server's own tests: `/healthz`, `/api/version`, limits, rate limit (per client IP, 429), robustness, MCP | `npm:server` (46 tests) | ok; they were not part of `check.sh` before |
+| uiCA's ablation variants (`CLX_noLSD`, `CLX_noMoveElim`, ...) and `includeTrace` | `interfaces.mjs` (library, module, native CLI, REST; the trace compared in full) | ok; note: `CLX_SimplePorts*` give "not supported: configurations with simplePortAssignment" everywhere |
 | live API (api.wuica.jacen.li) | about 20 requests, one at a time: health, version, archs, 8 random analyses, asm, text/plain, compare, assemble, MCP list and analyze | ok: identical to the local library; the live server still has the two behaviors fixed here (bad option value: code 3; BOM: assembler error) |
 | live site (wuica.jacen.li) | 3 page loads: version 0.1.3, build 794c0e17030d, analysis, service worker controls the page after a reload, "works offline", no console errors; reproduced the reported focus problem (checking ZEN3 keeps SKL in details and status line) | ok |
 
@@ -117,6 +121,15 @@ random requests. Differences in what they accept:
 - `GET /api/archs?fields=bogus` gives a list of empty objects (not an error). `POST /mcp` with invalid JSON gives the
   REST error object, not a JSON-RPC parse error (-32700).
 
+## A decision to confirm: bad option values are code 1 (e229cf7)
+
+The package's tests asserted code 3 for `initPolicy: "nonsense"` (and the npm CLI's exit status 3). The contract's
+table (packages/wuica/README.md) lists "unknown option or syntax" under code 1, and the module's own message for a
+wrong type started with "invalid request". e229cf7 checks the option values in the library: a wrong type or an
+unknown initPolicy is now code 1 (REST 400, CLI exit 1), and the README row says "bad option value". The two test
+assertions were changed (3 → 1). If code 3 was intended, reverting e229cf7 (and the two lines it added to
+`tests-js/interfaces.mjs` in the next commit) restores it.
+
 ## Open problems (not fixed here: larger changes or decisions)
 
 1. **The assembler runs on the page's thread.** A large `.rept` freezes the page while it assembles: `.rept 1000000` /
@@ -127,7 +140,7 @@ random requests. Differences in what they accept:
    7.6 KB per instruction (natively: 300,000 nops → 2.3 GB RSS) and more for long-latency loops (20,000 `div rcx` →
    2.6 GB of wasm memory; 50,000 → out of memory at about 3.7 GB). After such a block the page's analyzer worker keeps
    that memory until the page is reloaded (the server replaces a worker that grew by more than 256 MB; the page and
-   the pool do not). Suggestion: after an analysis, if `engine.memory()` is above, say, 512 MB, restart the worker
+   the pool have no such step: inferred from the code and WebAssembly's semantics, not measured in a browser). Suggestion: after an analysis, if `engine.memory()` is above, say, 512 MB, restart the worker
    (`engine.cancel()` does that; the data is reloaded lazily). Reproduction: hex mode, `48f7f1` repeated 20,000 times,
    Analyze, then look at the tab's memory.
 3. **No size limit for hex input in the page.** The page parses the text on its thread (210 KB of hex: 0.7 s) and
@@ -141,3 +154,23 @@ random requests. Differences in what they accept:
    refused or clamped in another; a single documented range (0–63, 1–10000, 1–100000, the page's) would be simpler.
 6. **Deploy:** the live site and API run the code before these fixes (checked: the focus problem, a bad option value
    giving code 3, a BOM failing); they change only with the next deploy.
+
+## Could not test
+
+- Other browsers (Firefox, Safari) and real phones: only headless Chrome 157 on macOS, with phone widths emulated.
+- The service worker update on the live site (no deploy was made); it is tested locally against a second build.
+- The new check tasks with `scripts/check.sh full --remote aethia` (not run; aethia has no Chrome, and `interfaces`
+  needs the server's `npm ci` there).
+- Load on the live API (on purpose: about 20 requests in total, one at a time).
+- The Compiler Explorer import against godbolt.org beyond two manual imports (by rule); the rest uses recorded
+  responses.
+
+## Files shared with other work
+
+Touched here and possibly changed elsewhere tonight: `web/js/app.js` (the "checked CPUs" block and the status line in
+`run()`, not the service-worker section), `web/js/assembler.js`, `web/js/compare.js`, `web/js/compare-view.js`
+(`drawCpus` only), `web/js/engine.js`, `web/js/url-state.js` (`encodeState`), `scripts/check.mjs` (three tasks, one
+argument), `tests-js/web_host_browser.mjs`, `tests-js/web_browser.mjs` (cleanup), `tests-js/web_layout_browser.mjs`
+(the CPU section). Not touched: trace.js, trace.css, render.js, ab.js, pool.js, godbolt*.js, the Rust crates. At the
+time of writing, the branches web-infra, asm-import and ci-setup had no commits beyond origin/main, so no overlap
+could be checked.
