@@ -40,6 +40,14 @@ fn canonicalize_into(instr_string: &str, out: &mut String) {
 fn format_number(v: f64, buf: &mut String) -> &str {
     use std::fmt::Write;
     buf.clear();
+    if v.fract() == 0.0 && v.abs() < 1e15 && !(v == 0.0 && v.is_sign_negative()) {
+        // an integer (most values): '{:.2}' gives its digits and ".00", which are removed (and "0" is shown as "")
+        if v == 0.0 {
+            return "";
+        }
+        write!(buf, "{}", v as i64).unwrap();
+        return buf;
+    }
     write!(buf, "{v:.2}").unwrap();
     let s = buf.trim_end_matches('0').trim_end_matches('.');
     if s == "0" {
