@@ -163,7 +163,7 @@ rule with rewritten registers, long FP chains; the extra set now has 42 blocks) 
 fixtures 4 of ZEN3 and 1 of ADL-P; extra fixtures 5 instruction and 10 simulation cases of ZEN3, plus the cases of the new blocks
 (30 instruction and 54 simulation cases per configuration); set `more`: 5 of ZEN3. `fixtures/decode_fixtures_extra.jsonl.gz` gained
 the decoder cases of the new blocks (the others are unchanged); of the tables only `uarch.json` changed (new configuration fields).
-CI needs a new data asset (`ci-data-v6`) with these files; `ci/data-asset.txt` still names `ci-data-v5`. Earlier sets: `crash-fixes`
+CI reads these files from the data asset `ci-data-v7` (`ci/data-asset.txt`; `ci-data-v6` has round 8's). Earlier sets: `crash-fixes`
 (`f85fcbd`) in `~/uicaspeed/wuica-fix-crash/final`; `improve-r6` in `~/projects/wuica-r6/r6m`; `improve-r7` in
 `~/projects/wuica-r7/t1`; `improve-r8` in `~/projects/wuica-r8/r8`.
 
