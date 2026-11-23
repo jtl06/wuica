@@ -275,8 +275,10 @@ export function createAB(api) {
   }
 
   // The messages are replaced only when there are new ones (no flicker while live mode re-runs).
+  let regionB = null; // the marked region of B's last assembly (its branch targets' label)
   async function machineCodeB(current) {
     const text = bCode.value;
+    regionB = null;
     if (state.bMode === 'hex') {
       const p = parseHexInput(text);
       if (!p.ok) { showB([{ line: p.line ?? null, severity: 'error', message: p.message }]); return null; }
@@ -290,6 +292,7 @@ export function createAB(api) {
     if (!assembler) { showB([{ severity: 'error', message: 'No assembler: use hex' }]); return null; }
     const r = await assembler.assemble(text, state.bSyntax);
     if (!current()) return null;
+    regionB = r.ok ? r.region ?? null : null;
     const items = [...r.diagnostics];
     if (r.ok && r.bytes.length === 0) items.push({ severity: 'error', message: 'No machine code' });
     if (r.ok && r.bytes.length && assembler.mock) items.push({ severity: 'note', message: 'mock assembler' });
@@ -333,7 +336,7 @@ export function createAB(api) {
         response = { error: e?.message ?? String(e) };
       }
       const item = api.archItems().get(x.arch);
-      const start = api.labels?.(s) ?? null;
+      const start = api.labels?.(s, s === 'b' ? regionB : undefined) ?? null;
       return { side: s, response, shown: ok(response) ? branchLabels(response.rows, start ?? 'loop') : null, elapsedMs: performance.now() - t0, hex, byteCount: x.bytes.length, archKey: x.arch,
         archTitle: api.archTitle(x.arch, !!item?.experimental), experimental: !!item?.experimental,
         inputMode: s === 'a' ? state.mode : state.bMode, start };

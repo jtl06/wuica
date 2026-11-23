@@ -263,8 +263,8 @@ function paintDerived() {
 function runKey() {
   return JSON.stringify([state.mode, state.mode === 'asm' ? state.syntax : '', el.code.value, state.arch, options(), ab?.key() ?? '']);
 }
-// drawn: a result was just drawn; if its input changed while it ran (in A–B mode, e.g. B edited while A and B ran), it
-// dims at once (style.css: otherwise only after a pause in typing)
+// drawn: an A–B result was just drawn; if its input changed while it ran (e.g. B edited while A and B ran), it dims at
+// once (style.css: otherwise only after a pause in typing, as single mode's result does)
 function paintStale({ drawn = false } = {}) {
   const stale = !!lastView && runKey() !== lastRunKey;
   el.body.classList.toggle('stale', stale);
@@ -677,12 +677,12 @@ function draw() {
   insight.decorate(el.body, lastView);
   traceLink.decorate(el.body, lastView, { onUi });
   views.decorate(el.body, lastView);
-  paintStale({ drawn: true });
+  paintStale();
 }
 
 async function machineCode(id) {
   const text = el.code.value;
-  pastedSource = null; regionChip.show(null);
+  pastedSource = null; regionChip.show(null); regionA = null;
   if (state.mode === 'hex') {
     const p = parseHexInput(text);
     if (!p.ok) {
@@ -716,7 +716,7 @@ async function machineCode(id) {
   if (r.ok && r.bytes.length === 0) items.push({ line: null, column: null, severity: 'error', message: 'No machine code' });
   if (r.ok && r.bytes.length && assembler.mock) items.push({ line: null, column: null, severity: 'note', message: 'mock assembler' });
   if (items.length) showMessages(items); else clearMessages();
-  if (r.ok && r.bytes.length) { regionChip.show(r.region ?? null, text); pastedSource = r.source ? { ...r.source, hex: toHex(r.bytes) } : null; }
+  if (r.ok && r.bytes.length) { regionChip.show(r.region ?? null, text); pastedSource = r.source ? { ...r.source, hex: toHex(r.bytes) } : null; regionA = r.region ?? null; }
   return r.ok && r.bytes.length ? r.bytes : null;
 }
 
@@ -923,10 +923,14 @@ function sweepSide({ auto = true } = {}) {
   if (sv) panels.update({ hex: sv.hex, arch: sv.archKey, options: options(), elapsedMs: sv.elapsedMs, response: sv.response }, { auto });
 }
 // the label of a block's start in the code of side s (assembly), for its branch targets; null for machine code
-function blockLabel(s, text) {
+// region: the marked region the block is (asm-regions.js), or null: then the label in front of the region's code
+function blockLabel(s, text, region = s === 'a' ? regionA : null) {
   const asm = s === 'b' ? state.bMode === 'asm' : state.mode === 'asm';
-  return asm ? startLabel(text ?? (s === 'b' ? ab?.getB().text : el.code.value)) : null;
+  const t = text ?? (s === 'b' ? ab?.getB().text : el.code.value);
+  if (!asm) return null;
+  return startLabel(region?.line ? t.split('\n').slice(region.line).join('\n') : t);
 }
+let regionA = null; // the marked region of side A's last assembly (a block's start label is the region's)
 document.addEventListener('wuica:ab-side', (e) => {
   const s = e.detail === 'b' ? 'b' : 'a';
   if (s === abSide) return;
@@ -1038,7 +1042,7 @@ function setupFeatures() {
     replaced,
     drawn: (body, view) => abSlots.decorate(body, view),
     cpusBox: abCpus.box, redraw: () => { if (lastView?.ab) { draw(); updateABCpus(lastView.ab, { auto: true }); } },
-    labels: (s) => blockLabel(s),
+    labels: (s, region) => blockLabel(s, undefined, region),
     state, el: { code: el.code, body: el.body, toolbar: el.toolbar }, archItems: () => archItems, archTitle, ensureAssembler: assemblerForRun, ensureTable,
     machineCodeA: machineCode, changed, writeControls,
     getA: () => ({ mode: state.mode, syntax: state.syntax, text: el.code.value }),

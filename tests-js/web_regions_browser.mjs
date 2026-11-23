@@ -188,7 +188,7 @@ try {
       await until(() => document.querySelector('.tp .value') && instrRows().length && $('srcmap-row') && !$('srcmap-row').hidden && $('srcmap').open && document.querySelector('.sm-list'));
       const items = [...document.querySelectorAll('#srcmap .sm-list > li')].map((li) => li.innerText.replace(/\\s+/g, ' ').trim());
       const out = { rows: instrRows().length, chip: chip(), items, hint: document.querySelector('.sm-hint')?.textContent, messages: $('input-messages').textContent,
-        tabs: [...document.querySelectorAll('.view-tab')].map((b) => b.textContent) };
+        tabs: [...document.querySelectorAll('.view-tab')].map((b) => b.textContent), branch: instrRows().at(-1)?.cells[0].textContent };
       // a click on a line jumps to its costliest row: the table tab shows, the row flashes
       document.querySelector('#srcmap button.sm-l')?.click();
       await wait(50);
@@ -199,13 +199,15 @@ try {
       await done(() => $('run').click());
       [...document.querySelectorAll('.view-tab')].find((b) => b.textContent === 'source').click();
       await until(() => document.querySelector('.sm-list'));
-      out.whole = { rows: instrRows().length, items: [...document.querySelectorAll('#srcmap .sm-list > li')].map((li) => li.innerText.replace(/\\s+/g, ' ').trim()), hidden: $('srcmap-row').hidden };
+      out.whole = { rows: instrRows().length, items: [...document.querySelectorAll('#srcmap .sm-list > li')].map((li) => li.innerText.replace(/\\s+/g, ' ').trim()), hidden: $('srcmap-row').hidden,
+        branches: instrRows().map((tr) => tr.cells[0].textContent).filter((t) => /^j/.test(t)) };
       // hex mode: no source rows
       return out;`);
     check(r.rows === 6 && r.chip === '▣ region', 'gcc -g, the loop marked: its 6 instructions', JSON.stringify(r));
     check(r.items.length === 2 && /^3 .*dot\.c:3$/.test(r.items[0]) && /^4 .*dot\.c:4$/.test(r.items[1]) && r.messages === '', 'the source rows: dot.c:3 and dot.c:4', JSON.stringify(r.items));
     check(/line \d+ \d+%/.test(r.hint ?? ''), 'the summary hint names the costliest line', r.hint);
     check(r.jump.tab === 'table' && !r.jump.open && r.jump.flash, 'a click on a source line: the table tab, the row flashes', JSON.stringify(r.jump));
+    check(r.branch === 'jnz .L3' && r.whole.branches.join() === 'jle dot+0x23,jnz dot+0xb', 'branch targets as labels: the marked loop\'s own label; in the whole function, the function\'s label and the offset', JSON.stringify([r.branch, r.whole.branches]));
     check(r.tabs.at(-1) === 'source' && r.tabs.slice(0, -1).join() === 'table,bound,try,bytes,deps,mca,sweep,trace', 'the source tab comes last: the other tabs keep their places', JSON.stringify(r.tabs));
     check(r.whole.rows === 12 && !r.whole.hidden && r.whole.items.length === 2, 'the whole function: 12 instructions, lines 3 and 4', JSON.stringify(r.whole));
     await page.shot('regions-loc.png');
