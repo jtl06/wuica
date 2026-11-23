@@ -76,6 +76,9 @@ class Page {
       if (m.method === 'Log.entryAdded' && ['error', 'warning'].includes(m.params.entry.level)) p.problems.push(`log ${m.params.entry.level}: ${m.params.entry.text} ${m.params.entry.url ?? ''}`);
     });
     for (const d of ['Runtime', 'Log', 'Page', 'Network']) await p.cmd(`${d}.enable`);
+    // a compare panel or the cost column estimated over its time budget (from the main analysis's time, so on a slow machine
+    // also for the small blocks here) waits for a click on its run button; this suite does not test that, so click it
+    await p.cmd('Page.addScriptToEvaluateOnNewDocument', { source: `setInterval(() => { for (const b of document.querySelectorAll('.cmp-run, .ins-cost-status button')) b.click(); }, 20);` });
     await p.cmd('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile });
     return p;
   }

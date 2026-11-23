@@ -89,7 +89,7 @@ jobs:
           set +e
           scripts/check.sh full --jobs "$(nproc)" --chrome-jobs 1 --no-skip 2>&1 | tee target/check/output.txt
           status="${PIPESTATUS[0]}"
-          if ! grep -q '^check full: ' target/check/output.txt; then
+          if ! grep -Eq '^check full: (ok|FAILED)' target/check/output.txt; then
             { echo '### check full did not finish'; echo '```'; tail -n 60 target/check/output.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           fi
           exit "$status"
