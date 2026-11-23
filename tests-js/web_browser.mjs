@@ -211,7 +211,7 @@ try {
     check(/Mock mode/.test(r.notice), 'mock: the notice says so', r.notice);
     check(r.groups.length === 1 && r.groups[0] === 'by release date: SNB,IVB,HSW,BDW,SKL,KBL,SKX,CFL,CLX,ICL,TGL,ZEN3,RKL,ICX,ADL-P' && r.arch === 'SKL', 'mock: the microarchitecture menu', JSON.stringify(r.groups));
     check(r.examples === ',chain,loadstore,avx,stack,saxpy,dot1,dot4,popcnt,ptrchase,strlen,crc32,memcpy,gemm,synthetic,error' && r.exGroups === 'basics,classic loops,mock', 'mock: the examples menu', JSON.stringify([r.examples, r.exGroups]));
-    check(/^unofficial port of uiCA by Andreas Abel and Jan Reineke\. data from uops\.info\. v0\.1\.0-dev · LLVM 22\.1\.2 · Intel XED · build \S+$/.test(r.footer[0])
+    check(/^unofficial port of uiCA by Andreas Abel and Jan Reineke\. data from uops\.info\. v\d+\.\d+\.\d+(-\S+)? · LLVM 22\.1\.2 · Intel XED · build \S+$/.test(r.footer[0])
       && r.footer[1] === 'https://github.com/andreas-abel/uiCA https://www.uops.info/ https://github.com/jtl06/wuica' && r.footer[2] === 'Source on GitHub' && r.footer[3] === '', 'mock: the footer (credit, GitHub, versions; no license or font text)', JSON.stringify(r.footer));
     check(r.focusable && r.labelled.length === 0, 'mock: controls are focusable and labelled', JSON.stringify(r.labelled));
     check(r.empty === '', 'mock: empty state', r.empty);

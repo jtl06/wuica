@@ -211,6 +211,7 @@ export function renderResult(root, view) {
 
     const { table, notes } = uopTable(r, view.ui.hideEmpty ?? true); // empty columns are left out, as in uiCA's table
     out.push(row('uops',
+      h('div', { class: 'table-tools' }), // filled by other views (e.g. the cost toggle of insight-view.js); empty otherwise
       h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Uops per instruction, average per iteration',
         title: 'average uops per iteration' }, table),
       notes.size ? h('p', { class: 'legend' },
