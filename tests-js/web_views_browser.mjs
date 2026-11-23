@@ -263,6 +263,12 @@ try {
     check(/^add rax, qword ptr \[rsi\] uops\.info ↗ × ports 1\*p0156\+1\*p23 tp 0\.50 uops 2 · 1 fused · MITE 1 · 1 load lat RAX→RAX 1 · mem→RAX 3 · \[RSI\]→RAX 6 front 3 B @0$/.test(r.card)
       && /^https:\/\/www\.uops\.info\//.test(r.link) && r.sel, 'details: a click on a row shows its card', JSON.stringify(r));
     check(r.follow === '1' && r.closed && r.notes === 'M', 'details: the card follows the focus, Escape closes it; the notes keep their text', JSON.stringify(r));
+    // the accuracy link next to "limitations", and the numbers of the prototypes in their tooltips
+    const acc = await page.eval(`
+      const a = [...document.querySelectorAll('.top nav a')].find((x) => x.textContent === 'accuracy');
+      return { href: a?.href, prev: a?.previousElementSibling?.textContent, zen3: [...document.querySelectorAll('label.cpu')].find((l) => l.textContent.startsWith('ZEN3'))?.title };`);
+    const { ACCURACY_URL, accuracyNote } = await import('../web/js/archs.js');
+    check(acc.href === ACCURACY_URL && acc.prev === 'limitations' && acc.zen3.endsWith(accuracyNote('ZEN3')), 'accuracy: the link, and the numbers in the tooltip of a prototype', JSON.stringify(acc));
     // SHA-256 with the bound view open: the details arrive without a long task
     await page.goto(`${origin}/?nosw=1`);
     await page.ready();

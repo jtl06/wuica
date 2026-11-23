@@ -1,6 +1,7 @@
 // Builds the result view. All text goes in through textContent: responses, fragments and diagnostics are data.
 
 import { formatListing } from './listing.js';
+import { accuracyNote } from './archs.js';
 
 const FRONT_END = ['MITE', 'MS', 'DSB', 'LSD'];
 const COUNTS = ['Issued', 'Exec.'];
@@ -203,7 +204,7 @@ export function renderResult(root, view) {
     const instrs = r.rows.filter((x) => x.kind === 'instr').length;
     const details = [`${instrs} instruction${instrs === 1 ? '' : 's'}`, `${view.byteCount} byte${view.byteCount === 1 ? '' : 's'}`,
       view.elapsedMs !== null && view.elapsedMs !== undefined && !mock ? `${view.elapsedMs < 10 ? view.elapsedMs.toFixed(1) : Math.round(view.elapsedMs)} ms` : null,
-      view.experimental ? 'prototype model: less validated' : null].filter(Boolean).join(' · ');
+      view.experimental ? 'prototype model: less validated' : null, view.experimental ? accuracyNote(view.archKey) || null : null].filter(Boolean).join(' · ');
     // one line: the throughput, loop/unrolled and the cpu, the bottleneck
     const bnKey = r.bottlenecks.length > 1 ? 'bottlenecks' : 'bottleneck';
     out.push(leadRow('throughput',

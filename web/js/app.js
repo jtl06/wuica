@@ -4,7 +4,7 @@
 import { WasmEngine, makeRequest } from './engine.js';
 import { WorkerEngine } from './engine-rpc.js';
 import { parseHexInput, toHex } from './hex-input.js';
-import { archGroups, archTitle, DEFAULT_ARCH, ARCH_INFO, PROTOTYPE } from './archs.js';
+import { archGroups, archTitle, DEFAULT_ARCH, ARCH_INFO, PROTOTYPE, accuracyNote } from './archs.js';
 import { DEFAULT_STATE, LIMITS, encodeState, decodeState, clampInt } from './url-state.js';
 import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES, MOCK_EXAMPLES } from './examples.js';
 import { fetchBytes, fetchManifest, PATHS, formatSize, whenIdle } from './loader.js';
@@ -511,7 +511,7 @@ function fillArchs() {
       const info = ARCH_INFO[it.key];
       const name = info ? `${info.name}${info.year ? ` (${info.year})` : ''}` : it.key;
       const box = h('input', { type: 'checkbox', value: it.key, 'aria-label': it.title });
-      cells.push(h('label', { class: 'cpu' + (it.experimental ? ' proto' : ''), title: `${name}${it.experimental ? ` · ${PROTOTYPE} model: less validated` : ''}` },
+      cells.push(h('label', { class: 'cpu' + (it.experimental ? ' proto' : ''), title: `${name}${it.experimental ? ` · ${PROTOTYPE} model: less validated${accuracyNote(it.key) ? ` · ${accuracyNote(it.key)}` : ''}` : ''}` },
         box, it.key, it.experimental ? h('span', { class: 'proto-mark', 'aria-hidden': 'true', text: 'p' }) : null));
     }
   }
