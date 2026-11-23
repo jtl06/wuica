@@ -1,5 +1,6 @@
 // Adapter for the assembler module (wuica_asm.wasm: LLVM's x86 assembler, built in assembler/). The rest of the
-// page only uses: WasmAssembler.create(bytes), assemble(text, syntax) and the result shape below.
+// page only uses: WasmAssembler.create(bytes), assemble(text, syntax) and the result shape below. The page runs small
+// sources on its own thread and large ones in a worker (assembler-rpc.js).
 //
 // The interface is the one of assembler/README.md ("Interface", "Rules"): exports memory, _initialize, malloc,
 // free, wuica_assemble, wuica_fatal_message; no imports (the import object is {});
@@ -20,9 +21,10 @@
 export const SYNTAX = Object.freeze({ intel: 0, att: 1 });
 const ERR_CAP = 16384;
 const OUT_CAP = 1 << 16;
-// At most this much machine code (as in the npm package): the assembler runs on the page's thread, and a block this
-// large is already more than the analyzer can simulate in its memory.
+// At most this much machine code (as in the npm package), assembled or given as hex: a block this large is already
+// more than the analyzer can simulate in its memory.
 export const MAX_CODE_BYTES = 1 << 20;
+export const tooMuchCode = (bytes) => `Too much machine code: ${bytes.toLocaleString('en-US')} bytes (at most ${MAX_CODE_BYTES.toLocaleString('en-US')})`;
 
 // llvm-mc's diagnostics: "<input>:LINE:COL: error: MESSAGE", followed by the source line and a caret line.
 export function parseDiagnostics(text) {
@@ -52,6 +54,24 @@ export function semicolonHint(diagnostics, text) {
   return diagnostics;
 }
 
+// The analyzer only models 64-bit code: a source that switches the assembler to 16- or 32-bit mode (.code16,
+// .code16gcc, .code32; LLVM accepts them in lower case only) would be analyzed as 64-bit code without a word.
+// Returns {line, column, message} for the first such directive (outside comments), or null.
+export function codeModeError(text) {
+  const plain = String(text).replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' ')); // block comments, lines kept
+  const lines = plain.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const code = lines[i].replace(/(#|\/\/).*$/, '');
+    let at = 0;
+    for (const stmt of code.split(';')) {
+      const m = /^(\s*(?:[\w.$@]+:\s*)*)(\.code(?:16gcc|16|32))(?=\s|$)/.exec(stmt);
+      if (m) return { line: i + 1, column: at + m[1].length + 1, message: `${m[2]}: only 64-bit code can be analyzed` };
+      at += stmt.length + 1;
+    }
+  }
+  return null;
+}
+
 // True if the bytes are a WebAssembly module. A static host may answer a missing file with an HTML page and
 // status 200, so the status of the response is not enough.
 export function isWasm(bytes) {
@@ -62,10 +82,11 @@ export class WasmAssembler {
   #module;
   #x = null;
 
-  // source: the bytes of wuica_asm.wasm, or (tests) a function that returns a fresh object with the exports.
+  // source: the bytes of wuica_asm.wasm, a WebAssembly.Module, or (tests) a function that returns a fresh object with
+  // the exports.
   static async create(source) {
     const a = new WasmAssembler();
-    if (typeof source === 'function') {
+    if (typeof source === 'function' || source instanceof WebAssembly.Module) {
       a.#module = source;
     } else {
       if (!isWasm(source)) throw new Error('wuica_asm.wasm is not a WebAssembly module');
@@ -74,6 +95,12 @@ export class WasmAssembler {
     await a.#instantiate();
     return a;
   }
+
+  // The size of the instance's memory (it only grows: the most it has used); 0 if there is no instance.
+  get memoryBytes() { return this.#x?.memory.buffer.byteLength ?? 0; }
+
+  // Drops the instance (and its memory); the next call makes a new one.
+  reset() { this.#x = null; }
 
   async #instantiate() {
     let x;
@@ -129,6 +156,8 @@ export class WasmAssembler {
     if (!this.#x) await this.#instantiate();
     // (a byte order mark at the start is not code: LLVM would reject it)
     const plain = stripHints(String(text).replace(/^\uFEFF/, '').replace(/\0/g, ' '));
+    const mode = codeModeError(plain);
+    if (mode) return { ok: false, diagnostics: [{ severity: 'error', ...mode }] };
     const source = new TextEncoder().encode(plain + '\0');
     let r;
     try {
@@ -136,7 +165,7 @@ export class WasmAssembler {
       if (r.status === -2) {
         const need = Number(/(\d+) bytes needed/.exec(r.message)?.[1]);
         if (need > MAX_CODE_BYTES) {
-          return { ok: false, diagnostics: [{ line: null, column: null, severity: 'error', message: `Too much machine code: ${need.toLocaleString('en-US')} bytes (at most ${MAX_CODE_BYTES.toLocaleString('en-US')})` }] };
+          return { ok: false, diagnostics: [{ line: null, column: null, severity: 'error', message: tooMuchCode(need) }] };
         }
         if (need > OUT_CAP) r = this.#run(source, SYNTAX[syntax], need);
       }

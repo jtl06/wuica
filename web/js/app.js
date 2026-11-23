@@ -8,7 +8,8 @@ import { archGroups, archTitle, DEFAULT_ARCH, ARCH_INFO, PROTOTYPE } from './arc
 import { DEFAULT_STATE, LIMITS, encodeState, decodeState, clampInt } from './url-state.js';
 import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES, MOCK_EXAMPLES } from './examples.js';
 import { fetchBytes, fetchManifest, PATHS, formatSize, whenIdle } from './loader.js';
-import { WasmAssembler, isWasm } from './assembler.js';
+import { WasmAssembler, isWasm, MAX_CODE_BYTES, tooMuchCode } from './assembler.js';
+import { WorkerAssembler, PageAssembler } from './assembler-rpc.js'; // large sources in a worker of its own
 import { renderResult, renderEmpty, renderFailure, copyText, h, row } from './render.js';
 import { latestWins } from './compare.js';
 import { createComparePanels } from './compare-view.js';
@@ -71,6 +72,7 @@ const tableData = new Map(); // table name -> promise of its bytes (the main eng
 let assemblerPromise = null;
 let assemblerMissing = false; // true: this build has no assembler (final); a failed load of an existing one is not
 let assemblerError = '';
+let assembling = null;  // AbortController of the assembly of the current run: a newer run or an edit stops it
 let prefetchStarted = false;
 let inflight = { id: 0, key: '' }; // the analysis that is running (busy)
 let cancelledKey = '';              // the input of a run the user cancelled: live mode does not start it again
@@ -259,8 +261,10 @@ function changed({ rerun = false } = {}) {
   else if (rerun && lastView && ready) scheduleRun();
 }
 function liveSchedule(ms) {
+  // an assembly is out of date now: stop it (a large one takes seconds; a small one is done before the next edit)
+  if (assembling) stopAssembly();
   // an analysis that takes long is out of date now: stop it rather than wait for it
-  if (busy && engine?.capabilities.cancel && performance.now() - busySince > LONG_RUN_MS) { runSeq++; engine.cancel(); setBusy(false); }
+  else if (busy && engine?.capabilities.cancel && performance.now() - busySince > LONG_RUN_MS) { runSeq++; engine.cancel(); setBusy(false); }
   liveRunner.schedule(ms);
 }
 function setLive(on) {
@@ -441,7 +445,11 @@ function ensureAssembler() {
     if (manifest.assembler !== false) { // false: build.sh found no module, so do not even ask for it
       try {
         const bytes = await download('assembler', PATHS.assembler);
-        if (isWasm(bytes)) return await WasmAssembler.create(bytes);
+        if (isWasm(bytes)) {
+          // small sources on this thread, large ones in a worker (started when the first one comes): assembler-rpc.js
+          const module = await WebAssembly.compile(bytes);
+          return new PageAssembler(await WasmAssembler.create(module), () => WorkerAssembler.create(module, spawnAsmWorker));
+        }
         assemblerError = 'wuica_asm.wasm is not a WebAssembly module';
       } catch (e) {
         assemblerError = e?.message ?? String(e); // not there, offline, or not usable
@@ -459,6 +467,13 @@ function ensureAssembler() {
     return null;
   })();
   return assemblerPromise;
+}
+
+// The assembler for side B of a run: its jobs stop with the run (as side A's in machineCode()).
+async function assemblerForRun() {
+  const signal = assembling?.signal;
+  const a = await ensureAssembler();
+  return a && { mock: a.mock, assemble: (text, syntax) => a.assemble(text, syntax, { signal }) };
 }
 
 function loadExample(ex) {
@@ -530,6 +545,29 @@ function ensureTable(archKey) {
 
 const spawnWorker = () => new Worker(new URL('./engine-worker.js', import.meta.url), { type: 'module' });
 
+// WebAssembly memory never shrinks: after a huge block (20,000 `div rcx`: 2.6 GB) the analyzer's worker would keep it
+// until the page is reloaded. After a run, a worker with more than this is replaced by a new one with only the tables
+// of the CPUs shown (WorkerEngine.recycle), as the API server does; once nothing else waits on it (the views below the
+// result also use it). The pool does the same for its workers (pool.js).
+const ENGINE_MEMORY_LIMIT = 512 * 2 ** 20;
+let memoryTimer = 0;
+function checkMemory(delay = 0) {
+  if (!(engine instanceof WorkerEngine)) return;
+  clearTimeout(memoryTimer);
+  memoryTimer = setTimeout(async () => {
+    let bytes = 0;
+    try { bytes = await engine.memory(); } catch { return; }
+    if (bytes <= ENGINE_MEMORY_LIMIT) return;
+    if (busy || assembling || engine.pending > 0) { checkMemory(500); return; } // later, when nothing waits on it
+    const shown = lastView?.ab ? [lastView.ab.a?.archKey, lastView.ab.b?.archKey] : [lastView?.archKey];
+    const keep = [...new Set([state.arch, ...shown].map((k) => archItems.get(k)?.table).filter(Boolean))];
+    engine.recycle(keep);
+    for (const name of [...tables.keys()]) if (!keep.includes(name)) tables.delete(name); // loaded again when needed
+    engine.memory().catch(() => {}); // the new worker starts now, not with the next run
+  }, delay);
+}
+const spawnAsmWorker = () => new Worker(new URL('./assembler-worker.js', import.meta.url), { type: 'module' });
+
 // The worker pool, or null: none in mock mode, with ?pool=0, or when the analyzer runs on the page's thread. Making it
 // starts no worker yet; the pool starts them when jobs come in.
 function getPool() {
@@ -587,6 +625,10 @@ async function machineCode(id) {
       showMessages([{ line: p.line ?? null, column: null, severity: 'error', message: p.message }]);
       return null;
     }
+    if (p.bytes.length > MAX_CODE_BYTES) { // as for assembly: more than the analyzer can simulate in its memory
+      showMessages([{ line: null, column: null, severity: 'error', message: tooMuchCode(p.bytes.length) }]);
+      return null;
+    }
     clearMessages();
     return p.bytes;
   }
@@ -597,7 +639,13 @@ async function machineCode(id) {
   const assembler = await ensureAssembler();
   if (id !== runSeq) return null;
   if (!assembler) { showAssemblerMissing(); paintDerived(); return null; }
-  const r = await assembler.assemble(text, state.syntax);
+  let r;
+  try {
+    r = await assembler.assemble(text, state.syntax, { signal: assembling?.signal });
+  } catch (e) {
+    if (e?.name === 'CancelledError') return null; // replaced by a newer run, an edit, or Cancel
+    throw e;
+  }
   if (id !== runSeq) return null;
   // what it assembled to is the result's objdump listing
   const items = [...r.diagnostics];
@@ -623,11 +671,18 @@ function paintBusy(on) {
   el.run.classList.toggle('busy', on);
 }
 
+// Stops the assembly of the current run (it ends without a result; the assembler's worker is replaced if it was busy).
+function stopAssembly() {
+  const c = assembling;
+  assembling = null;
+  c?.abort();
+}
+
 function cancelRun() {
   if (!busy) return;
   cancelledKey = inflight.key;
   runSeq++; // whatever the stopped run still does is ignored
-  engine.cancel?.();
+  if (assembling) stopAssembly(); else engine.cancel?.();
   setBusy(false);
   flash('cancelled');
 }
@@ -642,21 +697,33 @@ async function run({ auto = false } = {}) {
   const key = runKey();
   const messages = !!el.messages.firstChild || !!ab?.hasMessages();
   if (auto && ((busy && key === inflight.key) || key === cancelledKey || (lastView && key === lastRunKey && !messages))) return;
-  if (busy && (!auto || performance.now() - busySince > LONG_RUN_MS)) engine.cancel?.(); // a newer request replaces the one that is running
+  // a newer request replaces the one that is running (an assembly is always stopped: its input is out of date)
+  if (assembling) stopAssembly();
+  else if (busy && (!auto || performance.now() - busySince > LONG_RUN_MS)) engine.cancel?.();
   const id = ++runSeq;
   if (!auto) clearMessages();
-  if (ab?.active()) { await runCompare(id, key, { auto }); return; } // awaited: live mode runs one comparison at a time
+  const ctrl = new AbortController();
+  assembling = ctrl;
+  if (ab?.active()) { await runCompare(id, key, { auto, ctrl }); return; } // awaited: live mode runs one comparison at a time
   const archKey = state.arch;
   const opts = options();
   const item = archItems.get(archKey);
   let bytes;
+  inflight = { id, key };
+  if (state.mode === 'asm') setBusy(true, { defer: true }); // a long assembly can be cancelled
   try {
     bytes = await machineCode(id);
   } catch (e) {
-    showMessages([{ line: null, column: null, severity: 'error', message: `The assembler failed: ${e?.message ?? e}` }]);
+    if (id === runSeq) showMessages([{ line: null, column: null, severity: 'error', message: `The assembler failed: ${e?.message ?? e}` }]);
+    bytes = null;
+  } finally {
+    if (assembling === ctrl) assembling = null;
+  }
+  if (!bytes || id !== runSeq) {
+    if (inflight.id === id) inflight = { id: 0, key: '' };
+    if (id === runSeq && busy) setBusy(false);
     return;
   }
-  if (!bytes || id !== runSeq) return;
   const hex = toHex(bytes);
 
   setBusy(true, { defer: auto });
@@ -691,6 +758,7 @@ async function run({ auto = false } = {}) {
     }
     syncUrl(true);
     prefetchTables();
+    checkMemory();
   } catch (e) {
     if (id !== runSeq) return;
     lastView = null;
@@ -713,17 +781,25 @@ function analyze() {
 }
 
 // A–B mode: both sides, one after the other (ab.js gets the machine code and draws the comparison). auto: as in run().
-async function runCompare(id, key, { auto = false } = {}) {
+async function runCompare(id, key, { auto = false, ctrl = null } = {}) {
   const current = () => id === runSeq;
   const opts = options();
   let input;
+  inflight = { id, key };
+  if (state.mode === 'asm' || state.bMode === 'asm') setBusy(true, { defer: true }); // a long assembly can be cancelled
   try {
     input = await ab.inputs(id, current);
   } catch (e) {
-    showMessages([{ line: null, column: null, severity: 'error', message: `The assembler failed: ${e?.message ?? e}` }]);
+    if (current() && e?.name !== 'CancelledError') showMessages([{ line: null, column: null, severity: 'error', message: `The assembler failed: ${e?.message ?? e}` }]);
+    input = null;
+  } finally {
+    if (assembling === ctrl) assembling = null;
+  }
+  if (!input || !current()) {
+    if (inflight.id === id) inflight = { id: 0, key: '' };
+    if (current() && busy) setBusy(false);
     return;
   }
-  if (!input || !current()) return;
   setBusy(true, { defer: auto });
   inflight = { id, key };
   try {
@@ -739,6 +815,7 @@ async function runCompare(id, key, { auto = false } = {}) {
     if (!auto) flash(ab.summary(view), { ms: 4000 });
     syncUrl(true);
     prefetchTables();
+    checkMemory();
   } catch (e) {
     if (!current()) return;
     lastView = null;
@@ -838,7 +915,7 @@ function setupFeatures() {
     },
   });
   ab = createAB({
-    state, el: { code: el.code, body: el.body }, archItems: () => archItems, archTitle, ensureAssembler, ensureTable,
+    state, el: { code: el.code, body: el.body }, archItems: () => archItems, archTitle, ensureAssembler: assemblerForRun, ensureTable,
     machineCodeA: machineCode, changed, writeControls,
     getA: () => ({ mode: state.mode, syntax: state.syntax, text: el.code.value }),
     setA: importCode,
@@ -1065,6 +1142,8 @@ async function start() {
   manifest = await fetchManifest();
   el.buildId.textContent = manifest.version;
   registerServiceWorker();
+  // the assembler loads while the analyzer does: the first result in asm mode needs both
+  if (state.mode === 'asm') ensureAssembler();
 
   try {
     const wasmBytes = MOCK ? null : download('analyzer', PATHS.wasm);

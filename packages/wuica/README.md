@@ -163,6 +163,25 @@ Request:
 - Every field of `options` is optional; the defaults are shown. Unknown options and unknown request fields are an
   error (code 1), not ignored. The library also accepts the options at the top level of the request
   (`{hex, arch, minIterations}`); `options` takes precedence. The MCP tools accept only the nested form.
+- The source must be 64-bit code: `.code16`, `.code16gcc` and `.code32` are an error (code 1), since the analyzer
+  only models 64-bit mode. `assemble` alone accepts them.
+
+### Option ranges per interface
+
+All interfaces run the same analyzer, but they accept different ranges for the numeric options. A value outside the
+range is refused (code 1, REST 400; the MCP tools' schema rejects it as invalid arguments), except in the web page,
+which clamps it into its range.
+
+| Interface | `alignmentOffset` | `minIterations` | `minCycles` | Other limits |
+|---|---|---|---|---|
+| library, `wuica` CLI, native CLI (`crates/wuica-cli`) | any integer (negative values and values above 63 are simulated as given) | any integer | any integer | none; very large values run out of memory (library: code 3) |
+| MCP tools of `wuica mcp` (stdio) | 0–63 | 1–100000 | 1–1000000 | |
+| REST API (`server/`) | any integer | at most 1000 | at most 20000 | `source` at most 64 KB, `hex` at most 65536 characters, at most 10,000 instructions |
+| remote MCP (`server/`, `/mcp`) | 0–63 | 1–1000 | 1–20000 | as REST |
+| web page | 0–63 | 1–10000 | 1–100000 | at most 1 MiB of machine code (assembled or as hex) |
+
+Microarchitecture ids are accepted the same way everywhere: exactly, or case-insensitively with `-` optional (`adlp`,
+`adl-p` → `ADL-P`). Hex may contain spaces, commas and `0x` / `\x` prefixes everywhere.
 
 Response (JSON), on success:
 

@@ -107,6 +107,24 @@ export function parseDiagnostics(text) {
   return out;
 }
 
+// The analyzer only models 64-bit code: a source that switches the assembler to 16- or 32-bit mode (.code16,
+// .code16gcc, .code32; LLVM accepts them in lower case only) would be analyzed as 64-bit code without a word.
+// Returns {line, column, message} for the first such directive (outside comments), or null.
+export function codeModeError(text) {
+  const plain = String(text).replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' ')); // block comments, lines kept
+  const lines = plain.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const code = lines[i].replace(/(#|\/\/).*$/, '');
+    let at = 0;
+    for (const stmt of code.split(';')) {
+      const m = /^(\s*(?:[\w.$@]+:\s*)*)(\.code(?:16gcc|16|32))(?=\s|$)/.exec(stmt);
+      if (m) return { line: i + 1, column: at + m[1].length + 1, message: `${m[2]}: only 64-bit code can be analyzed` };
+      at += stmt.length + 1;
+    }
+  }
+  return null;
+}
+
 // GNU as's {load}/{store} pseudo-prefixes at the start of a line, which LLVM's assembler rejects.
 export function stripHints(text) {
   return text.replace(/^([ \t]*)\{(?:load|store)\}[ \t]*/gm, '$1');

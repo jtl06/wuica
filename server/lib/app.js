@@ -13,7 +13,7 @@
 // JSON by default; `Accept: text/plain` gives uiCA's text report (or the stderr lines of a failure).
 
 import http from 'node:http';
-import { createWuica } from 'wuica';
+import { createWuica, ARCH_FIELDS } from 'wuica';
 import { createServer as createMcpServer } from 'wuica/mcp';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { resolveConfig } from './config.js';
@@ -174,7 +174,14 @@ export async function createApp(options = {}) {
       // stateless: no SSE stream to open (GET) and no session to delete (DELETE)
       return send(res, 405, { jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed: this MCP endpoint is stateless; use POST' }, id: null }, { headers: { Allow: 'POST, OPTIONS' } });
     }
-    const body = await readJson(req);
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (e) {
+      // invalid JSON is a JSON-RPC parse error (as the MCP SDK answers it); a body that is too large stays a 413
+      if (e instanceof HttpError && e.status === 400) return send(res, 400, { jsonrpc: '2.0', error: { code: -32700, message: 'Parse error: the request body is not valid JSON' }, id: null });
+      throw e;
+    }
     const msgs = Array.isArray(body) ? body : [body];
     if (msgs.length > MAX_MCP_BATCH) {
       return send(res, 400, { jsonrpc: '2.0', error: { code: -32600, message: `a batch may hold at most ${MAX_MCP_BATCH} messages` }, id: null });
@@ -236,7 +243,9 @@ export async function createApp(options = {}) {
     if (p === '/api/archs') {
       method(['GET']);
       rateLimit(req, ctx);
-      const fields = url.searchParams.get('fields') ?? undefined;
+      const fields = url.searchParams.get('fields') || undefined;
+      const unknown = (fields ?? '').split(',').map((f) => f.trim()).filter((f) => f !== '' && f !== 'all' && !ARCH_FIELDS.includes(f));
+      if (unknown.length) throw new HttpError(400, `unknown field(s): ${unknown.join(', ')} (valid: ${ARCH_FIELDS.join(', ')})`);
       const archs = facade.archs(fields);
       return send(res, 200, wantText ? archsText(facade.archs()) : archs, { headers: { 'Cache-Control': 'public, max-age=3600' } });
     }
