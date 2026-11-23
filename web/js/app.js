@@ -19,6 +19,7 @@ import { createCeImport } from './godbolt-ui.js';   // import from Compiler Expl
 import { createInsight } from './insight-view.js';
 import { createPool, poolSize, tableCap } from './pool.js';  // workers for the views with many analyses
 import { createConverter } from './asm-text.js';  // hex <-> asm
+import { createViews } from './views.js';         // the opt-in views below the result
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -114,6 +115,7 @@ const insight = createInsight({
   pool: () => getPool(),
   onToggle: () => { const o = insight.open(); state.cost = o.cost; state.costNop = o.cost && o.nop; syncUrl(true); },
 });
+const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o), onToggle: (open) => { Object.assign(state, open); syncUrl(true); } });
 // The trace (trace.js), below both panes; linked to the uop table (trace-link.js). Its open state and the selected row
 // are in the URL.
 const traceOpened = (open) => { if (state.trace === open) return; state.trace = open; syncUrl(true); };
@@ -208,6 +210,7 @@ function writeControls() {
   tracePanel.setOpen(state.trace);
   abTracePanel.setOpen(state.trace);
   traceLink.setOpen({ waits: state.waits });
+  views.setOpen(state);
   paintDerived();
   ab?.paint();
 }
@@ -561,6 +564,7 @@ function draw() {
   showTrace(trace);
   insight.decorate(el.body, lastView);
   traceLink.decorate(el.body, lastView, { onUi });
+  views.decorate(el.body, lastView);
   paintStale();
 }
 

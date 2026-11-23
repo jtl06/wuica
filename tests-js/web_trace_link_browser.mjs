@@ -253,7 +253,9 @@ try {
   const pt = await page.eval(`${HELPERS}
     const v = viewer(); v.canvas.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); v.canvas.blur(); let r = Array.from(v.rows).findIndex((i) => gk(v.model.uops[i]) === ${JSON.stringify(expectGroup(regMergeRow))});
     v.reveal(r); await wait(50);
-    const u = v.model.uops[v.rows[r]]; const p = v.pointOf(r, u.dispatched ?? u.issued); const b = v.canvas.getBoundingClientRect();
+    const u = v.model.uops[v.rows[r]]; const p = v.pointOf(r, u.dispatched ?? u.issued); let b = v.canvas.getBoundingClientRect();
+    // the point in the viewport, wherever the trace is on the page (the views above it can push it below the fold)
+    window.scrollBy(0, b.top + p.y - innerHeight / 2); await wait(50); b = v.canvas.getBoundingClientRect();
     return { x: b.left + p.x, y: b.top + p.y };`);
   await page.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: pt.x, y: pt.y });
   await sleep(120);

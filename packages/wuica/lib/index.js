@@ -15,6 +15,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { Analyzer, Assembler, parseDiagnostics } from './wasm.js';
 import { archList, DEFAULT_ARCH, ARCH_INFO, ARCH_ORDER } from './archs.js';
+import { insights } from './insights.js';
 
 export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, parseDiagnostics };
 
@@ -236,7 +237,8 @@ class Wuica {
     return { code: CODES.OK, ...(code.assembled ? { hex: code.hex } : {}), stderr: code.stderr, results };
   }
 
-  // The compact form of an analyze() response (used by the MCP server): uop table reduced to non-zero values.
+  // The compact form of an analyze() response (used by the MCP server): uop table reduced to non-zero values, plus the
+  // derived diagnosis of the web page's bound view (insights.js).
   summarize(r) {
     if (r.code !== CODES.OK) return r;
     const { name, year, prototype } = this.#info(r.arch);
@@ -261,10 +263,11 @@ class Wuica {
       if (row.instrStr) e.uopsInfo = row.instrStr;
       return e;
     });
+    const ins = insights(r);
     return {
       code: r.code, arch: r.arch, name, year, prototype, tp: r.tp, unit: 'cycles per iteration', mode: r.mode,
       bottlenecks: r.bottlenecks, limits: r.limits, decodeErrors: r.decodeErrors, ...(r.hex ? { hex: r.hex } : {}),
-      stderr: r.stderr, instructions,
+      stderr: r.stderr, instructions, ...(ins ? { insights: ins } : {}),
     };
   }
 

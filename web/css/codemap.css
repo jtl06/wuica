@@ -1,0 +1,32 @@
+/* The code layout map (js/codemap.js). Colours only from the theme's custom properties. */
+
+.ly-body:empty { display: none; }
+.ly-body { margin-top: 0.4rem; display: grid; gap: 0.35rem; }
+.ly-tools { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 2.5ch; color: var(--subtle); }
+.ly-off { display: inline-flex; align-items: baseline; gap: 0.75ch; }
+.ly-shift { text-decoration: none; padding: 0 0.4ch; }
+.ly-offv { color: var(--text); font-variant-numeric: tabular-nums; cursor: help; }
+.ly-legend { display: inline-flex; flex-wrap: wrap; gap: 0.2rem 2ch; }
+.ly-k { cursor: help; font-variant-numeric: tabular-nums; }
+.ly-k::before { content: ""; display: inline-block; width: 0.9em; height: 0.2em; margin-right: 0.5ch; vertical-align: middle; }
+.ly-k.b16::before { background: var(--border); height: 0.12em; background: var(--subtle); }
+.ly-k.b32::before { background: var(--date); }
+.ly-k.b64::before { background: var(--caveat); }
+.ly-wrap { max-height: 26rem; overflow: auto; background: var(--surface); border: 1px solid var(--border); padding: 0.3rem 0.4rem; }
+.ly-map { display: block; width: 100%; height: auto; font-family: var(--mono); }
+.ly-map:focus-visible { outline: 2px solid var(--cursor); outline-offset: 2px; }
+.ly-axis text, .ly-addr { fill: var(--subtle); font-size: 8px; }
+.ly-line { fill: none; stroke: var(--border); stroke-width: 1; }
+.ly-bounds line { stroke-width: 1; }
+.ly-bounds .b16 { stroke: var(--subtle); stroke-dasharray: 2 2; opacity: 0.6; }
+.ly-bounds .b32 { stroke: var(--date); }
+.ly-ins rect { stroke: none; cursor: pointer; }
+.ly-ins.t0 rect { fill: rgb(var(--accent-rgb) / 0.42); }
+.ly-ins.t1 rect { fill: rgb(var(--accent-rgb) / 0.22); }
+.ly-ins.jcc rect { fill: color-mix(in srgb, var(--caveat) 55%, transparent); }
+.ly-ins.split rect { stroke: var(--caveat); stroke-width: 1; }
+.ly-ins:hover rect { fill: rgb(var(--accent-rgb) / 0.65); }
+.ly-ins.sel rect { fill: var(--code); }
+.ly-info { color: var(--code); overflow-wrap: anywhere; }
+@media (max-width: 640px) { .ly-map { min-width: 30rem; } }
+body.ab-on #codemap-row { display: none !important; }

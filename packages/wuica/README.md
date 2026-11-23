@@ -191,9 +191,13 @@ warnings and the warning "N position(s) could not be decoded".
 In the library this is `r.text`; the MCP tool takes `format: "text"`.
 
 **Compact form** (the MCP `analyze` JSON, `w.summarize(r)`): `{code, arch, name, year, prototype, tp, unit, mode,
-bottlenecks, limits, decodeErrors, hex?, stderr, instructions}`. Each entry of `instructions` is
+bottlenecks, limits, decodeErrors, hex?, stderr, instructions, insights}`. Each entry of `instructions` is
 `{instr, bytes, issued, executed, uopSource: {MITE|DSB|LSD|MS: n}, ports: {"Port 0": n, ...}, notes, uopsInfo}`
-(zero values omitted, numbers rounded to 2 decimals).
+(zero values omitted, numbers rounded to 2 decimals). `insights` is a diagnosis derived from the analysis (as the web
+page's "bound" view): `utilization` (each limit and port: cycles / tp), `binding`, `next` (`{limit, tp, maxSpeedup}`:
+the next limit, and the speedup at most if the binding one went away), `unexplained` (cycles no single limit explains),
+`chain` (the critical loop-carried chain: `{index, instr, operand, latency, carried}`) and `hot` (`{resource, ports?,
+instructions: [{index, instr, share}]}`: the largest shares of the binding resource).
 
 ### Failures
 
