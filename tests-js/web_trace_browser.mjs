@@ -157,6 +157,7 @@ try {
       const out = { tp: document.querySelector('.tp .value').textContent };
       out.closed = !!panel() && !panel().open && !document.querySelector('.trace-viewer');
       out.label = panel()?.closest('.row')?.querySelector('.label')?.textContent;
+      out.wide = panel()?.closest('#more') !== null && Math.abs(panel().getBoundingClientRect().width - document.getElementById('more').getBoundingClientRect().width) < 120; // below both panes, full width
       const t0 = performance.now();
       panel().querySelector('summary').click();
       await until(() => document.querySelector('.trace-viewer'));
@@ -187,7 +188,7 @@ try {
       key('Escape'); await wait(30); out.escHidden = tip().hidden;
       return out;`);
     check(r.tp === '32.00', 'the 50-instruction loop is analyzed', r.tp);
-    check(r.closed && r.label === 'trace', 'the trace panel is in the result, closed, and nothing is loaded until it is opened', JSON.stringify([r.closed, r.label]));
+    check(r.closed && r.label === 'trace' && r.wide, 'the trace panel is in the result, closed, and nothing is loaded until it is opened', JSON.stringify([r.closed, r.label]));
     check(r.range === 'steady' && r.rowRounds.length === 3 && r.rowRounds[0] === r.relevant.first && /uops in cycles/.test(r.note), 'it opens on three steady-state iterations', JSON.stringify([r.range, r.rowRounds, r.relevant, r.note]));
     check(r.canvas[0] > 600 && r.canvas[1] > 200 && r.colours >= 5, 'the timeline is drawn', JSON.stringify([r.canvas, r.colours]));
     check(r.legend.length === 8, 'the legend', JSON.stringify(r.legend));
@@ -280,7 +281,8 @@ try {
     // Zen 3 names its ports (uarch.json portNames); the trace has letters
     const zen = await page.eval(`${HELPERS}
       const v = viewer(); const run = $('results').dataset.run;
-      $('arch').value = 'ZEN3'; $('arch').dispatchEvent(new Event('change'));
+      for (const b of document.querySelectorAll('#cpu-grid input')) b.checked = b.value === 'ZEN3'; // only ZEN3 (one change event)
+      document.querySelector('#cpu-grid input').dispatchEvent(new Event('change', { bubbles: true }));
       await until(() => $('results').dataset.run !== run, 30000);
       await until(() => viewer() && viewer() !== v);
       const w = viewer(); w.canvas.focus();

@@ -1,8 +1,9 @@
 /* A–B comparison (js/ab.js). Colours come only from the theme's custom properties, so it follows the theme. */
 
 body:not(.ab-on) .ab-only { display: none !important; }
-/* the compare panels (all CPUs, sweep) belong to single mode; their open state is kept for it */
-body.ab-on #compare { display: none; }
+/* the table of the checked CPUs and the sweep belong to single mode; their state is kept for it */
+body.ab-on #cmp-cpus, body.ab-on #sweep-row { display: none !important; }
+body.ab-on .more { display: none; }
 
 /* the switch */
 .ab-switch .ab-tools { display: inline-flex; flex-wrap: wrap; gap: 0.5rem; }
@@ -19,6 +20,11 @@ body.ab-on #compare { display: none; }
 @media (max-width: 800px) {
   .ab-grid { grid-template-columns: minmax(0, 1fr); }
   .ab-grid .ab-head { min-height: 2rem; }
+}
+/* wide: B's controls fit on one line; both boxes as tall as fits with the result below */
+@media (min-width: 1200px) {
+  .ab-grid { column-gap: 2rem; }
+  body.ab-on #code, body.ab-on #code-b { height: clamp(9rem, calc(100vh - 40rem), 24rem); }
 }
 .ab-desc { color: var(--subtle); }
 .ab-head .choice { gap: 0.25rem 1rem; }

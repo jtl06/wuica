@@ -88,13 +88,14 @@ const root = new URL('../', import.meta.url);
 
 // --- open panels in the URL --------------------------------------------------------------------------------------------
 {
-  const both = { ...DEFAULT_STATE, cmpCpus: true, cmpSweep: true, text: '90' };
+  const both = { ...DEFAULT_STATE, mode: 'hex', cpus: 'all', cmpSweep: true, text: '90' };
   const f = encodeState(both);
-  check(f === 'v=1&cmpcpu=1&cmpsweep=1&c=OTA' && JSON.stringify(decodeState(f)) === JSON.stringify(both), 'url: the open panels go into the fragment, before the code', f);
-  check(encodeState({ ...DEFAULT_STATE, cmpSweep: true }) === 'v=1&cmpsweep=1' && encodeState(DEFAULT_STATE) === '', 'url: only open panels are written');
+  check(f === 'v=1&as=all&cmpsweep=1&c=OTA' && JSON.stringify(decodeState(f)) === JSON.stringify(both), 'url: the checked CPUs and the open sweep go into the fragment, before the code', f);
+  check(encodeState({ ...DEFAULT_STATE, mode: 'hex', cmpSweep: true }) === 'v=1&cmpsweep=1' && encodeState(DEFAULT_STATE) === '', 'url: only an open sweep is written');
   const old = decodeState('v=1&a=ZEN3&al=5&c=OTA');
-  check(old.cmpCpus === false && old.cmpSweep === false && old.arch === 'ZEN3' && old.alignmentOffset === 5, 'url: an old link opens no panel');
-  check(decodeState('v=1&cmpcpu=yes&cmpsweep=0').cmpCpus === false && decodeState('v=1&cmpcpu=yes&cmpsweep=0').cmpSweep === false, 'url: bad values are ignored');
+  check(old.cpus === '' && old.cmpSweep === false && old.arch === 'ZEN3' && old.alignmentOffset === 5, 'url: an old link opens no panel');
+  check(decodeState('v=1&cmpcpu=1&cmpsweep=1').cpus === 'all' && !encodeState(decodeState('v=1&cmpcpu=1')).includes('cmpcpu'), 'url: an old link with the table of all CPUs open checks them all');
+  check(decodeState('v=1&cmpcpu=yes&cmpsweep=0').cpus === '' && decodeState('v=1&cmpcpu=yes&cmpsweep=0').cmpSweep === false, 'url: bad values are ignored');
 }
 
 // --- latest-wins scheduling ------------------------------------------------------------------------------------------

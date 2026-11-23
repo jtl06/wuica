@@ -101,8 +101,8 @@ const CHAIN = {
 
 // --- URL state -------------------------------------------------------------------------------------------------------
 {
-  const f = encodeState({ ...DEFAULT_STATE, cmpCpus: true, cmpSweep: true, cost: true, costNop: true });
-  check(f === 'v=1&cmpcpu=1&cmpsweep=1&cost=1&costnop=1', 'url: the cost column is remembered', f);
+  const f = encodeState({ ...DEFAULT_STATE, mode: 'hex', cmpSweep: true, cost: true, costNop: true });
+  check(f === 'v=1&cmpsweep=1&cost=1&costnop=1', 'url: the cost column is remembered', f);
   const s = decodeState(f);
   check(s.cost && s.costNop && !decodeState('v=1').cost, 'url: and restored');
 }

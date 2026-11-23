@@ -5,7 +5,7 @@ import zlib from 'node:zlib';
 import readline from 'node:readline';
 import { MockEngine, recordedCases, SYNTHETIC_HEX, MOCK_ERROR_HEX } from '../web/js/engine-mock.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
-import { EXAMPLES, CLASSIC_EXAMPLES, MOCK_EXAMPLES } from '../web/js/examples.js';
+import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES, MOCK_EXAMPLES } from '../web/js/examples.js';
 import { parseHexInput } from '../web/js/hex-input.js';
 import { archGroups, ARCH_ORDER, ARCH_INFO } from '../web/js/archs.js';
 import { DEFAULT_STATE, encodeState, decodeState, clampInt } from '../web/js/url-state.js';
@@ -101,6 +101,19 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
     check(Array.isArray(d) && d.length === listed, `example ${ex.id}: decodes into its ${listed} instructions`, JSON.stringify(d).slice(0, 120));
     if (ex.id !== 'synthetic') check(d.every((i, k) => k === d.length - 1 || lines[k].endsWith('    ' + i.asm)), `example ${ex.id}: the listing shows what the decoder reads`, d.map((i) => i.asm).join('; '));
   }
+  // the showcase: SHA-256, 64 rounds unrolled (2,949 instructions, one loop); the throughput equals the Python uiCA's
+  const sha = SHOWCASE_EXAMPLES.find((e) => e.id === 'sha256');
+  const d = await real.decode(sha.hex, 'SKYLAKE');
+  check(Array.isArray(d) && d.length === 2949 && /^jnz /.test(d.at(-1).asm) && sha.hex.length === 2 * 11602, 'showcase: 2,949 instructions, 11,602 bytes, ends in a branch', `${d?.length} ${d?.at?.(-1)?.asm}`);
+  if (exists('data/uarch.json') && exists('data/arch/SKL.json')) {
+    await real.loadUarch(fs.readFileSync(new URL('data/uarch.json', root)));
+    await real.loadArch('SKL', fs.readFileSync(new URL('data/arch/SKL.json', root)));
+    const t0 = performance.now();
+    const r = await real.analyze(makeRequest(sha.hex, 'SKL'));
+    const ms = performance.now() - t0;
+    check(r.tp === 744.25 && r.mode === 'loop' && r.rows.filter((x) => x.kind === 'instr').length === 2949, 'showcase: 744.25 cycles/iteration on SKL (as uiCA)', `${r.tp} ${r.mode}`);
+    console.log(`showcase on SKL: ${ms.toFixed(0)} ms`);
+  }
 } else console.log('(no real module: examples not decoded)');
 
 // --- examples -------------------------------------------------------------------------------------------------------
@@ -110,6 +123,10 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
   check(EXAMPLES.length >= 3 && CLASSIC_EXAMPLES.length >= 9 && new Set(all.map((e) => e.id)).size === all.length, 'examples: at least three basics, the classic loops, unique ids');
   for (const ex of CLASSIC_EXAMPLES) check(/^\s+j\w+ loop$/.test(ex.text.intel.trim().split('\n').at(-1)) && ex.text.intel.startsWith('loop:'), `example ${ex.id}: a loop ending in a backward branch`);
   check(['dot1', 'dot4'].every((id) => CLASSIC_EXAMPLES.some((e) => e.id === id)), 'examples: the A–B demo pair exists');
+  for (const ex of SHOWCASE_EXAMPLES) {
+    const p = parseHexInput(ex.text.hex);
+    check(ex.hexOnly && p.ok && p.hex === ex.hex && !ex.text.intel && !all.some((e) => e.id === ex.id), `example ${ex.id}: hex only, parses to its machine code`);
+  }
   for (const ex of all) {
     const p = parseHexInput(ex.text.hex);
     check(p.ok && p.hex === ex.hex && p.format === 'listing', `example ${ex.id}: the hex text parses to its machine code`, JSON.stringify(p));
@@ -190,11 +207,22 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
   const f = encodeState(s);
   check(/^[A-Za-z0-9=&_-]+$/.test(f), 'url: the fragment needs no escaping', f);
   check(JSON.stringify(decodeState('#' + f)) === JSON.stringify({ ...DEFAULT_STATE, ...s }) && JSON.stringify(decodeState(f)) === JSON.stringify({ ...DEFAULT_STATE, ...s }), 'url: round trip of every field');
-  const h = { ...DEFAULT_STATE, text: '48 01 d8\n   0:\t49 ff cf\tdec r15\n', arch: 'ZEN3' };
-  check(JSON.stringify(decodeState(encodeState(h))) === JSON.stringify(h) && !encodeState(h).includes('m=') && !encodeState(h).includes('ip='), 'url: defaults are left out');
+  const h = { ...DEFAULT_STATE, mode: 'hex', text: '48 01 d8\n   0:\t49 ff cf\tdec r15\n', arch: 'ZEN3' };
+  check(JSON.stringify(decodeState(encodeState(h))) === JSON.stringify(h) && !encodeState(h).includes('m=') && !encodeState(h).includes('ip='), 'url: defaults are left out (hex: no m=)');
+  // assembly is the default input, but a link without m= is hex (links made when hex was the default keep their meaning)
+  const a = { ...DEFAULT_STATE, text: 'add rax, 1\n' };
+  check(encodeState(a) === 'v=1&m=asm&c=YWRkIHJheCwgMQo' && JSON.stringify(decodeState(encodeState(a))) === JSON.stringify(a) && decodeState('v=1&c=OTA').mode === 'hex'
+    && DEFAULT_STATE.mode === 'asm' && encodeState({ ...DEFAULT_STATE, mode: 'hex' }) === 'v=1&m=hex' && decodeState('v=1&m=hex').mode === 'hex', 'url: assembly is the default; links without m= are hex', encodeState(a));
   check(decodeState(encodeState({ ...DEFAULT_STATE, mode: 'hex', syntax: 'att', text: 'x' })).syntax === 'intel', 'url: the syntax is only kept for assembly');
   const evil = decodeState('v=1&m=evil&s=x&a=%3Cscript%3E&al=99&mi=-5&mc=1e9&ip=nope&sfe=yes&c=!!!&zzz=1');
-  check(JSON.stringify(evil) === JSON.stringify({ ...DEFAULT_STATE, alignmentOffset: 63 }), 'url: bad values fall back to the defaults', JSON.stringify(evil));
+  check(JSON.stringify(evil) === JSON.stringify({ ...DEFAULT_STATE, mode: 'hex', alignmentOffset: 63 }), 'url: bad values fall back to the defaults (no m=asm: hex)', JSON.stringify(evil));
+  // the checked CPUs: a short list; the focused CPU (a=) is one of them; old links: one CPU, or all with cmpcpu=1
+  const m = { ...DEFAULT_STATE, arch: 'ZEN3', cpus: 'SKL,ZEN3,ADL-P', text: 'nop\n' };
+  check(encodeState(m) === 'v=1&m=asm&a=ZEN3&as=SKL,ZEN3,ADL-P&c=bm9wCg' && JSON.stringify(decodeState(encodeState(m))) === JSON.stringify(m), 'url: the checked CPUs round trip', encodeState(m));
+  check(encodeState({ ...DEFAULT_STATE, arch: 'ZEN3', cpus: 'ZEN3' }) === 'v=1&m=asm&a=ZEN3' && encodeState({ ...DEFAULT_STATE, cpus: 'all' }) === 'v=1&m=asm&as=all', 'url: one CPU needs no list; all of them is "all"');
+  check(decodeState('v=1&as=HSW,ICL').arch === 'HSW' && decodeState('v=1&as=HSW,ICL').cpus === 'HSW,ICL' && decodeState('v=1&a=ZEN3').cpus === '' && decodeState('v=1&a=ZEN3&cmpcpu=1').cpus === 'all',
+    'url: without a=, the first checked CPU is focused; an old link with the table of all CPUs open checks them all');
+  check(decodeState('v=1&as=SKL,%3Cx%3E,SKL,,ICL').cpus === 'SKL,ICL' && decodeState('v=1&as=%E0%A4%A').cpus === '' && decodeState('v=1&as=' + 'A,'.repeat(200)).arch === 'A' && decodeState('v=1&as=' + 'A,'.repeat(200)).cpus === '', 'url: bad CPU lists are cleaned');
   check(decodeState('v=1&a=%E0%A4%A').arch === 'SKL' && decodeState('v=1&c=_w').text === '', 'url: malformed escapes and invalid UTF-8');
   check(decodeState('v=1&mi=0&mc=99999999').minIterations === 1 && decodeState('v=1&mi=0&mc=99999999').minCycles === 100000, 'url: numbers are clamped');
   check(clampInt('12', [0, 63], 0) === 12 && clampInt('', [0, 63], 7) === 7 && clampInt('1.5', [0, 63], 7) === 7 && clampInt(64, [0, 63], 0) === 63, 'url: clampInt');

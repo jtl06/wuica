@@ -7,7 +7,7 @@
 // carries both sides. The page (app.js) runs the analyses: inputs() gets the machine code of both sides,
 // analyze() runs them, draw() shows the result. All text goes in through textContent.
 
-import { h, uopTable, NOTES, LEGEND } from './render.js';
+import { h, uopTable, NOTES, LEGEND, rowLimit, moreRows } from './render.js';
 import { GROUP_LABEL } from './archs.js';
 import { compareResponses, signed } from './ab-diff.js';
 import { parseHexInput, toHex } from './hex-input.js';
@@ -46,12 +46,10 @@ export function createAB(api) {
   const rAB = h('input', { type: 'radio', name: 'compare', value: 'ab', id: 'cmp-ab' });
   const swap = h('button', { type: 'button', id: 'ab-swap', title: 'exchange the two sides: code, input format and cpu' }, 'swap');
   const copy = h('button', { type: 'button', id: 'ab-copy', title: 'replace B with a copy of A' }, 'A → B');
-  const switchRow = h('div', { class: 'row ab-switch' },
-    h('div', { class: 'label', id: 'l-compare', text: 'compare' }),
-    h('div', { class: 'field wrap' },
-      h('div', { class: 'choice', role: 'radiogroup', 'aria-labelledby': 'l-compare' },
-        h('label', null, rSingle, 'single'), h('label', null, rAB, 'A–B')),
-      h('span', { class: 'ab-tools ab-only' }, swap, copy)));
+  const switchRow = h('div', { class: 'ab-switch' },
+    h('div', { class: 'choice', role: 'radiogroup', 'aria-label': 'compare', title: 'one block, or two versions side by side' },
+      h('label', null, rSingle, 'single'), h('label', null, rAB, 'A–B')),
+    h('span', { class: 'ab-tools ab-only' }, swap, copy));
   const heading = document.getElementById('h-input');
   if (heading) heading.after(switchRow); else api.el.code.closest('section')?.prepend(switchRow);
 
@@ -61,7 +59,7 @@ export function createAB(api) {
   const aCol = h('div', { class: 'field ab-a-col' });
   aCol.append(...field.childNodes);
   field.append(aCol);
-  const aDesc = h('span', { class: 'ab-desc' });
+  const aDesc = h('span', { class: 'ab-desc', title: 'A uses the input format above and the marked CPU (check a CPU to use it)' });
   const aHead = h('div', { class: 'ab-head ab-a ab-only' }, h('span', { class: 'ab-tag', text: 'A' }), aDesc);
   aCol.insertBefore(aHead, api.el.code);
 
@@ -279,6 +277,8 @@ export function createAB(api) {
   // By default as lean as single mode: the throughputs and their difference, the bottlenecks, the two uop tables.
   // The limits, the instruction diff and the text reports are collapsed (one line each); ui.open keeps them open.
   const row = (label, ...content) => h('div', { class: 'row' }, h('div', { class: 'label', text: label }), h('div', { class: 'field' }, ...content));
+  // a row whose content says what it is: its label is for screen readers only
+  const lead = (label, ...content) => h('div', { class: 'row lead' }, h('div', { class: 'label', text: label }), h('div', { class: 'field' }, ...content));
   const sep = () => h('span', { class: 'sep', text: ' · ' });
   const tag = (t) => h('span', { class: 'ab-tag', text: t });
   const ms = (s) => `${s.elapsedMs < 10 ? s.elapsedMs.toFixed(1) : Math.round(s.elapsedMs)} ms`;
@@ -326,16 +326,17 @@ export function createAB(api) {
       out.push(h('p', { class: 'ab-sr', text: `A: ${two(t.a)} cycles, B: ${two(t.b)} cycles, Δ = ${t.verdict === 'same' ? '0' : `${sign2(t.delta)} (${percent(t.pct)})`}` }));
     }
     out.push(h('div', { class: 'meta' }, sideMeta('A', a), sep(), sideMeta('B', b)));
-    return row('throughput', ...out);
+    return lead('throughput', ...out);
   }
 
   function bottlenecks(cmp) {
     const bn = cmp.bottlenecks;
     const list = (names, cls) => (names.length ? names.flatMap((n, k) => [k ? ', ' : '', h('span', { class: cls(n), text: n })]) : h('span', { class: 'hint', text: 'unknown' }));
-    if (bn.same) return row(bn.a.length > 1 ? 'bottlenecks' : 'bottleneck', h('span', { class: 'bn', text: bn.a.join(', ') || 'unknown' }), h('span', { class: 'hint', text: ' (both)' }));
+    const key = (t) => h('span', { class: 'k', 'aria-hidden': 'true', text: `${t} ` });
+    if (bn.same) return lead(bn.a.length > 1 ? 'bottlenecks' : 'bottleneck', key(bn.a.length > 1 ? 'bottlenecks' : 'bottleneck'), h('span', { class: 'bn', text: bn.a.join(', ') || 'unknown' }), h('span', { class: 'hint', text: ' (both)' }));
     const change = [bn.gone.length ? `no longer: ${bn.gone.join(', ')}` : '', bn.new.length ? `new: ${bn.new.join(', ')}` : ''].filter(Boolean).join(' · ');
-    return row('bottleneck',
-      h('div', { class: 'ab-bn', title: change || null },
+    return lead('bottleneck',
+      h('div', { class: 'ab-bn', title: change || null }, key('bottleneck'),
         tag('A'), ' ', list(bn.a, (n) => (bn.b.includes(n) ? 'bn' : 'bn ab-gone')),
         h('span', { class: 'ab-arrow', 'aria-hidden': 'true', text: ' → ' }),
         tag('B'), ' ', list(bn.b, (n) => (bn.a.includes(n) ? 'bn' : 'bn ab-new')),
@@ -418,10 +419,11 @@ export function createAB(api) {
     const notes = new Set();
     const side = (t, s) => {
       if (!s || !ok(s.response)) return h('div', { class: 'ab-col' }, h('div', { class: 'ab-cap' }, tag(t), ' no result'));
-      const r = uopTable(s.response, true);
+      const r = uopTable(s.response, true, rowLimit(s.response.rows.length, ui.allRows));
       for (const k of r.notes) notes.add(k);
       return h('div', { class: 'ab-col' }, h('div', { class: 'ab-cap' }, tag(t), ` ${s.archKey} · ${two(Number(s.response.tp))}`),
-        h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': `Uops per instruction of ${t}, average per iteration` }, r.table));
+        h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': `Uops per instruction of ${t}, average per iteration` }, r.table),
+        r.more ? moreRows(r.more, s.response.rows.length, () => { ui.allRows = true; draw(shown); }) : null);
     };
     const pair = h('div', { class: 'ab-pair' }, side('A', view.a), side('B', view.b));
     return row('uops', pair,

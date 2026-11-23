@@ -142,6 +142,7 @@ const HELPERS = `
   const overflow = () => document.documentElement.scrollWidth - innerWidth;
   const unlabelled = () => [...document.querySelectorAll('input, select, textarea')].filter((e) => !(e.labels?.length || e.getAttribute('aria-label') || e.getAttribute('aria-labelledby'))).map((e) => e.id || e.name);
   const line = (id) => document.querySelector('.ce-line[data-for="' + id + '"]')?.textContent ?? '';
+  const focused = () => $('cpus').dataset.focus; // the CPU with the details: side A's
   const paste = (el, text) => { const dt = new DataTransfer(); dt.setData('text/plain', text); el.focus(); el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); };
 `;
 const CHAIN = '48 83 c0 01 48 83 c0 01 49 ff cf 75 f3';
@@ -165,7 +166,8 @@ try {
     await page.ready();
     const r = await page.eval(`${HELPERS}
       const out = {};
-      out.start = [$('cmp-single').checked, getComputedStyle($('code-b').closest('.ab-b')).display, location.hash];
+      out.start = [$('cmp-single').checked, getComputedStyle($('code-b').closest('.ab-b')).display, location.hash, $('mode-asm').checked];
+      $('mode-hex').click(); await wait(50);
       set($('code'), ${JSON.stringify(CHAIN)});
       await done(() => $('cmp-ab').click());
       out.entered = [vals(), verdict(), $('code-b').value, $('code-b').offsetWidth > 0, location.hash];
@@ -191,7 +193,7 @@ try {
       out.zen = [document.querySelectorAll('.ab-tp .value').length, [...document.querySelectorAll('#result-body .meta')].map((e) => e.textContent).join(' / '), document.querySelector('.ab-diff')?.closest('.row').innerText.includes('different ports'), location.hash.includes('ba=ZEN3')];
       // swap with another cpu: the cpus change sides too
       await done(() => $('ab-swap').click());
-      out.swapArch = [$('arch').value, $('b-arch').value];
+      out.swapArch = [focused(), $('b-arch').value];
       await done(() => set($('b-arch'), ''));
       // copy A to B
       await done(() => $('ab-copy').click());
@@ -213,7 +215,7 @@ try {
       out.unlabelled = unlabelled();
       out.focusable = ['cmp-single', 'cmp-ab', 'ab-swap', 'ab-copy', 'code-b', 'b-arch', 'b-scale', 'b-mode-asm'].every((id) => $(id) && $(id).tabIndex >= 0);
       return out;`);
-    check(r.start[0] && r.start[1] === 'none' && r.start[2] === '', 'ab: the page starts in single mode, B hidden', JSON.stringify(r.start));
+    check(r.start[0] && r.start[1] === 'none' && r.start[2] === '' && r.start[3], 'ab: the page starts in single mode (assembly), B hidden', JSON.stringify(r.start));
     check(r.entered[0].join() === '2.00,2.00' && r.entered[1] === 'same' && r.entered[2] === r.entered[2] && r.entered[3] && /ab=1/.test(r.entered[4]), 'ab: switching to A–B copies A to B and compares at once', JSON.stringify(r.entered));
     check(r.stale, 'ab: an edit of B marks the result stale');
     check(r.result.vals.join() === '2.00,1.00' && r.result.verdict === 'better' && r.result.sr === 'A: 2.00 cycles, B: 1.00 cycles, Δ = −1.00 (−50%)' && /B better Δ = −1\.00 cycles \(−50%\) · B is 2\.00× faster/.test(r.result.delta), 'ab: the headline (Ctrl+Enter runs both)', JSON.stringify(r.result));
@@ -253,14 +255,14 @@ try {
       const out = {};
       await done(() => $('cmp-ab').click());
       await until(() => vals().length === 2);
-      out.demo = [vals(), verdict(), $('code').value.includes('vfmadd231ps ymm0, ymm7'), $('code-b').value.includes('vfmadd231ps ymm3, ymm7'), $('live').checked, getComputedStyle($('compare')).display === 'none'];
+      out.demo = [vals(), verdict(), $('code').value.includes('vfmadd231ps ymm0, ymm7'), $('code-b').value.includes('vfmadd231ps ymm3, ymm7'), $('live').checked, getComputedStyle($('more')).display === 'none' && $('cmp-cpus').offsetParent === null, $('b-mode-asm').checked];
       const n = $('results').dataset.run;
-      set($('code-b'), ${JSON.stringify(BETTER)}); // typing in B: no click
+      set($('code-b'), 'loop:\\n  add rax, 2\\n  dec r15\\n  jnz loop\\n'); // typing in B (assembly, as A): no click
       await until(() => $('results').dataset.run !== n);
       await wait(300);
       out.live = [vals(), Number($('results').dataset.run) - Number(n), $('result-body').classList.contains('stale')];
       return out;`);
-    check(d.demo[0].join() === '16.00,4.00' && d.demo[1] === 'better' && d.demo[2] && d.demo[3] && d.demo[4] && d.demo[5], 'ab: from the default example, A–B shows the demo pair (dot product, 1 vs 4 accumulators); the compare panels are hidden', JSON.stringify(d.demo));
+    check(d.demo[0].join() === '16.00,4.00' && d.demo[1] === 'better' && d.demo[2] && d.demo[3] && d.demo[4] && d.demo[5] && d.demo[6], 'ab: from the default example, A–B shows the demo pair (dot product, 1 vs 4 accumulators; B in assembly too); the compare views are hidden', JSON.stringify(d.demo));
     check(d.live[0].join() === '16.00,1.00' && d.live[1] === 1 && !d.live[2], 'ab: live mode re-runs the comparison while typing in B (once, no click)', JSON.stringify(d.live));
     check(ce.requests.length === 0, 'ab: nothing was sent to godbolt.org', JSON.stringify(ce.requests));
     const problems = page.take();

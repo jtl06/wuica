@@ -3,6 +3,8 @@
 // corpus of the Python reference, so the mock engine has the reference's result for them
 // (see mock-data.js; `arch` is the microarchitecture that result was recorded for). Menu group "basics".
 
+import { SHA256_BLOCK_HEX } from './showcase.js';
+
 function ex(id, title, arch, intel, att, listing) {
   const hex = listing.map((l) => l[0].replace(/ /g, '')).join('');
   let addr = 0;
@@ -76,6 +78,12 @@ export const CLASSIC_EXAMPLES = [
     ['loop:', '  vmovaps ymm0, ymmword ptr [rsi]', '  vmovaps ymm1, ymmword ptr [rsi + 32]', '  vbroadcastss ymm2, dword ptr [rdi]', '  vfmadd231ps ymm8, ymm2, ymm0', '  vfmadd231ps ymm9, ymm2, ymm1', '  vbroadcastss ymm3, dword ptr [rdi + 4]', '  vfmadd231ps ymm10, ymm3, ymm0', '  vfmadd231ps ymm11, ymm3, ymm1', '  vbroadcastss ymm2, dword ptr [rdi + 8]', '  vfmadd231ps ymm12, ymm2, ymm0', '  vfmadd231ps ymm13, ymm2, ymm1', '  vbroadcastss ymm3, dword ptr [rdi + 12]', '  vfmadd231ps ymm14, ymm3, ymm0', '  vfmadd231ps ymm15, ymm3, ymm1', '  add rdi, 16', '  add rsi, 64', '  dec rcx', '  jnz loop'],
     ['loop:', '  vmovaps (%rsi), %ymm0', '  vmovaps 32(%rsi), %ymm1', '  vbroadcastss (%rdi), %ymm2', '  vfmadd231ps %ymm0, %ymm2, %ymm8', '  vfmadd231ps %ymm1, %ymm2, %ymm9', '  vbroadcastss 4(%rdi), %ymm3', '  vfmadd231ps %ymm0, %ymm3, %ymm10', '  vfmadd231ps %ymm1, %ymm3, %ymm11', '  vbroadcastss 8(%rdi), %ymm2', '  vfmadd231ps %ymm0, %ymm2, %ymm12', '  vfmadd231ps %ymm1, %ymm2, %ymm13', '  vbroadcastss 12(%rdi), %ymm3', '  vfmadd231ps %ymm0, %ymm3, %ymm14', '  vfmadd231ps %ymm1, %ymm3, %ymm15', '  addq $16, %rdi', '  addq $64, %rsi', '  decq %rcx', '  jne loop'],
     [['c5 fc 28 06', 'vmovaps ymm0, ymmword ptr [rsi]'], ['c5 fc 28 4e 20', 'vmovaps ymm1, ymmword ptr [rsi+0x20]'], ['c4 e2 7d 18 17', 'vbroadcastss ymm2, dword ptr [rdi]'], ['c4 62 6d b8 c0', 'vfmadd231ps ymm8, ymm2, ymm0'], ['c4 62 6d b8 c9', 'vfmadd231ps ymm9, ymm2, ymm1'], ['c4 e2 7d 18 5f 04', 'vbroadcastss ymm3, dword ptr [rdi+0x4]'], ['c4 62 65 b8 d0', 'vfmadd231ps ymm10, ymm3, ymm0'], ['c4 62 65 b8 d9', 'vfmadd231ps ymm11, ymm3, ymm1'], ['c4 e2 7d 18 57 08', 'vbroadcastss ymm2, dword ptr [rdi+0x8]'], ['c4 62 6d b8 e0', 'vfmadd231ps ymm12, ymm2, ymm0'], ['c4 62 6d b8 e9', 'vfmadd231ps ymm13, ymm2, ymm1'], ['c4 e2 7d 18 5f 0c', 'vbroadcastss ymm3, dword ptr [rdi+0xc]'], ['c4 62 65 b8 f0', 'vfmadd231ps ymm14, ymm3, ymm0'], ['c4 62 65 b8 f9', 'vfmadd231ps ymm15, ymm3, ymm1'], ['48 83 c7 10', 'add rdi, 0x10'], ['48 83 c6 40', 'add rsi, 0x40'], ['48 ff c9', 'dec rcx'], ['75 ab', 'jnz 0x0']]),
+];
+
+// A large block that shows the analyzer's speed (menu group "showcase"). Machine code only: `hexOnly` examples switch the
+// input to hex.
+export const SHOWCASE_EXAMPLES = [
+  { id: 'sha256', title: 'SHA-256 block (2,949 instr)', arch: 'SKL', hexOnly: true, hex: SHA256_BLOCK_HEX.replace(/\s+/g, ''), text: { hex: SHA256_BLOCK_HEX } },
 ];
 
 // Only offered while the mock engine is active: inputs that make it return what the recorded results lack.

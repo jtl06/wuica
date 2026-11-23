@@ -40,8 +40,12 @@ export function columnKind(name) {
   return 'port'; // "Port 0", "ALU0", "FP2", "Div", ...: every other column is an execution resource
 }
 
-function row(label, ...content) {
+export function row(label, ...content) {
   return h('div', { class: 'row' }, h('div', { class: 'label', text: label }), h('div', { class: 'field' }, ...content));
+}
+// a row whose label is for screen readers only: its content says what it is (the throughput line)
+function leadRow(label, ...content) {
+  return h('div', { class: 'row lead' }, h('div', { class: 'label', text: label }), h('div', { class: 'field' }, ...content));
 }
 
 function sep() { return h('span', { class: 'sep', text: ' · ' }); }
@@ -90,23 +94,22 @@ function textBlock(cls, summary, text, open, onToggle) {
 
 const spacedHex = (hex, max = 48) => (hex.slice(0, 2 * max).match(/../g) ?? []).join(' ') + (hex.length > 2 * max ? ' …' : '');
 
+// one compact item per limit: name, value and a small bar (relative to the largest)
 function limitsView(r) {
   const max = Math.max(r.tp || 0, ...r.limits.map((l) => l.tp || 0), 1e-9);
-  const box = h('div', { class: 'limits' });
+  const box = h('ul', { class: 'limits' });
   for (const l of r.limits) {
     const hot = r.bottlenecks.includes(l.name) ? ' is-bottleneck' : '';
-    const gauge = h('span', { class: 'gauge' + hot, 'aria-hidden': 'true' }, h('span'));
+    const gauge = h('span', { class: 'gauge', 'aria-hidden': 'true' }, h('span'));
     gauge.firstChild.style.width = `${Math.min(100, (100 * l.tp) / max).toFixed(1)}%`;
-    box.append(
-      h('span', { class: 'name' + hot, text: l.name, title: `${Number(l.tp).toFixed(2)} cycles/iteration if ${l.name} were the only bottleneck` }),
-      h('span', { class: 'val' + hot, text: Number(l.tp).toFixed(2) }),
-      gauge,
-    );
+    box.append(h('li', { class: 'lim' + hot, title: `${Number(l.tp).toFixed(2)} cycles/iteration if ${l.name} were the only bottleneck` },
+      h('span', { class: 'name', text: l.name }), ' ', h('span', { class: 'val', text: Number(l.tp).toFixed(2) }), gauge));
   }
   return box;
 }
 
-export function uopTable(r, hideEmpty) { // (also used by the A–B view, ab.js)
+// limit: the number of rows drawn (a long block draws its first rows; a button draws the rest); the totals are of all rows
+export function uopTable(r, hideEmpty, limit = Infinity) { // (also used by the A–B view, ab.js)
   const n = r.columns.length;
   const totals = new Array(n).fill(0);
   for (const x of r.rows) for (let i = 0; i < n; i++) totals[i] += Number(x.values?.[i]) || 0;
@@ -124,7 +127,7 @@ export function uopTable(r, hideEmpty) { // (also used by the A–B view, ab.js)
     shown.map((i) => h('th', { scope: 'col', class: cls(i), text: r.columns[i] })));
 
   const body = h('tbody');
-  for (const x of r.rows) {
+  for (const x of r.rows.length > limit ? r.rows.slice(0, limit) : r.rows) {
     const extra = x.kind !== 'instr';
     let label = x.label;
     if (!extra && typeof x.url === 'string' && x.url.startsWith(UOPS_INFO)) {
@@ -148,7 +151,17 @@ export function uopTable(r, hideEmpty) { // (also used by the A–B view, ab.js)
     shown.map((i) => h('td', { class: cls(i), text: fmt(totals[i]) })));
 
   const table = h('table', { class: 'grid uops' }, h('thead', null, head), body, h('tfoot', null, foot));
-  return { table, hidden: n - shown.length, notes: new Set(r.rows.map((x) => x.notes).filter((k) => NOTES[k])) };
+  return { table, hidden: n - shown.length, notes: new Set(r.rows.map((x) => x.notes).filter((k) => NOTES[k])), more: Math.max(0, r.rows.length - limit) };
+}
+
+// A long block (thousands of rows) draws its first rows at once; the rest on request (one long layout otherwise).
+export const ROWS_AT_ONCE = 400;
+export const ROWS_FIRST = 200;
+export const rowLimit = (n, all) => (all || n <= ROWS_AT_ONCE ? Infinity : ROWS_FIRST);
+export function moreRows(more, total, onAll) {
+  const b = h('button', { type: 'button', class: 'plain', text: `show all ${total.toLocaleString('en-US')} rows` });
+  b.addEventListener('click', onAll);
+  return h('p', { class: 'more-rows hint' }, `${more.toLocaleString('en-US')} more rows · `, b);
 }
 
 function mockLine(m, archKey) {
@@ -163,8 +176,8 @@ function mockLine(m, archKey) {
 //   archKey, archTitle, experimental,
 //   byteCount, hex,           the machine code that was analyzed
 //   inputMode,                'asm' | 'hex': the listing remembers its open state per input mode
-//   elapsedMs,
-//   ui: { hideEmpty, reportOpen, listingOpen: {asm, hex} (null: closed) }, onUi(name, value)
+//   elapsedMs,                (the cycle-by-cycle trace is drawn by app.js below the result, full width)
+//   ui: { hideEmpty, reportOpen, listingOpen: {asm, hex} (null: closed), allRows }, onUi(name, value)
 // }
 export function renderResult(root, view) {
   const r = view.response;
@@ -191,37 +204,38 @@ export function renderResult(root, view) {
     const details = [`${instrs} instruction${instrs === 1 ? '' : 's'}`, `${view.byteCount} byte${view.byteCount === 1 ? '' : 's'}`,
       view.elapsedMs !== null && view.elapsedMs !== undefined && !mock ? `${view.elapsedMs < 10 ? view.elapsedMs.toFixed(1) : Math.round(view.elapsedMs)} ms` : null,
       view.experimental ? 'prototype model: less validated' : null].filter(Boolean).join(' · ');
-    out.push(row('throughput',
+    // one line: the throughput, loop/unrolled and the cpu, the bottleneck
+    const bnKey = r.bottlenecks.length > 1 ? 'bottlenecks' : 'bottleneck';
+    out.push(leadRow('throughput',
       h('div', { class: 'tp' },
-        h('span', { class: 'value', text: Number(r.tp).toFixed(2) }),
-        h('span', { class: 'unit', text: 'cycles/iteration' })),
-      h('div', { class: 'meta', title: details }, mode, sep(), h('span', { class: view.experimental ? 'caveat' : null, text: view.archTitle })),
+        h('span', { class: 'tp-main' }, h('span', { class: 'value', text: Number(r.tp).toFixed(2) }), ' ', h('span', { class: 'unit', text: 'cycles/iteration' })),
+        h('span', { class: 'meta', title: details }, mode, sep(), h('span', { class: view.experimental ? 'caveat' : null, text: view.archTitle })),
+        h('span', { class: 'bn-line' }, h('span', { class: 'k', text: bnKey }), ' ',
+          r.bottlenecks.length ? h('span', { class: 'bn', text: r.bottlenecks.join(', ') })
+            : h('span', { class: 'hint', title: 'no single limit explains the throughput', text: 'unknown' }))),
       mock ? h('div', { class: 'mock-tag', text: mockLine(mock, view.archKey) }) : null,
       r.decodeErrors > 0 ? h('div', { class: 'caveat', role: 'alert',
         text: `${r.decodeErrors} undecodable position${r.decodeErrors === 1 ? '' : 's'} skipped` }) : null));
-
-    out.push(row(r.bottlenecks.length > 1 ? 'bottlenecks' : 'bottleneck',
-      r.bottlenecks.length ? h('span', { class: 'bn', text: r.bottlenecks.join(', ') })
-        : h('span', { class: 'hint', title: 'no single limit explains the throughput', text: 'unknown' })));
 
     if (r.limits.length) {
       out.push(h('div', { class: 'row', title: 'cycles/iteration if each were the only bottleneck' },
         h('div', { class: 'label', text: 'limits' }), h('div', { class: 'field' }, limitsView(r))));
     }
 
-    const { table, notes } = uopTable(r, view.ui.hideEmpty ?? true); // empty columns are left out, as in uiCA's table
-    out.push(row('uops',
+    // empty columns are left out, as in uiCA's table
+    const { table, notes, more } = uopTable(r, view.ui.hideEmpty ?? true, rowLimit(r.rows.length, view.ui.allRows));
+    out.push(leadRow('uops', // the table says what it is: it gets the whole width
       h('div', { class: 'table-tools' }), // filled by other views (e.g. the cost toggle of insight-view.js); empty otherwise
       h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Uops per instruction, average per iteration',
         title: 'average uops per iteration' }, table),
+      more ? moreRows(more, r.rows.length, () => view.onUi('allRows', true)) : null,
       notes.size ? h('p', { class: 'legend' },
         [...notes].map((k) => h('span', { title: NOTES[k] }, h('b', { text: k }), ` ${LEGEND[k]}`))) : null));
 
     const listingOpen = view.ui.listingOpen?.[view.inputMode] ?? false; // collapsed until opened
-    out.push(row('text',
+    out.push(h('div', { class: 'row text-row' }, h('div', { class: 'label', text: 'text' }), h('div', { class: 'field' },
       textBlock('listing', 'objdump', formatListing(r.rows).text, listingOpen, (open) => view.onUi('listingOpen', { ...view.ui.listingOpen, [view.inputMode]: open })),
-      textBlock('report', 'uiCA report', typeof r.text === 'string' ? r.text : '', view.ui.reportOpen, (open) => view.onUi('reportOpen', open))));
-    if (view.trace) out.push(row('trace', view.trace)); // the cycle-by-cycle trace panel (trace.js)
+      textBlock('report', 'uiCA report', typeof r.text === 'string' ? r.text : '', view.ui.reportOpen, (open) => view.onUi('reportOpen', open)))));
   }
 
   root.replaceChildren(...out);

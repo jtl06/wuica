@@ -1,10 +1,11 @@
-// The state of the page in the URL fragment: input, mode, options, the open compare panels and side B of an A–B comparison. The fragment, never the query string:
+// The state of the page in the URL fragment: input, mode, the checked CPUs, options, the open panels and side B of an A–B comparison. The fragment, never the query string:
 // a fragment is not sent to the server. No DOM; btoa/atob exist in browsers and in Node.
 
 export const DEFAULT_STATE = Object.freeze({
-  mode: 'hex',            // 'hex' | 'asm'
+  mode: 'asm',            // 'asm' | 'hex' (a link without m= is hex: that was the default before)
   syntax: 'intel',        // 'intel' | 'att'
-  arch: 'SKL',
+  arch: 'SKL',            // the focused CPU: its detailed result (and side A of an A–B comparison)
+  cpus: '',               // the checked CPUs: '' = only arch; 'all'; or keys separated by commas (app.js orders them)
   text: '',
   alignmentOffset: 0,     // 0..63
   initPolicy: 'diff',     // 'diff' | 'same' | 'stack'
@@ -13,11 +14,10 @@ export const DEFAULT_STATE = Object.freeze({
   noMacroFusion: false,
   minIterations: 10,
   minCycles: 500,
-  cmpCpus: false,         // the compare panels that are open (compare-view.js)
-  cmpSweep: false,
+  cmpSweep: false,        // the alignment sweep is open (compare-view.js)
   // A–B comparison (ab.js): the fields above are side A and the shared options; these are side B
   ab: false,              // true: A–B mode
-  bMode: 'hex',           // 'hex' | 'asm'
+  bMode: 'asm',           // 'asm' | 'hex' (a link without bm= is hex, as for A)
   bSyntax: 'intel',       // 'intel' | 'att'
   bArch: '',              // '' = the same microarchitecture as A
   bText: '',
@@ -36,7 +36,17 @@ const MAX_TEXT = 200000; // characters accepted from a link
 
 const INTS = { al: 'alignmentOffset', mi: 'minIterations', mc: 'minCycles' };
 const FLAGS = { sfe: 'simpleFrontEnd', nmi: 'noMicroFusion', nma: 'noMacroFusion' };
-const VIEWS = { cmpcpu: 'cmpCpus', cmpsweep: 'cmpSweep', cost: 'cost', costnop: 'costNop' }; // open panels; not analysis options
+const VIEWS = { cmpsweep: 'cmpSweep', cost: 'cost', costnop: 'costNop' }; // open panels; not analysis options
+const KEY = /^[A-Za-z0-9_-]{1,32}$/;
+const MAX_CPUS = 64;
+
+// A list of CPU keys ("SKL,ZEN3") from a link: valid keys only, no repeats; '' if none.
+function cpuList(v) {
+  if (v === 'all') return 'all';
+  const keys = [];
+  for (const k of String(v).split(',')) if (KEY.test(k) && !keys.includes(k) && keys.length < MAX_CPUS) keys.push(k);
+  return keys.join(',');
+}
 
 function toBase64Url(text) {
   const bytes = new TextEncoder().encode(text);
@@ -57,12 +67,15 @@ export function clampInt(value, [lo, hi], fallback) {
 }
 
 // The fragment (without "#") for a state; values equal to the defaults are left out. An empty state gives "".
+// The input format: links made when hex was the default have no m=, so a fragment without m= is hex; assembly (now the
+// default) is written as m=asm whenever there is a fragment at all.
 export function encodeState(state) {
   const s = { ...DEFAULT_STATE, ...state };
   const p = [];
-  if (s.mode !== DEFAULT_STATE.mode) p.push(`m=${s.mode}`);
   if (s.mode === 'asm' && s.syntax !== DEFAULT_STATE.syntax) p.push(`s=${s.syntax}`);
   if (s.arch !== DEFAULT_STATE.arch) p.push(`a=${encodeURIComponent(s.arch)}`);
+  const cpus = cpuList(s.cpus);
+  if (cpus !== '' && cpus !== s.arch) p.push(`as=${cpus}`);
   for (const [k, name] of Object.entries(INTS)) if (s[name] !== DEFAULT_STATE[name]) p.push(`${k}=${s[name]}`);
   if (s.initPolicy !== DEFAULT_STATE.initPolicy) p.push(`ip=${s.initPolicy}`);
   for (const [k, name] of Object.entries(FLAGS)) if (s[name]) p.push(`${k}=1`);
@@ -76,6 +89,8 @@ export function encodeState(state) {
     if (s.bScale !== DEFAULT_STATE.bScale) p.push(`bk=${s.bScale}`);
     if (s.bText !== '') p.push(`bc=${toBase64Url(s.bText)}`);
   }
+  if (s.mode === 'asm' && p.length) p.unshift('m=asm');
+  if (s.mode === 'hex' && !p.length) p.push('m=hex'); // only the format differs from the defaults
   return p.length ? 'v=1&' + p.join('&') : '';
 }
 
@@ -90,14 +105,23 @@ export function decodeState(fragment) {
     if (i > 0) q.set(part.slice(0, i), part.slice(i + 1));
   }
   if (q.get('v') !== '1') return null;
-  const s = { ...DEFAULT_STATE };
-  if (q.get('m') === 'asm') s.mode = 'asm';
+  const s = { ...DEFAULT_STATE, mode: q.get('m') === 'asm' ? 'asm' : 'hex' };
   if (q.get('s') === 'att') s.syntax = 'att';
   if (q.has('a')) {
     try {
       const a = decodeURIComponent(q.get('a'));
-      if (/^[A-Za-z0-9_-]{1,32}$/.test(a)) s.arch = a;
+      if (KEY.test(a)) s.arch = a;
     } catch { /* keep the default */ }
+  }
+  // the checked CPUs; without "a", the first of them is the focused one. An old link with the table of all CPUs
+  // open (cmpcpu=1) checks them all.
+  if (q.has('as')) {
+    let v = '';
+    try { v = cpuList(decodeURIComponent(q.get('as'))); } catch { /* none */ }
+    if (v !== '' && v !== 'all' && !q.has('a')) s.arch = v.split(',')[0];
+    if (v !== '' && v !== s.arch) s.cpus = v;
+  } else if (q.get('cmpcpu') === '1') {
+    s.cpus = 'all';
   }
   for (const [k, name] of Object.entries(INTS)) if (q.has(k)) s[name] = clampInt(q.get(k), LIMITS[name], DEFAULT_STATE[name]);
   if (['same', 'stack'].includes(q.get('ip'))) s.initPolicy = q.get('ip');
@@ -112,12 +136,12 @@ export function decodeState(fragment) {
   if (q.has('c')) s.text = text('c');
   if (q.get('ab') === '1') {
     s.ab = true;
-    if (q.get('bm') === 'asm') s.bMode = 'asm';
+    s.bMode = q.get('bm') === 'asm' ? 'asm' : 'hex';
     if (q.get('bs') === 'att') s.bSyntax = 'att';
     if (q.has('ba')) {
       try {
         const a = decodeURIComponent(q.get('ba'));
-        if (/^[A-Za-z0-9_-]{1,32}$/.test(a)) s.bArch = a;
+        if (KEY.test(a)) s.bArch = a;
       } catch { /* the same as A */ }
     }
     if (q.has('bk')) s.bScale = clampInt(q.get('bk'), LIMITS.bScale, DEFAULT_STATE.bScale);

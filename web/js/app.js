@@ -4,12 +4,12 @@
 import { WasmEngine, makeRequest } from './engine.js';
 import { WorkerEngine } from './engine-rpc.js';
 import { parseHexInput, toHex } from './hex-input.js';
-import { archGroups, archTitle, DEFAULT_ARCH } from './archs.js';
+import { archGroups, archTitle, DEFAULT_ARCH, ARCH_INFO, PROTOTYPE } from './archs.js';
 import { DEFAULT_STATE, LIMITS, encodeState, decodeState, clampInt } from './url-state.js';
-import { EXAMPLES, CLASSIC_EXAMPLES, MOCK_EXAMPLES } from './examples.js';
+import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES, MOCK_EXAMPLES } from './examples.js';
 import { fetchBytes, fetchManifest, PATHS, formatSize, whenIdle } from './loader.js';
 import { WasmAssembler, isWasm } from './assembler.js';
-import { renderResult, renderEmpty, renderFailure, copyText, h } from './render.js';
+import { renderResult, renderEmpty, renderFailure, copyText, h, row } from './render.js';
 import { latestWins } from './compare.js';
 import { createComparePanels } from './compare-view.js';
 import { createTracePanel } from './trace.js';
@@ -29,7 +29,7 @@ const VERSION = '0.1.2';                   // the page's version (footer); bump 
 const el = {
   notice: $('notice'), code: $('code'), codeHint: $('code-hint'), messages: $('input-messages'),
   modeAsm: $('mode-asm'), modeHex: $('mode-hex'), syntax: $('syntax'), syntaxWrap: $('syntax-wrap'),
-  examples: $('examples'), arch: $('arch'), archHint: $('arch-hint'),
+  examples: $('examples'), cpus: $('cpus'), cpuGrid: $('cpu-grid'), cpuAll: $('cpu-all'), cpuClear: $('cpu-clear'), traceSlot: $('trace-slot'),
   advanced: $('advanced'), advancedSummary: $('advanced-summary'),
   align: $('opt-align'), sfe: $('opt-sfe'), nmi: $('opt-nmi'), nma: $('opt-nma'), iter: $('opt-iter'), cycles: $('opt-cycles'),
   reset: $('opt-reset'), run: $('run'), copy: $('copy-link'), live: $('live'),
@@ -52,6 +52,7 @@ const ui = { hideEmpty: true, reportOpen: false, listingOpen: { asm: null, hex: 
 let manifest = { version: 'dev', files: {}, tables: [], assembler: null };
 let uarch = null;
 let archItems = new Map(); // key -> {key, title, table, chip, experimental}
+let checked = [];          // the checked CPUs, in menu order; state.arch (the focused one, with the details) is one of them
 let engine = null;
 let wasmModule = null;  // the compiled analyzer, shared by every worker
 let uarchBytes = null;
@@ -81,8 +82,9 @@ let liveOn = true;
 try { liveOn = localStorage.getItem(LIVE_KEY) !== 'off'; } catch { /* storage unavailable: on */ }
 const liveRunner = latestWins(() => run({ auto: true }));
 
-// The compare panels (compare-view.js): all CPUs, alignment sweep. They get every successful result of single
-// mode; in A–B mode they are hidden (ab.css), keep their open state, and wait for the next single-mode result.
+// The compare views (compare-view.js): the table of the checked CPUs (several checked) and the alignment sweep. They
+// get every successful result of single mode; in A–B mode they are hidden (ab.css), keep their state, and wait for
+// the next single-mode result.
 const panels = createComparePanels({
   els: {
     cpus: $('cmp-cpus'), cpusInfo: $('cmp-cpus-info'), cpusBody: $('cmp-cpus-body'),
@@ -90,15 +92,15 @@ const panels = createComparePanels({
   },
   engine: () => engine,
   pool: () => getPool(),
-  items: () => [...archItems.values()],
+  checked: () => checked.map((k) => archItems.get(k)).filter(Boolean),
+  multi: () => checked.length > 1 && !state.ab,
   tableLoaded: (key) => !!engine?.hasArch(archItems.get(key)?.table),
   ensureTable: (key) => ensureTable(key),
-  onArch: (key) => selectArch(key),
+  onArch: (key) => focusArch(key),
   onAlign: (offset) => setAlign(offset),
   onToggle: () => {
     const o = panels.open();
-    if (o.cpus === state.cmpCpus && o.sweep === state.cmpSweep) return;
-    state.cmpCpus = o.cpus;
+    if (o.sweep === state.cmpSweep) return;
     state.cmpSweep = o.sweep;
     syncUrl(true);
   },
@@ -174,7 +176,7 @@ function writeControls() {
   el.code.setAttribute('aria-label', state.mode === 'asm' ? 'Assembly code' : 'Machine code (hex)');
   el.codeHint.textContent = HINTS[state.mode];
   el.codeHint.hidden = !HINTS[state.mode];
-  if (archItems.has(state.arch)) el.arch.value = state.arch;
+  paintCpus();
   el.align.value = state.alignmentOffset;
   for (const r of document.querySelectorAll('input[name="init"]')) r.checked = r.value === state.initPolicy;
   el.sfe.checked = state.simpleFrontEnd;
@@ -182,7 +184,7 @@ function writeControls() {
   el.nma.checked = state.noMacroFusion;
   el.iter.value = state.minIterations;
   el.cycles.value = state.minCycles;
-  panels.setOpen({ cpus: state.cmpCpus, sweep: state.cmpSweep });
+  panels.setOpen({ sweep: state.cmpSweep });
   insight.setOpen({ cost: state.cost, nop: state.costNop });
   paintDerived();
   ab?.paint();
@@ -191,10 +193,8 @@ function writeControls() {
 function paintDerived() {
   const changed = ['alignmentOffset', 'initPolicy', 'simpleFrontEnd', 'noMicroFusion', 'noMacroFusion', 'minIterations', 'minCycles']
     .filter((k) => state[k] !== DEFAULT_STATE[k]).length;
-  el.advancedSummary.textContent = changed ? `· ${changed} changed` : '';
-  const item = archItems.get(state.arch);
-  el.archHint.textContent = item?.experimental ? 'prototype model' : '';
-  el.archHint.classList.toggle('caveat', !!item?.experimental);
+  el.advancedSummary.textContent = changed ? ` · ${changed} changed` : '';
+  paintCpus();
   el.run.disabled = !ready || (state.mode === 'asm' && assemblerMissing);
   paintStale();
 }
@@ -209,7 +209,7 @@ function paintStale() {
 }
 
 function collectState() {
-  return { ...state, text: el.code.value };
+  return { ...state, cpus: cpusField(), text: el.code.value };
 }
 
 let syncTimer = 0;
@@ -226,6 +226,7 @@ function syncUrl(now = false) {
 }
 
 function changed({ rerun = false } = {}) {
+  keepFocusChecked();
   paintDerived();
   syncUrl();
   if (!ready) touched = true;
@@ -244,12 +245,79 @@ function setLive(on) {
   try { localStorage.setItem(LIVE_KEY, on ? 'on' : 'off'); } catch { /* not remembered */ }
   if (on && ready && el.code.value.trim() !== '') liveRunner.schedule(0); else liveRunner.cancel();
 }
-function selectArch(key) {
-  if (!archItems.has(key) || (key === state.arch && el.arch.value === key)) return;
+// ---- the checked CPUs ---------------------------------------------------------------------------------------------
+// Several can be checked (a table compares them); one of them, state.arch, is focused: it has the detailed result, the
+// sweep, the trace and side A of an A–B comparison. The focus stays where it is (a row of the table moves it) unless
+// its CPU is unchecked (then the first checked one); in A–B mode, a CPU that is checked gets it (side A has no table).
+// At least one CPU stays checked.
+
+const inMenuOrder = (keys) => [...archItems.keys()].filter((k) => keys.includes(k));
+// the checked CPUs for the URL: '' (only the focused one), 'all', or a list
+function cpusField() {
+  if (!archItems.size) return state.cpus; // not read yet: as the link had it
+  if (checked.length <= 1 && (checked[0] ?? state.arch) === state.arch) return '';
+  if (checked.length === archItems.size) return 'all';
+  return checked.join(',');
+}
+// the checked CPUs from state.cpus (a link) once the menu is known; unknown keys are dropped
+function readCpus() {
+  if (!archItems.size) return;
+  if (!archItems.has(state.arch)) state.arch = archItems.has(DEFAULT_ARCH) ? DEFAULT_ARCH : archItems.keys().next().value;
+  const want = state.cpus === 'all' ? [...archItems.keys()] : String(state.cpus || '').split(',');
+  checked = inMenuOrder([...want, state.arch]);
+  state.cpus = cpusField();
+}
+function setChecked(keys) {
+  checked = inMenuOrder(keys);
+  state.cpus = cpusField();
+  paintCpus();
+  panels.refreshCpus();
+}
+// the focused CPU changed elsewhere (A–B swap, an example of the mock): it is checked too
+function keepFocusChecked() {
+  if (!archItems.size || checked.includes(state.arch) || !archItems.has(state.arch)) return;
+  setChecked(checked.length <= 1 ? [state.arch] : [...checked, state.arch]);
+}
+// focus a CPU (a row of the table, an example); an unchecked one is checked (instead of the only one checked)
+function focusArch(key, { rerun = true } = {}) {
+  if (!archItems.has(key)) return;
+  if (!checked.includes(key)) setChecked(checked.length <= 1 ? [key] : [...checked, key]);
+  if (key === state.arch) return;
   state.arch = key;
-  el.arch.value = key;
+  ab?.paint();
   ensureTable(key).catch((e) => flash(`table not loaded: ${e?.message ?? e}`, { error: true, ms: 6000 }));
-  changed({ rerun: true });
+  changed({ rerun });
+}
+const cpuBoxes = () => [...el.cpuGrid.querySelectorAll('input[type=checkbox]')];
+function paintCpus() {
+  for (const b of cpuBoxes()) {
+    b.checked = checked.includes(b.value);
+    const focus = b.value === state.arch;
+    b.parentElement.classList.toggle('focus', focus);
+    if (focus) b.setAttribute('aria-describedby', 'l-cpus-focus'); else b.removeAttribute('aria-describedby');
+  }
+  el.cpus.classList.toggle('multi', checked.length > 1 || state.ab);
+  el.cpus.dataset.focus = state.arch;
+  el.cpus.dataset.checked = checked.join(',');
+  el.cpuClear.disabled = checked.length <= 1;
+  el.cpuAll.disabled = archItems.size > 0 && checked.length === archItems.size;
+}
+// the boxes changed (one click, or a test that sets several and sends one change event)
+function cpusChanged(e) {
+  const now = cpuBoxes().filter((b) => b.checked).map((b) => b.value);
+  if (!now.length) { if (e?.target) e.target.checked = true; return; } // the last one stays checked
+  const added = now.filter((k) => !checked.includes(k));
+  setChecked(now);
+  const focus = state.ab && added.length === 1 ? added[0] : now.includes(state.arch) ? state.arch : now[0];
+  if (focus !== state.arch) {
+    state.arch = focus;
+    ab?.paint(); // side A's caption, B's "same as A"
+    ensureTable(focus).catch((err) => flash(`table not loaded: ${err?.message ?? err}`, { error: true, ms: 6000 }));
+    changed({ rerun: true });
+  } else {
+    paintDerived();
+    syncUrl(true);
+  }
 }
 function setAlign(offset) {
   const v = clampInt(offset, LIMITS.alignmentOffset, DEFAULT_STATE.alignmentOffset);
@@ -358,45 +426,46 @@ function ensureAssembler() {
 }
 
 function loadExample(ex) {
+  if (ex.hexOnly && state.mode !== 'hex') setMode('hex'); // machine code only
   const key = state.mode === 'asm' ? state.syntax : 'hex';
   el.code.value = buffers[state.mode] = ex.text[key];
-  if (engine?.capabilities.mock && archItems.has(ex.arch) && state.arch !== ex.arch) {
-    state.arch = ex.arch; // the mock has the reference's result for this microarchitecture
-    el.arch.value = ex.arch;
-  }
+  // the mock has the reference's result for this microarchitecture
+  if (engine?.capabilities.mock && archItems.has(ex.arch) && state.arch !== ex.arch) focusArch(ex.arch, { rerun: false });
   clearMessages();
   changed();
   run();
 }
 
-const ALL_EXAMPLES = [...EXAMPLES, ...CLASSIC_EXAMPLES, ...MOCK_EXAMPLES];
+const ALL_EXAMPLES = [...EXAMPLES, ...CLASSIC_EXAMPLES, ...SHOWCASE_EXAMPLES, ...MOCK_EXAMPLES];
 function fillExamples() {
   const group = (label, list) => h('optgroup', { label }, list.map((e) => h('option', { value: e.id, text: e.title })));
-  el.examples.replaceChildren(h('option', { value: '', text: 'choose…' }), group('basics', EXAMPLES), group('classic loops', CLASSIC_EXAMPLES),
-    ...(engine?.capabilities.mock ? [group('mock', MOCK_EXAMPLES)] : []));
+  el.examples.replaceChildren(h('option', { value: '', text: 'examples…' }), group('basics', EXAMPLES), group('classic loops', CLASSIC_EXAMPLES),
+    group('showcase', SHOWCASE_EXAMPLES), ...(engine?.capabilities.mock ? [group('mock', MOCK_EXAMPLES)] : []));
 }
 // the code of an example in the current input format
 const exampleCode = (ex) => ({ mode: state.mode, syntax: state.syntax, text: ex.text[state.mode === 'asm' ? state.syntax : 'hex'] });
 
 // ---- microarchitectures and their tables ---------------------------------------------------------------------------
 
+// The CPU boxes: short keys in order of release; the full name and year in the tooltip and the accessible name;
+// prototypes marked.
 function fillArchs() {
-  const groups = archGroups(uarch);
   archItems = new Map();
-  const nodes = [];
-  for (const g of groups) {
-    const og = h('optgroup', { label: g.label });
+  const cells = [];
+  for (const g of archGroups(uarch)) {
     for (const it of g.items) {
       archItems.set(it.key, it);
-      og.append(h('option', { value: it.key, text: it.title }));
+      const info = ARCH_INFO[it.key];
+      const name = info ? `${info.name}${info.year ? ` (${info.year})` : ''}` : it.key;
+      const box = h('input', { type: 'checkbox', value: it.key, 'aria-label': it.title });
+      cells.push(h('label', { class: 'cpu' + (it.experimental ? ' proto' : ''), title: `${name}${it.experimental ? ` · ${PROTOTYPE} model: less validated` : ''}` },
+        box, it.key, it.experimental ? h('span', { class: 'proto-mark', 'aria-hidden': 'true', text: 'p' }) : null));
     }
-    nodes.push(og);
   }
   if (archItems.size === 0) throw new Error('uarch.json has no configurations');
-  el.arch.replaceChildren(...nodes);
-  if (!archItems.has(state.arch)) state.arch = archItems.has(DEFAULT_ARCH) ? DEFAULT_ARCH : archItems.keys().next().value;
-  el.arch.value = state.arch;
-  el.arch.disabled = false;
+  el.cpuGrid.replaceChildren(...cells, h('span', { id: 'l-cpus-focus', class: 'vh', text: 'details shown' }));
+  readCpus();
+  paintCpus();
 }
 
 // The bytes of a table, downloaded once (they are kept: the engines load them again after a restart).
@@ -451,11 +520,19 @@ function nextFrame() { // lets the busy state paint before the (synchronous) ana
   });
 }
 
+// The trace panel (trace.js) goes below the result, full width.
+function showTrace(panel) {
+  el.traceSlot.hidden = !panel;
+  if (!panel) { el.traceSlot.replaceChildren(); return; }
+  if (el.traceSlot.querySelector('.field')?.firstChild !== panel) el.traceSlot.replaceChildren(...row('trace', panel).childNodes);
+}
+
 function draw() {
-  if (!lastView) return;
-  if (lastView.ab) { ab.draw(lastView.ab); paintStale(); return; }
-  const trace = lastView.response && !lastView.response.error ? tracePanel.update(lastView) : null;
-  renderResult(el.body, { ...lastView, trace, ui, onUi: (k, v) => { ui[k] = v; if (k === 'hideEmpty') draw(); } });
+  if (!lastView) { showTrace(null); return; }
+  if (lastView.ab) { showTrace(null); ab.draw(lastView.ab); paintStale(); return; }
+  const trace = lastView.response && !lastView.response.error && Array.isArray(lastView.response.rows) ? tracePanel.update(lastView) : null;
+  renderResult(el.body, { ...lastView, ui, onUi: (k, v) => { ui[k] = v; if (k === 'hideEmpty' || k === 'allRows') draw(); } });
+  showTrace(trace);
   insight.decorate(el.body, lastView);
   paintStale();
 }
@@ -558,8 +635,9 @@ async function run({ auto = false } = {}) {
     lastRunKey = key;
     draw();
     if (response && !response.error) {
-      if (!auto) flash(`${Number(response.tp).toFixed(2)} cycles/iteration · ${archKey}${response.mock ? ' (mock data)' : ''}`, { ms: 4000 });
-      panels.update({ hex, arch: archKey, options: opts, elapsedMs }, { auto });
+      // the time is shown here (not in the result): how fast the analyzer is
+      if (!auto) flash(`${Number(response.tp).toFixed(2)} cycles/iteration · ${archKey}${response.mock ? ' (mock data)' : ` · ${elapsedMs < 10 ? elapsedMs.toFixed(1) : Math.round(elapsedMs)} ms`}`, { ms: 6000 });
+      panels.update({ hex, arch: archKey, options: opts, elapsedMs, response }, { auto });
     } else if (!auto) {
       flash('analysis failed', { error: true });
     }
@@ -568,6 +646,7 @@ async function run({ auto = false } = {}) {
   } catch (e) {
     if (id !== runSeq) return;
     lastView = null;
+    showTrace(null);
     renderFailure(el.body, `Analysis failed: ${e?.message ?? e}`);
   } finally {
     if (inflight.id === id) inflight = { id: 0, key: '' };
@@ -614,6 +693,7 @@ async function runCompare(id, key, { auto = false } = {}) {
   } catch (e) {
     if (!current()) return;
     lastView = null;
+    showTrace(null);
     renderFailure(el.body, `Comparison failed: ${e?.message ?? e}`);
   } finally {
     if (inflight.id === id) inflight = { id: 0, key: '' };
@@ -658,6 +738,9 @@ function setupFeatures() {
     },
     toggled() { // single <-> A–B
       lastView = null;
+      showTrace(null);
+      paintCpus();
+      panels.refreshCpus();
       changed();
       if (ready && !el.run.disabled && el.code.value.trim() !== '') run();
       else renderEmpty(el.body);
@@ -754,7 +837,18 @@ function bind() {
     if (ex) loadExample(ex);
   });
   el.code.addEventListener('input', () => { buffers[state.mode] = el.code.value; changed(); });
-  el.arch.addEventListener('change', () => selectArch(el.arch.value));
+  el.cpuGrid.addEventListener('change', cpusChanged);
+  el.cpuAll.addEventListener('click', () => { setChecked([...archItems.keys()]); paintDerived(); syncUrl(true); });
+  el.cpuClear.addEventListener('click', () => { setChecked([state.arch]); paintDerived(); syncUrl(true); });
+  // the options popover: Escape or a click elsewhere closes it
+  el.advanced.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && el.advanced.open) { el.advanced.open = false; el.advanced.querySelector('summary').focus(); }
+  });
+  // (a popover only: on phones the options are in the flow, and closing them would move what is being tapped)
+  const popBody = el.advanced.querySelector('.pop-body');
+  document.addEventListener('pointerdown', (e) => {
+    if (el.advanced.open && !el.advanced.contains(e.target) && getComputedStyle(popBody).position === 'absolute') el.advanced.open = false;
+  });
   const int = (input, name) => input.addEventListener('change', () => {
     state[name] = clampInt(input.value, LIMITS[name], DEFAULT_STATE[name]);
     input.value = state[name];
@@ -789,7 +883,8 @@ function bind() {
 
     if (restore(frag)) {
       lastFragment = frag;
-      if (!archItems.has(state.arch)) state.arch = DEFAULT_ARCH;
+      readCpus();
+      panels.refreshCpus();
       clearMessages();
       writeControls();
       if (state.mode === 'asm') ensureAssembler().then(() => paintDerived());

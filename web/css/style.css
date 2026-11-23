@@ -43,7 +43,7 @@
   --heat-extra: 0.18;
   --max-width: 1080px;
   --page-gutter: clamp(1.25rem, 4vw, 4rem);
-  --label-width: 8.5rem;
+  --label-width: 6.5ch;     /* the labels of the result rows: limits, chain, uops, text, trace */
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   color-scheme: dark;
 }
@@ -153,17 +153,54 @@ a.ext:hover { color: var(--external); text-decoration-color: currentColor; }
 .top nav { display: flex; align-items: baseline; gap: 1.5rem; }
 .top nav a, .top nav button.plain { color: var(--text); text-decoration: none; }
 .top nav a:hover, .top nav button.plain:hover { color: var(--accent); }
+.top nav a.gh { display: inline-flex; align-self: center; color: var(--subtle); }
+.top nav a.gh:hover, .top nav a.gh:focus-visible { color: var(--accent); }
 
 main { padding-top: 0.5rem; padding-bottom: 2rem; }
 
-.block { padding: 1.25rem 0 1.5rem; border-bottom: 1px solid var(--border); }
-.block > h2 { color: var(--heading); margin-bottom: 0.75rem; }
+.block, .pane { padding: 1.25rem 0 1.5rem; border-bottom: 1px solid var(--border); min-width: 0; }
+.block > h2, .pane > h2 { color: var(--heading); margin-bottom: 0.75rem; }
 
 .bottom { padding-top: 1.25rem; padding-bottom: 2.5rem; color: var(--subtle); }
 .bottom p + p { margin-top: 0.4rem; }
 .bottom .small { font-size: 0.85em; color: var(--subtle); }
-.bottom a.gh { display: inline-flex; vertical-align: -0.15em; margin-left: 0.35rem; color: var(--subtle); text-decoration: none; }
-.bottom a.gh:hover, .bottom a.gh:focus-visible { color: var(--accent); }
+
+/* visually hidden, still read (labels of controls whose content says what they are) */
+.vh, .row.lead > .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* ---- the input pane: a toolbar, the code, the CPUs, the actions ------------------------------------------------ */
+
+.pane-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 2rem; margin-bottom: 0.6rem; }
+.pane-head > h2 { color: var(--heading); }
+.ab-switch { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 1.25rem; }
+.toolbar { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1rem; margin-bottom: 0.5rem; }
+.toolbar .code-hint { margin-left: auto; }
+.toolbar .code-hint:empty { display: none; }
+
+/* one dense grid: the label, the CPUs in order of release, all / clear */
+.cpus { display: grid; grid-template-columns: repeat(auto-fill, minmax(7.75ch, 1fr)); align-items: baseline; gap: 0.1rem 0.6rem; margin-top: 0.6rem; }
+.cpu-grid { display: contents; }
+.cpus-label { color: var(--accent); cursor: help; }
+.cpu-grid label.cpu { white-space: nowrap; cursor: pointer; color: var(--subtle); }
+.cpu-grid input[type="checkbox"] { margin-right: 0.3rem; }
+.cpu-grid label.cpu:has(input:checked) { color: var(--text); }
+.cpu-grid label.cpu:hover { color: var(--accent-hover); }
+/* several checked (or A–B): the one with the details is marked */
+.cpus.multi label.cpu.focus { color: var(--heading); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; }
+.proto-mark { color: var(--caveat); font-size: 0.75em; vertical-align: super; line-height: 0; margin-left: 0.1em; }
+.cpu-tools { grid-column: span 2; display: inline-flex; justify-content: flex-end; gap: 1rem; white-space: nowrap; }
+.cpu-tools button.plain:disabled { opacity: 0.45; text-decoration: none; }
+
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.25rem; margin-top: 0.7rem; }
+
+/* the options: a popover under the toolbar, at its left edge and never wider (in the flow on phones) */
+details.pop > summary { color: var(--text); }
+details.pop[open] > summary { color: var(--accent); }
+.pop-body {
+  position: absolute; z-index: 20; top: calc(100% + 0.2rem); left: 0;
+  width: max-content; max-width: min(34rem, 100%);
+  background: var(--surface); border: 1px solid var(--control-border); padding: 0.6rem 0.85rem 0.7rem;
+}
 
 .terse { color: var(--description); max-width: 82ch; }
 .terse li { padding: 0.1rem 0; }
@@ -182,7 +219,8 @@ main { padding-top: 0.5rem; padding-bottom: 2rem; }
 
 @media (max-width: 640px) {
   .row { grid-template-columns: minmax(0, 1fr); row-gap: 0.15rem; }
-  .row.actions > .label { display: none; }
+  .pop-body { position: static; width: auto; margin-top: 0.4rem; }
+  .toolbar .code-hint { margin-left: 0; }
 }
 
 /* ---- controls ------------------------------------------------------------------------------------------- */
@@ -236,7 +274,7 @@ button.plain:hover:not(:disabled) { background: none; text-decoration-color: cur
 .choice label:has(input:checked) { color: var(--accent); }
 label.inline { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--subtle); }
 label.inline select { color: var(--text); }
-#examples { max-width: 24ch; }
+#examples { width: 14ch; } /* the menu itself shows the whole titles */
 
 .field > .hint { margin-top: 0.3rem; }
 .messages:empty { display: none; }
@@ -248,18 +286,19 @@ label.inline select { color: var(--text); }
 
 details > summary { cursor: pointer; color: var(--text); width: fit-content; }
 details > summary:hover { color: var(--accent-hover); }
-.options { display: grid; gap: 0.6rem; padding: 0.6rem 0 0.25rem; }
+.options { display: grid; gap: 0.6rem; }
 .opt { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.75rem; }
 .opt > label:first-child, .opt > legend { min-width: 17ch; color: var(--description); }
 fieldset.opt { display: grid; gap: 0.2rem; }
 fieldset.opt > legend { float: left; margin-bottom: 0.2rem; }
 fieldset.opt > label { clear: both; padding-left: 1.5ch; }
 
-.status { margin-left: auto; min-width: min(30ch, 100%); text-align: right; color: var(--subtle); min-height: 1.85em; }
+.status { margin-left: auto; flex: 1 1 20ch; min-width: 0; text-align: right; color: var(--subtle); min-height: 1.85em; }
+.result-head { flex-wrap: nowrap; margin-bottom: 0.4rem; }
 .status .bar { display: block; height: 2px; margin-top: 2px; background: transparent; }
 .status .bar > span { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.15s linear; }
 .status.error { color: var(--caveat); }
-@media (max-width: 640px) { .status { margin-left: 0; flex-basis: 100%; text-align: left; } }
+@media (max-width: 640px) { .result-head { flex-wrap: wrap; } .status { margin-left: 0; flex-basis: 100%; text-align: left; } }
 
 .notice { border: 1px solid var(--caveat); color: var(--caveat); background: var(--surface); padding: 0.5rem 0.75rem; margin-top: 1rem; }
 .notice p + p { margin-top: 0.3rem; }
@@ -272,21 +311,24 @@ fieldset.opt > label { clear: both; padding-left: 1.5ch; }
 .empty { color: var(--subtle); }
 .error-box { border: 1px solid var(--caveat); background: var(--surface); color: var(--caveat); padding: 0.5rem 0.75rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 
-.tp { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.75rem; }
+.row.lead { grid-template-columns: minmax(0, 1fr); }
+.tp { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.1rem 2ch; }
 .tp .value { font-size: 1.6rem; line-height: 1.2; color: var(--heading); }
 .tp .unit { color: var(--text); }
+.k { color: var(--accent); }
 .meta { color: var(--description); }
 .meta .sep { color: var(--subtle); }
 .meta .tag { color: var(--date); cursor: help; }
 .mock-tag { color: var(--caveat); }
 
-.limits { display: grid; grid-template-columns: max-content max-content minmax(2rem, 14rem); column-gap: 1.5ch; align-items: center; width: fit-content; max-width: 100%; }
+.limits { display: flex; flex-wrap: wrap; gap: 0.15rem 2ch; }
+.limits .lim { display: inline-flex; align-items: center; gap: 0.75ch; white-space: nowrap; cursor: help; }
 .limits .name { color: var(--description); }
-.limits .val { text-align: right; font-variant-numeric: tabular-nums; }
-.limits .gauge { height: 0.55em; background: var(--border); }
+.limits .val { font-variant-numeric: tabular-nums; }
+.limits .gauge { display: block; width: 3.5rem; height: 0.55em; background: var(--border); }
 .limits .gauge > span { display: block; height: 100%; background: rgb(var(--accent-rgb) / 0.45); }
-.limits .is-bottleneck { color: var(--heading); }
-.limits .gauge.is-bottleneck > span { background: var(--accent); }
+.limits .is-bottleneck .name, .limits .is-bottleneck .val { color: var(--heading); }
+.limits .is-bottleneck .gauge > span { background: var(--accent); }
 
 .table-tools { display: flex; flex-wrap: wrap; gap: 0.25rem 1.5rem; align-items: center; color: var(--subtle); margin-bottom: 0.35rem; }
 .table-tools label { cursor: pointer; }
@@ -314,12 +356,15 @@ table.grid { width: 100%; }
 .grid tr.extra td.heat { background-image: linear-gradient(rgb(var(--accent-rgb) / calc(var(--h, 0) * var(--heat-extra))), rgb(var(--accent-rgb) / calc(var(--h, 0) * var(--heat-extra)))); }
 .grid tr.unsupported th { color: var(--caveat); }
 
+.more-rows { margin-top: 0.35rem; }
 .legend { color: var(--subtle); display: flex; flex-wrap: wrap; gap: 0.1rem 2ch; margin-top: 0.35rem; }
 .legend b { font-weight: 400; color: var(--date); }
 .legend span { cursor: help; }
 
 .text-block { position: relative; }
-.text-block + .text-block { margin-top: 0.2rem; }
+.text-row > .field { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 3ch; }
+.text-row .text-block { min-width: 0; max-width: 100%; }
+.text-row .text-block[open] { flex-basis: 100%; }
 .text-block > .copy { display: none; position: absolute; top: 0; right: 0; }
 .text-block[open] > .copy { display: inline; }
 pre.listing, pre.report {
@@ -386,6 +431,32 @@ table.cmp-cpus { width: 100%; }
 .sweep-chart .cur-pt { fill: none; stroke: var(--cursor); stroke-width: 2; }
 .sweep-chart .hit { fill: transparent; cursor: pointer; }
 .sweep-chart .hit:hover { fill: var(--accent-dim); }
+
+/* ---- the checked CPUs (above the result) and the views below both panes ------------------------------------------ */
+
+.multi { margin-bottom: 0.9rem; }
+.multi-info { margin-top: 0.2rem; font-size: 0.8667rem; }
+.multi-info:empty { display: none; }
+.more { padding-top: 0.75rem; padding-bottom: 0.9rem; }
+
+/* ---- wide screens: input | result side by side; A–B stays one column (A and B side by side, the result below) -- */
+
+@media (min-width: 1200px) {
+  :root { --max-width: 1680px; --page-gutter: clamp(1.5rem, 2.5vw, 3rem); }
+  .top { padding-top: 1rem; padding-bottom: 0.75rem; }
+  body:not(.ab-on) .panes {
+    display: grid; grid-template-columns: minmax(0, clamp(24rem, 34vw, 36rem)) minmax(0, 1fr);
+    border-bottom: 1px solid var(--border);
+  }
+  body:not(.ab-on) .pane { border-bottom: 0; padding-top: 1rem; }
+  body:not(.ab-on) .pane-input { padding-right: 2rem; }
+  body:not(.ab-on) .pane-result { padding-left: 2rem; border-left: 1px solid var(--border); min-height: 0; }
+  /* the code box fills the height of the window (about 20 lines at 800 px) */
+  body:not(.ab-on) #code { height: clamp(16rem, calc(100vh - 22rem), 60rem); min-height: 16rem; }
+}
+@media (min-width: 1200px) and (max-width: 1359px) {
+  body:not(.ab-on) #code { height: clamp(16rem, calc(100vh - 23.5rem), 60rem); } /* the CPUs take a row more */
+}
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }

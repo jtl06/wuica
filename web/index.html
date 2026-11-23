@@ -36,133 +36,120 @@
   <nav aria-label="Page">
     <a href="#about">limitations</a>
     <button type="button" class="plain" id="theme-toggle" aria-label="Color theme: dark" title="switch to light">dark</button>
+    <a class="gh" id="source-gh" href="https://github.com/jtl06/wuica" rel="noopener noreferrer" aria-label="Source on GitHub" title="Source on GitHub"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a>
   </nav>
 </header>
 
 <main>
   <div id="notice" class="notice" hidden></div>
 
-  <section class="block" aria-labelledby="h-input">
-    <h2 id="h-input">Input</h2>
-
-    <div class="row">
-      <div class="label" id="l-mode">format</div>
-      <div class="field wrap">
-        <div class="choice" role="radiogroup" aria-labelledby="l-mode">
-          <label><input type="radio" name="mode" value="asm" id="mode-asm"> Assembly</label>
-          <label><input type="radio" name="mode" value="hex" id="mode-hex" checked> Hex</label>
-        </div>
-        <label class="inline" id="syntax-wrap" hidden>syntax
-          <select id="syntax">
-            <option value="intel">Intel</option>
-            <option value="att">AT&amp;T</option>
-          </select>
-        </label>
-        <label class="inline">examples
-          <select id="examples">
-            <option value="">choose…</option>
-          </select>
-        </label>
-      </div>
+  <div class="panes">
+  <section class="pane pane-input" id="input" aria-labelledby="h-input">
+    <div class="pane-head">
+      <h2 id="h-input">Input</h2>
+      <!-- js/ab.js puts the single / A–B switch here -->
     </div>
 
-    <div class="row">
-      <label class="label" for="code">code</label>
-      <div class="field">
-        <textarea id="code" rows="9" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off"
-          wrap="off" aria-describedby="code-hint input-messages"></textarea>
-        <p class="hint" id="code-hint"></p>
-        <div id="input-messages" class="messages" aria-live="polite"></div>
+    <div class="toolbar">
+      <div class="choice" role="radiogroup" aria-label="input format">
+        <label><input type="radio" name="mode" value="asm" id="mode-asm"> asm</label>
+        <label><input type="radio" name="mode" value="hex" id="mode-hex" checked> hex</label>
       </div>
-    </div>
-
-    <div class="row">
-      <label class="label" for="arch">cpu</label>
-      <div class="field wrap">
-        <select id="arch" disabled>
-          <option>loading…</option>
+      <label class="inline" id="syntax-wrap" hidden><span class="vh">syntax</span>
+        <select id="syntax" title="assembly syntax">
+          <option value="intel">Intel</option>
+          <option value="att">AT&amp;T</option>
         </select>
-        <span class="hint" id="arch-hint"></span>
-      </div>
-    </div>
-
-    <div class="row">
-      <div class="label">options</div>
-      <div class="field">
-        <details id="advanced">
-          <summary>advanced <span class="hint" id="advanced-summary"></span></summary>
-          <div class="options">
-            <div class="opt">
-              <label for="opt-align" title="position of the first byte in a 64-byte cache line">alignment offset</label>
-              <input type="number" id="opt-align" min="0" max="63" step="1" value="0" inputmode="numeric" title="0–63: position of the first byte in a 64-byte cache line">
-            </div>
-            <fieldset class="opt">
-              <legend>initial registers</legend>
-              <label title="all registers start with different values"><input type="radio" name="init" value="diff" checked> diff</label>
-              <label title="all registers start with the same value"><input type="radio" name="init" value="same"> same</label>
-              <label title="the same value, except the stack and base pointers"><input type="radio" name="init" value="stack"> stack</label>
-            </fieldset>
-            <fieldset class="opt">
-              <legend>model variants</legend>
-              <label title="a front end limited only by the issue width"><input type="checkbox" id="opt-sfe"> simple front end</label>
-              <label><input type="checkbox" id="opt-nmi"> no micro-fusion</label>
-              <label><input type="checkbox" id="opt-nma"> no macro-fusion</label>
-            </fieldset>
-            <div class="opt">
-              <label for="opt-iter">min iterations</label>
-              <input type="number" id="opt-iter" min="1" max="10000" step="1" value="10" inputmode="numeric">
-            </div>
-            <div class="opt">
-              <label for="opt-cycles">min cycles</label>
-              <input type="number" id="opt-cycles" min="1" max="100000" step="1" value="500" inputmode="numeric">
-            </div>
-            <div class="opt">
-              <button type="button" id="opt-reset" class="plain">reset</button>
-            </div>
+      </label>
+      <label class="inline"><span class="vh">examples</span>
+        <select id="examples" title="load an example">
+          <option value="">examples…</option>
+        </select>
+      </label>
+      <details id="advanced" class="pop">
+        <summary title="analysis options">options<span class="hint" id="advanced-summary"></span></summary>
+        <div class="options pop-body">
+          <div class="opt">
+            <label for="opt-align" title="position of the first byte in a 64-byte cache line">alignment offset</label>
+            <input type="number" id="opt-align" min="0" max="63" step="1" value="0" inputmode="numeric" title="0–63: position of the first byte in a 64-byte cache line">
           </div>
-        </details>
-      </div>
+          <fieldset class="opt">
+            <legend>initial registers</legend>
+            <label title="all registers start with different values"><input type="radio" name="init" value="diff" checked> diff</label>
+            <label title="all registers start with the same value"><input type="radio" name="init" value="same"> same</label>
+            <label title="the same value, except the stack and base pointers"><input type="radio" name="init" value="stack"> stack</label>
+          </fieldset>
+          <fieldset class="opt">
+            <legend>model variants</legend>
+            <label title="a front end limited only by the issue width"><input type="checkbox" id="opt-sfe"> simple front end</label>
+            <label><input type="checkbox" id="opt-nmi"> no micro-fusion</label>
+            <label><input type="checkbox" id="opt-nma"> no macro-fusion</label>
+          </fieldset>
+          <div class="opt">
+            <label for="opt-iter">min iterations</label>
+            <input type="number" id="opt-iter" min="1" max="10000" step="1" value="10" inputmode="numeric">
+          </div>
+          <div class="opt">
+            <label for="opt-cycles">min cycles</label>
+            <input type="number" id="opt-cycles" min="1" max="100000" step="1" value="500" inputmode="numeric">
+          </div>
+          <div class="opt">
+            <button type="button" id="opt-reset" class="plain">reset</button>
+          </div>
+        </div>
+      </details>
+      <span class="hint code-hint" id="code-hint"></span>
     </div>
 
-    <div class="row actions">
-      <div class="label" aria-hidden="true"></div>
-      <div class="field wrap">
-        <button type="button" id="run" class="primary" disabled title="Ctrl/⌘ + Enter" aria-keyshortcuts="Control+Enter Meta+Enter">Analyze</button>
-        <button type="button" id="copy-link">Copy link</button>
-        <label class="inline live" title="re-analyze while typing"><input type="checkbox" id="live" checked> live</label>
-        <div class="status" id="status-wrap">
-          <span id="status" role="status" aria-live="polite">starting…</span>
-          <span class="bar" aria-hidden="true"><span id="status-bar"></span></span>
-        </div>
-      </div>
+    <div class="field code-field">
+      <textarea id="code" rows="9" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off"
+        wrap="off" aria-describedby="code-hint input-messages"></textarea>
+      <div id="input-messages" class="messages" aria-live="polite"></div>
+    </div>
+
+    <div class="cpus" id="cpus" role="group" aria-labelledby="l-cpus">
+      <span class="cpus-label" id="l-cpus" title="the CPUs to analyze on; with several, a table compares them and one (marked) has the details">cpu</span>
+      <div class="cpu-grid" id="cpu-grid"><span class="hint">loading…</span></div>
+      <span class="cpu-tools">
+        <button type="button" class="plain" id="cpu-all" title="check every CPU">all</button>
+        <button type="button" class="plain" id="cpu-clear" title="keep only the CPU with the details">clear</button>
+      </span>
+    </div>
+
+    <div class="actions">
+      <button type="button" id="run" class="primary" disabled title="Ctrl/⌘ + Enter" aria-keyshortcuts="Control+Enter Meta+Enter">Analyze</button>
+      <button type="button" id="copy-link">Copy link</button>
+      <label class="inline live" title="re-analyze while typing"><input type="checkbox" id="live" checked> live</label>
     </div>
   </section>
 
-  <section class="block" id="results" aria-labelledby="h-results">
-    <h2 id="h-results">Result</h2>
+  <section class="pane pane-result" id="results" aria-labelledby="h-results">
+    <div class="pane-head result-head">
+      <h2 id="h-results">Result</h2>
+      <div class="status" id="status-wrap">
+        <span id="status" role="status" aria-live="polite">starting…</span>
+        <span class="bar" aria-hidden="true"><span id="status-bar"></span></span>
+      </div>
+    </div>
+    <div id="cmp-cpus" class="multi" hidden>
+      <div id="cmp-cpus-body" class="cmp-body"></div>
+      <p class="hint multi-info" id="cmp-cpus-info"></p>
+    </div>
     <div id="result-body"></div>
   </section>
+  </div>
 
-  <section class="block" id="compare" aria-labelledby="h-compare">
-    <h2 id="h-compare">Compare</h2>
-    <div class="row">
-      <div class="label">cpus</div>
-      <div class="field">
-        <details id="cmp-cpus" class="cmp">
-          <summary title="the block on every CPU">all <span class="hint" id="cmp-cpus-info"></span></summary>
-          <div id="cmp-cpus-body" class="cmp-body"></div>
-        </details>
-      </div>
-    </div>
-    <div class="row">
-      <div class="label">alignment</div>
+  <section class="block more" id="more" aria-label="More views">
+    <div class="row" id="sweep-row">
+      <div class="label">sweep</div>
       <div class="field">
         <details id="cmp-sweep" class="cmp">
-          <summary title="the block at every alignment offset (0–63) on the selected CPU">sweep 0–63 <span class="hint" id="cmp-sweep-info"></span></summary>
+          <summary title="the block at every alignment offset (0–63) on the CPU with the details">alignment 0–63 <span class="hint" id="cmp-sweep-info"></span></summary>
           <div id="cmp-sweep-body" class="cmp-body"></div>
         </details>
       </div>
     </div>
+    <div class="row" id="trace-slot" hidden></div>
   </section>
 
   <section class="block" id="about" aria-labelledby="h-about">
@@ -170,7 +157,7 @@
     <ul class="terse">
       <li>all data in L1; no branch mispredictions</li>
       <li>ends in a branch: a loop (branch taken); otherwise unrolled</li>
-      <li>prototype models (ZEN3, ADL-P, ICX): from the fork, less validated</li>
+      <li>prototype models (ZEN3, ADL-P, ICX; marked <span class="proto-mark">p</span>): from the fork, less validated</li>
       <li>runs in your browser; your code is not uploaded (only Compiler Explorer links contact godbolt.org)</li>
     </ul>
   </section>
@@ -178,8 +165,7 @@
 
 <footer class="bottom">
   <p>unofficial port of <a class="ext" href="https://github.com/andreas-abel/uiCA" rel="noopener noreferrer">uiCA</a> by Andreas Abel and Jan Reineke.
-    data from <a class="ext" href="https://www.uops.info" rel="noopener noreferrer">uops.info</a>.
-    <a class="gh" id="source-gh" href="https://github.com/jtl06/wuica" rel="noopener noreferrer" aria-label="Source on GitHub" title="Source on GitHub"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a></p>
+    data from <a class="ext" href="https://www.uops.info" rel="noopener noreferrer">uops.info</a>.</p>
   <p class="small">v<span id="app-version"></span> · LLVM 22.1.2 · Intel XED · build <span id="build-id">dev</span><span id="update-note" hidden> · new version: <button type="button" class="plain" id="reload">reload</button></span></p>
 </footer>
 </body>

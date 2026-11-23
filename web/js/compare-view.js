@@ -1,4 +1,5 @@
-// The compare panels below the result: the block on every CPU, and the selected CPU at every alignment offset.
+// The compare views: the table of the checked CPUs (above the detailed result, when several are checked) and the focused
+// CPU at every alignment offset (a panel below the result).
 // They run on the worker pool (pool.js) if the page has one, in parallel and apart from the main analysis; otherwise
 // in the analyzer's worker, one analysis at a time (a main analysis waits behind one of them at most). They stop as
 // soon as their input is out of date, and reuse results (compare.js). The page (app.js) passes in what
@@ -37,9 +38,10 @@ function keepFocus(root, draw) {
 }
 
 // env: {
-//   els: {cpus, cpusInfo, cpusBody, sweep, sweepInfo, sweepBody}   the <details> elements, their hints and bodies
+//   els: {cpus, cpusInfo, cpusBody, sweep, sweepInfo, sweepBody}   the table's box and the sweep's <details>, their hints and bodies
 //   engine()                the analyzer (analyze(request), capabilities)
-//   items()                 the CPU menu items in menu order ({key, title, table, experimental})
+//   checked()               the checked CPUs in menu order ({key, title, table, experimental})
+//   multi()                 true: the table of the checked CPUs is shown (several checked, single mode)
 //   tableLoaded(key), ensureTable(key)
 //   pool()                  the worker pool (pool.js) or null: then the analyses run in engine(), one at a time
 //   onArch(key), onAlign(offset)   a row or a point was chosen
@@ -98,8 +100,9 @@ export function createComparePanels(env) {
     });
   }
 
-  // What both panels share: open state, scheduling, progress markers (data-state, data-runs, data-ms: for tests).
-  function panel({ details, info, body, keyOf, jobsFor, draw, label }) {
+  // What both views share: open state, scheduling, progress markers (data-state, data-runs, data-ms: for tests).
+  // details: the element that gets the markers (a <details> element is also the open state, unless isOpen is given)
+  function panel({ details, isOpen = () => details.open, info, body, keyOf, jobsFor, draw, label }) {
     const p = {
       details, info, body,
       shownKey: null, doneKey: null, runningKey: null, forcedKey: null,
@@ -109,7 +112,7 @@ export function createComparePanels(env) {
     p.paintInfo = () => {
       let t = p.progress;
       if (!t && p.doneKey && p.doneKey === p.shownKey) t = `${label(p)} · ${fmtMs(p.ms)}${p.mock ? ' · mock data' : ''}`;
-      info.textContent = t ? `· ${t}` : '';
+      info.textContent = t ? `${details instanceof HTMLDetailsElement ? '· ' : ''}${t}` : '';
     };
     p.paintStale = () => {
       // dimmed while what it shows is not for the current input (the main result's, or its own, is out of date)
@@ -130,7 +133,7 @@ export function createComparePanels(env) {
     };
 
     p.runner = latestWins(async ({ isStale, signal }) => {
-      if (!input || !details.open) return;
+      if (!input || !isOpen()) return;
       const inp = input;
       const key = keyOf(inp);
       if (key !== p.shownKey) { p.shownKey = key; p.results = new Map(); p.doneKey = null; p.mock = false; }
@@ -155,7 +158,7 @@ export function createComparePanels(env) {
       let finished = false;
       try {
         finished = await runJobs(inp.hex, jobs, {
-          isStale: () => isStale() || !details.open, signal,
+          isStale: () => isStale() || !isOpen(), signal,
           onTable: () => { tablesDone++; p.progress = `loading tables ${tablesDone}/${missing}`; p.paintInfo(); },
           onResult: (job, r) => {
             p.results.set(job.id, r);
@@ -181,32 +184,35 @@ export function createComparePanels(env) {
     }, { onError: (e) => { p.progress = ''; p.runningKey = null; p.setState('idle'); info.textContent = `· failed: ${e?.message ?? e}`; } });
 
     p.update = (auto) => {
-      if (!details.open || !input) return;
+      if (!isOpen() || !input) return;
       const key = keyOf(input);
       if (key === p.doneKey || key === p.runningKey) { p.redraw(); return; } // only the markers moved
       p.paintStale();
+      p.setState('queued');
       p.runner.schedule(auto ? AUTO_DELAY : 0);
     };
     p.force = () => { if (input) { p.forcedKey = keyOf(input); p.runner.schedule(0); } };
 
-    let last = details.open;
-    details.addEventListener('toggle', () => {
-      if (details.open === last) return;
-      last = details.open;
-      env.onToggle();
-      if (!details.open) { p.runner.cancel(); return; }
-      if (input) p.update(false); else env.wantResult();
-    });
+    if (details instanceof HTMLDetailsElement) {
+      let last = details.open;
+      details.addEventListener('toggle', () => {
+        if (details.open === last) return;
+        last = details.open;
+        env.onToggle();
+        if (!details.open) { p.runner.cancel(); return; }
+        if (input) p.update(false); else env.wantResult();
+      });
+    }
     return p;
   }
 
-  // ---- all CPUs -----------------------------------------------------------------------------------------------------
+  // ---- the checked CPUs -----------------------------------------------------------------------------------------------
 
   let sort = 'menu';
   const cpus = panel({
-    details: env.els.cpus, info: env.els.cpusInfo, body: env.els.cpusBody,
-    keyOf: (i) => compareKey(i.hex, i.options),
-    jobsFor: (i) => env.items().map((it) => ({ id: it.key, arch: it.key, options: i.options })),
+    details: env.els.cpus, isOpen: () => env.multi(), info: env.els.cpusInfo, body: env.els.cpusBody,
+    keyOf: (i) => `${compareKey(i.hex, i.options)}|${env.checked().map((it) => it.key).join()}`,
+    jobsFor: (i) => env.checked().map((it) => ({ id: it.key, arch: it.key, options: i.options })),
     label: (p) => `${[...p.results.values()].filter((r) => !r.error).length} CPUs`,
     draw: drawCpus,
   });
@@ -221,7 +227,7 @@ export function createComparePanels(env) {
   }
 
   function drawCpus(p) {
-    const rows = compareRows(env.items(), p.results, { sort, current: input?.arch ?? null });
+    const rows = compareRows(env.checked(), p.results, { sort, current: input?.arch ?? null });
     const ariaSort = (col) => (col === 'menu' ? (sort === 'menu' ? 'ascending' : null) : sort === 'tp' ? 'ascending' : sort === 'tp-desc' ? 'descending' : null);
     const head = h('tr', null,
       h('th', { scope: 'col', class: 'first', 'aria-sort': ariaSort('menu') }, sortButton('menu', 'cpu', 'sort by release date')),
@@ -238,7 +244,7 @@ export function createComparePanels(env) {
       const tr = h('tr', { class: [r.current ? 'current' : '', r.fastest ? 'fastest' : '', r.state !== 'ok' ? r.state : ''].filter(Boolean).join(' ') || null,
         'aria-current': r.current ? 'true' : null, 'data-arch': r.key },
         h('th', { scope: 'row', class: 'first' },
-          h('button', { type: 'button', class: 'plain pick', 'data-focus': `cpu-${r.key}`, title: `show ${r.title}`, text: r.key })),
+          h('button', { type: 'button', class: 'plain pick', 'data-focus': `cpu-${r.key}`, title: `details for ${r.title}`, 'aria-pressed': r.current ? 'true' : 'false', text: r.key })),
         h('td', { class: 'cmp-name' }, name, r.experimental ? h('span', { class: 'caveat', text: ` · ${PROTOTYPE}` }) : null),
         h('td', { class: 'cmp-tp', title: r.state === 'error' ? r.error : null, text: r.state === 'ok' ? fmtTp(r.tp) : r.state === 'error' ? 'failed' : '…' }),
         h('td', { class: 'cmp-bar', 'aria-hidden': 'true' }, gauge),
@@ -247,14 +253,14 @@ export function createComparePanels(env) {
       tr.addEventListener('click', () => env.onArch(r.key));
       body.append(tr);
     }
-    const parts = [h('div', { class: 'table-wrap', role: 'region', 'aria-label': 'Throughput on every CPU' },
+    const parts = [h('div', { class: 'table-wrap', role: 'region', 'aria-label': 'Throughput on the checked CPUs' },
       h('table', { class: 'grid cmp-cpus' }, h('thead', null, head), body))];
     if (p.waitingForClick) parts.unshift(runButton(p));
     p.body.replaceChildren(...parts);
   }
 
   function runButton(p) {
-    const n = input ? (p === cpus ? env.items().length : SWEEP_OFFSETS) : 0;
+    const n = input ? (p === cpus ? env.checked().length : SWEEP_OFFSETS) : 0;
     const b = h('button', { type: 'button', class: 'cmp-run', 'data-focus': 'run', text: `run ${n} analyses`,
       title: `about ${Math.round(((input?.elapsedMs ?? 0) * n) / parallel(n) / 1000)} s` });
     b.addEventListener('click', () => p.force());
@@ -367,13 +373,30 @@ export function createComparePanels(env) {
   }
 
   const panels = [cpus, sweep];
+  function showCpus() {
+    const on = env.multi();
+    env.els.cpus.hidden = !on;
+    if (!on) cpus.runner.cancel();
+    return on;
+  }
   return {
-    // a successful main analysis: {hex, arch, options, elapsedMs}; auto: it was a live run
+    // a successful main analysis: {hex, arch, options, elapsedMs, response}; auto: it was a live run. Its own result
+    // is the focused CPU's row and the sweep's point at its offset (the same numbers as the detailed result).
     update(next, { auto = false } = {}) {
       input = next;
       cursor = null;
       mainStale = false;
+      if (next.response) {
+        const r = summarize(next.response);
+        if (!r.error) cache.set(resultKey(next.hex, next.arch, next.options), r);
+      }
+      showCpus();
       for (const p of panels) p.update(auto);
+    },
+    // the checked CPUs changed (or single / A–B): show or hide the table; it computes what is missing
+    refreshCpus() {
+      if (!showCpus()) return;
+      if (input) cpus.update(false); else env.wantResult();
     },
     // the main result no longer matches the input
     setStale(stale) {
@@ -381,10 +404,9 @@ export function createComparePanels(env) {
       mainStale = stale;
       for (const p of panels) p.paintStale();
     },
-    setOpen({ cpus: c = false, sweep: s = false }) {
-      env.els.cpus.open = !!c;
+    setOpen({ sweep: s = false }) {
       env.els.sweep.open = !!s;
     },
-    open() { return { cpus: env.els.cpus.open, sweep: env.els.sweep.open }; },
+    open() { return { sweep: env.els.sweep.open }; },
   };
 }

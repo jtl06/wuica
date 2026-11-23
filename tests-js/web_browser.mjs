@@ -120,6 +120,9 @@ const HELPERS = `
   const listing = () => document.querySelector('pre.listing')?.textContent;
   const listingOpen = () => !!document.querySelector('details.listing-wrap')?.open;
   const caveats = () => [...document.querySelectorAll('#result-body .caveat')].map((e) => e.textContent).join(' / ');
+  // the CPU checkboxes: the focused CPU (the details), and "check exactly these" (one change event, like one click)
+  const focused = () => $('cpus').dataset.focus;
+  const cpus = (...keys) => { const boxes = [...document.querySelectorAll('#cpu-grid input')]; for (const b of boxes) b.checked = keys.includes(b.value); boxes[0].dispatchEvent(new Event('change', { bubbles: true })); };
 `;
 
 // the objdump listing of the first example
@@ -159,14 +162,17 @@ try {
       const out = {};
       out.title = document.title; out.robots = document.querySelector('meta[name=robots]').content;
       out.notice = $('notice').hidden ? '' : $('notice').innerText;
-      out.groups = [...$('arch').querySelectorAll('optgroup')].map((g) => g.label + ': ' + [...g.children].map((o) => o.value).join(','));
-      out.arch = $('arch').value; out.examples = [...$('examples').options].map((o) => o.value).join(',');
+      out.groups = [[...document.querySelectorAll('#cpu-grid input')].map((b) => b.value).join(','), [...document.querySelectorAll('#cpu-grid label.proto input')].map((b) => b.value).join(','),
+        document.querySelector('#cpu-grid input[value=ZEN3]').getAttribute('aria-label'), document.querySelector('#cpu-grid label.proto').title];
+      out.arch = [focused(), [...document.querySelectorAll('#cpu-grid input:checked')].map((b) => b.value).join()]; out.examples = [...$('examples').options].map((o) => o.value).join(',');
       out.exGroups = [...$('examples').querySelectorAll('optgroup')].map((g) => g.label).join(',');
-      out.footer = [document.querySelector('footer').innerText.replace(/\\s+/g, ' ').trim(), [...document.querySelectorAll('footer a')].map((a) => a.href).join(' '), document.querySelector('footer a.gh')?.getAttribute('aria-label'),
+      out.footer = [document.querySelector('footer').innerText.replace(/\\s+/g, ' ').trim(), [...document.querySelectorAll('footer a')].map((a) => a.href).join(' '), document.querySelector('header nav a.gh:last-child')?.getAttribute('aria-label') + ' ' + document.querySelector('header nav a.gh')?.href,
         document.body.innerText.match(/(?<!un)official|AGPL|Plex|OFL|Typeface|license/gi)?.join(',') ?? ''];
-      out.focusable = ['code', 'arch', 'run', 'copy-link', 'examples', 'mode-asm', 'mode-hex'].every((id) => $(id).tabIndex >= 0);
+      out.focusable = ['code', 'run', 'copy-link', 'examples', 'mode-asm', 'mode-hex', 'cpu-all'].every((id) => $(id).tabIndex >= 0) && [...document.querySelectorAll('#cpu-grid input')].every((b) => b.tabIndex >= 0);
       out.labelled = [...document.querySelectorAll('input, select, textarea')].filter((e) => !(e.labels?.length || e.getAttribute('aria-label') || e.getAttribute('aria-labelledby'))).map((e) => e.id || e.name);
       out.empty = $('result-body').innerText;
+      out.start = [$('mode-asm').checked, $('code').value.split('\\n')[1]]; // assembly is the default
+      $('mode-hex').click(); await wait(50); // the rest of this part is in hex
       out.csp = document.querySelector('meta[http-equiv=Content-Security-Policy]').content;
       // Ctrl+Enter runs
       $('code').focus();
@@ -189,7 +195,7 @@ try {
       document.querySelector('details.report-wrap summary').click(); await wait(50);
       out.report = document.querySelector('pre.report').textContent.slice(0, 43);
       out.hash = location.hash; out.search = location.search;
-      for (const id of ['loadstore', 'avx', 'stack', 'synthetic']) { await example(id); out[id] = [tp(), $('arch').value, document.querySelector('.mock-tag').textContent.slice(0, 44), document.querySelectorAll('table.uops tr.extra').length, overflow()]; }
+      for (const id of ['loadstore', 'avx', 'stack', 'synthetic']) { await example(id); out[id] = [tp(), focused(), document.querySelector('.mock-tag').textContent.slice(0, 44), document.querySelectorAll('table.uops tr.extra').length, overflow()]; }
       out.reportStaysOpen = document.querySelector('details.report-wrap').open;
       out.synthetic2 = { notes: [...document.querySelectorAll('table.uops td.note')].map((td) => td.textContent).join(''), nolink: !document.querySelector('table.uops tr.unsupported a'), caveat: caveats(), mode: mode() === 'unrolled',
         listing: listing().trimEnd().split('\\n'), instrs: document.querySelectorAll('table.uops tbody tr:not(.extra)').length, legend: document.querySelector('.legend').innerText };
@@ -198,10 +204,12 @@ try {
       return out;`);
     check(r.robots === 'noindex' && /wuica/.test(r.title), 'mock: title and robots');
     check(/Mock mode/.test(r.notice), 'mock: the notice says so', r.notice);
-    check(r.groups.length === 1 && r.groups[0] === 'by release date: SNB,IVB,HSW,BDW,SKL,KBL,SKX,CFL,CLX,ICL,TGL,ZEN3,RKL,ICX,ADL-P' && r.arch === 'SKL', 'mock: the microarchitecture menu', JSON.stringify(r.groups));
-    check(r.examples === ',chain,loadstore,avx,stack,saxpy,dot1,dot4,popcnt,ptrchase,strlen,crc32,memcpy,gemm,synthetic,error' && r.exGroups === 'basics,classic loops,mock', 'mock: the examples menu', JSON.stringify([r.examples, r.exGroups]));
+    check(r.groups[0] === 'SNB,IVB,HSW,BDW,SKL,KBL,SKX,CFL,CLX,ICL,TGL,ZEN3,RKL,ICX,ADL-P' && r.groups[1] === 'ZEN3,ICX,ADL-P' && r.groups[2] === 'ZEN3 · AMD Zen 3 (2020) · prototype' && /prototype/.test(r.groups[3])
+      && r.arch[0] === 'SKL' && r.arch[1] === 'SKL', 'mock: the CPU checkboxes (in order of release; prototypes marked; names in the accessible name); SKL checked', JSON.stringify([r.groups, r.arch]));
+    check(r.start[0] && r.start[1] === '  add rax, 1', 'mock: assembly is the default input, with the first example', JSON.stringify(r.start));
+    check(r.examples === ',chain,loadstore,avx,stack,saxpy,dot1,dot4,popcnt,ptrchase,strlen,crc32,memcpy,gemm,sha256,synthetic,error' && r.exGroups === 'basics,classic loops,showcase,mock', 'mock: the examples menu', JSON.stringify([r.examples, r.exGroups]));
     check(/^unofficial port of uiCA by Andreas Abel and Jan Reineke\. data from uops\.info\. v\d+\.\d+\.\d+(-\S+)? · LLVM 22\.1\.2 · Intel XED · build \S+$/.test(r.footer[0])
-      && r.footer[1] === 'https://github.com/andreas-abel/uiCA https://www.uops.info/ https://github.com/jtl06/wuica' && r.footer[2] === 'Source on GitHub' && r.footer[3] === '', 'mock: the footer (credit, GitHub, versions; no license or font text)', JSON.stringify(r.footer));
+      && r.footer[1] === 'https://github.com/andreas-abel/uiCA https://www.uops.info/' && r.footer[2] === 'Source on GitHub https://github.com/jtl06/wuica' && r.footer[3] === '', 'mock: the footer (credit, versions; no license or font text); GitHub at the right end of the top bar', JSON.stringify(r.footer));
     check(r.focusable && r.labelled.length === 0, 'mock: controls are focusable and labelled', JSON.stringify(r.labelled));
     check(r.empty === '', 'mock: empty state', r.empty);
     check(/script-src 'self' 'wasm-unsafe-eval' https:\/\/static\.cloudflareinsights\.com;/.test(r.csp) && /connect-src 'self' https:\/\/cloudflareinsights\.com https:\/\/godbolt\.org;/.test(r.csp) && !/unsafe-inline/.test(r.csp), 'mock: the CSP allows the Cloudflare beacon and Compiler Explorer (link import), nothing else', r.csp);
@@ -248,7 +256,7 @@ try {
     check(s.assembled[0] === (manifest.assembler ? '' : 'mock assembler') && s.assembled[1] === CHAIN && !s.assembled[2], 'mock: assembly is assembled; the listing shows it (collapsed by default)', JSON.stringify(s.assembled));
     check(s.stale && /line 2:3: .*\n.*line 4:5: /.test(s.diag) && s.selected === '    bogus', 'mock: assembler diagnostics with lines; a click selects the line', JSON.stringify([s.stale, s.diag, s.selected]));
     check(s.hexKept, 'mock: each input mode keeps its text');
-    check(s.options[0] === '63' && s.options[1] === '· 4 changed' && s.options[2] === '#v=1&al=63&mc=1234&ip=stack&nma=1', 'mock: options are clamped and go into the fragment', JSON.stringify(s.options));
+    check(s.options[0] === '63' && s.options[1] === ' · 4 changed' && s.options[2] === '#v=1&al=63&mc=1234&ip=stack&nma=1', 'mock: options are clamped and go into the fragment', JSON.stringify(s.options));
     check(s.reset[0] === '0' && !s.reset[1] && s.reset[2] === '#v=1', 'mock: reset to defaults', JSON.stringify(s.reset));
 
     // restore from a link (full load), then from a changed fragment; copy link
@@ -258,11 +266,11 @@ try {
     await page.waitFor(`document.querySelector('.tp .value')`, 'the result of a shared link');
     const u = await page.eval(`${HELPERS}
       const out = {};
-      out.restored = [$('mode-asm').checked, $('syntax').value, $('arch').value, $('code').value.split('\\n')[1], $('opt-align').value, document.querySelector('input[name=init]:checked').value, $('opt-sfe').checked, $('opt-nmi').checked, $('opt-nma').checked, $('opt-iter').value, $('opt-cycles').value].join('|');
+      out.restored = [$('mode-asm').checked, $('syntax').value, focused(), $('code').value.split('\\n')[1], $('opt-align').value, document.querySelector('input[name=init]:checked').value, $('opt-sfe').checked, $('opt-nmi').checked, $('opt-nma').checked, $('opt-iter').value, $('opt-cycles').value].join('|');
       out.tp = tp(); out.same = location.hash === ${JSON.stringify(link)};
       location.hash = 'v=1&a=SKL&c=NDggODMgYzAgMDEgNDggODMgYzAgMDEgNDkgZmYgY2YgNzUgZjM';
       await until(() => tp() === '2.00');
-      out.second = [$('mode-hex').checked, $('arch').value, $('code').value, $('opt-align').value].join('|');
+      out.second = [$('mode-hex').checked, focused(), $('code').value, $('opt-align').value].join('|');
       location.hash = 'about'; await wait(200); out.anchor = $('code').value;
       let copied = null; navigator.clipboard.writeText = async (t) => { copied = t; };
       $('copy-link').click(); await wait(200);
@@ -315,7 +323,7 @@ try {
       const rows = () => [...document.querySelectorAll('table.cmp-cpus tbody tr')].map((tr) => [tr.dataset.arch, tr.querySelector('.cmp-tp').textContent, tr.querySelector('.cmp-bn').textContent]);
       const bn = () => document.querySelector('#result-body .bn')?.textContent ?? 'unknown';
       out.cold = [$('cmp-cpus').dataset.ms, $('cmp-cpus-info').textContent];
-      out.menu = rows(); out.tp = tp(); out.open = [$('cmp-cpus').open, $('cmp-sweep').open];
+      out.menu = rows(); out.tp = tp(); out.open = [!$('cmp-cpus').hidden, $('cmp-sweep').open];
       out.current = document.querySelector('table.cmp-cpus tr[aria-current=true]')?.dataset.arch;
       out.protos = [...document.querySelectorAll('table.cmp-cpus tbody tr')].filter((tr) => /prototype/.test(tr.textContent)).map((tr) => tr.dataset.arch).join();
       document.querySelector('table.cmp-cpus button[data-focus=sort-tp]').focus(); document.activeElement.click();
@@ -328,7 +336,7 @@ try {
       for (const arch of ['ZEN3', 'HSW']) {
         const row = rows().find((r) => r[0] === arch);
         await done(() => document.querySelector('table.cmp-cpus tr[data-arch="' + arch + '"]').click());
-        out.picked.push([arch, row[1], row[2], $('arch').value, tp(), bn(), document.querySelector('table.cmp-cpus tr[aria-current=true]')?.dataset.arch]);
+        out.picked.push([arch, row[1], row[2], focused(), tp(), bn(), document.querySelector('table.cmp-cpus tr[aria-current=true]')?.dataset.arch]);
       }
       out.notRerun = runs('cmp-cpus') === before;
       // the sweep: 64 points; a click sets the offset
@@ -378,11 +386,11 @@ try {
       await done(() => $('run').click()); out.manual = document.querySelector('#result-body .meta').title.includes('3 bytes');
       return out;`);
     const menuOrder = 'SNB,IVB,HSW,BDW,SKL,KBL,SKX,CFL,CLX,ICL,TGL,ZEN3,RKL,ICX,ADL-P';
-    check(c.menu.map((r) => r[0]).join() === menuOrder && c.menu.every((r) => /^\d+\.\d\d$/.test(r[1])) && c.open[0] && !c.open[1] && c.current === 'SKL', 'compare: a link opens the table of all CPUs, in menu order, every one with a result', JSON.stringify(c.menu));
+    check(c.menu.map((r) => r[0]).join() === menuOrder && c.menu.every((r) => /^\d+\.\d\d$/.test(r[1])) && c.open[0] && !c.open[1] && c.current === 'SKL', 'compare: an old link with the table of all CPUs checks them all: the table, in menu order, every one with a result', JSON.stringify(c.menu));
     check(c.menu.find((r) => r[0] === 'SKL')[1] === c.tp && c.menu.find((r) => r[0] === 'ADL-P')[1] === '1.00' && c.protos === 'ZEN3,ICX,ADL-P', 'compare: the row of the selected CPU is the main result; prototypes are marked', JSON.stringify([c.tp, c.protos]));
     check(c.byTp.every((v, i) => i === 0 || Number(v) >= Number(c.byTp[i - 1])) && c.sortAria === 'ascending' && c.sortFocus === 'sort-tp', 'compare: sortable by throughput (focus stays on the button)', JSON.stringify([c.byTp, c.sortAria, c.sortFocus]));
     check(c.picked.length === 2 && c.picked.every((p) => p[0] === p[3] && p[1] === p[4] && p[2] === p[5] && p[6] === p[0]) && c.notRerun, 'compare: a row selects that CPU; its single analysis gives the same throughput and bottleneck', JSON.stringify(c.picked));
-    check(c.sweep.hits === 64 && c.sweep.pts === 64 && c.sweep.now === '0' && /cmpcpu=1&cmpsweep=1/.test(c.sweep.hash), 'sweep: 64 points; the open panels are in the fragment', JSON.stringify(c.sweep));
+    check(c.sweep.hits === 64 && c.sweep.pts === 64 && c.sweep.now === '0' && /as=all&cmpsweep=1/.test(c.sweep.hash) && !/cmpcpu/.test(c.sweep.hash), 'sweep: 64 points; the checked CPUs and the open sweep are in the fragment', JSON.stringify(c.sweep));
     check(c.click[1] === '5' && c.click[3] === '5' && c.click[4] && c.click[0] === `offset 5: ${c.click[2]} cycles/iteration`, 'sweep: a click sets the alignment offset; the main result equals the point', JSON.stringify(c.click));
     check(c.key[0] === '6' && c.key[1] === '6' && c.key[2] && c.sweepNotRerun, 'sweep: arrow keys move the offset; focus stays; the sweep is not recomputed', JSON.stringify([c.key, c.sweepNotRerun]));
     check(c.live[0] === 1 && c.live[1] && !c.live[3] && c.live[4] && c.live[5] && c.live[6] >= 1 && c.live[7] >= 1, 'live: typing analyzes once, for the latest text; the panels follow', JSON.stringify(c.live));
@@ -396,7 +404,7 @@ try {
     await page.reload();
     await page.waitFor(`document.getElementById('cmp-sweep').dataset.state === 'done'`, 'the panels after a reload', 60000);
     const t = await page.eval(`${HELPERS}
-      const out = { live: $('live').checked, open: [$('cmp-cpus').open, $('cmp-sweep').open] };
+      const out = { live: $('live').checked, open: [!$('cmp-cpus').hidden, $('cmp-sweep').open] };
       $('live').click(); out.stored = localStorage.getItem('wuica-live');
       // timings with the tables loaded: the CPU table and the sweep for each built-in example
       const runs = (id) => Number($(id).dataset.runs || 0);
@@ -404,16 +412,16 @@ try {
       out.times = {};
       const settle = async (id, start) => { const n = runs(id); await start(); await until(() => runs(id) > n && $(id).dataset.state === 'done', 30000); return Number($(id).dataset.ms); };
       document.querySelector('#cmp-sweep summary').click(); await wait(50);
-      await done(() => set($('arch'), 'SKL'));
+      if (focused() !== 'SKL') await done(() => document.querySelector('table.cmp-cpus tr[data-arch="SKL"]').click());
       for (const id of ['chain', 'loadstore', 'avx', 'stack']) out.times[id] = [await settle('cmp-cpus', () => example(id))];
-      document.querySelector('#cmp-cpus summary').click();
+      $('cpu-clear').click(); // SKL only: no table
       out.times.stack.push(await settle('cmp-sweep', () => document.querySelector('#cmp-sweep summary').click()));
       for (const id of ['chain', 'loadstore', 'avx']) out.times[id].push(await settle('cmp-sweep', () => example(id)));
       document.querySelector('#cmp-sweep summary').click(); await wait(100);
-      out.closed = location.hash.includes('cmp');
+      out.closed = location.hash.includes('cmp') || location.hash.includes('as=');
       return out;`);
     check(!t.live && t.open[0] && t.open[1] && t.stored === 'on', 'live: off after a reload; switched on again', JSON.stringify(t));
-    check(Object.values(t.times).every((x) => x[0] > 0 && x[1] > 0) && !t.closed, 'compare: timings for the examples; closed panels leave the fragment', JSON.stringify(t));
+    check(Object.values(t.times).every((x) => x[0] > 0 && x[1] > 0) && !t.closed, 'compare: timings for the examples; a closed sweep and one CPU leave the fragment', JSON.stringify(t));
     console.log('compare timings on SKL, one panel at a time, tables loaded (ms: all CPUs, sweep):', JSON.stringify(t.times), '; first table with table loading:', c.cold[0]);
     // phone width, both panels open: no sideways scrolling
     await page.cmd('Emulation.setDeviceMetricsOverride', { width: 375, height: 812, deviceScaleFactor: 1, mobile: true });
@@ -441,6 +449,10 @@ try {
       out.failed = document.querySelector('.error-box')?.textContent ?? '';
       out.examples = [...$('examples').options].map((o) => o.value).join(',');
       out.overflow0 = overflow();
+      out.start = [$('mode-asm').checked, $('code').value.split('\\n')[1]];
+      await run(); // the default example, in assembly
+      out.asmFirst = tp();
+      $('mode-hex').click(); await wait(400); // the rest in hex
       await run();
       out.first = { tp: tp(), mock: !!document.querySelector('.mock-tag'), text: $('result-body').innerText, metaTitle: document.querySelector('#result-body .meta').title,
         rows: [...document.querySelectorAll('table.uops tbody tr')].map((tr) => tr.innerText.trim().replace(/\\t+/g, '|')),
@@ -451,12 +463,12 @@ try {
       out.fontSize = [getComputedStyle($('code')).fontSize, getComputedStyle(document.body).fontSize, getComputedStyle(document.body).fontFamily.split(',')[0]];
       // the examples on the microarchitectures the reference's results were recorded for
       for (const [id, arch] of [['loadstore', 'ZEN3'], ['avx', 'ADL-P'], ['stack', 'SKL']]) {
-        if ($('arch').value !== arch) await done(() => set($('arch'), arch));
+        if (focused() !== arch) await done(() => cpus(arch));
         await example(id);
-        if (arch === 'ADL-P') out.prototype = [$('arch-hint').textContent, caveats()];
+        if (arch === 'ADL-P') out.prototype = [document.querySelector('#cpu-grid label.focus').classList.contains('proto'), caveats()];
         out[id] = [tp(), $('result-body').innerText.includes(arch), document.querySelector('table.uops thead').innerText.trim().replace(/\\s*\\t+/g, '|'), document.querySelectorAll('table.uops tr.extra').length, notes(), overflow(), document.querySelector('pre.report').textContent];
       }
-      out.notPrototype = [$('arch-hint').textContent, caveats()]; // SKL
+      out.notPrototype = [document.querySelector('#cpu-grid label.focus').classList.contains('proto'), caveats()]; // SKL
       // options change the result
       await example('chain');
       out.before = notes();
@@ -502,14 +514,15 @@ try {
       return out;`);
     check(r.failed === '' && r.notice === '' && r.build === manifest.version, 'real: the page starts with the real analyzer and shows the build', JSON.stringify([r.failed, r.notice, r.build]));
     check(requests.some((x) => x.includes('wuica_wasm.wasm')) && requests.some((x) => x.includes('data/arch/SKL.json')) && requests.some((x) => x.includes('js/engine-worker.js')), 'real: the analyzer, its worker and the selected table are fetched');
-    check(r.examples === ',chain,loadstore,avx,stack,saxpy,dot1,dot4,popcnt,ptrchase,strlen,crc32,memcpy,gemm', 'real: no mock-only examples', r.examples);
+    check(r.examples === ',chain,loadstore,avx,stack,saxpy,dot1,dot4,popcnt,ptrchase,strlen,crc32,memcpy,gemm,sha256', 'real: no mock-only examples', r.examples);
+    check(r.start[0] && r.start[1] === '  add rax, 1' && r.asmFirst === '2.00', 'real: assembly is the default; the first example assembled gives 2.00', JSON.stringify([r.start, r.asmFirst]));
     check(r.first.tp === '2.00' && !r.first.mock && /^loop · SKL/m.test(r.first.text) && /bottleneck\s+Dependencies/.test(r.first.text) && !/ ms\n|bytes|instructions/.test(r.first.text)
       && /^4 instructions · 13 bytes · \d+(\.\d)? ms$/.test(r.first.metaTitle), 'real: the first example: 2.00 cycles, a loop, bottleneck Dependencies; counts and time only in the tooltip', JSON.stringify([r.first.text.slice(0, 300), r.first.metaTitle]));
     check(r.first.rows.length === 4 && r.first.rows[0] === 'add rax, 0x1|1|1|1|0.22|0.22|0.29|0.27' && r.first.rows[3] === 'jnz 0xfffffffffffffff5|M' && r.first.total === 'Total|3|3|3|0.5|0.52|0.52|1.47', 'real: the uop table equals the reference (rounded like uiCA, totals as in its "Total" line)', JSON.stringify([r.first.rows, r.first.total]));
     check(r.first.report.startsWith('Throughput (in cycles per iteration): 2.00\nBottleneck: Dependencies\n') && r.first.report.includes('│ Total'), 'real: the text report');
     check(r.loadstore[0] === '1.00' && r.loadstore[1] && /ALU0\|ALU1\|ALU2\|ALU3\|AGU0\|AGU1\|AGU2\|SD0$/.test(r.loadstore[2]) && r.loadstore[4] === '----M', 'real: load/store example on ZEN3 (1.00, Zen port names)', JSON.stringify(r.loadstore.slice(0, 6)));
     check(r.avx[0] === '4.00' && r.avx[1] && /Port 0\|Port 1\|Port 5\|Port 6\|Port B$/.test(r.avx[2]), 'real: AVX example on ADL-P (4.00, ports up to B)', JSON.stringify(r.avx.slice(0, 6)));
-    check(r.prototype[0] === 'prototype model' && /^ADL-P .*prototype$/.test(r.prototype[1]) && r.notPrototype[0] === '' && r.notPrototype[1] === '', 'real: a prototype model (ADL-P) is marked next to the menu and in the result; SKL is not', JSON.stringify([r.prototype, r.notPrototype]));
+    check(r.prototype[0] === true && /^ADL-P .*prototype$/.test(r.prototype[1]) && r.notPrototype[0] === false && r.notPrototype[1] === '', 'real: a prototype model (ADL-P) is marked at its checkbox and in the result; SKL is not', JSON.stringify([r.prototype, r.notPrototype]));
     check(r.stack[0] === '2.10' && r.stack[3] === 1 && /unknown/.test(r.stack[6].split('\n')[1]), 'real: stack example on SKL (2.10, a stack-sync row, bottleneck unknown)', JSON.stringify(r.stack.slice(0, 6)));
     check([r.loadstore, r.avx, r.stack].every((x) => x[5] <= 0) && r.overflow0 <= 0 && r.overflow1 <= 0 && r.tableScrolls[0] && r.tableScrolls[1] === 'auto', 'real: at 375px the page never scrolls sideways; the table scrolls in its container', JSON.stringify([r.overflow0, r.overflow1, r.tableScrolls]));
     check(r.fontSize[0] === '16px' && r.fontSize[1] === '15px' && /IBM Plex Mono/.test(r.fontSize[2]), 'real: font sizes', JSON.stringify(r.fontSize));
@@ -552,8 +565,8 @@ try {
     await page.goto(`${origin}/?x=1#v=1&a=ADL-P&c=YzQgZTIgZDUgYWEgZjQgNGMgMDMgZDEgNGQgMGYgYWYgYzAgNDkgZmYgY2YgNzUgZWY`);
     await page.waitFor(`document.querySelector('.tp .value')`, 'a result while offline');
     const off = await page.eval(`${HELPERS}
-      const out = { tp: tp(), arch: $('arch').value, build: $('build-id').textContent, real: !document.querySelector('.mock-tag') && $('notice').hidden };
-      await done(() => set($('arch'), 'ICX'));
+      const out = { tp: tp(), arch: focused(), build: $('build-id').textContent, real: !document.querySelector('.mock-tag') && $('notice').hidden };
+      await done(() => cpus('ICX'));
       out.switched = $('result-body').innerText.includes('Ice Lake server');
       await wait(300); out.status = $('status').textContent; out.font = document.fonts.check('15px "IBM Plex Mono"');
       if (${!!manifest.assembler}) {

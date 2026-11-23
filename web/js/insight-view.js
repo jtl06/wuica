@@ -21,7 +21,7 @@ export function createInsight(env) {
   const cache = new ResultCache();
   const open = { cost: false, nop: false };
   let root = null, view = null; // what was decorated last
-  let job = null;               // {key, hex, arch, options, cu, jobs, response, variant, estimate}
+  let job = null;               // {key, hex, arch, options, cu, jobs, count, response, variant, estimate}; jobs: null until needed
   let results = new Map();      // unit -> summary, for job.key
   let doneKey = null, forcedKey = null, waitingKey = null, runs = 0;
   let cellsOf = null;           // row -> td of the cost column in the decorated table
@@ -109,11 +109,11 @@ export function createInsight(env) {
     if (!tools) return;
     tools.replaceChildren();
     if (state === 'waiting') {
-      const b = h('button', { type: 'button', class: 'plain', text: `compute (${job.jobs.length} analyses)`, title: `about ${Math.max(1, Math.round(job.estimate / 1000))} s` });
+      const b = h('button', { type: 'button', class: 'plain', text: `compute (${job.count} analyses)`, title: `about ${Math.max(1, Math.round(job.estimate / parallel(job.count) / 1000))} s` });
       b.addEventListener('click', () => { forcedKey = job.key; runner.schedule(0); });
       tools.append(b);
     } else if (state === 'running') {
-      tools.append(h('span', { class: 'hint', text: `${results.size}/${job.jobs.length}` }));
+      tools.append(h('span', { class: 'hint', text: `${results.size}/${job.count}` }));
     }
   }
 
@@ -122,6 +122,8 @@ export function createInsight(env) {
     const j = job;
     const stale = () => isStale() || job !== j || !open.cost;
     if (doneKey === j.key) { setState('done'); return; }
+    if (!j.jobs && j.estimate / parallel(j.count) > BUDGET_MS && forcedKey !== j.key) { waitingKey = j.key; setState('waiting'); paintTools('waiting'); return; }
+    buildJobs(j);
     const todo = j.jobs.filter((x) => !results.has(x.unit));
     if (todo.length && j.estimate / parallel(todo.length) > BUDGET_MS && forcedKey !== j.key) { waitingKey = j.key; setState('waiting'); paintTools('waiting'); return; }
     await runJobs(j, todo, stale, signal);
@@ -226,11 +228,16 @@ export function createInsight(env) {
     delete opts.hex; delete opts.arch; delete opts.includeTrace;
     const key = costKey(v.hex, v.archKey, opts, variant());
     if (!job || job.key !== key) {
-      const jobs = costJobs(cu.units, v.hex, variant());
-      job = { key, hex: v.hex, arch: v.archKey, options: opts, cu, jobs, response: r, variant: variant(), estimate: (v.elapsedMs ?? 0) * jobs.length };
+      // the blocks of the jobs (one per instruction, each almost the whole block) are made only when they run: a large
+      // block waits for a click first
+      const count = cu.units.filter((u) => !u.fixed).length;
+      job = { key, hex: v.hex, arch: v.archKey, options: opts, cu, jobs: null, count, response: r, variant: variant(), estimate: (v.elapsedMs ?? 0) * count };
       results = new Map();
-      for (const x of jobs) { const c = cache.get(resultKey(x.hex, job.arch, opts)); if (c) results.set(x.unit, c); }
-      doneKey = jobs.every((x) => results.has(x.unit)) ? key : null;
+      doneKey = null;
+      if (job.estimate / parallel(count) <= BUDGET_MS || forcedKey === key) {
+        buildJobs(job);
+        if (job.jobs.every((x) => results.has(x.unit))) doneKey = key;
+      }
     } else {
       job.response = r; job.cu = cu;
     }
@@ -242,6 +249,13 @@ export function createInsight(env) {
   }
 
   function redecorate() { if (root && view) decorate(root, view); }
+
+  function buildJobs(j) {
+    if (j.jobs) return;
+    j.jobs = costJobs(j.cu.units, j.hex, j.variant);
+    j.count = j.jobs.length;
+    for (const x of j.jobs) { const c = cache.get(resultKey(x.hex, j.arch, j.options)); if (c) results.set(x.unit, c); }
+  }
 
   return {
     decorate,

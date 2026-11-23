@@ -142,6 +142,8 @@ const HELPERS = `
   const top = () => instrRows().map((tr, i) => tr.querySelector('td.ins-cost.top') ? i : -1).filter((i) => i >= 0);
   const head = () => [...document.querySelectorAll('table.uops thead th')].map((th) => th.textContent);
   const rowText = () => [...document.querySelectorAll('table.uops tbody tr')].map((tr) => tr.innerText.trim().replace(/\\t+/g, '|'));
+  const focused = () => $('cpus').dataset.focus; // the CPU with the details
+  const cpus = (...keys) => { const boxes = [...document.querySelectorAll('#cpu-grid input')]; for (const b of boxes) b.checked = keys.includes(b.value); boxes[0].dispatchEvent(new Event('change', { bubbles: true })); };
 `;
 const b64 = (s) => Buffer.from(s).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
 
@@ -188,7 +190,7 @@ try {
       if (document.querySelector('.ins-variant').value !== 'remove') await costDone(() => set(document.querySelector('.ins-variant'), 'remove'));
       const out = {};
       for (const [id, arch] of [['loadstore', 'ZEN3'], ['avx', 'ADL-P'], ['stack', 'SKL']]) {
-        if ($('arch').value !== arch) await done(() => set($('arch'), arch));
+        if (focused() !== arch) await done(() => cpus(arch));
         await costDone(() => done(() => set($('examples'), id)));
         out[id] = { cost: cost(), extra: document.querySelectorAll('table.uops tr.extra td.ins-cost').length, chain: !!document.querySelector('.ins-chain-row') };
       }

@@ -83,14 +83,14 @@ const resp = (rows, extra = {}) => ({ arch: 'SKL', tp: 1, mode: 'loop', decodeEr
 
 // --- the A–B state in the URL fragment ------------------------------------------------------------------------------------
 {
-  const single = { ...DEFAULT_STATE, text: '48 01 d8', arch: 'ZEN3', bText: 'ignored', bMode: 'asm' };
+  const single = { ...DEFAULT_STATE, mode: 'hex', text: '48 01 d8', arch: 'ZEN3', bText: 'ignored', bMode: 'asm' };
   check(encodeState(single) === 'v=1&a=ZEN3&c=NDggMDEgZDg', 'url: a single-mode link is as before (B is left out)', encodeState(single));
-  check(j(decodeState('v=1&a=ZEN3&c=NDggMDEgZDg')) === j({ ...DEFAULT_STATE, text: '48 01 d8', arch: 'ZEN3' }), 'url: old links decode as before');
+  check(j(decodeState('v=1&a=ZEN3&c=NDggMDEgZDg')) === j({ ...DEFAULT_STATE, mode: 'hex', text: '48 01 d8', arch: 'ZEN3' }), 'url: old links decode as before (hex)');
   const s = { ...DEFAULT_STATE, ab: true, text: 'add rax, 1\n', mode: 'asm', bMode: 'asm', bSyntax: 'att', bArch: 'ADL-P', bText: 'loop:\n  addq $2, %rax ✓\n', bScale: 2 };
   const f = encodeState(s);
   check(/^[A-Za-z0-9=&_-]+$/.test(f) && f.includes('&ab=1&bm=asm&bs=att&ba=ADL-P&bk=2&bc='), 'url: side B in the fragment', f);
   check(j(decodeState(f)) === j(s), 'url: round trip of both sides', j(decodeState(f)));
-  check(decodeState('v=1&ab=1&bm=x&bs=y&ba=%3Cx%3E&bk=999&bc=!!').bScale === 64 && j(decodeState('v=1&ab=1&bm=x&bs=y&ba=%3Cx%3E&bk=0&bc=!!')) === j({ ...DEFAULT_STATE, ab: true, bScale: 1 }), 'url: bad B values fall back to the defaults');
+  check(decodeState('v=1&ab=1&bm=x&bs=y&ba=%3Cx%3E&bk=999&bc=!!').bScale === 64 && j(decodeState('v=1&ab=1&bm=x&bs=y&ba=%3Cx%3E&bk=0&bc=!!')) === j({ ...DEFAULT_STATE, mode: 'hex', ab: true, bMode: 'hex', bScale: 1 }), 'url: bad B values fall back to the defaults');
   check(decodeState('v=1&bm=asm&bc=eA').bText === '' && !decodeState('v=1&bm=asm').ab, 'url: B is only read in A–B mode');
 }
 

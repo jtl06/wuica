@@ -130,7 +130,7 @@ try {
       const got = {};
       for (const [mode, query] of [['single', '&pool=0'], ['pool', '']]) {
         const page = await openPage();
-        await page.goto(link(ex, { cmpCpus: true, cmpSweep: true, cost: true }, query));
+        await page.goto(link(ex, { cpus: 'all', cmpSweep: true, cost: true }, query));
         got[mode] = await page.eval(`${HELPERS}
           await until(() => {
             for (const b of document.querySelectorAll('.cmp-run, .ins-cost-status button')) b.click(); // over the budget: run anyway
@@ -160,7 +160,7 @@ try {
         await wait(300);
         const out = { before: window.__wuicaPool === undefined };
         const n = runs('cmp-cpus');
-        document.querySelector('#cmp-cpus summary').click();
+        $('cpu-all').click(); // every CPU checked: the table of all of them
         await until(() => runs('cmp-cpus') > n);
         const pool = window.__wuicaPool;
         out.size = pool.size;
@@ -173,7 +173,8 @@ try {
         return out;`);
       const tables = r.stats.flatMap((s) => s.tables);
       check(r.before, 'lazy: no pool before a view needs one');
-      check(r.stats.length === r.size && tables.length === 15 && new Set(tables).size === 15, 'all CPUs: each table in one worker only', JSON.stringify(r.stats));
+      // the focused CPU's row is the main result (not analyzed again): the other 14 tables, each in one worker
+    check(r.stats.length === r.size && tables.length === 14 && new Set(tables).size === 14 && !tables.includes(GEMM.arch), 'all CPUs: each table in one worker only; the focused CPU comes from the main analysis', JSON.stringify(r.stats));
       const tableReqs = requests.filter((p) => p.startsWith('/data/arch/'));
       const wasm = r.stats.reduce((n, s) => n + s.wasmBytes, 0), kept = r.stats.reduce((n, s) => n + s.tableBytes, 0);
       console.log(`pool after the table of all CPUs (GEMM): ${r.stats.length} workers, tables ${JSON.stringify(r.stats.map((s) => s.tables))}`);
@@ -191,10 +192,12 @@ try {
     await until(() => document.querySelector('.tp .value'));
     await wait(300);
     const t = async (start, cond) => { const t0 = performance.now(); start(); await until(cond); return Math.round(performance.now() - t0); };
+    // the sweep opens and closes; the table of all CPUs comes with "all" and goes with "clear"
+    const toggle = (id, on) => (id === 'cmp-cpus' ? $(on ? 'cpu-all' : 'cpu-clear').click() : document.querySelector('#' + id + ' summary').click());
     const panel = async (id) => {
       const n = runs(id);
-      const ms = await t(() => document.querySelector('#' + id + ' summary').click(), () => runs(id) > n && $(id).dataset.state === 'done');
-      document.querySelector('#' + id + ' summary').click();
+      const ms = await t(() => toggle(id, true), () => runs(id) > n && $(id).dataset.state === 'done');
+      toggle(id, false);
       await wait(50);
       return ms;
     };
