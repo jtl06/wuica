@@ -1,3 +1,6 @@
-target/
+target*/
 *.wasm
 .DS_Store
+# generated from a uiCA installation with tools/export_data.py and tools/export_fixtures.py
+data/
+fixtures/generated/

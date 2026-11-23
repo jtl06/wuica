@@ -50,8 +50,13 @@ basic blocks, all zenbench microbenchmarks, blocks of 10/100/1000 instructions).
 | Boundary | Fixture | Exported by | Checked by |
 |---|---|---|---|
 | decoder output | `fixtures/decode_fixtures.jsonl.gz` (file × XED chip: hex, list of dicts) | `tools/export_decode_fixtures.py` | `crates/wuica-xed/tests/fixtures.rs`, `tests-js/decode_fixtures.mjs` |
-| instruction objects | (to do) file × arch: every field of every `Instr` after `getInstructions`, `adjustLatenciesAndAddMergeUops` and `computeUopProperties` | `tools/export_instr_fixtures.py` | `wuica-core` test |
-| simulation result | (to do) file × arch: throughput, and the `-json` output | `tools/export_sim_fixtures.py` | `wuica-core` test, `wuica-cli` |
+| instruction objects | `fixtures/generated/instr_fixtures.jsonl.gz` (8056 cases: file × configuration × options that affect them): every field of every `Instr` after `getInstructions`, `adjustLatenciesAndAddMergeUops` and `computeUopProperties`; the JSON form of `wuica_core::model::InstrList` | `tools/export_fixtures.py` | `crates/wuica-core/tests/model_fixtures.rs` (the model holds everything), builder test |
+| simulation result | `fixtures/generated/sim_fixtures.jsonl.gz` (9899 cases: file × configuration, and 8 option variants for 24 files): throughput and the detailed text output; the `-json` output for 1119 cases | `tools/export_fixtures.py` | simulator test |
+
+The fixtures in `fixtures/generated/` and the tables in `data/` are generated (they are large): run `tools/export_data.py` and
+`tools/export_fixtures.py` against a uiCA installation. Four simulation cases have an `error` field: the reference itself raises
+an exception there (two in the `-json` output for ADL-P/ICX, where a fractional throughput limit makes a cycle number a float; two
+in stock uiCA for SNB/IVB).
 
 Both sides always get the same raw bytes (the hex string in the fixture).
 

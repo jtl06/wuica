@@ -1,0 +1,171 @@
+//! Microarchitecture configurations (uiCA's `microArchConfigs.py`), loaded from `data/uarch.json` (made by `tools/export_data.py`).
+//! The fields have the meaning of the attributes of uiCA's `MicroArchConfig` with the same (JSON) name.
+
+use indexmap::IndexMap;
+use serde::{Deserialize, Serialize};
+
+/// The number of move-elimination slots: a number or 'unlimited'.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Slots {
+    Limited(i64),
+    /// the string "unlimited"
+    Unlimited(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UArchConfig {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "XEDName")]
+    pub xed_name: String,
+    #[serde(rename = "IQWidth")]
+    pub iq_width: i64,
+    #[serde(rename = "DSBWidth")]
+    pub dsb_width: i64,
+    #[serde(rename = "IDQWidth")]
+    pub idq_width: i64,
+    #[serde(rename = "issueWidth")]
+    pub issue_width: i64,
+    #[serde(rename = "RBWidth")]
+    pub rb_width: i64,
+    #[serde(rename = "RSWidth")]
+    pub rs_width: i64,
+    #[serde(rename = "retireWidth")]
+    pub retire_width: i64,
+    #[serde(rename = "pop5CRequiresComplexDecoder")]
+    pub pop5c_requires_complex_decoder: bool,
+    #[serde(rename = "macroFusibleInstrCanBeDecodedAsLastInstr")]
+    pub macro_fusible_instr_can_be_decoded_as_last_instr: bool,
+    #[serde(rename = "branchCanBeLastInstrInCachedBlock")]
+    pub branch_can_be_last_instr_in_cached_block: bool,
+    #[serde(rename = "both32ByteBlocksMustBeCacheable")]
+    pub both_32byte_blocks_must_be_cacheable: bool,
+    #[serde(rename = "nDecoders")]
+    pub n_decoders: i64,
+    #[serde(rename = "preDecodeWidth")]
+    pub pre_decode_width: i64,
+    #[serde(rename = "preDecodeBlockSize")]
+    pub pre_decode_block_size: i64,
+    #[serde(rename = "predecodeDecodeDelay")]
+    pub predecode_decode_delay: i64,
+    #[serde(rename = "issueDispatchDelay")]
+    pub issue_dispatch_delay: i64,
+    #[serde(rename = "DSB_MS_Stall")]
+    pub dsb_ms_stall: i64,
+    #[serde(rename = "pop5CEndsDecodeGroup")]
+    pub pop5c_ends_decode_group: bool,
+    #[serde(rename = "high8RenamedSeparately")]
+    pub high8_renamed_separately: bool,
+    #[serde(rename = "movzxHigh8AliasCanBeEliminated")]
+    pub movzx_high8_alias_can_be_eliminated: bool,
+    #[serde(rename = "moveEliminationPipelineLength")]
+    pub move_elimination_pipeline_length: i64,
+    #[serde(rename = "moveEliminationGPRSlots")]
+    pub move_elimination_gpr_slots: Slots,
+    #[serde(rename = "moveEliminationSIMDSlots")]
+    pub move_elimination_simd_slots: Slots,
+    #[serde(rename = "moveEliminationGPRAllAliasesMustBeOverwritten")]
+    pub move_elimination_gpr_all_aliases_must_be_overwritten: bool,
+    #[serde(rename = "LSDEnabled")]
+    pub lsd_enabled: bool,
+    #[serde(rename = "LSDUnrolling")]
+    pub lsd_unrolling: IndexMap<String, u32>,
+    #[serde(rename = "fastPointerChasing")]
+    pub fast_pointer_chasing: bool,
+    #[serde(rename = "slow256BitMemAcc")]
+    pub slow_256bit_mem_acc: bool,
+    #[serde(rename = "DSBBlockSize")]
+    pub dsb_block_size: i64,
+    #[serde(rename = "simplePortAssignment")]
+    pub simple_port_assignment: bool,
+    #[serde(rename = "isAMD")]
+    pub is_amd: bool,
+    #[serde(rename = "loadPorts")]
+    pub load_ports: String,
+    #[serde(rename = "storeAddrPorts")]
+    pub store_addr_ports: String,
+    #[serde(rename = "storeDataPorts")]
+    pub store_data_ports: String,
+    #[serde(rename = "fusiblePorts")]
+    pub fusible_ports: String,
+    #[serde(rename = "dividerPort")]
+    pub divider_port: String,
+    #[serde(rename = "loadLatency")]
+    pub load_latency: i64,
+    #[serde(rename = "portNames")]
+    pub port_names: IndexMap<String, String>,
+    #[serde(rename = "experimental")]
+    pub experimental: bool,
+    #[serde(rename = "portAssignment")]
+    pub port_assignment: Option<String>,
+    #[serde(rename = "renameImmediateFolding")]
+    pub rename_immediate_folding: bool,
+    #[serde(rename = "takenBranchPort")]
+    pub taken_branch_port: Option<String>,
+    #[serde(rename = "memoryRenaming")]
+    pub memory_renaming: Option<String>,
+    #[serde(rename = "memRenamingWidths")]
+    pub mem_renaming_widths: Option<Vec<u32>>,
+    #[serde(rename = "memRenamingExcluded")]
+    pub mem_renaming_excluded: Vec<String>,
+    #[serde(rename = "memRenamingFoldedCheck")]
+    pub mem_renaming_folded_check: bool,
+    #[serde(rename = "storeForwardFailDelay")]
+    pub store_forward_fail_delay: i64,
+    #[serde(rename = "loadValueNumbering")]
+    pub load_value_numbering: bool,
+    #[serde(rename = "loadLineSlots")]
+    pub load_line_slots: Option<u32>,
+    #[serde(rename = "rmwForwardDelayOverride")]
+    pub rmw_forward_delay_override: Option<i64>,
+    #[serde(rename = "simpleRMWForwardDelay")]
+    pub simple_rmw_forward_delay: i64,
+    #[serde(rename = "storeForwardDelay")]
+    pub store_forward_delay: i64,
+    #[serde(rename = "storeLineRestrictedPorts")]
+    pub store_line_restricted_ports: String,
+    #[serde(rename = "vectorStoreDataPorts")]
+    pub vector_store_data_ports: String,
+    #[serde(rename = "narrowStorePenalty")]
+    pub narrow_store_penalty: i64,
+    #[serde(rename = "opCacheEntryOps")]
+    pub op_cache_entry_ops: i64,
+    #[serde(rename = "opCacheMaxFields")]
+    pub op_cache_max_fields: i64,
+    #[serde(rename = "opCacheEntryFields")]
+    pub op_cache_entry_fields: i64,
+    #[serde(rename = "dataFrom")]
+    pub data_from: Option<String>,
+    #[serde(rename = "sameRegMoveEliminated")]
+    pub same_reg_move_eliminated: bool,
+    #[serde(rename = "rmwForwardDelay")]
+    pub rmw_forward_delay: i64,
+}
+
+impl UArchConfig {
+    /// The ports of this microarchitecture (one character each), from `allPorts` in `uarch.json`.
+    pub fn ports<'a>(&self, uarch: &'a UArch) -> &'a [String] {
+        &uarch.all_ports[&self.name]
+    }
+}
+
+/// The content of `data/uarch.json`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UArch {
+    /// name of the instruction table (`UArchConfig::name`) -> ports
+    #[serde(rename = "allPorts")]
+    pub all_ports: IndexMap<String, Vec<String>>,
+    /// name of the instruction table -> ports of the ALUs
+    #[serde(rename = "ALUPorts")]
+    pub alu_ports: IndexMap<String, Vec<String>>,
+    /// configuration key (the value of `-arch`, e.g. `SKL` or `CLX_noLSD`) -> configuration; several configurations can share
+    /// an instruction table (`name`)
+    pub configs: IndexMap<String, UArchConfig>,
+}
+
+impl UArch {
+    pub fn from_json(json: &str) -> Result<UArch, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+}
