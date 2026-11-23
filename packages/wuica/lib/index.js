@@ -14,10 +14,10 @@ import { Analyzer, Assembler, parseDiagnostics, codeModeError } from './wasm.js'
 import { archList, DEFAULT_ARCH, ARCH_INFO, ARCH_ORDER } from './archs.js';
 import { insights } from './insights.js';
 import { readMaybeCompressed } from './files.js';
-import { CODES, failure, tableFailure, analysisResult, compareFields } from './core.js';
+import { CODES, WARM_HEX, failure, tableFailure, analysisResult, compareFields } from './core.js';
 import { ThreadPool, threadLimit } from './threads.js';
 
-export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, CODES, parseDiagnostics };
+export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, CODES, WARM_HEX, parseDiagnostics };
 
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
 

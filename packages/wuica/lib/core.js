@@ -25,3 +25,12 @@ export function compareFields(r) {
   if (r.code !== undefined) return { code: r.code, error: r.error };
   return { code: CODES.OK, tp: r.tp, mode: r.mode, bottlenecks: r.bottlenecks, decodeErrors: r.decodeErrors };
 }
+
+// A block for warming up the analyzer: ~500 instructions of several kinds in a loop (a 24-instruction mix, 20 times;
+// ~10 ms). V8 compiles the module's functions when they are first called, with its baseline compiler, and optimizes the
+// hot ones in the background later: after one analysis of this block, the first analysis of a large block runs at
+// nearly full speed (docs/PORTING.md, "Speed").
+const WARM_MIX = '4883c001' + '488906' + '8b06' + 'c4e2d5aaf4' + '4c03d1' + '4d0fafc0' + 'c5fc100c87' + 'c4e27da80c86' + 'c5fc110c86'
+  + 'f3480fb80cc7' + '4801ca' + 'f2480f38f104cf' + '660f6f0f' + '660f74c8' + '660fd7c1' + '488b00' + 'c4626db8c0' + '4839d0'
+  + '4883c708' + '4c8d0c49' + '48c1e005' + '4421c0' + 'c5f857c0' + '488d0c0a';
+export const WARM_HEX = WARM_MIX.repeat(20) + '49ffcf' + '0f853bf8ffff'; // dec r15; jnz to the start

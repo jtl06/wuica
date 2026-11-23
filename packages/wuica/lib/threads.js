@@ -12,15 +12,25 @@
 //   after IDLE_MS without a job they are stopped (close() stops them at once).
 // - A table is pinned to the thread that loaded it: a job goes to a thread that has its table, else a table no thread
 //   has goes to the first free thread (or a new one). So every table is loaded once, whatever the number of compares.
+//   A new thread gets its first job at once (it waits in the thread's queue while the thread starts).
+// - Warm-up: V8 compiles the module's functions when they are first called (and optimizes the hot ones later, in the
+//   background), and the compiled code belongs to the module, which the threads share. While new threads start
+//   (~80 ms), this thread analyzes a block once on an instance of their module, so that they find most of the code
+//   compiled (on aethia the first analysis of the SHA-256 showcase in 8 new threads at once takes ~100 instead of
+//   ~230 ms).
 // - A thread that cannot start or stops unexpectedly does not fail anything: its jobs resolve to null and the caller
 //   runs them on its own thread. After a start failure the pool is `broken` and the caller stops using it.
 
 import os from 'node:os';
+import path from 'node:path';
 import { Worker, isMainThread } from 'node:worker_threads';
-import { capMemory } from './wasm.js';
+import { Analyzer, capMemory } from './wasm.js';
+import { readMaybeCompressed } from './files.js';
+import { WARM_HEX } from './core.js';
 
 const WORKER = new URL('./thread-worker.js', import.meta.url);
 export const IDLE_MS = 30_000;
+const WARM_MIN_HEX = 2 * 1024; // the smallest block (hex digits: 1 KB of code, ~250 instructions) that gets a warm-up
 const MIB = 2 ** 20;
 
 // The memory limit of a thread's analyzer, for `threads` threads.
@@ -46,6 +56,7 @@ export class ThreadPool {
   #compiled = null;   // promise of the module with the threads' memory limit
   #limit;
   #slots = [];        // {worker, ready, job, tables: Set}
+  #warmed = false;
   #queue = [];        // {id, table, request, resolve}
   #nextId = 1;
   #idleTimer = null;
@@ -78,8 +89,21 @@ export class ThreadPool {
       if (this.broken) { resolve(null); return; }
       this.#queue.push({ id: this.#nextId++, table, request, resolve });
     })));
-    this.#pump();
+    // (not for a small block: its analyses are short, and the warm-up would compete with them for the CPU)
+    if (this.#pump() && !this.#warmed && jobs[0]?.request.hex.length >= WARM_MIN_HEX && !process.env.WUICA_NO_THREAD_WARMUP) {
+      this.#warmed = true;
+      this.#warmUp(jobs[0]).catch(() => {});
+    }
     return out;
+  }
+
+  // One analysis of WARM_HEX on an instance of the threads' module (see the top); the instance is dropped afterwards.
+  async #warmUp({ table, request }) {
+    const bytes = await readMaybeCompressed(path.join(this.#dataDir, 'arch', `${table}.json`));
+    const a = new Analyzer(this.#workerData.module);
+    a.loadUarch(this.#uarch);
+    a.loadArch(table, bytes);
+    a.analyze({ hex: WARM_HEX, arch: request.arch });
   }
 
   #owner(table) { return this.#slots.find((s) => s.tables.has(table)); }
@@ -91,17 +115,23 @@ export class ThreadPool {
     return i < 0 ? null : this.#queue.splice(i, 1)[0];
   }
 
+  // Gives the waiting jobs to free threads, and starts a thread for each job of a table no thread has (up to the
+  // limit). Returns the number of threads started.
   #pump() {
     for (const s of this.#slots) {
-      if (!s.ready || s.job || !this.#queue.length) continue;
+      if (s.job || !this.#queue.length) continue;
       const j = this.#pick(s);
       if (j) this.#start(s, j);
     }
-    // a new thread for each table that no thread has, up to the limit
-    const starting = this.#slots.filter((s) => !s.ready).length;
-    const unowned = new Set(this.#queue.filter((j) => !this.#owner(j.table)).map((j) => j.table)).size;
-    for (let k = starting; k < unowned && this.#slots.length < this.#limit; k++) this.#spawn();
+    let started = 0;
+    while (this.#slots.length < this.#limit) {
+      const i = this.#queue.findIndex((j) => !this.#owner(j.table));
+      if (i < 0) break;
+      this.#spawn(this.#queue.splice(i, 1)[0]);
+      started++;
+    }
     this.#idle();
+    return started;
   }
 
   #start(slot, job) {
@@ -111,15 +141,14 @@ export class ThreadPool {
     slot.worker.postMessage({ id: job.id, table: job.table, request: job.request });
   }
 
-  #spawn() {
+  #spawn(job) {
     const worker = new Worker(WORKER, { workerData: this.#workerData, stdout: true, stderr: true });
     const slot = { worker, ready: false, job: null, tables: new Set() };
     this.#slots.push(slot);
+    this.#start(slot, job);
     worker.on('message', (m) => {
       if (m.type === 'ready') {
         slot.ready = true;
-        worker.unref();
-        this.#pump();
       } else if (m.type === 'init-error') {
         this.#fail(slot, true);
       } else if (slot.job && m.id === slot.job.id) {
