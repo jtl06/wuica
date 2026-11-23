@@ -19,3 +19,4 @@
 .dp-map.picking .dp-arc:not(.on) { opacity: 0.25; }
 .dp-map.picking .dp-arc.on { stroke: var(--accent); opacity: 1; }
 .dp-info { overflow-wrap: anywhere; color: var(--description); }
+body.ab-on #deps-row { display: none !important; }

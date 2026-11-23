@@ -382,6 +382,22 @@ try {
     console.log(`deps: SHA-256: traced and drawn in ${s[2]} ms after the click; long tasks ${JSON.stringify(s[3])}`);
   }
 
+  // --- A–B mode: the views of the single result are hidden, also when the A–B traces show the "more" section -------------
+  {
+    const chain = ex('chain');
+    await page.goto(`${origin}/?nosw=1#v=1&bound=1&whatif=1&codemap=1&deps=1&trace=1&c=${b64(chain.text.hex)}`);
+    await page.result();
+    const r = await page.eval(`${HELPERS}
+      await until(() => document.querySelector('.bd-item') && document.querySelector('.dp-map'), 20000);
+      const shown = () => ['bound-row', 'whatif-row', 'codemap-row', 'deps-row'].map((id) => getComputedStyle($(id)).display !== 'none');
+      const single = shown();
+      await done(() => $('cmp-ab').click()); await wait(300);
+      const ab = [shown(), getComputedStyle($('more')).display];
+      await done(() => $('cmp-single').click()); await wait(300);
+      return { single, ab, back: shown() };`);
+    check(r.single.every(Boolean) && r.ab[0].every((x) => !x) && r.back.every(Boolean), 'A–B mode: the views are hidden (also with the A–B traces open), back in single mode they are there', JSON.stringify(r));
+  }
+
   // --- copy: Markdown, CSV, JSON of the result -------------------------------------------------------------------------------
   {
     const chain = ex('chain');

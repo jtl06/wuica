@@ -219,7 +219,7 @@ export function createBound(env = {}) {
     if (!m) { clean(); return; }
     hint.textContent = m.next ? ` · next ${m.next.name} ≤×${m.next.speedup.toFixed(1)}` : '';
     hint.title = m.next ? `without the bottleneck, at best ${f2(m.next.tp)} cycles/iteration (the next limit): up to ${m.next.speedup.toFixed(2)}× faster` : '';
-    if (!open) { body.replaceChildren(); clean(); root?.dataset && (root.dataset.bound = 'closed'); return; }
+    if (!open) { body.replaceChildren(); clean(); if (root) root.dataset.bound = 'closed'; return; }
     if (!m.items.some((x) => x.id === selected && x.group !== 'other')) selected = defaultResource(m);
     const groups = [];
     for (const [g, label] of GROUPS) {

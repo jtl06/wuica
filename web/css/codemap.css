@@ -29,3 +29,4 @@
 .ly-ins.sel rect { fill: var(--code); }
 .ly-info { color: var(--code); overflow-wrap: anywhere; }
 @media (max-width: 640px) { .ly-map { min-width: 30rem; } }
+body.ab-on #codemap-row { display: none !important; }
