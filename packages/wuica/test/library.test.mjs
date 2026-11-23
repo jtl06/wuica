@@ -135,6 +135,8 @@ test('assemble', async () => {
   assert.deepEqual(r.stderr, []);
   assert.equal((await w.assemble('addq %rbx, %rax', 'att')).hex, '4801d8');
   assert.equal((await w.assemble('{load} mov eax, ebx')).code, 0);
+  assert.equal((await w.assemble('\uFEFFadd rax, rbx\n')).hex, '4801d8'); // a byte order mark at the start is dropped
+  assert.equal((await w.analyze('SKL', { source: '\uFEFFadd rax, rbx\r\nadd rbx, rax\r\n' })).code, 0);
   const warn = await w.assemble('.warning "careful"\nnop\n');
   assert.equal(warn.code, 0);
   assert.equal(warn.stderr[0].tag.severity, 'warning');

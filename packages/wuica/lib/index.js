@@ -157,7 +157,8 @@ class Wuica {
     if (typeof source !== 'string') return failure(CODES.REQUEST, '`source` must be a string');
     const s = syntaxCode(syntax);
     if (s < 0) return failure(CODES.REQUEST, `unknown syntax "${syntax}" (use "intel" or "att")`);
-    const r = (await this.#getAssembler()).assemble(source, s);
+    // a byte order mark (a file saved by some Windows editors) is not part of the code: LLVM would reject it
+    const r = (await this.#getAssembler()).assemble(source.replace(/^\uFEFF/, ''), s);
     if (!r.ok) {
       if (r.status === 'trap') return failure(CODES.ASSEMBLER, r.message, undefined, { trapped: true });
       const first = parseDiagnostics(r.message).find((d) => d.severity === 'error');
