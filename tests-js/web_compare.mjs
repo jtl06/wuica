@@ -134,11 +134,15 @@ const root = new URL('../', import.meta.url);
   check(seen.join() === '1,6' && stale.join() === 'true,false', 'latest: no queue; only the latest runs afterwards', JSON.stringify([seen, stale]));
 
   // a new request with a debounce while a run is waiting: the debounce decides (no extra run)
+  // ('a' is held by a gate until both requests are in, so the result does not depend on timing under load)
   const seen2 = [];
-  const u = latestWins(async () => { seen2.push(input); await sleep(30); });
+  let release;
+  const gate = new Promise(r => { release = r; });
+  const u = latestWins(async () => { const mine = input; seen2.push(mine); if (mine === 'a') await gate; });
   input = 'a'; u.schedule(0); await sleep(5);
-  input = 'b'; u.schedule(0); await sleep(1);  // would run right after 'a'
+  input = 'b'; u.schedule(0);                  // would run right after 'a'
   input = 'c'; u.schedule(60);                 // replaces it: runs 60 ms from now
+  release();
   await u.idle();
   check(seen2.join() === 'a,c', 'latest: a later debounce replaces a waiting run', seen2.join());
 
