@@ -62,3 +62,6 @@ body.ab-on #bound-row { display: none !important; }
 .sl-rob { background: var(--caveat); }
 .sl-rs { background: var(--date); }
 .sl-other { background: var(--subtle); }
+
+/* the columns of the port set (js/portset.js) */
+.grid thead th.ps-on { color: var(--heading); box-shadow: inset 0 -2px var(--accent); }

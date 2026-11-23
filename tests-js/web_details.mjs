@@ -5,7 +5,7 @@
 // Usage: node tests-js/web_details.mjs
 import fs from 'node:fs';
 import { detailsFit, portString, portThroughput, latencyPairs, createDetails } from '../web/js/details.js';
-import { layout, hazards, cardModel, frontTags } from '../web/js/icard.js';
+import { layout, hazards, cardModel, frontTags, bottleneckShare } from '../web/js/icard.js';
 import { portSetBlame, setName } from '../web/js/portset.js';
 import { slotParts } from '../web/js/slots.js';
 import { ACCURACY, accuracyNote } from '../web/js/archs.js';
@@ -64,6 +64,10 @@ const near = (a, b, eps = 1e-9) => Math.abs(a - b) < eps;
   check(b && b.total === 5 && b.max === 4 && b.set.name === 'p0156' && b.ports.join() === 'p0,p1,p5,p6' && b.unit === 'uops', 'port set: blame', JSON.stringify(b));
   check(portSetBlame(r, { ...ps, rows: [1] }) === null && portSetBlame(r, null) === null && portSetBlame(r, { ...ps, rows: [0, 0, 0, 0] }) === null, 'port set: wrong or empty');
   check(setName(['ALU0', 'ALU1']) === 'ALU0 ALU1', 'port set: other names');
+  // the card's share of the bottleneck: Ports by the port set when the details have it, else the busiest ports
+  const rp = { ...r, tp: 2, bottlenecks: ['Ports'], limits: [{ name: 'Ports', tp: 2 }] };
+  const s0 = bottleneckShare(rp, 0, null), s1 = bottleneckShare(rp, 0, { ports: ps });
+  check(s0?.resource === 'Ports' && near(s0.share, 1 / 3) && near(s1.share, 0.8) && bottleneckShare(rp, 3, { ports: ps }).share === 0, 'card: share of the bottleneck', JSON.stringify([s0, s1]));
 
   const sp = slotParts({ width: 4, cycles: 10, iterations: 10, slots: { issued: 2, frontEnd: 1, rob: 0.5, rs: 0, other: 0.5 } });
   check(sp.map((p) => p.key).join() === 'issued,frontEnd,rob,rs,other' && near(sp[0].share, 0.5) && near(sp[2].share, 0.125), 'slots: shares');

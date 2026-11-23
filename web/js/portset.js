@@ -25,6 +25,17 @@ export function portSetBlame(response, ps) {
   return { weights: w, total, max, unit: 'uops', ports: ps.ports.map(shortPort), set: { name: setName(ps.ports), uops: Number(ps.uops), n: ps.ports.length, tp: Number(ps.tp) } };
 }
 
+// marks the uop table's columns of the set's ports (null: none)
+export function markPorts(root, ports) {
+  const ths = root?.querySelectorAll?.('table.uops thead th') ?? [];
+  for (const th of ths) {
+    const on = !!ports && ports.includes(th.textContent);
+    th.classList.toggle('ps-on', on);
+    if (on) th.title = 'in the port set behind the Ports limit'; else if (th.classList.contains('ps-was')) th.removeAttribute('title');
+    th.classList.toggle('ps-was', on);
+  }
+}
+
 // one line: the set, its uops per iteration and the cycles they need
 export function setLine(b) {
   const s = b.set;

@@ -7,7 +7,7 @@
 
 import { h, columnKind } from './render.js';
 import { jumpToRow, finishJump } from './rowjump.js';
-import { portSetBlame, setLine } from './portset.js';
+import { portSetBlame, setLine, markPorts } from './portset.js';
 import { slotsLine } from './slots.js';
 
 const EPS = 0.005; // values are shown with two decimals
@@ -186,6 +186,7 @@ export function createBound(env = {}) {
       th.parentElement?.classList.remove('bd-hot');
     }
     shaded = [];
+    markPorts(root, null);
   }
 
   function shade(b, name) {
@@ -248,6 +249,7 @@ export function createBound(env = {}) {
     body.replaceChildren(...[h('div', { class: 'bd-groups' }, groups, ps ? setLine(ps) : null, d?.issue ? slotsLine(d.issue) : null),
       top.length ? h('div', { class: 'bd-top' }, h('span', { class: 'bd-g', text: 'top', title: `the instructions with the largest share of ${name}; the uop table is shaded by the share` }), h('ol', { class: 'bd-list' }, list)) : null].filter(Boolean));
     shade(b, name);
+    if (ps) markPorts(root, d.ports.ports);
     if (root?.dataset) root.dataset.bound = selected ?? '';
   }
 

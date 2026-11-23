@@ -241,6 +241,7 @@ try {
       const out = { card0: !!$('icard') && !$('icard').hidden };
       document.querySelector('.bd-item[data-id="Ports"]').click(); await wait(30);
       out.set = document.querySelector('.bd-set')?.innerText.replace(/\\s+/g, ' ').trim();
+      out.cols = [...document.querySelectorAll('table.uops thead th.ps-on')].map((th) => th.textContent);
       out.slots = document.querySelector('.bd-slots')?.innerText.replace(/\\s+/g, ' ').trim();
       out.top = top();
       // a click on a row: the card with the details
@@ -258,9 +259,9 @@ try {
       out.notes = trs().map((tr) => tr.querySelector('td.note').textContent).join('');
       return out;`);
     const p = want.details.ports;
-    check(!r.card0 && r.set === `set p6 ${p.uops} uops / ${p.ports.length} = ${p.tp.toFixed(2)}` && r.top[0] === 'dec r15 100%', 'details: Ports drills down to the port set and its instructions', JSON.stringify(r));
+    check(!r.card0 && r.set === `set p6 ${p.uops} uops / ${p.ports.length} = ${p.tp.toFixed(2)}` && r.top[0] === 'dec r15 100%' && r.cols.join() === 'Port 6', 'details: Ports drills down to the port set and its instructions', JSON.stringify(r));
     check(/^slots issued \d+% front end \d+%/.test(r.slots), 'details: the issue slots', r.slots);
-    check(/^add rax, qword ptr \[rsi\] uops\.info ↗ × ports 1\*p0156\+1\*p23 tp 0\.50 uops 2 · 1 fused · MITE 1 · 1 load lat RAX→RAX 1 · mem→RAX 3 · \[RSI\]→RAX 6 front 3 B @0$/.test(r.card)
+    check(/^add rax, qword ptr \[rsi\] uops\.info ↗ × ports 1\*p0156\+1\*p23 tp 0\.50 uops 2 · 1 fused · MITE 1 · 1 load lat RAX→RAX 1 · mem→RAX 3 · \[RSI\]→RAX 6 share 50% of DSB front 3 B @0$/.test(r.card)
       && /^https:\/\/www\.uops\.info\//.test(r.link) && r.sel, 'details: a click on a row shows its card', JSON.stringify(r));
     check(r.follow === '1' && r.closed && r.notes === 'M', 'details: the card follows the focus, Escape closes it; the notes keep their text', JSON.stringify(r));
     // the accuracy link next to "limitations", and the numbers of the prototypes in their tooltips

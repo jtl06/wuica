@@ -12,6 +12,8 @@
 
 import { h, fmt } from './render.js';
 import { portString, portThroughput, latencyPairs } from './details.js';
+import { boundModel, blame, defaultResource } from './bound.js';
+import { portSetBlame } from './portset.js';
 
 const f2 = (x) => Number(x).toFixed(2);
 const colIndex = (r, name) => (Array.isArray(r?.columns) ? r.columns.indexOf(name) : -1);
@@ -72,6 +74,16 @@ export function cardModel(response, row, det, alignmentOffset = 0) {
     m.microcoded = m.ms > 0;
   }
   return m;
+}
+
+// The row's share of the bottleneck (bound.js's blame; for Ports the port set of the details, if there): {resource,
+// share, unit} or null
+export function bottleneckShare(response, row, details = null) {
+  const res = defaultResource(boundModel(response));
+  if (!res) return null;
+  const b = (res === 'Ports' ? portSetBlame(response, details?.ports) : null) ?? blame(response, res);
+  if (!b || !(b.total > 0)) return null;
+  return { resource: res, share: (b.weights[row] ?? 0) / b.total, unit: b.unit };
 }
 
 // the front-end facts as short tags: [{text, title}]
@@ -161,6 +173,8 @@ export function createICard(env) {
       lines.push(line('uops', 'per iteration: issued · executed', `${fmt(m.issued) || 0}`, h('span', { class: 'ic-d', text: ` · ${fmt(m.executed) || 0} exec` })));
       if (env.details && !r.mock) lines.push(h('div', { class: 'ic-l hint', text: '…' }));
     }
+    const sh = bottleneckShare(r, row, det);
+    if (sh) lines.push(line('share', `its share of the bottleneck (${sh.resource}, by ${sh.unit})`, `${Math.round(sh.share * 100)}%`, h('span', { class: 'ic-d', text: ` of ${sh.resource}` })));
     lines.push(line('front', 'front end', ...frontTags(m).map((t, k) => h('span', { class: 'ic-t', title: t.title }, k ? ' ' : '', t.text))));
     c.replaceChildren(...lines);
     c.hidden = false;
