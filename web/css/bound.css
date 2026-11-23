@@ -1,0 +1,47 @@
+/* The bound view (js/bound.js) and the row jump (js/rowjump.js). Colours only from the theme's custom properties. */
+
+.bd-body:empty { display: none; }
+.bd-body { margin-top: 0.4rem; display: grid; gap: 0.5rem; }
+.bd-groups { display: grid; gap: 0.25rem; }
+.bd-group, .bd-top { display: grid; grid-template-columns: 9ch minmax(0, 1fr); column-gap: 1ch; align-items: baseline; }
+.bd-g { color: var(--subtle); }
+.bd-items { display: flex; flex-wrap: wrap; gap: 0.2rem 2ch; }
+.bd-item {
+  display: inline-flex; align-items: center; gap: 0.75ch;
+  border: 0; padding: 0 0.3ch; color: var(--description); white-space: nowrap;
+}
+.bd-item:hover:not(:disabled) { border: 0; }
+.bd-item[aria-pressed="true"] { color: var(--text); box-shadow: inset 0 -2px var(--accent); }
+.bd-item.na:disabled { opacity: 1; cursor: help; color: var(--subtle); }
+.bd-item.is-bn .bd-name, .bd-item.is-bn .bd-pct { color: var(--heading); }
+.bd-item.over .bd-pct { color: var(--caveat); }
+.bd-pct { font-variant-numeric: tabular-nums; min-width: 4ch; text-align: right; }
+.bd-bar { display: block; width: 3.5rem; height: 0.55em; background: var(--border); }
+.bd-fill { display: block; height: 100%; background: rgb(var(--accent-rgb) / 0.45); }
+.bd-item.is-bn .bd-fill { background: var(--accent); }
+.bd-item.over .bd-fill { background: var(--caveat); }
+.bd-item.na .bd-fill { background: var(--subtle); }
+.bd-list { display: flex; flex-wrap: wrap; gap: 0.15rem 2.5ch; min-width: 0; }
+.bd-list li { min-width: 0; max-width: 100%; }
+.bd-row { color: var(--code); text-decoration: none; text-align: left; max-width: 100%; display: inline-flex; gap: 1ch; }
+.bd-row .bd-ins { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 40ch; }
+.bd-row .bd-share { color: var(--description); font-variant-numeric: tabular-nums; }
+.bd-row:hover .bd-ins { text-decoration: underline; }
+
+/* the share of each row in the uop table: a bar behind the instruction */
+.grid tbody tr.bd-hot > th:first-child {
+  background-image: linear-gradient(to right, rgb(var(--accent-rgb) / 0.22) calc(var(--bd, 0) * 100%), transparent calc(var(--bd, 0) * 100%));
+}
+
+/* a row the page jumped to */
+@keyframes rj-flash { from { background-color: rgb(var(--accent-rgb) / 0.35); } to { background-color: transparent; } }
+.grid tbody tr.rj-flash > * { animation: rj-flash 1.5s ease-out; }
+.grid tbody tr > th:focus { outline: 1px solid var(--cursor); outline-offset: -1px; }
+
+@media (max-width: 640px) {
+  .bd-group, .bd-top { grid-template-columns: 6ch minmax(0, 1fr); }
+  .bd-g { overflow-wrap: anywhere; }
+  .bd-bar { width: 2.5rem; }
+  .bd-row .bd-ins { max-width: 22ch; }
+}
+@media (prefers-reduced-motion: reduce) { .grid tbody tr.rj-flash > * { animation: none; background-color: rgb(var(--accent-rgb) / 0.2); } }
