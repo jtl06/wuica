@@ -117,9 +117,11 @@ fn main() {
         s[3] = measure(iters, || r.uops_table());
         s[4] = measure(iters, || facile::compute_dependency_limit(&instrs, config, "diff"));
         s[5] = measure(iters, || sim_summary(&r));
-        s[6] = measure(iters, || facile::bottleneck_report(&instrs, &decoded.instrs, config, 0, dep, &summary));
+        // the report as `analyze` makes it (from the result of the simulation; "summary" is not part of the analysis)
+        s[6] = measure(iters, || facile::format_bottlenecks(&facile::bottleneck_values_for(&instrs, &decoded.instrs, config, 0, dep, &r)));
+        let _ = facile::bottleneck_report(&instrs, &decoded.instrs, config, 0, dep, &summary);
         s[7] = measure(iters, || wuica_core::analyze::analyze(&decoded.instrs, decoded.errors, &request, &uarch, &data).unwrap());
-        let parts = [1, 2, 3, 4, 5, 6];
+        let parts = [1, 2, 3, 4, 6];
         s[8] = Stat {
             ns: s[7].ns - parts.iter().map(|&i| s[i].ns).sum::<f64>(),
             allocs: s[7].allocs - parts.iter().map(|&i| s[i].allocs).sum::<f64>(),

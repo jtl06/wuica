@@ -168,6 +168,59 @@ pub struct SimSummary {
     pub instances: Vec<Vec<InstrInstanceSummary>>,
 }
 
+/// What the bottleneck analysis reads from a simulation: the questions it asks of a [`SimSummary`]. The analysis
+/// ([`bottleneck_values_for`]) is written against this trait, so that it can also read the result of a simulation directly,
+/// without first making a [`SimSummary`] (which has a `String` for each uop).
+pub trait SimView {
+    /// `TP`
+    fn tp(&self) -> f64;
+    /// `loop`
+    fn is_loop(&self) -> bool;
+    /// `nRounds`
+    fn n_rounds(&self) -> i64;
+    /// the number of instances of instruction `instr` in the relevant rounds (0 for an instruction without an entry)
+    fn n_instances(&self, instr: usize) -> usize;
+    /// the number of uops (`InstrInstanceSummary::uops`, not the other uops) of the instances of `instr` that are not eliminated
+    fn not_eliminated_uops(&self, instr: usize) -> i64;
+    /// whether an instance of an instruction came from `source` (an instruction whose first instance did)
+    fn any_instr_from(&self, source: InstrSource) -> bool;
+    /// over the unfused uops of all instances (`uops` and `other_uops`): (`max(Counter(uop.actualPort for uop in allUnfusedUops
+    /// if uop.actualPort).values())`, `None` if no uop has a port; the sum of their `divCycles`)
+    fn port_and_div_usage(&self) -> (Option<i64>, i64);
+}
+
+impl SimView for SimSummary {
+    fn tp(&self) -> f64 {
+        self.tp
+    }
+    fn is_loop(&self) -> bool {
+        self.is_loop
+    }
+    fn n_rounds(&self) -> i64 {
+        self.n_rounds
+    }
+    fn n_instances(&self, instr: usize) -> usize {
+        self.instances.get(instr).map_or(0, |l| l.len())
+    }
+    fn not_eliminated_uops(&self, instr: usize) -> i64 {
+        let list: &[InstrInstanceSummary] = self.instances.get(instr).map(|l| l.as_slice()).unwrap_or(&[]);
+        list.iter().map(|ii| ii.uops.iter().filter(|u| !u.eliminated).count() as i64).sum()
+    }
+    fn any_instr_from(&self, source: InstrSource) -> bool {
+        self.instances.iter().any(|ii_list| ii_list.first().is_some_and(|ii| ii.source == Some(source)))
+    }
+    fn port_and_div_usage(&self) -> (Option<i64>, i64) {
+        let all_unfused_uops = || self.instances.iter().flatten().flat_map(|ii| ii.uops.iter().chain(&ii.other_uops));
+        let mut port_usage_c: IndexMap<&str, i64> = IndexMap::new();
+        for uop in all_unfused_uops() {
+            if let Some(port) = uop.actual_port.as_deref().filter(|p| !p.is_empty()) {
+                *port_usage_c.entry(port).or_insert(0) += 1;
+            }
+        }
+        (port_usage_c.values().copied().max(), all_unfused_uops().map(|uop| uop.div_cycles).sum())
+    }
+}
+
 // ---------------------------------------------------------------------------------------------------------------------------
 // Limits
 // ---------------------------------------------------------------------------------------------------------------------------
@@ -175,6 +228,16 @@ pub struct SimSummary {
 /// `computePortUsageLimit(instructions, instrInstancesForInstr)`. `instances` is [`SimSummary::instances`]; `None` is Python's
 /// default `{}` (instructions that may be eliminated are then left out).
 pub fn compute_port_usage_limit(instrs: &InstrList, instances: Option<&[Vec<InstrInstanceSummary>]>) -> f64 {
+    port_usage_limit(instrs, |idx| {
+        let list: &[InstrInstanceSummary] = instances.and_then(|i| i.get(idx)).map(|l| l.as_slice()).unwrap_or(&[]);
+        let not_eliminated: i64 = list.iter().map(|ii| ii.uops.iter().filter(|u| !u.eliminated).count() as i64).sum();
+        (list.len(), not_eliminated)
+    })
+}
+
+/// [`compute_port_usage_limit`]; `instances(idx)` is (number of instances of the instruction, number of their uops that are
+/// not eliminated), which is only asked for instructions that may be eliminated
+fn port_usage_limit(instrs: &InstrList, instances: impl Fn(usize) -> (usize, i64)) -> f64 {
     // frozenset(ports) -> number of uops, in the order of insertion; a set of ports is a bit set of the characters
     let mut port_usage: Vec<(u128, Num)> = Vec::new();
     for (idx, instr) in instrs.instrs.iter().enumerate() {
@@ -184,12 +247,11 @@ pub fn compute_port_usage_limit(instrs: &InstrList, instances: Option<&[Vec<Inst
         for (ports, n_uops) in &instr.port_data {
             let mut n_uops = Num::Int(*n_uops);
             if instr.may_be_eliminated {
-                let list: &[InstrInstanceSummary] = instances.and_then(|i| i.get(idx)).map(|l| l.as_slice()).unwrap_or(&[]);
-                if list.is_empty() {
+                let (n_instances, not_eliminated) = instances(idx);
+                if n_instances == 0 {
                     continue;
                 }
-                let not_eliminated: i64 = list.iter().map(|ii| ii.uops.iter().filter(|u| !u.eliminated).count() as i64).sum();
-                n_uops = Num::Float(not_eliminated as f64 / list.len() as f64);
+                n_uops = Num::Float(not_eliminated as f64 / n_instances as f64);
             }
             let set = port_set(ports);
             match port_usage.iter_mut().find(|(s, _)| *s == set) {
@@ -1028,34 +1090,36 @@ pub fn bottleneck_values(
     dep_limit: f64,
     summary: &SimSummary,
 ) -> BottleneckValues {
-    let all_unfused_uops = || summary.instances.iter().flatten().flat_map(|ii| ii.uops.iter().chain(&ii.other_uops));
+    bottleneck_values_for(instrs, disas, config, alignment_offset, dep_limit, summary)
+}
 
+/// [`bottleneck_values`] for any description of the simulation.
+pub fn bottleneck_values_for(
+    instrs: &InstrList,
+    disas: &[DecodedInstr],
+    config: &UArchConfig,
+    alignment_offset: i64,
+    dep_limit: f64,
+    sim: &(impl SimView + ?Sized),
+) -> BottleneckValues {
     // Front End
-    let any_instr_from =
-        |source: InstrSource| summary.instances.iter().any(|ii_list| ii_list.first().is_some_and(|ii| ii.source == Some(source)));
-    let mite_instrs = any_instr_from(InstrSource::Mite);
-    let dsb_instrs = any_instr_from(InstrSource::Dsb);
-    let lsd_instrs = any_instr_from(InstrSource::Lsd);
+    let mite_instrs = sim.any_instr_from(InstrSource::Mite);
+    let dsb_instrs = sim.any_instr_from(InstrSource::Dsb);
+    let lsd_instrs = sim.any_instr_from(InstrSource::Lsd);
 
-    // Port Usage: Counter(uop.actualPort for uop in allUnfusedUops if uop.actualPort)
-    let mut port_usage_c: IndexMap<&str, i64> = IndexMap::new();
-    for uop in all_unfused_uops() {
-        if let Some(port) = uop.actual_port.as_deref().filter(|p| !p.is_empty()) {
-            *port_usage_c.entry(port).or_insert(0) += 1;
-        }
-    }
+    let (max_port_usage, div_usage) = sim.port_and_div_usage();
 
     BottleneckValues {
-        tp: summary.tp,
-        predec_limit: (mite_instrs && !dsb_instrs && !lsd_instrs).then(|| compute_predec_limit(disas, summary.is_loop, alignment_offset)),
+        tp: sim.tp(),
+        predec_limit: (mite_instrs && !dsb_instrs && !lsd_instrs).then(|| compute_predec_limit(disas, sim.is_loop(), alignment_offset)),
         dec_limit: mite_instrs.then(|| compute_dec_limit(instrs, config)),
         dsb_limit: dsb_instrs.then(|| compute_dsb_limit(instrs, alignment_offset)),
         lsd_limit: lsd_instrs.then(|| compute_lsd_limit(instrs, config)),
         issue_limit: compute_issue_limit(instrs, config),
-        port_usage_limit: compute_port_usage_limit(instrs, Some(&summary.instances)),
-        max_port_usage: port_usage_c.values().copied().max(),
-        div_usage: all_unfused_uops().map(|uop| uop.div_cycles).sum(),
-        n_rounds: summary.n_rounds,
+        port_usage_limit: port_usage_limit(instrs, |idx| (sim.n_instances(idx), sim.not_eliminated_uops(idx))),
+        max_port_usage,
+        div_usage,
+        n_rounds: sim.n_rounds(),
         dep_limit,
     }
 }

@@ -4,7 +4,7 @@
 use crate::config::UArch;
 use crate::data::ArchData;
 use crate::decoded::DecodedInstr;
-use crate::facile::{self, InstrInstanceSummary, InstrSource, SimSummary, UopSummary};
+use crate::facile::{self, InstrInstanceSummary, InstrSource, SimSummary, SimView, UopSummary};
 use crate::instr_builder::build_instructions;
 use crate::sim::{simulate, InitPolicy, SimOptions, SimResult, TableValue, UopSource};
 use serde::{Deserialize, Serialize};
@@ -123,12 +123,7 @@ pub fn sim_summary(r: &SimResult) -> SimSummary {
                     .map(|&i| {
                         let inst = &r.instr_instances[i as usize];
                         InstrInstanceSummary {
-                            source: match inst.source {
-                                Some(UopSource::Mite) => Some(InstrSource::Mite),
-                                Some(UopSource::Dsb) => Some(InstrSource::Dsb),
-                                Some(UopSource::Lsd) => Some(InstrSource::Lsd),
-                                _ => None,
-                            },
+                            source: instr_source(inst.source),
                             uops: unfused(&mut inst.uops()),
                             other_uops: unfused(&mut inst.reg_merge_uops.iter().chain(&inst.stack_sync_uops).copied()),
                         }
@@ -136,6 +131,78 @@ pub fn sim_summary(r: &SimResult) -> SimSummary {
                     .collect()
             })
             .collect(),
+    }
+}
+
+/// The source of an instruction instance as `sim_summary` describes it
+fn instr_source(source: Option<UopSource>) -> Option<InstrSource> {
+    match source {
+        Some(UopSource::Mite) => Some(InstrSource::Mite),
+        Some(UopSource::Dsb) => Some(InstrSource::Dsb),
+        Some(UopSource::Lsd) => Some(InstrSource::Lsd),
+        _ => None,
+    }
+}
+
+/// The result of the simulation read directly, with the same answers as the [`SimSummary`] of [`sim_summary`].
+impl SimView for SimResult {
+    fn tp(&self) -> f64 {
+        self.tp
+    }
+    fn is_loop(&self) -> bool {
+        !self.unroll
+    }
+    fn n_rounds(&self) -> i64 {
+        self.n_relevant_rounds()
+    }
+    fn n_instances(&self, instr: usize) -> usize {
+        self.relevant_instr_instances_for_instr.get(instr).map_or(0, |l| l.len())
+    }
+    fn not_eliminated_uops(&self, instr: usize) -> i64 {
+        let list: &[u32] = self.relevant_instr_instances_for_instr.get(instr).map(|l| l.as_slice()).unwrap_or(&[]);
+        let mut n = 0;
+        for &i in list {
+            for l in self.instr_instances[i as usize].uops() {
+                n += self.laminated_uops[l as usize].unfused_uops().filter(|&u| !self.uops[u as usize].eliminated).count() as i64;
+            }
+        }
+        n
+    }
+    fn any_instr_from(&self, source: InstrSource) -> bool {
+        self.relevant_instr_instances_for_instr
+            .iter()
+            .any(|list| list.first().is_some_and(|&i| instr_source(self.instr_instances[i as usize].source) == Some(source)))
+    }
+    fn port_and_div_usage(&self) -> (Option<i64>, i64) {
+        // counted by port index; ports with the same name (there are none) are then added up as the Counter of names would
+        let mut by_index = vec![0i64; self.ports.len()];
+        let mut div_usage = 0;
+        for list in &self.relevant_instr_instances_for_instr {
+            for &i in list {
+                let inst = &self.instr_instances[i as usize];
+                for l in inst.uops().chain(inst.reg_merge_uops.iter().copied()).chain(inst.stack_sync_uops.iter().copied()) {
+                    for u in self.laminated_uops[l as usize].unfused_uops() {
+                        let uop = &self.uops[u as usize];
+                        if let Some(p) = uop.actual_port {
+                            by_index[p as usize] += 1;
+                        }
+                        div_usage += uop.div_cycles;
+                    }
+                }
+            }
+        }
+        let mut by_name: Vec<(&str, i64)> = Vec::new();
+        for (p, &n) in by_index.iter().enumerate().filter(|(_, &n)| n != 0) {
+            let name = self.port_name(p as u8);
+            if name.is_empty() {
+                continue;
+            }
+            match by_name.iter_mut().find(|(q, _)| *q == name) {
+                Some((_, m)) => *m += n,
+                None => by_name.push((name, n)),
+            }
+        }
+        (by_name.iter().map(|(_, n)| *n).max(), div_usage)
     }
 }
 
@@ -213,9 +280,9 @@ pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Response, String> {
         let instrs = build_instructions(decoded, config, uarch, data, request.alignment_offset, request.no_micro_fusion, request.no_macro_fusion);
         let r = simulate(&instrs, config, uarch, &options).map_err(|e| e.to_string())?;
-        let summary = sim_summary(&r);
         let dep_limit = facile::compute_dependency_limit(&instrs, config, &request.init_policy);
-        let report = facile::bottleneck_report(&instrs, decoded, config, request.alignment_offset, dep_limit, &summary);
+        let report =
+            facile::format_bottlenecks(&facile::bottleneck_values_for(&instrs, decoded, config, request.alignment_offset, dep_limit, &r));
         let table = r.uops_table();
         let text_with_hyperlinks = format!("Throughput (in cycles per iteration): {:.2}\n{report}\n{table}\n", r.tp);
         let (bottlenecks, limits) = parse_bottleneck_report(&report);
