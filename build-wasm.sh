@@ -9,8 +9,12 @@ if [ -z "$CC_wasm32_unknown_unknown" ]; then
 fi
 [ -n "$CC_wasm32_unknown_unknown" ] || { echo "no clang with the wasm32 target found; set CC_wasm32_unknown_unknown"; exit 1; }
 if [ -z "$AR_wasm32_unknown_unknown" ]; then
-   ar="$(dirname "$CC_wasm32_unknown_unknown")/llvm-ar"
-   [ -x "$ar" ] && export AR_wasm32_unknown_unknown="$ar"
+   # llvm-ar next to clang (Homebrew), next to the file clang links to (Debian/Ubuntu: /usr/bin/clang -> /usr/lib/llvm-N/bin),
+   # or on the PATH
+   cc="$(command -v "$CC_wasm32_unknown_unknown" || echo "$CC_wasm32_unknown_unknown")"
+   for ar in "$(dirname "$cc")/llvm-ar" "$(dirname "$(readlink -f "$cc" 2>/dev/null || echo "$cc")")/llvm-ar" "$(command -v llvm-ar || true)"; do
+      if [ -n "$ar" ] && [ -x "$ar" ] && [ ! -d "$ar" ]; then export AR_wasm32_unknown_unknown="$ar"; break; fi
+   done
 fi
 # do not embed local paths (they contain the user name) in panic messages: map them to neutral prefixes
 export CARGO_ENCODED_RUSTFLAGS="--remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}/registry/src=/cargo-registry\x1f--remap-path-prefix=$PWD=/wuica\x1f--remap-path-prefix=$HOME=/home"

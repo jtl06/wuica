@@ -12,6 +12,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { findChrome } from './chrome.mjs';
 import { hostHandler } from './static-host.mjs';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES } from '../web/js/examples.js';
@@ -22,10 +23,7 @@ const dist = path.join(repo, 'web', 'dist');
 const args = process.argv.slice(2);
 const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : null; };
 const shots = opt('--shots');
-const chrome = opt('--chrome') || process.env.CHROME || [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
-].find((p) => fs.existsSync(p));
+const chrome = findChrome(opt('--chrome'));
 if (!fs.existsSync(path.join(dist, 'manifest.json'))) { console.log('web/dist is missing: run web/build.sh first'); process.exit(1); }
 if (!chrome) { console.log('Chrome not found (use --chrome PATH): skipped'); process.exit(0); }
 
@@ -135,8 +133,11 @@ const HELPERS = `
   const until = async (f, ms = 30000) => { const t0 = Date.now(); while (!f()) { if (Date.now() - t0 > ms) throw new Error('timeout: ' + f); await wait(30); } };
   const set = (el, v) => { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); };
   const body = () => $('result-body');
+  // the cost column of a block estimated over its budget (from the main analysis's time, so also for a small block on a slow
+  // machine) waits for a click: where a test only needs the result, click it
+  const runAnyway = () => { for (const b of document.querySelectorAll('.ins-cost-status button')) b.click(); };
   const done = async (start) => { const n = $('results').dataset.run; start(); await until(() => $('results').dataset.run !== n); };
-  const costDone = async (start) => { await start(); await until(() => body().dataset.cost === 'done'); }; // the state changes at once on a change
+  const costDone = async (start) => { await start(); await until(() => (runAnyway(), body().dataset.cost === 'done')); }; // the state changes at once on a change
   const instrRows = () => [...document.querySelectorAll('table.uops tbody tr:not(.extra)')];
   const cost = () => instrRows().map((tr) => tr.querySelector('td.ins-cost')?.textContent ?? null);
   const top = () => instrRows().map((tr, i) => tr.querySelector('td.ins-cost.top') ? i : -1).filter((i) => i >= 0);
@@ -153,7 +154,7 @@ try {
     const page = await openPage();
     await page.goto(`${origin}/?nosw=1#v=1&cost=1&c=${b64(CHAIN.text.hex)}`);
     const r = await page.eval(`${HELPERS}
-      await until(() => document.querySelector('.tp .value') && body().dataset.cost === 'done');
+      await until(() => (runAnyway(), document.querySelector('.tp .value') && body().dataset.cost === 'done'));
       const out = { tp: document.querySelector('.tp .value').textContent, cost: cost(), top: top(), head: head(), hash: location.hash };
       const chain = document.querySelector('.ins-chain-row');
       out.chain = [chain?.querySelector('.label').textContent, chain?.querySelector('.field').innerText.replace(/\\s+/g, ' ').trim()];
@@ -230,7 +231,7 @@ try {
     await page.cmd('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
     await page.goto(`${origin}/?nosw=1#v=1&cost=1&a=SKL&c=${b64(EXAMPLES.find((x) => x.id === 'stack').text.hex)}`);
     const r = await page.eval(`${HELPERS}
-      await until(() => document.querySelector('.tp .value') && body().dataset.cost === 'done');
+      await until(() => (runAnyway(), document.querySelector('.tp .value') && body().dataset.cost === 'done'));
       const topCell = document.querySelector('td.ins-cost.top');
       return { overflow: document.documentElement.scrollWidth - innerWidth, top: topCell ? getComputedStyle(topCell).color : null, bg: getComputedStyle(document.documentElement).backgroundColor };`);
     check(r.overflow <= 0 && r.top === 'rgb(152, 251, 152)' && r.bg === 'rgb(9, 10, 9)', 'phone, dark: no sideways scrolling; the largest saving in the heading colour', JSON.stringify(r));

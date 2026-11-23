@@ -17,6 +17,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { findChrome } from './chrome.mjs';
 import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
 import { DEFAULT_STATE, encodeState } from '../web/js/url-state.js';
 
@@ -26,10 +27,7 @@ const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1
 const dist = path.resolve(opt('--dist') || path.join(here, '..', 'web', 'dist'));
 const reps = Number(opt('--reps') || 3);
 const timingOnly = args.includes('--timing-only');
-const chrome = opt('--chrome') || process.env.CHROME || [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
-].find((p) => fs.existsSync(p));
+const chrome = findChrome(opt('--chrome'));
 if (!fs.existsSync(path.join(dist, 'manifest.json'))) { console.log(`${dist} has no build: run web/build.sh first`); process.exit(1); }
 if (!chrome) { console.log('Chrome not found (use --chrome PATH): skipped'); process.exit(0); }
 
@@ -109,6 +107,9 @@ const HELPERS = `
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const until = async (f, ms = 60000) => { const t0 = Date.now(); while (!f()) { if (Date.now() - t0 > ms) throw new Error('timeout: ' + f); await wait(5); } };
   const body = () => $('result-body');
+  // a view whose estimated time is over its budget (compare-view.js, insight-view.js: from the main analysis's time, so on a
+  // slow machine too) waits for a click on its run button: click it, the test needs the results either way
+  const runAnyway = () => { for (const b of document.querySelectorAll('.cmp-run, .ins-cost-status button')) b.click(); };
   const runs = (id) => Number($(id).dataset.runs ?? 0);
   const costRuns = () => Number(body().dataset.costRuns ?? 0);
   const done = async (start) => { const n = $('results').dataset.run; start(); await until(() => $('results').dataset.run !== n); };
@@ -133,7 +134,7 @@ try {
         await page.goto(link(ex, { cpus: 'all', cmpSweep: true, cost: true }, query));
         got[mode] = await page.eval(`${HELPERS}
           await until(() => {
-            for (const b of document.querySelectorAll('.cmp-run, .ins-cost-status button')) b.click(); // over the budget: run anyway
+            runAnyway();
             return document.querySelector('.tp .value') && $('cmp-cpus').dataset.state === 'done' && $('cmp-sweep').dataset.state === 'done' && body().dataset.cost === 'done';
           });
           const out = collect();
@@ -161,14 +162,14 @@ try {
         const out = { before: window.__wuicaPool === undefined };
         const n = runs('cmp-cpus');
         $('cpu-all').click(); // every CPU checked: the table of all of them
-        await until(() => runs('cmp-cpus') > n);
+        await until(() => (runAnyway(), runs('cmp-cpus') > n));
         const pool = window.__wuicaPool;
         out.size = pool.size;
         out.stats = await pool.stats();
         const m = runs('cmp-sweep'), c = costRuns();
         document.querySelector('#cmp-sweep summary').click();
         document.querySelector('.ins-cost-box').click();
-        await until(() => runs('cmp-sweep') > m && costRuns() > c);
+        await until(() => (runAnyway(), runs('cmp-sweep') > m && costRuns() > c));
         out.all = await pool.stats();
         return out;`);
       const tables = r.stats.flatMap((s) => s.tables);
@@ -196,14 +197,14 @@ try {
     const toggle = (id, on) => (id === 'cmp-cpus' ? $(on ? 'cpu-all' : 'cpu-clear').click() : document.querySelector('#' + id + ' summary').click());
     const panel = async (id) => {
       const n = runs(id);
-      const ms = await t(() => toggle(id, true), () => runs(id) > n && $(id).dataset.state === 'done');
+      const ms = await t(() => toggle(id, true), () => (runAnyway(), runs(id) > n && $(id).dataset.state === 'done'));
       toggle(id, false);
       await wait(50);
       return ms;
     };
     const cost = async () => {
       const n = costRuns();
-      const ms = await t(() => document.querySelector('.ins-cost-box').click(), () => costRuns() > n && body().dataset.cost === 'done');
+      const ms = await t(() => document.querySelector('.ins-cost-box').click(), () => (runAnyway(), costRuns() > n && body().dataset.cost === 'done'));
       document.querySelector('.ins-cost-box').click();
       await wait(50);
       return ms;
