@@ -191,7 +191,7 @@ as without it, byte for byte (`crates/wuica/tests/details.rs` checks this on eve
   steady-state window (one round).
 
 Speed (`crates/wuica/examples/phases.rs`, `DETAILS=1`; `tests-js/analyze_fixtures.mjs`, `WUICA_DETAILS=1`): about 10 % more time
-per analysis for small blocks, about 25 % for the 1,500-instruction SHA-256 example (most of it the larger JSON); the default
+per analysis for small blocks, about 25 % for the 2,949-instruction SHA-256 example (most of it the larger JSON); the default
 request is as fast as before.
 
 ## Assembler
