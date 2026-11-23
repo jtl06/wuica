@@ -14,6 +14,7 @@ import { Analyzer, Assembler, parseDiagnostics, codeModeError } from './wasm.js'
 import { archList, DEFAULT_ARCH, ARCH_INFO, ARCH_ORDER } from './archs.js';
 import { insights } from './insights.js';
 import { instrDetails, detailInsights } from './details.js';
+export { detailInsights };
 import { readMaybeCompressed } from './files.js';
 import { CODES, WARM_HEX, failure, tableFailure, analysisResult, compareFields } from './core.js';
 import { ThreadPool, threadLimit, threadOption, threadsFor } from './threads.js';

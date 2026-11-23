@@ -42,6 +42,9 @@ const R = {
   check(srcModel(R, src, 'bb') === null, 'another block: no model');
   check(srcModel(R, { ...src, lines: [2, 4] }, 'aa') === null, 'another number of instructions: no model');
   check(srcModel(R, { ...src, lines: [null, null, null, null] }, 'aa') === null, 'no lines: no model');
+  // lines far apart: two windows with a gap between them
+  const far = srcModel(R, { text: Array.from({ length: 900 }, (_, k) => `line ${k + 1}`).join('\n'), lines: [5, 5, 800, null], hex: 'aa' }, 'aa');
+  check(far.lines.map((x) => x.gap ?? x.line).join() === '4,5,6,792,799,800,801' && far.lines.find((x) => x.line === 800).share > 0, 'lines far apart: windows around each, the gap in between', JSON.stringify(far.lines.map((x) => x.gap ?? x.line)));
   check(srcModel(R, null, 'aa') === null && srcModel({ error: 'x' }, src, 'aa') === null, 'no source or no result: no model');
 }
 

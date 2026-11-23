@@ -48,13 +48,13 @@ pub fn py_format2(x: f64) -> String {
 
 /// A Python number that is an `int` or a `float` (only where the difference matters: `sum()`).
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Num {
+pub(crate) enum Num {
     Int(i64),
     Float(f64),
 }
 
 impl Num {
-    fn as_f64(self) -> f64 {
+    pub(crate) fn as_f64(self) -> f64 {
         match self {
             Num::Int(i) => i as f64,
             Num::Float(f) => f,
@@ -62,7 +62,7 @@ impl Num {
     }
 
     /// `self + other`
-    fn add(self, other: Num) -> Num {
+    pub(crate) fn add(self, other: Num) -> Num {
         match (self, other) {
             (Num::Int(a), Num::Int(b)) => Num::Int(a + b),
             (a, b) => Num::Float(a.as_f64() + b.as_f64()),
@@ -72,7 +72,7 @@ impl Num {
 
 /// Python's `sum()` (CPython 3.12): integers are added exactly; from the first float on, floats are added with Neumaier's
 /// compensated summation (integers without compensation).
-fn py_sum(items: impl IntoIterator<Item = Num>) -> Num {
+pub(crate) fn py_sum(items: impl IntoIterator<Item = Num>) -> Num {
     let mut items = items.into_iter();
     let mut i_result: i64 = 0;
     let mut f_result;

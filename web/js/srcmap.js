@@ -54,13 +54,18 @@ export function srcModel(response, src, hex) {
     per.set(line, e);
   });
   const text = String(src.text ?? '').split('\n');
-  const mapped = [...per.keys()];
-  const lo = Math.max(1, Math.min(...mapped) - CONTEXT), hi = Math.min(Math.max(text.length, Math.max(...mapped)), Math.max(...mapped) + CONTEXT, lo + MAX_LINES - 1);
+  // the mapped lines with CONTEXT lines around each; a gap between two windows is one line {gap: n} (an inlined helper
+  // far from the loop does not hide it); at most MAX_LINES source lines
+  const mapped = [...per.keys()].sort((a, b) => a - b);
+  const show = new Set();
+  for (const l of mapped) for (let k = Math.max(1, l - CONTEXT); k <= l + CONTEXT && k <= Math.max(text.length, l); k++) show.add(k);
+  const order = [...show].sort((a, b) => a - b).slice(0, MAX_LINES);
   const lines = [];
-  for (let line = lo; line <= hi; line++) {
+  order.forEach((line, k) => {
+    if (k > 0 && line > order[k - 1] + 1) lines.push({ gap: line - order[k - 1] - 1 });
     const e = per.get(line);
     lines.push({ line, text: text[line - 1] ?? '', share: e && total > 0 ? e.value / total : 0, rows: e?.rows ?? [], top: e ? e.top : -1 });
-  }
+  });
   return { resource: resource ?? 'Issued', unit, lines, unmapped: total > 0 ? unmapped / total : 0, total };
 }
 
@@ -102,10 +107,12 @@ export function createSrcMap(env) {
     ensureRow(); // only once there is an imported source
     row.hidden = false;
     const best = m.lines.reduce((a, x) => (x.share > (a?.share ?? 0) ? x : a), null);
+    const src = m.lines.filter((x) => !x.gap);
     hint.textContent = best ? ` · line ${best.line} ${pct(best.share)}` : '';
     if (!open) { body.replaceChildren(); body.dataset.state = 'closed'; return; }
-    const max = Math.max(...m.lines.map((x) => x.share), 1e-9);
+    const max = Math.max(...src.map((x) => x.share), 1e-9);
     const items = m.lines.map((x) => {
+      if (x.gap) return h('li', { class: 'sm-l none sm-gap', title: `${x.gap} line${x.gap === 1 ? '' : 's'} without instructions of the block` }, h('span', { class: 'sm-no', text: '⋮' }));
       const fill = h('span', { class: 'sm-fill' });
       fill.style.width = `${((100 * x.share) / max).toFixed(1)}%`;
       const parts = [h('span', { class: 'sm-no', text: String(x.line) }), h('span', { class: 'sm-bar', 'aria-hidden': 'true' }, fill),

@@ -450,11 +450,17 @@ try {
       await until(() => document.querySelector('.bd-item') && document.querySelector('.dp-map'), 20000);
       const shown = () => ['bound-row', 'whatif-row', 'codemap-row', 'deps-row'].map((id) => getComputedStyle($(id)).display !== 'none');
       const single = shown();
+      trs()[1].cells[2].click(); await wait(100); // a selected row (its card) in single mode
+      const cardSingle = !$('icard').hidden;
       await done(() => $('cmp-ab').click()); await wait(300);
       const ab = [shown(), getComputedStyle($('more')).display];
+      // a click on a row of A's table in A–B mode: no card (not the single result's)
+      document.querySelector('table.uops tbody tr')?.cells[2]?.click(); await wait(300);
+      const cards = [...document.querySelectorAll('.ic')].filter((c) => !c.hidden && c.offsetParent !== null).length;
       await done(() => $('cmp-single').click()); await wait(300);
-      return { single, ab, back: shown() };`);
+      return { single, ab, back: shown(), cardSingle, cards };`);
     check(r.single.every(Boolean) && r.ab[0].every((x) => !x) && r.back.every(Boolean), 'A–B mode: the views are hidden (also with the A–B traces open), back in single mode they are there', JSON.stringify(r));
+    check(r.cardSingle && r.cards === 0, 'A–B mode: no instruction card', JSON.stringify(r));
   }
 
   // --- copy: Markdown, CSV, JSON of the result -------------------------------------------------------------------------------

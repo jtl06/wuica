@@ -7,7 +7,7 @@ use crate::config::UArchConfig;
 use crate::model::{Instr, InstrList, OpId, Operand};
 use crate::sim::issue::{self as issue_cause, IssueLog};
 use crate::sim::SimResult;
-use crate::facile::SimView;
+use crate::facile::{py_sum, Num, SimView};
 use serde::Serialize;
 
 /// The details of an analysis.
@@ -222,26 +222,27 @@ fn port_bits(ports: &str) -> u128 {
 /// largest value), and the uops of each instruction on it.
 fn port_set(instrs: &InstrList, sim: &SimResult) -> Option<(u128, f64, f64, Vec<f64>)> {
     // per instruction: (set, uops) as the limit counts them
-    let mut per_instr: Vec<Vec<(u128, f64)>> = vec![Vec::new(); instrs.instrs.len()];
-    let mut usage: Vec<(u128, f64)> = Vec::new();
+    // (the same arithmetic as facile.rs: integer counts, Python's sum)
+    let mut per_instr: Vec<Vec<(u128, Num)>> = vec![Vec::new(); instrs.instrs.len()];
+    let mut usage: Vec<(u128, Num)> = Vec::new();
     for (idx, instr) in instrs.instrs.iter().enumerate() {
         if instr.macro_fused_with_prev_instr {
             continue;
         }
         for (ports, n) in &instr.port_data {
-            let mut n = *n as f64;
+            let mut n = Num::Int(*n);
             if instr.may_be_eliminated {
                 let k = sim.n_instances(idx);
                 if k == 0 {
                     continue;
                 }
-                n = sim.not_eliminated_uops(idx) as f64 / k as f64;
+                n = Num::Float(sim.not_eliminated_uops(idx) as f64 / k as f64);
             }
             let set = port_bits(ports);
             per_instr[idx].push((set, n));
             match usage.iter_mut().find(|(s, _)| *s == set) {
-                Some((_, m)) => *m += n,
-                None => usage.push((set, n)),
+                Some((_, m)) => *m = m.add(n),
+                None => usage.push((set, Num::Int(0).add(n))),
             }
         }
     }
@@ -253,19 +254,20 @@ fn port_set(instrs: &InstrList, sim: &SimResult) -> Option<(u128, f64, f64, Vec<
             }
         }
     }
+    // max(TP, v) from TP = 0: the first union with the largest positive value; none if no uop needs a port
     let mut best: Option<(u128, f64, f64)> = None;
     for pc in unions {
         if pc == 0 {
             continue;
         }
-        let uops: f64 = usage.iter().filter(|(s, _)| s & !pc == 0).map(|(_, u)| u).sum();
+        let uops = py_sum(usage.iter().filter(|(s, _)| s & !pc == 0).map(|(_, u)| *u)).as_f64();
         let v = uops / pc.count_ones() as f64;
-        if best.is_none_or(|(_, _, tp)| v > tp) {
+        if v > best.map_or(0.0, |(_, _, tp)| tp) {
             best = Some((pc, uops, v));
         }
     }
     let (pc, uops, tp) = best?;
-    let per_row: Vec<f64> = per_instr.iter().map(|l| l.iter().filter(|(s, _)| s & !pc == 0).map(|(_, n)| n).sum()).collect();
+    let per_row: Vec<f64> = per_instr.iter().map(|l| py_sum(l.iter().filter(|(s, _)| s & !pc == 0).map(|(_, n)| *n)).as_f64()).collect();
     Some((pc, uops, tp, per_row))
 }
 

@@ -104,7 +104,7 @@ export function createServer(w) {
         '`chain` (the loop-carried critical dependency chain: `index` into `instructions`, operand, latency, carried ' +
         'into the next iteration), `hot` (the instructions with the largest share of the binding resource: fix these ' +
         'first). With `details: true`, each instruction also has `allowedPorts` (uops.info notation, e.g. 1*p0156+1*p23), ' +
-        '`uops`, `fusedUops`, `latencies` ("input->output:cycles"), `frontEnd` (length, offset from the 64-byte line, crosses ' +
+        '`uops`, `fusedUops`, `latencies` ("input->output:cycles"), `frontEnd` (length, offset = alignment offset + position in the block, crosses ' +
         '16/32/64-byte boundaries, lcp = length-changing prefix, microcoded, macro-fusion), and `insights` has `portSet` (the ' +
         'ports behind the Ports limit and the instructions whose uops can only use them) and `issueSlots` (issue slots per ' +
         'iteration: issued, or lost to the front end, a full reorder buffer (rob) or scheduler (rs), other). ' +

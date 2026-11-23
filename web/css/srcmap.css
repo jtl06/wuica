@@ -13,6 +13,7 @@ button.sm-l:hover { background: var(--accent-dim); border: 0; }
 .sm-pct { color: var(--description); text-align: right; font-variant-numeric: tabular-nums; }
 .sm-code { white-space: pre; overflow: hidden; text-overflow: ellipsis; min-width: 0; color: var(--code); }
 .sm-l.none .sm-code { color: var(--subtle); }
+.sm-gap { min-height: 1em; }
 
 @media (max-width: 640px) {
   .sm-l { grid-template-columns: 3ch 2rem 4ch minmax(0, 1fr); }

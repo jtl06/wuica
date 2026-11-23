@@ -44,13 +44,16 @@ fn check(r: &Response, d: &Details) -> Result<(), String> {
             }
         }
     }
+    if d.ports.is_none() && r.limits.iter().any(|l| l.name == "Ports") {
+        return Err("a Ports limit without a port set".into());
+    }
     if let Some(ports) = &d.ports {
         let limit = r.limits.iter().find(|l| l.name == "Ports").map_or(0.0, |l| l.tp);
         if wuica_core::facile::py_format2(ports.tp) != format!("{limit:.2}") {
             return Err(format!("port set {:?}: {} uops / {} ports = {}, but the Ports limit is {limit}", ports.ports, ports.uops, ports.ports.len(), ports.tp));
         }
         let sum: f64 = ports.rows.iter().sum();
-        if (sum - ports.uops).abs() > 1e-6 {
+        if !(ports.tp > 0.0) || (sum - ports.uops).abs() > 1e-6 {
             return Err(format!("the rows' uops on the port set ({sum}) are not its uops ({})", ports.uops));
         }
     }

@@ -240,7 +240,8 @@ export function createBound(env = {}) {
     if (env.details && d === undefined && !r.mock) {
       const v = view;
       clearTimeout(detailsTimer);
-      detailsTimer = setTimeout(() => { if (view === v && open) env.details.get(v).then((x) => { if (x && view === v && open) paint(); }); }, DETAILS_DELAY);
+      const current = () => view === v && open && !document.body.classList.contains('ab-on'); // (not drawn in A–B mode)
+      detailsTimer = setTimeout(() => { if (current()) env.details.get(v).then((x) => { if (x && current()) paint(); }); }, DETAILS_DELAY);
     }
     const ps = selected === 'Ports' ? portSetBlame(r, d?.ports) : null;
     const b = ps ?? (selected ? blame(r, selected) : null);

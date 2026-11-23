@@ -94,7 +94,7 @@ export function bottleneckShare(response, row, details = null) {
 // the front-end facts as short tags: [{text, title}]
 export function frontTags(m) {
   const first = m.firstCopy ? ' (in the first copy of the unrolled block)' : '';
-  const t = [{ text: `${m.length} B`, title: `${m.length} bytes` }, { text: `@${m.offset}`, title: `at byte ${m.offset} of its 64-byte line (alignment offset + position)${first}` }];
+  const t = [{ text: `${m.length} B`, title: `${m.length} bytes` }, { text: `@${m.offset % 64}`, title: `at byte ${m.offset % 64} of its 64-byte line (alignment offset + position: ${m.offset})${first}` }];
   for (const b of m.crosses) t.push({ text: `✂${b}`, title: `crosses a ${b}-byte boundary${first}` });
   if (m.lcp) t.push({ text: 'LCP', title: 'length-changing prefix: the predecoder stalls' });
   if (m.microcoded) t.push({ text: 'µcode', title: 'uops from the microcode sequencer (MS)' });
@@ -119,7 +119,12 @@ export function createICard(env) {
 
   const table = () => root?.querySelector('table.uops');
   const trs = () => table()?.tBodies[0]?.rows ?? [];
-  const rowOf = (tr) => (tr && tr.parentElement?.parentElement === table() && tr.parentElement.tagName === 'TBODY' ? tr.sectionRowIndex : -1);
+  // a row of the decorated (single-mode) table: not of the A–B view's tables (as trace-link.js)
+  const abOn = () => document.body.classList.contains('ab-on');
+  const rowOf = (tr) => {
+    const t = tr?.parentElement?.parentElement;
+    return tr && !abOn() && t === table() && t.classList.contains('tl-linkable') && tr.parentElement.tagName === 'TBODY' ? tr.sectionRowIndex : -1;
+  };
   const align = () => Number(view?.request?.alignmentOffset) || 0;
   const ok = () => !!view?.response && !view.response.error && Array.isArray(view.response.rows);
 
@@ -140,7 +145,7 @@ export function createICard(env) {
     if (card?.isConnected) return card;
     const wrap = table()?.closest('.table-wrap');
     if (!wrap) return null;
-    card = h('div', { class: trs().length > STICK_ROWS ? 'ic stick' : 'ic', id: 'icard', role: 'region', 'aria-label': 'instruction', 'aria-live': 'polite', hidden: true });
+    card = h('div', { class: trs().length > STICK_ROWS ? 'ic stick' : 'ic', id: 'icard', role: 'region', 'aria-label': 'instruction', hidden: true });
     wrap.after(card);
     return card;
   }
@@ -203,7 +208,7 @@ export function createICard(env) {
   function paintPlain(row) { card?.querySelector('.ic-l.hint')?.remove(); if (root && shown === row) root.dataset.icard = 'basic'; }
 
   function show(row) {
-    if (!ok() || row < 0 || row >= view.response.rows.length) { hide(); return; }
+    if (!ok() || abOn() || row < 0 || row >= view.response.rows.length) { hide(); return; }
     closed = false;
     paint(row);
   }
@@ -215,8 +220,8 @@ export function createICard(env) {
     target.addEventListener('click', (e) => {
       const tr = e.target.closest?.('tr');
       if (rowOf(tr) < 0 || e.target.closest('a, button, input, select, textarea, label, summary')) return;
-      const sel = env.getSel?.() ?? -1;
-      if (sel >= 0) show(sel);
+      const row = rowOf(tr), sel = env.getSel?.() ?? -1;
+      if (sel === row) show(sel); // trace-link.js selected it (it ignores a click that selects text)
     });
     target.addEventListener('focusin', (e) => {
       const tr = e.target.closest?.('tr');
