@@ -133,12 +133,23 @@ curl -s -X POST https://api.wuica.jacen.li/api/analyze/SKL -d '{"source":"loop: 
 claude mcp add --transport http wuica https://api.wuica.jacen.li/mcp
 ```
 
-**TLS for a second-level name:** Cloudflare's free Universal SSL certificate covers `jacen.li` and `*.jacen.li`.
-It does not cover `api.wuica.jacen.li`, which is two levels deep. Before the name will work over HTTPS, do one of the
-following:
+**TLS:** the Universal SSL certificate covers only `jacen.li` and `*.jacen.li`, not a name two levels deep. The zone
+also has a certificate for `wuica.jacen.li` and `*.wuica.jacen.li`, which covers `api.wuica.jacen.li`. Check with
+`cf ssl certificate-packs list -z jacen.li` before using another name.
 
-- enable Total TLS, or order an advanced certificate for `api.wuica.jacen.li` (Advanced Certificate Manager);
-- use a one-level name instead, such as `api-wuica.jacen.li`, in `cloudflared.yml` and the `route dns` command.
+## How it was deployed (2026-11-23)
+
+The steps above, with these differences:
+
+- Node.js is Ubuntu's `nodejs` package (22.22, security updates through apt), so `ExecStart` is `/usr/bin/node`.
+- The bundle was built with `COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata` (macOS tar otherwise adds `._*`
+  files), with `npm ci --omit=dev --ignore-scripts` run on the Mac before packing (no native modules).
+- The tunnel was created without `cloudflared tunnel login`: `cf tunnels create --name wuica-api --config-source local
+  --tunnel-secret <32 random bytes, base64>`, and the credentials file `/etc/cloudflared/<TUNNEL_ID>.json`
+  (`{"AccountTag", "TunnelSecret", "TunnelID"}`, mode 0600) was written from the result. The DNS record is a proxied
+  CNAME `api.wuica.jacen.li` → `<TUNNEL_ID>.cfargotunnel.com`, made with `cf dns records create -z jacen.li --body ...`.
+- Checked from outside: `/healthz`, `/api/archs`, analyze, MCP `tools/list`; a burst of POSTs from one address gets
+  429 after about 60 while another address still gets 200 (the limit is per client IP).
 
 ## Client IP and rate limit
 

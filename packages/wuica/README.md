@@ -117,12 +117,12 @@ Example prompt: *"Use wuica to compare this loop on Skylake, Ice Lake and Zen 3 
 
 ## API contract
 
-The library, the MCP tools and a planned REST server share these shapes. They follow
+The library, the MCP tools and the REST API (https://api.wuica.jacen.li, server/) share these shapes. They follow
 [Compiler Explorer's API](https://github.com/compiler-explorer/compiler-explorer/blob/main/docs/API.md): a list
 endpoint like `/api/compilers`, a call keyed by id like `/api/compiler/<id>/compile`, results as JSON or plain
 text, and errors with structured stderr.
 
-| REST (planned) | Library | MCP tool |
+| REST | Library | MCP tool |
 |---|---|---|
 | `GET /api/archs[?fields=id,name]` | `w.archs(fields?)` | `list_archs {fields?}` |
 | `POST /api/analyze/<arch>` | `w.analyze(arch, request)` | `analyze {arch, ...request, format?}` |
@@ -212,7 +212,7 @@ Every call can fail like a compiler run in Compiler Explorer, with a non-zero `c
 }
 ```
 
-| code | meaning | REST status (planned) |
+| code | meaning | REST status |
 |---|---|---|
 | 0 | success | 200 |
 | 1 | bad request: neither or both of source/hex, bad hex, unknown arch, unknown option or syntax | 400 (unknown arch: 404) |
