@@ -5,6 +5,7 @@
 //    node tests-js/web_views_browser.mjs [--chrome PATH] [--shots DIR]
 //
 // Skips (exit 0) if Chrome is not found.
+import { testConditions } from './cdp.mjs';
 import { LONG_TASK_MS } from './cdp.mjs'; // (the bound of the long-task checks)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -85,6 +86,7 @@ class Page {
       if (m.method === 'Log.entryAdded' && ['error', 'warning'].includes(m.params.entry.level)) p.problems.push(`log ${m.params.entry.level}: ${m.params.entry.text} ${m.params.entry.url ?? ''}`);
     });
     for (const d of ['Runtime', 'Log', 'Page']) await p.cmd(`${d}.enable`);
+    await testConditions((x, a) => p.cmd(x, a)); // (cdp.mjs: scratch runs under another font, scrollbars)
     await p.size(width, height, mobile);
     return p;
   }

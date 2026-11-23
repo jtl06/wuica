@@ -21,6 +21,19 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // the bound leaves room for that and still catches a task that doubles.
 export const LONG_TASK_MS = 200;
 
+// Scratch runs of the browser suites under other conditions than this machine's (layout checks that depend on widths):
+//   WUICA_TEST_FONT=monospace     every text in that font instead of the page's own (as when it is not loaded; the checks
+//                                 of the font itself then accept it)
+//   WUICA_TEST_SCROLLBARS=1       scrollbars that take room, 15 px (Linux; macOS draws them over the page)
+// (a constructed style sheet: the page's CSP allows no inline style). cmd: the page's DevTools command function.
+export async function testConditions(cmd) {
+  const rules = [];
+  if (process.env.WUICA_TEST_FONT) rules.push(`html, body, button, input, select, textarea { font-family: ${process.env.WUICA_TEST_FONT} !important; }`);
+  if (process.env.WUICA_TEST_SCROLLBARS) rules.push('::-webkit-scrollbar { width: 15px; height: 15px; background: #808080; }');
+  if (!rules.length) return;
+  await cmd('Page.addScriptToEvaluateOnNewDocument', { source: `{ const s = new CSSStyleSheet(); s.replaceSync(${JSON.stringify(rules.join('\n'))}); document.adoptedStyleSheets = [...document.adoptedStyleSheets, s]; }` });
+}
+
 export function findChrome(args = process.argv.slice(2)) {
   const i = args.indexOf('--chrome');
   return (i >= 0 ? args[i + 1] : null) || process.env.CHROME || [
@@ -130,6 +143,7 @@ export class Page {
       if (m.method === 'Fetch.requestPaused' && intercept) intercept(m.params, p);
     });
     for (const d of ['Runtime', 'Log', 'Page', 'Network']) await p.cmd(`${d}.enable`);
+    await testConditions((m, a) => p.cmd(m, a));
     if (intercept) await p.cmd('Fetch.enable', { patterns: [{ urlPattern: 'https://godbolt.org/*' }] });
     await p.size(width, height, mobile);
     return p;

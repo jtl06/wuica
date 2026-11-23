@@ -65,6 +65,14 @@ body.ab-on .toolbar .choice, .ab-head .choice { gap: 0.25rem 0.8rem; }
 .ab-side-error { margin-top: 0.3rem; }
 .ab-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .ab-tp + .meta { margin-top: 0.1rem; }
+/* two lines, whatever the font and the scrollbars take: the second is cut with … (its whole text in its title), the
+   first's verdict too; phones wrap */
+@media (min-width: 641px) {
+  .ab-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ab-tp { flex-wrap: nowrap; min-width: 0; }
+  .ab-tp > * { flex: none; }
+  .ab-tp > .ab-delta { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+}
 .meta .ab-tag { min-width: 1.4em; line-height: 1.25; }
 
 .ab-bn .bn { color: var(--heading); }

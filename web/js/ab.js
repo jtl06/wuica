@@ -407,7 +407,7 @@ export function createAB(api) {
       tag('A'), ' ', list(bn.a, (n) => (bn.b.includes(n) ? 'bn' : 'bn ab-gone'), view.a, cmp.workA),
       h('span', { class: 'ab-arrow', 'aria-hidden': 'true', text: ' → ' }),
       tag('B'), ' ', list(bn.b, (n) => (bn.a.includes(n) ? 'bn' : 'bn ab-new'), view.b, cmp.workB),
-      change ? h('span', { class: 'ab-sr', text: ` (${change})` }) : null);
+      null); // (what changed: in the title; B's new names are marked in its list)
   }
 
   // the model's known blind spots the blocks meet (caveats.js), on the second line: once, tagged with the side when one
@@ -448,7 +448,8 @@ export function createAB(api) {
         h('span', { class: 'ab-verdict', text: t.verdict === 'better' ? 'B better' : t.verdict === 'worse' ? 'B worse' : 'no change' }),
         t.verdict === 'same' ? null : ` Δ ${sign2(t.delta)} (${percent(t.pct)}) · ${speed}`));
     }
-    const meta = h('div', { class: 'meta' }, sideMeta('A', a), sep(), sideMeta('B', b), cmp.okA && cmp.okB ? [sep(), bottlenecks(view), notModelled(view)] : null);
+    const meta = h('div', { class: 'meta ab-meta' }, sideMeta('A', a), sep(), sideMeta('B', b), cmp.okA && cmp.okB ? [sep(), bottlenecks(view), notModelled(view)] : null);
+    meta.title = meta.textContent; // (one line on wider screens, cut with …: the whole of it here)
     // the same in one line, for screen readers and for copying
     const sr = t ? h('p', { class: 'ab-sr', text: `A: ${two(t.a)} cycles, B: ${two(t.b)} cycles${per ? ' per element' : ''}, Δ = ${t.verdict === 'same' ? '0' : `${sign2(t.delta)} (${percent(t.pct)})`}` }) : null;
     return lead('throughput', line, meta, sr);

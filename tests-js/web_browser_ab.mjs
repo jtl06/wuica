@@ -5,6 +5,7 @@
 //    node tests-js/web_browser_ab.mjs [--chrome PATH]
 //
 // Skips (exit 0) if Chrome is not found.
+import { testConditions } from './cdp.mjs';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -100,6 +101,7 @@ class Page {
       }
     });
     for (const d of ['Runtime', 'Log', 'Page']) await p.cmd(`${d}.enable`);
+    await testConditions((x, a) => p.cmd(x, a)); // (cdp.mjs: scratch runs under another font, scrollbars)
     await p.cmd('Fetch.enable', { patterns: [{ urlPattern: 'https://godbolt.org/*' }] });
     await p.cmd('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile });
     return p;
