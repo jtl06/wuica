@@ -31,13 +31,18 @@ export function createCmpSlots(env) {
     if (cache.has(k)) return Promise.resolve(cache.get(k));
     if (pending.has(k)) return pending.get(k);
     const request = { ...makeRequest(hex, arch, options), details: true };
+    // out of date: the table shows other code or options now, or the bound view was closed (not cached: asked again)
+    const isStale = () => !env.enabled?.() || !lastInput || keyOf(lastInput.hex, arch, lastInput.options) !== k;
     const p = (async () => {
       try {
         const pool = env.pool?.();
         let res = null;
-        if (pool) await pool.run([{ job: arch, request }], { onResult: (_, response) => { res = response; } });
+        if (isStale()) return undefined; // undefined: stale, nothing to show
+        if (pool) await pool.run([{ job: arch, request }], { isStale, onResult: (_, response) => { res = response; } });
         else res = await env.engine().analyze(request);
-        const issue = res?.details?.issue ?? null;
+        if (!res) return undefined;
+        const issue = res.details?.issue ?? null;
+        if (cache.size >= 256) cache.clear(); // (keys hold the code: keep the memory bounded)
         cache.set(k, issue);
         return issue;
       } catch (e) {
@@ -76,6 +81,7 @@ export function createCmpSlots(env) {
       if (cache.has(k)) { td.replaceChildren(cell(cache.get(k))); continue; }
       td.dataset.state = 'loading';
       fetchIssue(inp.hex, arch, inp.options).then((issue) => {
+        if (issue === undefined) return; // out of date: a newer table asks again
         if (!td.isConnected) { if (last?.isConnected) decorateCell(last, arch, issue); return; }
         td.replaceChildren(cell(issue));
         delete td.dataset.state;

@@ -1225,9 +1225,18 @@ async function start() {
 }
 
 // A fresh visit (no state in the link, nothing typed): the default example is analyzed once, after the next frame
-// (the analysis runs in the worker; a key press meanwhile goes first, and live mode or Analyze replace this run).
+// (the analysis runs in the worker; a key press meanwhile goes first, and live mode or Analyze replace this run). The
+// address stays without a fragment while nothing was changed.
 function autoFirst() {
-  const go = () => { if (!lastView && !busy && !touched && el.code.value.trim() !== '' && !el.run.disabled) run({ auto: true }); };
+  const go = async () => {
+    if (lastView || busy || touched || el.code.value.trim() === '' || el.run.disabled) return;
+    const pristine = encodeState(collectState());
+    await run({ auto: true });
+    if (encodeState(collectState()) !== pristine || location.hash.replace(/^#/, '') !== lastFragment) return;
+    clearTimeout(syncTimer);
+    lastFragment = '';
+    try { history.replaceState(null, '', location.pathname + location.search); } catch { /* kept */ }
+  };
   requestAnimationFrame(() => setTimeout(go, 0));
 }
 

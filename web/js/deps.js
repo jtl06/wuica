@@ -176,7 +176,7 @@ export function createDeps(env) {
         class: ['dp-arc', e.dist ? 'carried' : '', e.critical ? 'crit' : ''].filter(Boolean).join(' '),
         d: e.a === e.b ? `M${X0 - 2},${y(e.a) - 3} H${x} V${y(e.b) + 3} H${X0 - 2}` : `M${X0 - 2},${y(e.a)} H${x} V${y(e.b)} H${X0 - 2}`,
         'marker-end': 'url(#dp-arrow)', 'data-a': e.a, 'data-b': e.b,
-      }, s('title', null, document.createTextNode(`${g.nodes[e.a].label} → ${g.nodes[e.b].label}${e.mem ? ' (through memory)' : ''}${e.dist ? ` (${e.dist === 1 ? 'next iteration' : e.dist + ' iterations later'})` : ''}${latText(e) ? ` · ${latText(e)} cycles` : ''}${e.critical ? ' · critical chain' : ''}`)));
+      }, s('title', null, document.createTextNode(`${g.nodes[e.a].label} → ${g.nodes[e.b].label}${e.mem ? ' (through memory)' : ''}${e.dist ? ` (${e.dist === 1 ? 'next iteration' : e.dist + ' iterations later'})` : ''}${latText(e) ? ` · ${e.critical ? '' : '≈'}${latText(e)} cycles` : ''}${e.critical ? ' · critical chain' : ''}`)));
       return p;
     });
     // the latency of an arc, next to its vertical part: the chain's always, the selected instruction's while selected

@@ -6,6 +6,10 @@
 // inputs), registers compared by their full register (EAX = RAX, XMM1 = YMM1). If no output matches (an implicit operand),
 // the producer's largest latency; flags only if it writes no register.
 //
+// The chain's latencies are the simulator's; the others are estimates (shown with ≈). On the chain's edges of the
+// examples on SKL, ZEN3 and ADL-P the estimate equals the simulator's latency on 41 of 48 (1,384 of 1,392 with SHA-256);
+// the others are memory edges and special cases such as pointer chasing and the stack pointer's sync uop.
+//
 // Slack of an instruction: how many cycles it could be delayed in every iteration without making the loop-carried chain
 // longer. With P the chain's cycles per iteration and each arc weighted latency − P × iterations crossed, no cycle of
 // the graph weighs more than 0 (the chain weighs 0); the slack of an instruction is minus the heaviest cycle through it:

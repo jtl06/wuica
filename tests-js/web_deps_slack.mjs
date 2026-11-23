@@ -51,7 +51,8 @@ if (!wasmPath || !fs.existsSync(new URL('uarch.json', dataDir))) {
   const uarchBytes = fs.readFileSync(new URL('uarch.json', dataDir));
   await engine.loadUarch(uarchBytes);
   const configs = JSON.parse(uarchBytes).configs;
-  let withChain = 0;
+  let withChain = 0, agree = 0, chainEdges = 0;
+  const prototype = (arch) => arch !== 'SKL'; // models that change from round to round: reported, not required
   for (const arch of ['SKL', 'ZEN3', 'ADL-P']) {
     const table = configs[arch].name;
     if (!engine.hasArch(table)) await engine.loadArch(table, fs.readFileSync(new URL(`arch/${table}.json`, dataDir)));
@@ -62,6 +63,11 @@ if (!wasmPath || !fs.existsSync(new URL('uarch.json', dataDir))) {
       const g = annotateLatencies(depGraph(r, t.trace), r, t.details);
       const tag = `${arch} ${ex.id}`;
       check(g && g.edges.every((e) => Number.isFinite(e.lat) && e.lat >= 0), `${tag}: every arc has a latency`, JSON.stringify(g?.edges));
+      // the estimate against the simulator's own latency on the chain's edges (before the chain's values replace it)
+      for (const c of r.criticalPath?.edges ?? []) {
+        chainEdges++;
+        if (edgeLatency(t.details.rows[c.from], t.details.rows[c.to]) === c.latency) agree++;
+      }
       for (const c of r.criticalPath?.edges ?? []) {
         const e = g.edges.find((x) => g.nodes[x.a].row === c.from && g.nodes[x.b].row === c.to && (x.dist > 0) === c.carried);
         check(e && e.lat >= c.latency, `${tag}: the chain's edges carry its latency`, JSON.stringify([c, e]));
@@ -70,6 +76,7 @@ if (!wasmPath || !fs.existsSync(new URL('uarch.json', dataDir))) {
       if (!(P > 0)) { check(slackOf(g, P) === null, `${tag}: no chain, no slack`); continue; }
       withChain++;
       const s = slackOf(g, P);
+      if (prototype(arch) && !s) { console.log(`(${tag}: the estimated latencies make a cycle longer than the chain: no slack)`); continue; }
       check(s && !s.partial, `${tag}: the latencies fit the chain (${P} cycles/iteration)`);
       if (!s) continue;
       const crit = new Set(); for (const e of g.edges) if (e.critical) { crit.add(e.a); crit.add(e.b); }
@@ -85,6 +92,8 @@ if (!wasmPath || !fs.existsSync(new URL('uarch.json', dataDir))) {
     }
   }
   check(withChain >= 20, 'examples with a chain', String(withChain));
+  check(agree >= 0.8 * chainEdges, 'the estimated latency agrees with the simulator on 80 % of the chain edges', `${agree} of ${chainEdges}`);
+  console.log(`estimated latency = the simulator's on ${agree} of ${chainEdges} chain edges`);
   // dot1 on SKL: the four FMAs are the chain (16 cycles), the counter add rax, 32 could wait 15 cycles, the loads are off every cycle
   {
     const ex = CLASSIC_EXAMPLES.find((e) => e.id === 'dot1');

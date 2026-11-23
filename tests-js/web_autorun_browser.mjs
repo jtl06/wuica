@@ -33,7 +33,8 @@ try {
   // 1. a fresh visit: the result comes without a click, once
   await page.goto(srv.origin + '/');
   await page.waitFor(`document.querySelector('#result-body .tp .value')`, 'the first result', 60000);
-  const a = await page.eval(`${HELPERS} await wait(300); return { tp: tp(), run: runId(), code: $('code').value, busy: $('results').getAttribute('aria-busy'), longs: window.__longs };`);
+  const a = await page.eval(`${HELPERS} await wait(300); return { tp: tp(), run: runId(), code: $('code').value, busy: $('results').getAttribute('aria-busy'), longs: window.__longs, hash: location.hash };`);
+  check(a.hash === '', 'fresh visit: the address keeps no fragment while nothing was changed', a.hash);
   check(a.tp === want, 'fresh visit: the default example is analyzed without a click', `${a.tp} vs ${want}`);
   check(a.code === EXAMPLES[0].text.intel, 'fresh visit: the input is the default example');
   check(a.run === '1' && a.busy === null, 'fresh visit: one run, not busy', JSON.stringify(a));

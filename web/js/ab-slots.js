@@ -30,7 +30,7 @@ export function createABSlots(env) {
     if (!side?.response || side.response.error || side.response.mock || !env.engine?.()) return null;
     if (done.has(side)) return done.get(side);
     try {
-      const res = await env.engine().analyze({ ...makeRequest(side.hex, side.archKey, env.options?.() ?? {}), details: true });
+      const res = await env.engine().analyze({ ...(side.request ?? makeRequest(side.hex, side.archKey, env.options?.() ?? {})), details: true });
       const issue = detailsFit(side.response, res) ? res.details.issue ?? null : null;
       done.set(side, issue);
       return issue;
