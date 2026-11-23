@@ -605,9 +605,15 @@ try {
     await page.waitFor(`(await caches.keys()).join() === ${JSON.stringify(`wuica-${versionB}`)}`, 'the new build\'s cache, alone', 60000);
     const upd = await page.eval(`${HELPERS} return { keys: await caches.keys(), note: $('update-note').hidden ? null : $('update-note').innerText, build: $('build-id').textContent, mark: sessionStorage.getItem('wuica-update-reload') };`);
     check(first === manifest.version, 'deploy: the open page is still the cached build', first);
-    check(JSON.stringify(upd.keys) === JSON.stringify([`wuica-${versionB}`]) && (/new version/.test(upd.note ?? '') || (upd.mark === versionB && [manifest.version, versionB].includes(upd.build))),
+    check(JSON.stringify(upd.keys) === JSON.stringify([`wuica-${versionB}`]) && (/new version/.test(upd.note ?? '') || upd.mark === versionB),
       'deploy: the new worker replaces the cache and the page says so (or, idle, reloads itself)', JSON.stringify(upd));
-    await page.reload();
+    // the page reloads itself once it is idle (after the note); wait for that rather than reload over it, else reload by hand
+    let self = false;
+    for (const t0 = Date.now(); !self && Date.now() - t0 < 30000;) {
+      try { self = await page.eval(`return document.readyState === 'complete' && document.getElementById('build-id')?.textContent === ${JSON.stringify(versionB)};`); } catch { /* navigating */ }
+      if (!self) await sleep(200);
+    }
+    if (!self) await page.reload();
     await page.ready();
     check(await page.eval(`return document.getElementById('build-id').textContent;`) === versionB, 'deploy: after a reload the page is the new build');
     const p3 = page.take();

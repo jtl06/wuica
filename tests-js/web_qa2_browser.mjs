@@ -241,7 +241,7 @@ try {
       await tab('trace'); await until(() => trace().wuicaTrace?.model, 60000); open.push(snapOpen()); await wait(500);
       return { long: viewsLong, traceLong: long.slice(viewsLong.length), tp: s.tp, open, card: !!s.card };`);
     check(r.tp === '744.25' && r.open.join() === 'bound,whatif,codemap,deps,trace' && r.card, 'showcase: SHA-256 with each view in turn and a card', JSON.stringify(r));
-    const longLimit = process.env.CI ? 200 : 100; // CI runners are slower and shared
+    const longLimit = 200; // (the check runs suites side by side, CI runners are shared: a bound with room for that load)
     check(r.long.every((ms) => ms < longLimit), `showcase: no long task of ${longLimit} ms or more (the card, bound, try, bytes, deps)`, JSON.stringify(r.long));
     console.log(`showcase: SHA-256: long tasks ${JSON.stringify(r.long)} ms; loading the trace on its tab ${JSON.stringify(r.traceLong)} ms`);
     check(page.take().length === 0, 'showcase: no console errors');
