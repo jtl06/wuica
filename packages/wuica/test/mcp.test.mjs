@@ -85,6 +85,7 @@ test('what_if: every variant against analyses of the library', async () => {
   assert.deepEqual(sub.json.variants.map((v) => v.id), ['unroll2', 'nochain']);
   const flat = await call('what_if', { hex: '4801d8', variants: ['unroll2', 'noMacroFusion'] });
   assert.equal(flat.json.variants[0].error, 'not a loop');
+  assert.equal(flat.json.variants[0].label, 'unroll ×2'); // error rows have a label too
   assert.equal(typeof flat.json.variants[1].tp, 'number');
   // hex with 0x prefixes and commas, as the library accepts it: the same variants
   const pre = await call('what_if', { hex: HEX.match(/../g).map((b) => '0x' + b).join(','), arch: 'SKL' });
