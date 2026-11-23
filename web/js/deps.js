@@ -9,6 +9,7 @@
 
 import { h } from './render.js';
 import { jumpToRow } from './rowjump.js';
+import { annotateLatencies, slackOfAsync, fmtSlack } from './deps-slack.js'; // latency per arc, slack per instruction
 
 // as the trace view (trace.js): a trace grows with instructions × iterations; above this many uops it waits for a click
 const TRACE_LIMIT = 20000;
@@ -84,7 +85,7 @@ function s(tag, attrs, ...children) {
   for (const c of children) if (c) e.append(c);
   return e;
 }
-const ROW = 18, CH = 7.25, LABEL = 38, PAD = 8;
+const ROW = 18, CH = 7.25, LABEL = 38, PAD = 8, SL = 4 * CH; // SL: the slack column
 const short = (t, n = LABEL) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
 const isCancel = (e) => e?.name === 'CancelledError';
 const yieldToPage = () => new Promise((r) => setTimeout(r, 0));
@@ -127,10 +128,15 @@ export function createDeps(env) {
     body.replaceChildren(h('p', { class: 'hint', text: 'tracing…' }));
     let graph = null, error = null;
     try {
-      const res = await env.engine().analyze({ ...v.request, includeTrace: true });
+      const res = await env.engine().analyze({ ...v.request, includeTrace: true, details: true });
       await yieldToPage(); // a large trace: receiving it, building the graph and drawing it are separate tasks
       if (res?.error) error = res.error; else graph = depGraph(v.response, res.trace);
       await yieldToPage();
+      if (graph) {
+        annotateLatencies(graph, v.response, res.details);
+        graph.slack = await slackOfAsync(graph, v.response.criticalPath?.ratio);
+        if (pending !== key) return;
+      }
       if (!graph && !error) error = 'the trace does not match the table';
     } catch (e) {
       if (isCancel(e)) { pending = null; if (view === v) update(); return; }
@@ -145,7 +151,11 @@ export function createDeps(env) {
   function draw(g) {
     const n = g.nodes.length;
     const lane = g.lanes > 40 ? Math.max(2, 240 / g.lanes) : 6;
-    const X0 = LABEL * CH + PAD;
+    const X0 = LABEL * CH + SL + PAD;
+    const slack = g.slack?.slack ?? null;
+    const onChain = new Set();
+    for (const e of g.edges) if (e.critical) { onChain.add(e.a); onChain.add(e.b); }
+    const latText = (e) => (e.lat === null || e.lat === undefined ? '' : String(+Number(e.lat).toFixed(2)));
     const W = X0 + (g.lanes + 1) * lane + 10;
     const H = n * ROW + 4;
     const y = (i) => i * ROW + ROW / 2 + 2;
@@ -154,7 +164,8 @@ export function createDeps(env) {
     const defs = s('defs', null, s('marker', { id: 'dp-arrow', viewBox: '0 0 6 6', refX: 5, refY: 3, markerWidth: 5, markerHeight: 5, orient: 'auto-start-reverse' }, s('path', { d: 'M0,0 L6,3 L0,6 z', class: 'dp-head' })));
     svg.append(defs);
     const labels = g.nodes.map((nd, i) => {
-      const gEl = s('g', { id: `dp-i${i}`, class: 'dp-node', role: 'option', 'aria-selected': String(i === sel), 'data-i': i, 'aria-label': nd.label },
+      const sv = slack ? fmtSlack(slack[i]) : '';
+      const gEl = s('g', { id: `dp-i${i}`, class: 'dp-node' + (onChain.has(i) ? ' crit' : ''), role: 'option', 'aria-selected': String(i === sel), 'data-i': i, 'aria-label': `${nd.label}${sv ? `, slack ${sv}` : ''}` },
         s('rect', { class: 'dp-hit', x: 0, y: i * ROW + 2, width: X0, height: ROW }),
         s('text', { x: 4, y: y(i) + 4 }, document.createTextNode(short(nd.label))));
       return gEl;
@@ -165,16 +176,25 @@ export function createDeps(env) {
         class: ['dp-arc', e.dist ? 'carried' : '', e.critical ? 'crit' : ''].filter(Boolean).join(' '),
         d: e.a === e.b ? `M${X0 - 2},${y(e.a) - 3} H${x} V${y(e.b) + 3} H${X0 - 2}` : `M${X0 - 2},${y(e.a)} H${x} V${y(e.b)} H${X0 - 2}`,
         'marker-end': 'url(#dp-arrow)', 'data-a': e.a, 'data-b': e.b,
-      }, s('title', null, document.createTextNode(`${g.nodes[e.a].label} → ${g.nodes[e.b].label}${e.mem ? ' (through memory)' : ''}${e.dist ? ` (${e.dist === 1 ? 'next iteration' : e.dist + ' iterations later'})` : ''}${e.critical ? ' · critical chain' : ''}`)));
+      }, s('title', null, document.createTextNode(`${g.nodes[e.a].label} → ${g.nodes[e.b].label}${e.mem ? ' (through memory)' : ''}${e.dist ? ` (${e.dist === 1 ? 'next iteration' : e.dist + ' iterations later'})` : ''}${latText(e) ? ` · ${latText(e)} cycles` : ''}${e.critical ? ' · critical chain' : ''}`)));
       return p;
     });
-    svg.append(s('g', { class: 'dp-arcs' }, ...arcs), s('g', { class: 'dp-nodes' }, ...labels));
+    // the latency of an arc, next to its vertical part: the chain's always, the selected instruction's while selected
+    const latLabel = (e, cls) => {
+      const t = latText(e);
+      return t ? s('text', { class: `dp-lat ${cls}`, x: X0 + (e.lane + 1) * lane + 2, y: (y(e.a) + y(e.b)) / 2 + 4, 'aria-hidden': 'true' }, document.createTextNode(t)) : null;
+    };
+    const latsCrit = s('g', { class: 'dp-lats' }, ...g.edges.filter((e) => e.critical).map((e) => latLabel(e, 'crit')).filter(Boolean));
+    const latsSel = s('g', { class: 'dp-lats sel' });
+    svg.append(s('g', { class: 'dp-arcs' }, ...arcs), latsCrit, latsSel, s('g', { class: 'dp-nodes' }, ...labels));
 
     const info = h('p', { class: 'dp-info' });
     const describe = (i) => {
       const nb = neighbours(g, i);
       const name = (x) => `${short(g.nodes[x.node].label, 28)}${x.dist ? ' ↻' : ''}`;
+      const sv = slack ? fmtSlack(slack[i]) : '';
       info.replaceChildren(h('span', { class: 'code', text: g.nodes[i].label }),
+        sv ? h('span', { class: 'dp-s', title: 'slack: cycles it could be delayed in every iteration without lengthening the chain', text: ` slack ${sv}` }) : null,
         nb.reads.length ? h('span', { class: 'dp-r' }, ' ← ', nb.reads.map(name).join(', ')) : null,
         nb.feeds.length ? h('span', { class: 'dp-f' }, ' → ', nb.feeds.map(name).join(', ')) : null);
     };
@@ -182,6 +202,7 @@ export function createDeps(env) {
       sel = Math.max(0, Math.min(n - 1, i));
       for (const x of labels) { const on = Number(x.dataset.i) === sel; x.classList.toggle('sel', on); x.setAttribute('aria-selected', String(on)); }
       for (const p of arcs) p.classList.toggle('on', Number(p.dataset.a) === sel || Number(p.dataset.b) === sel);
+      latsSel.replaceChildren(...g.edges.filter((e) => e.a === sel || e.b === sel).map((e) => latLabel(e, 'on')).filter(Boolean));
       svg.classList.add('picking');
       svg.setAttribute('aria-activedescendant', `dp-i${sel}`);
       describe(sel);
@@ -199,8 +220,15 @@ export function createDeps(env) {
     const legend = h('p', { class: 'dp-legend hint' },
       h('span', { class: 'dp-k same', title: 'a value produced and used in the same iteration', text: `→ ${g.edges.length - c}` }),
       h('span', { class: 'dp-k carried', title: 'a value carried into a later iteration', text: `↻ ${c}` }),
-      g.edges.some((e) => e.critical) ? h('span', { class: 'dp-k crit', title: 'the critical loop-carried chain', text: 'chain' }) : null);
+      g.edges.some((e) => e.critical) ? h('span', { class: 'dp-k crit', title: 'the critical loop-carried chain, its latency per iteration; the numbers on the arcs are latencies in cycles', text: g.slack ? `chain ${+Number(g.slack.period).toFixed(2)}` : 'chain' }) : null,
+      slack ? h('span', { class: 'dp-k sl', title: `slack (the column left of the arcs): cycles an instruction could be delayed in every iteration without lengthening the chain; 0 on the chain, ∞ off every loop-carried cycle${g.slack.partial ? '; too large a graph to compute' : ''}`, text: 'slack' }) : null);
     body.replaceChildren(legend, h('div', { class: 'dp-wrap' }, svg), info);
+    // the slack column (a large graph: in a task of its own)
+    const addSlack = () => labels.forEach((x, i) => {
+      const sv = fmtSlack(slack[i]);
+      if (sv) x.append(s('text', { class: 'dp-sl' + (sv === '0' ? ' zero' : ''), x: LABEL * CH + SL - 2, y: y(i) + 4, 'text-anchor': 'end' }, document.createTextNode(sv)));
+    });
+    if (slack) { if (n > 500) setTimeout(() => { if (svg.isConnected) addSlack(); }, 0); else addSlack(); }
   }
 
   function paint() {

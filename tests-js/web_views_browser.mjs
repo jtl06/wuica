@@ -412,17 +412,26 @@ try {
       const out = { label: $('deps-row').querySelector('.label').textContent, summary: $('deps').querySelector('summary').innerText,
         arcs: arcs.map((a) => a.dataset.a + '>' + a.dataset.b + (a.classList.contains('carried') ? 'c' : '') + (a.classList.contains('crit') ? '!' : '')),
         legend: [...document.querySelectorAll('.dp-k')].map((x) => x.textContent), nodes: document.querySelectorAll('.dp-node').length,
-        order: [...$('more').children].map((e) => e.id) };
+        order: [...$('more').children].map((e) => e.id),
+        slack: [...document.querySelectorAll('.dp-node')].map((n) => n.querySelector('.dp-sl')?.textContent ?? ''),
+        lats: [...document.querySelectorAll('.dp-lat')].map((t) => [t.textContent, t.classList.contains('crit')]),
+        critNodes: [...document.querySelectorAll('.dp-node.crit')].map((n) => n.dataset.i).join() };
       const svg = document.querySelector('.dp-map');
       svg.focus();
       svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
       out.key = [svg.getAttribute('aria-activedescendant'), document.querySelector('.dp-info').textContent, [...document.querySelectorAll('.dp-arc.on')].length];
+      svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      out.picked = [document.querySelector('.dp-info').textContent, [...document.querySelectorAll('.dp-lat.on')].map((t) => t.textContent).join()];
+      svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
       svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await wait(50);
       out.flash = trs().findIndex((tr) => tr.classList.contains('rj-flash'));
       return out;`);
     check(r.label === 'deps' && r.summary === 'dependency arcs · 3 edges, 2 ↻' && r.order.join() === 'bound-row,whatif-row,codemap-row,deps-row,sweep-row,trace-slot', 'deps: a row "deps", open from the link', JSON.stringify(r));
-    check(r.arcs.slice().sort().join() === '0>1!,1>0c!,2>2c' && r.legend.join() === '→ 1,↻ 2,chain' && r.nodes === 4, 'deps: add → add, add ↻ add (the chain), dec ↻ dec', JSON.stringify(r));
-    check(r.key[0] === 'dp-i1' && r.key[1] === 'add rax, 0x1 ← add rax, 0x1 → add rax, 0x1 ↻' && r.key[2] === 2 && r.flash === 1, 'deps: arrow keys select an instruction and its arcs; Enter jumps to the row', JSON.stringify([r.key, r.flash]));
+    check(r.arcs.slice().sort().join() === '0>1!,1>0c!,2>2c' && r.legend.join() === '→ 1,↻ 2,chain 2,slack' && r.nodes === 4, 'deps: add → add, add ↻ add (the chain), dec ↻ dec', JSON.stringify(r));
+    check(r.slack.join() === '0,0,1,∞' && r.critNodes === '0,1', 'deps: slack per instruction (the adds are the chain: 0; dec r15 1 of 2 cycles; jnz off every cycle)', JSON.stringify(r));
+    check(r.lats.length === 2 && r.lats.every(([t, crit]) => t === '1' && crit), 'deps: latencies on the arcs of the chain', JSON.stringify(r.lats));
+    check(r.picked[0] === 'dec r15 slack 1 ← dec r15 ↻ → dec r15 ↻' && r.picked[1] === '1', 'deps: the selected instruction: its slack and its arcs\' latencies', JSON.stringify(r.picked));
+    check(r.key[0] === 'dp-i1' && r.key[1] === 'add rax, 0x1 slack 0 ← add rax, 0x1 → add rax, 0x1 ↻' && r.key[2] === 2 && r.flash === 1, 'deps: arrow keys select an instruction and its arcs; Enter jumps to the row', JSON.stringify([r.key, r.flash]));
     await page.shot('deps-chain.png');
 
     await page.goto(`${origin}/?nosw=1`);
@@ -436,8 +445,11 @@ try {
       const t0 = performance.now();
       document.querySelector('#deps .dp-body button').click();
       await until(() => document.querySelector('#deps .dp-body')?.dataset.state === 'done', 60000);
-      return [...out, Math.round(performance.now() - t0), long, document.querySelectorAll('.dp-node').length];`);
+      const drawn = Math.round(performance.now() - t0);
+      await until(() => document.querySelector('.dp-sl.zero'), 10000); // the slack column: a task of its own
+      return [...out, drawn, long, document.querySelectorAll('.dp-node').length, document.querySelectorAll('.dp-sl.zero').length, document.querySelector('.dp-k.sl')?.title ?? ''];`);
     check(s[0] === 'trace 2,949 instructions' && s[1] === 0 && s[4] === 2949, 'deps: SHA-256: the trace waits for a click, then every instruction is drawn', JSON.stringify(s));
+    check(s[5] > 100 && s[6] && !/too large/.test(s[6]), 'deps: SHA-256: the slack is computed (the chain has slack 0)', JSON.stringify(s.slice(5)));
     console.log(`deps: SHA-256: traced and drawn in ${s[2]} ms after the click; long tasks ${JSON.stringify(s[3])}`);
   }
 
