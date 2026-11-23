@@ -96,7 +96,12 @@ export function createServer(w) {
         'LSD loop buffer, MS microcode sequencer), `notes` M = macro-fused with the previous instruction, J = not ' +
         'cacheable in the DSB because of the JCC erratum, X = instruction not supported by the model (no data: the ' +
         'result is unreliable); `stderr` = assembler warnings and decode warnings (`decodeErrors` > 0: some bytes could ' +
-        'not be decoded). Format "text" (or the second item of "both") is uiCA\'s complete text report. ' + ERRORS_NOTE,
+        'not be decoded); `insights` = a derived diagnosis: `utilization` (each limit and execution port as a fraction ' +
+        'of tp; 1 = saturated), `binding` (the limiting component), `next` (the next limit and `maxSpeedup`, an upper ' +
+        'bound of the speedup if the binding component were removed), `unexplained` (cycles no single limit explains), ' +
+        '`chain` (the loop-carried critical dependency chain: `index` into `instructions`, operand, latency, carried ' +
+        'into the next iteration), `hot` (the instructions with the largest share of the binding resource: fix these ' +
+        'first). Format "text" (or the second item of "both") is uiCA\'s complete text report. ' + ERRORS_NOTE,
       inputSchema: z.object({
         arch: z.string().optional().describe('microarchitecture id (default "SKL"); see list_archs, e.g. SKL, ICL, TGL, RKL, ADL-P, ZEN3'),
         ...codeShape,

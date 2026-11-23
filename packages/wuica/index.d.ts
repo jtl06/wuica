@@ -121,6 +121,23 @@ export interface AnalyzeSummary {
     notes?: string;
     uopsInfo?: string;
   }>;
+  /** A diagnosis derived from the analysis (the web page's bound view); absent if tp is 0. */
+  insights?: Insights;
+}
+
+export interface Insights {
+  /** Each limit (by name) and execution port (by column name): cycles / tp. 1 = busy every cycle. */
+  utilization: Record<string, number>;
+  /** The bottleneck(s), or the largest limit if uiCA names none. */
+  binding: string[];
+  /** The largest limit below the binding one; maxSpeedup = tp / next.tp (an upper bound). */
+  next?: { limit: string; tp: number; maxSpeedup: number | null };
+  /** Cycles per iteration that no single limit explains. */
+  unexplained?: number;
+  /** The critical loop-carried dependency chain (index: into `instructions`). */
+  chain?: { index: number; instr: string; operand: string; latency: number; carried: boolean }[];
+  /** The instructions with the largest share of the binding resource (top 5). */
+  hot?: { resource: string; ports?: string[]; instructions: { index: number; instr: string; share: number }[] };
 }
 
 export interface ArchInfo {

@@ -4,6 +4,7 @@
 // Usage: node tests-js/web_bound.mjs
 import fs from 'node:fs';
 import { boundModel, blame, topRows, shortPort, defaultResource } from '../web/js/bound.js';
+import { insights } from '../packages/wuica/lib/insights.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
 
@@ -120,6 +121,16 @@ if (!fs.existsSync(wasm) || !fs.existsSync(new URL('data/uarch.json', root))) {
         const b = blame(r, it.id);
         if (b) ok &&= near([...b.weights].reduce((s, x) => s + x, 0) / b.total, 1) && b.weights.length === r.rows.length;
       }
+      // the npm package's insights (the MCP analyze JSON) say what the page says
+      const ins = insights(r);
+      const r2 = (x) => Math.round(x * 100) / 100;
+      const same = m.items.filter((x) => x.id !== 'other').every((x) => ins.utilization[x.id.startsWith('col:') ? x.id.slice(4) : x.id] === r2(x.util))
+        && JSON.stringify(ins.binding) === JSON.stringify(m.binding)
+        && (m.next ? ins.next.limit === m.next.name && ins.next.maxSpeedup === r2(m.next.speedup) : !ins.next)
+        && (m.gap ? ins.unexplained === r2(m.gap) : ins.unexplained === undefined);
+      const pageTop = topRows(blame(r, m.binding[0]), 5);
+      const sameTop = JSON.stringify((ins.hot?.instructions ?? []).map((x) => [x.index, x.share])) === JSON.stringify(pageTop.map((x) => [x.row, r2(x.share)]));
+      check(same && sameTop, `${ex.id} on ${arch}: the package's insights agree with the page`, JSON.stringify([ins, m.items.map((x) => [x.id, x.util]), m.next, pageTop]));
       check(ok, `${ex.id} on ${arch}: utilization from the report`, JSON.stringify({ tp, items: m.items.map((x) => [x.id, x.cycles]), repLimits, portTotals }));
     }
   }

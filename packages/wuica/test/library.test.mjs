@@ -152,6 +152,17 @@ test('summarize', async () => {
   assert.equal(s.instructions[0].bytes, '4801d8');
   assert.ok(s.instructions[0].ports.ALU0 > 0);
   assert.equal(s.instructions[3].notes, 'M');
+  // the derived diagnosis (add rax, rbx; add rbx, rax: a loop-carried chain)
+  const ins = s.insights;
+  assert.deepEqual(ins.binding, s.bottlenecks.slice(0, ins.binding.length));
+  for (const l of s.limits) assert.equal(ins.utilization[l.name], Math.round((l.tp / s.tp) * 100) / 100);
+  assert.ok(ins.utilization.ALU0 > 0);
+  if (s.bottlenecks.includes('Dependencies')) {
+    assert.ok(ins.chain.length >= 1 && ins.chain.every((e) => typeof e.index === 'number' && e.instr === s.instructions[e.index].instr));
+    assert.equal(ins.hot.resource, ins.binding[0]);
+  }
+  const shares = ins.hot?.instructions.map((x) => x.share) ?? [];
+  assert.ok(shares.every((x, i) => i === 0 || x <= shares[i - 1]));
 });
 
 test('a dataDir with plain JSON tables works', async () => {
