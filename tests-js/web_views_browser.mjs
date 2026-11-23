@@ -259,7 +259,7 @@ try {
       check(JSON.stringify(r.rows) === JSON.stringify(want), `what if (${k}): every experiment equals an analysis made here`, JSON.stringify([r.rows, want]));
     }
     const r = out.pool;
-    check(r.label === 'try' && /[#&]whatif=1(&|$)/.test(r.hash) && r.order.join() === 'bound-row,whatif-row,codemap-row,sweep-row,trace-slot', 'what if: a row "try" after "bound", open from the link', JSON.stringify(r));
+    check(r.label === 'try' && /[#&]whatif=1(&|$)/.test(r.hash) && r.order.join() === 'bound-row,whatif-row,codemap-row,deps-row,sweep-row,trace-slot', 'what if: a row "try" after "bound", open from the link', JSON.stringify(r));
     const { decodeState } = await import('../web/js/url-state.js');
     const s = decodeState(r.href.split('#')[1]);
     check(r.target === '_blank' && s.mode === 'hex' && s.text.replace(/ /g, '') === body.repeat(2) + tail && s.arch === 'SKL', 'what if: a variant opens in a new tab as machine code', r.href);
@@ -319,7 +319,7 @@ try {
       await until(() => document.querySelector('.ly-offv')?.textContent === 'offset 59');
       out.after = [document.querySelector('.ly-offv').textContent, $('opt-align').value, /[#&]al=59(&|$)/.test(location.hash), /[#&]codemap=1(&|$)/.test(location.hash)];
       return out;`);
-    check(r.label === 'bytes' && r.summary === 'cache lines · 13 B, 2 lines' && r.order.join() === 'bound-row,whatif-row,codemap-row,sweep-row,trace-slot', 'code map: a row "bytes", open from the link', JSON.stringify(r));
+    check(r.label === 'bytes' && r.summary === 'cache lines · 13 B, 2 lines' && r.order.join() === 'bound-row,whatif-row,codemap-row,deps-row,sweep-row,trace-slot', 'code map: a row "bytes", open from the link', JSON.stringify(r));
     check(r.ins.join() === '1,2,1,1' && r.split.join() === 'false,true,false,false' && r.off === 'offset 58' && r.legend.join() === '16B 1,32B 1,64B 1', 'code map: the split instruction has a box on each line', JSON.stringify(r));
     check(r.info === 'add rax, 0x1 · 0x3a–0x3d (4 B)' && r.key[0] === 'ly-i1' && /^add rax, 0x1 · 0x3e–0x41 \(4 B\) · crosses a cache line$/.test(r.key[1]) && r.key[2], 'code map: arrow keys move through the instructions', JSON.stringify([r.info, r.key]));
     check(r.flash === 1 && r.end === 'ly-i3', 'code map: Enter jumps to the row; End to the last instruction', JSON.stringify([r.flash, r.end]));
@@ -340,6 +340,46 @@ try {
       return { ms: Math.round(ms), long: [...long], n: document.querySelectorAll('.ly-ins').length, lines: document.querySelectorAll('.ly-line').length, o: overflow() };`);
     check(s.n === 2949 && s.lines === Math.ceil(11602 / 64) && s.long.every((ms) => ms < 100) && s.o <= 0, 'code map: SHA-256: every instruction, no task of 100 ms or more', JSON.stringify(s));
     console.log(`code map: SHA-256 drawn in ${s.ms} ms; long tasks ${JSON.stringify(s.long)}`);
+  }
+
+  // --- dependency arcs: the chain example; keys; SHA-256 waits for a click --------------------------------------------------
+  {
+    const chain = ex('chain');
+    await page.goto(`${origin}/?nosw=1#v=1&deps=1&c=${b64(chain.text.hex)}`);
+    await page.result();
+    const r = await page.eval(`${HELPERS}
+      await until(() => document.querySelector('#deps .dp-body')?.dataset.state === 'done', 20000);
+      const arcs = [...document.querySelectorAll('.dp-arc')];
+      const out = { label: $('deps-row').querySelector('.label').textContent, summary: $('deps').querySelector('summary').innerText,
+        arcs: arcs.map((a) => a.dataset.a + '>' + a.dataset.b + (a.classList.contains('carried') ? 'c' : '') + (a.classList.contains('crit') ? '!' : '')),
+        legend: [...document.querySelectorAll('.dp-k')].map((x) => x.textContent), nodes: document.querySelectorAll('.dp-node').length,
+        order: [...$('more').children].map((e) => e.id) };
+      const svg = document.querySelector('.dp-map');
+      svg.focus();
+      svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      out.key = [svg.getAttribute('aria-activedescendant'), document.querySelector('.dp-info').textContent, [...document.querySelectorAll('.dp-arc.on')].length];
+      svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await wait(50);
+      out.flash = trs().findIndex((tr) => tr.classList.contains('rj-flash'));
+      return out;`);
+    check(r.label === 'deps' && r.summary === 'dependency arcs · 3 edges, 2 ↻' && r.order.join() === 'bound-row,whatif-row,codemap-row,deps-row,sweep-row,trace-slot', 'deps: a row "deps", open from the link', JSON.stringify(r));
+    check(r.arcs.slice().sort().join() === '0>1!,1>0c!,2>2c' && r.legend.join() === '→ 1,↻ 2,chain' && r.nodes === 4, 'deps: add → add, add ↻ add (the chain), dec ↻ dec', JSON.stringify(r));
+    check(r.key[0] === 'dp-i1' && r.key[1] === 'add rax, 0x1 ← add rax, 0x1 → add rax, 0x1 ↻' && r.key[2] === 2 && r.flash === 1, 'deps: arrow keys select an instruction and its arcs; Enter jumps to the row', JSON.stringify([r.key, r.flash]));
+    await page.shot('deps-chain.png');
+
+    await page.goto(`${origin}/?nosw=1`);
+    await page.ready();
+    const s = await page.eval(`${HELPERS}
+      await done(() => set($('examples'), 'sha256'));
+      document.querySelector('#deps summary').click();
+      await until(() => document.querySelector('#deps .dp-body')?.dataset.state === 'waiting');
+      const out = [document.querySelector('#deps .dp-body button')?.textContent, document.querySelectorAll('.dp-map').length];
+      const long = []; new PerformanceObserver((l) => { for (const e of l.getEntries()) long.push(Math.round(e.duration)); }).observe({ type: 'longtask' });
+      const t0 = performance.now();
+      document.querySelector('#deps .dp-body button').click();
+      await until(() => document.querySelector('#deps .dp-body')?.dataset.state === 'done', 60000);
+      return [...out, Math.round(performance.now() - t0), long, document.querySelectorAll('.dp-node').length];`);
+    check(s[0] === 'trace 2,949 instructions' && s[1] === 0 && s[4] === 2949, 'deps: SHA-256: the trace waits for a click, then every instruction is drawn', JSON.stringify(s));
+    console.log(`deps: SHA-256: traced and drawn in ${s[2]} ms after the click; long tasks ${JSON.stringify(s[3])}`);
   }
 
   // --- copy: Markdown, CSV, JSON of the result -------------------------------------------------------------------------------
@@ -370,9 +410,9 @@ try {
     for (const [w, hgt, theme] of [[320, 640, 'light'], [375, 812, 'light'], [768, 1024, 'dark'], [1440, 900, 'dark'], [2560, 1440, 'light']]) {
       await page.size(w, hgt);
       await page.theme(theme);
-      await page.goto(`${origin}/?nosw=1#v=1&m=asm&bound=1&whatif=1&codemap=1&c=${b64(ex('dot1').text.intel)}`);
+      await page.goto(`${origin}/?nosw=1#v=1&m=asm&bound=1&whatif=1&codemap=1&deps=1&c=${b64(ex('dot1').text.intel)}`);
       await page.result();
-      out.push(await page.eval(`${HELPERS} await until(() => document.querySelector('.bd-item') && document.querySelector('.ly-map') && document.querySelector('#whatif .wi-body')?.dataset.state === 'done'); return { w: ${w}, o: overflow(), bg: getComputedStyle(document.documentElement).backgroundColor };`));
+      out.push(await page.eval(`${HELPERS} await until(() => document.querySelector('.bd-item') && document.querySelector('.ly-map') && document.querySelector('.dp-map') && document.querySelector('#whatif .wi-body')?.dataset.state === 'done'); return { w: ${w}, o: overflow(), bg: getComputedStyle(document.documentElement).backgroundColor };`));
     }
     check(out.every((m) => m.o <= 0), 'layout: no sideways scrolling from 320 to 2560 px with the views open', JSON.stringify(out));
     check(out[0].bg !== out[2].bg, 'layout: both themes', JSON.stringify(out.map((m) => m.bg)));

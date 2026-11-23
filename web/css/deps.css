@@ -1,0 +1,21 @@
+/* The dependency arcs (js/deps.js). Colours only from the theme's custom properties. */
+
+.dp-body:empty { display: none; }
+.dp-body { margin-top: 0.4rem; display: grid; gap: 0.35rem; }
+.dp-legend { display: flex; flex-wrap: wrap; gap: 0.2rem 2.5ch; }
+.dp-k { cursor: help; }
+.dp-k.crit { color: var(--date); }
+.dp-wrap { max-height: 30rem; overflow: auto; background: var(--surface); border: 1px solid var(--border); padding: 0.3rem 0.2rem; }
+.dp-map { display: block; font-family: var(--mono); font-size: 12px; }
+.dp-map:focus-visible { outline: 2px solid var(--cursor); outline-offset: 2px; }
+.dp-node text { fill: var(--code); }
+.dp-node .dp-hit { fill: transparent; cursor: pointer; }
+.dp-node:hover .dp-hit { fill: var(--accent-dim); }
+.dp-node.sel .dp-hit { fill: rgb(var(--accent-rgb) / 0.2); }
+.dp-arc { fill: none; stroke: var(--subtle); stroke-width: 1; }
+.dp-arc.carried { stroke-dasharray: 3 2; }
+.dp-arc.crit { stroke: var(--date); stroke-width: 1.6; }
+.dp-head { fill: var(--subtle); }
+.dp-map.picking .dp-arc:not(.on) { opacity: 0.25; }
+.dp-map.picking .dp-arc.on { stroke: var(--accent); opacity: 1; }
+.dp-info { overflow-wrap: anywhere; color: var(--description); }
