@@ -177,6 +177,8 @@ pub(crate) struct FrontEnd {
     /// the instances of the current round of the op cache that have not been delivered yet: `.0 .. .1`
     op_cache_round: Block,
     op_cache_rnd: i64,
+    /// remaining cycles in which the microcode sequencer delivers an instruction (`microcodeBusyCycles`)
+    microcode_busy_cycles: i64,
     rsp_offset: i64,
     pub all_generated_instr_instances: Vec<u32>,
     addresses_in_dsb: AddressSet,
@@ -228,6 +230,7 @@ impl FrontEnd {
             instruction_queue: VecDeque::new(),
             op_cache_round: (0, 0),
             op_cache_rnd: 0,
+            microcode_busy_cycles: 0,
             rsp_offset: 0,
             all_generated_instr_instances: Vec::new(),
             addresses_in_dsb: AddressSet::new(alignment_offset, code_len),
@@ -518,7 +521,9 @@ impl<'a> Sim<'a> {
             return Ok(());
         }
 
-        if self.fe.uop_source.is_none() && cfg.op_cache_entry_ops != 0 {
+        if self.fe.uop_source.is_none() && cfg.op_cache_entry_ops != 0 && self.fe.microcode_busy_cycles != 0 {
+            self.fe.microcode_busy_cycles -= 1;
+        } else if self.fe.uop_source.is_none() && cfg.op_cache_entry_ops != 0 {
             // one op cache entry per cycle; an instruction's macro-ops are not split between entries
             if self.idq.len() as i64 + cfg.op_cache_entry_ops <= cfg.idq_width {
                 let mut n_ops = 0;
@@ -553,6 +558,12 @@ impl<'a> Sim<'a> {
                     }
                     n_ops += slots;
                     n_fields += fields;
+                    let n_uops = self.insts[inst as usize].n_uops as i64;
+                    if cfg.microcode_ops != 0 && n_uops > cfg.microcode_ops {
+                        // a microcoded instruction ends the entry; the microcode sequencer delivers its macro-ops
+                        self.fe.microcode_busy_cycles = (n_uops + cfg.microcode_width - 1).div_euclid(cfg.microcode_width) - 1;
+                        break;
+                    }
                     if self.fe.op_cache_round.0 == self.fe.op_cache_round.1 {
                         break; // the entry ends at the end of the loop
                     }
