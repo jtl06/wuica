@@ -47,7 +47,7 @@ try {
   await page.goto(`${srv.origin}/?nosw=1#${frag}`);
   await page.waitFor(`document.querySelector('#ab-slots')`, 'the A–B result', 60000);
   const r = await page.eval(`${HELPERS}
-    const out = { closed: !$('ab-slots').open, after: $('ab-slots-row').previousElementSibling?.querySelector('.label')?.textContent, empty: $('ab-slots').querySelector('.ab-slots').children.length };
+    const out = { closed: !$('ab-slots').open, after: $('ab-slots-row').previousElementSibling?.querySelector('.label')?.textContent, inDiff: !!$('ab-slots-row').closest('#ab-main'), empty: $('ab-slots').querySelector('.ab-slots').children.length };
     $('ab-slots').querySelector('summary').click();
     await until(() => $('ab-slots').querySelector('.ab-slots').dataset.state === 'done');
     const keys = (k) => [...$('ab-slots').querySelectorAll('.bd-slots')[k].querySelectorAll('.sl-k')].map((x) => x.textContent).join(',');
@@ -59,7 +59,7 @@ try {
     await until(() => $('ab-slots')?.querySelector('.ab-slots').dataset.state === 'done');
     out.again = [$('ab-slots').open, $('ab-slots').querySelectorAll('.bd-slots').length];
     return out;`);
-  check(r.closed && r.empty === 0 && r.after === 'bottleneck', 'closed by default, nothing fetched; under the bottleneck row', JSON.stringify(r));
+  check(r.closed && r.empty === 0 && r.after === 'limits' && r.inDiff, 'closed by default, nothing fetched; in the diff tab, after the limits', JSON.stringify(r));
   check(r.tags === 'A,B' && r.a === want[0] && r.b === want[1], 'both bars: the shares of the details under Node', JSON.stringify([r, want]));
   check(/^issued \d+% → \d+%$/.test(r.summary), 'the summary: issued A → B', r.summary);
   check(r.again[0] && r.again[1] === 2, 'the next result: still open, both bars', JSON.stringify(r.again));

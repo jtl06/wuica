@@ -1,35 +1,39 @@
-/* A–B comparison (js/ab.js). Colours come only from the theme's custom properties, so it follows the theme. */
+/* A–B comparison (js/ab.js, js/ab-cpus.js). Colours come only from the theme's custom properties, so it follows the theme. */
 
 body:not(.ab-on) .ab-only { display: none !important; }
-/* the table of the checked CPUs and the sweep belong to single mode; their state is kept for it */
-body.ab-on #cmp-cpus, body.ab-on #sweep-row { display: none !important; }
-body.ab-on .more:not(:has(> #trace-slot:not([hidden]))) { display: none; } /* except for the traces of A and B */
+/* the table of the checked CPUs belongs to single mode (A–B has its own, ab-cpus.js); its state is kept for it */
+body.ab-on #cmp-cpus { display: none !important; }
 
 /* the switch */
 .ab-switch .ab-tools { display: inline-flex; flex-wrap: wrap; gap: 0.5rem; }
 
-/* the editors: A (the page's editor, wrapped in .ab-a-col) and B side by side; stacked on narrow screens */
+/* the editors: A (the page's editor, wrapped in .ab-a-col) over B; one row of controls each (A's: the toolbar) */
 .ab-a-col { display: contents; }
-.ab-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 1rem; row-gap: 0.75rem; align-items: start; }
+.ab-grid { display: flex; flex-direction: column; gap: 0; }
 .ab-grid > .ab-a-col { display: block; min-width: 0; }
 .ab-b { min-width: 0; }
 .ab-b > .messages { margin-top: 0.3rem; }
-.ab-head { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 0.3rem 1rem; min-height: 2rem; margin-bottom: 0.3rem; }
-/* side by side, B's controls take two lines: A's caption as well, so that the two text areas line up */
-.ab-grid .ab-head { min-height: 4.1rem; }
-@media (max-width: 800px) {
-  .ab-grid { grid-template-columns: minmax(0, 1fr); }
-  .ab-grid .ab-head { min-height: 2rem; }
+.ab-head { display: inline-flex; align-items: center; gap: 0.3rem 0.75rem; }
+.ab-b-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.75rem; margin: 0.45rem 0 0.35rem; }
+body.ab-on .toolbar .code-hint { display: none; } /* A's row has the elements per iteration at its end instead */
+.ab-work { margin-left: auto; gap: 0.4rem; }
+.ab-work-in { width: 7ch; }
+.dense .ab-work-in { width: 7ch; }
+.ab-work.flag .ab-work-k { color: var(--caveat); }
+.ab-work.flag .ab-work-in { border-color: var(--caveat); }
+#b-arch { max-width: 16ch; }
+body.ab-on #examples { width: 10ch; }
+body.ab-on .toolbar .choice, .ab-head .choice { gap: 0.25rem 0.8rem; }
+@media (max-width: 1199px) {
+  body.ab-on #code, body.ab-on #code-b { height: 11rem; min-height: 6rem; }
 }
-/* wide: B's controls fit on one line; both boxes as tall as fits with the result below */
+@media (max-width: 640px) {
+  html.dense body.ab-on #code, html.dense body.ab-on #code-b { height: 8rem; }
+}
+/* wide: the input pane a little wider than in single mode (two rows of controls) */
 @media (min-width: 1200px) {
-  .ab-grid { column-gap: 2rem; }
-  body.ab-on #code, body.ab-on #code-b { height: clamp(9rem, calc(100vh - 40rem), 24rem); }
+  body.ab-on .panes { grid-template-columns: minmax(0, clamp(24rem, 36vw, 42rem)) minmax(0, 1fr); }
 }
-.ab-desc { color: var(--subtle); }
-.ab-head .choice { gap: 0.25rem 1rem; }
-#b-scale { width: 6ch; }
-#b-arch { max-width: 22ch; }
 
 .ab-tag {
   display: inline-block;
@@ -40,27 +44,48 @@ body.ab-on .more:not(:has(> #trace-slot:not([hidden]))) { display: none; } /* ex
   color: var(--background);
   background: var(--accent);
 }
-#ab-b-tag, .ab-tag.b, .ab-col:nth-child(2) .ab-cap .ab-tag { background: var(--code); }
+#ab-b-tag, .ab-tag.b { background: var(--code); }
 
-/* ---- the result ---- */
-.ab-tp { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.6rem; }
+/* ---- the result: two lines on top ---- */
+.ab-tp { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.1rem 0.6rem; }
 .ab-tp .value { font-size: 1.6rem; line-height: 1.2; color: var(--heading); font-variant-numeric: tabular-nums; }
+.dense .ab-tp .value { font-size: 1.35rem; line-height: 1.15; }
 .ab-tp .value.ab-none { color: var(--subtle); }
-.ab-tp .ab-tag:nth-of-type(2) { background: var(--code); }
 .ab-tp .unit { color: var(--text); }
+.ab-tp .unit.caveat { color: var(--caveat); cursor: help; }
 .ab-arrow { color: var(--subtle); }
 
-.ab-delta { margin: 0.15rem 0 0.2rem; }
+.ab-delta { margin-left: 1ch; }
 .ab-verdict { border: 1px solid currentColor; padding: 0 0.4rem; margin-right: 0.25rem; }
 .ab-delta.ab-better { color: var(--accent); }
 .ab-delta.ab-worse { color: var(--caveat); }
 .ab-delta.ab-same { color: var(--description); }
 .ab-side-error { margin-top: 0.3rem; }
 .ab-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.ab-tp + .meta { margin-top: 0.1rem; }
+.meta .ab-tag { min-width: 1.4em; line-height: 1.25; }
 
 .ab-bn .bn { color: var(--heading); }
 .ab-bn .ab-gone { color: var(--subtle); text-decoration: line-through; }
 .ab-bn .ab-new { color: var(--code); }
+
+/* ---- A and B on each checked CPU (ab-cpus.js) ---- */
+.ab-cpus-box .table-wrap { width: fit-content; max-width: 100%; }
+table.grid.ab-cpus { width: auto; }
+.ab-cpus th, .ab-cpus td { text-align: right; }
+.ab-cpus th.first { text-align: left; }
+.ab-cpus td.ab-cv { min-width: 7ch; }
+.ab-cpus td.ab-d { min-width: 6ch; }
+.ab-cpus td.ab-cx { min-width: 8ch; text-align: left; padding-left: 1.5ch; }
+.ab-cpus tbody tr { cursor: pointer; }
+.ab-cpus tbody tr.current > * { background-color: var(--accent-dim); }
+.ab-cpus tbody tr.current > th { box-shadow: inset 2px 0 var(--accent); }
+.ab-cpus tr.pending td.ab-cv { color: var(--subtle); }
+.ab-cpus tr.error td { color: var(--caveat); }
+.ab-cpus button.pick { color: var(--code); text-decoration: none; }
+.ab-cpus tr.current button.pick { color: var(--heading); }
+.ab-cx.ab-better { color: var(--accent); }
+.ab-cx.ab-worse { color: var(--caveat); }
 
 /* limits of both, side by side */
 table.grid.ab-limits { width: auto; min-width: min(100%, 36rem); }
@@ -91,8 +116,11 @@ table.grid.ab-limits { width: auto; min-width: min(100%, 36rem); }
 .ab-diff tr.ab-removed .ab-i:not(.ab-empty) span:first-child { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--caveat) 60%, transparent); }
 .ab-diff tfoot .ab-i { color: var(--description); }
 
-/* two tables or reports next to each other */
-.ab-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.75rem 1rem; align-items: start; }
+/* the diff tab: the uop tables of A and B, one above the other, each the whole width */
+.ab-stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.6rem; margin-bottom: 0.3rem; }
 .ab-col { min-width: 0; }
-.ab-cap { color: var(--description); margin-bottom: 0.3rem; }
+.ab-cap { color: var(--description); margin-bottom: 0.2rem; }
+#ab-main > .field > .row { padding: 0.12rem 0; }
+/* the reports next to each other */
+.ab-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.75rem 1rem; align-items: start; }
 @media (max-width: 900px) { .ab-pair { grid-template-columns: minmax(0, 1fr); } }

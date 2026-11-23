@@ -385,6 +385,7 @@ label.inline.live { cursor: pointer; }
 label.inline.live:has(input:checked) { color: var(--accent); }
 /* while typing, the result dims only if it stays out of date (no flicker between keystrokes) */
 #results.live #result-body.stale { transition-delay: 0.6s; }
+#results #result-body.stale.stale-now { transition: none; } /* drawn already out of date: dimmed at once */
 
 .cmp-body { margin-top: 0.4rem; transition: opacity 0.1s; }
 .cmp-body:empty { display: none; }
@@ -439,18 +440,18 @@ table.cmp-cpus { width: 100%; }
 .multi-info:empty { display: none; }
 .more { padding-top: 0.75rem; padding-bottom: 0.9rem; }
 
-/* ---- wide screens: input | result side by side; A–B stays one column (A and B side by side, the result below) -- */
+/* ---- wide screens: input | result side by side (in A–B mode too: A over B in the input pane) ------------------- */
 
 @media (min-width: 1200px) {
   :root { --max-width: 1680px; --page-gutter: clamp(1.5rem, 2.5vw, 3rem); }
   .top { padding-top: 1rem; padding-bottom: 0.75rem; }
-  body:not(.ab-on) .panes {
+  .panes {
     display: grid; grid-template-columns: minmax(0, clamp(24rem, 34vw, 36rem)) minmax(0, 1fr);
     border-bottom: 1px solid var(--border);
   }
-  body:not(.ab-on) .pane { border-bottom: 0; padding-top: 1rem; }
-  body:not(.ab-on) .pane-input { padding-right: 2rem; }
-  body:not(.ab-on) .pane-result { padding-left: 2rem; border-left: 1px solid var(--border); min-height: 0; }
+  .pane { border-bottom: 0; padding-top: 1rem; }
+  .pane-input { padding-right: 2rem; }
+  .pane-result { padding-left: 2rem; border-left: 1px solid var(--border); min-height: 0; }
   /* the code box fills the height of the window (about 20 lines at 800 px) */
   body:not(.ab-on) #code { height: clamp(16rem, calc(100vh - 22rem), 60rem); min-height: 16rem; }
 }
@@ -461,5 +462,5 @@ table.cmp-cpus { width: 100%; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
   /* no animation, but still no dimming between keystrokes: a delayed step */
-  #results.live #result-body.stale, .cmp-body.stale { transition: opacity 0s 0.6s !important; }
+  #results.live #result-body.stale:not(.stale-now), .cmp-body.stale { transition: opacity 0s 0.6s !important; }
 }

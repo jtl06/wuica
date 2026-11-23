@@ -176,13 +176,15 @@ try {
       out.folds = [...document.querySelectorAll('#result-body details.ab-fold')].map((d) => d.open);
       out.lean = [!!$('ab-hide-empty'), !document.querySelector('#result-body .meta')?.textContent.match(/bytes|instruction| ms/)];
       document.querySelectorAll('#result-body details.ab-fold').forEach((d) => { d.open = true; }); await wait(50);
-      out.result = { vals: vals(), verdict: verdict(), sr: document.querySelector('.ab-sr').textContent, delta: document.querySelector('.ab-delta').textContent,
-        labels: [...document.querySelectorAll('#result-body > .row > .label')].map((e) => e.textContent).join(','),
+      out.result = { vals: vals(), verdict: verdict(), sr: document.querySelector('#result-body p.ab-sr').textContent, delta: document.querySelector('.ab-delta').textContent,
+        labels: [...document.querySelectorAll('#result-body > .row > .label, #ab-main > .field > .row > .label')].map((e) => e.textContent).join(','),
+        tabs: [...document.querySelectorAll('.view-tab')].map((b) => b.dataset.tab).join(), lines: document.querySelector('#result-body > .row.lead').getClientRects().length && Math.round(document.querySelector('#result-body > .row.lead > .field').getBoundingClientRect().height / parseFloat(getComputedStyle(document.documentElement).lineHeight || 18)),
         bn: document.querySelector('.ab-bn')?.innerText ?? document.querySelector('#result-body .bn')?.textContent,
         limits: [...document.querySelectorAll('.ab-limits tbody tr')].map((tr) => tr.innerText.replace(/\\s+/g, ' ').trim()),
         diff: [...document.querySelectorAll('.ab-diff tbody tr')].map((tr) => tr.className + ':' + tr.innerText.replace(/\\s+/g, ' ').trim()),
         diffHead: document.querySelector('.ab-diff thead').innerText.replace(/\\s+/g, ' ').trim(),
-        tables: document.querySelectorAll('.ab-pair table.uops').length, overflow: overflow(), status: $('status').textContent };
+        tables: document.querySelectorAll('#ab-main .ab-stack table.uops').length, stacked: (() => { const t = [...document.querySelectorAll('#ab-main .ab-stack .table-wrap')].map((w) => w.getBoundingClientRect()); return t.length === 2 && t[1].top > t[0].bottom && Math.abs(t[0].width - t[1].width) < 2; })(),
+        sticky: getComputedStyle(document.querySelector('#ab-main table.uops tbody th.first')).position, overflow: overflow(), status: $('status').textContent };
       out.hash = location.hash;
       // swap
       await done(() => $('ab-swap').click());
@@ -197,13 +199,29 @@ try {
       // copy A to B
       await done(() => $('ab-copy').click());
       out.copied = [$('code-b').value === $('code').value, verdict()];
-      // unrolled B: twice A, the same work per iteration of A
+      // elements per iteration: B does twice A's work per iteration; applied as typed (no new analysis), per element
       set($('code-b'), '48 83 c0 01 48 83 c0 01 48 83 c0 01 48 83 c0 01 49 ff cf 75 eb');
       await done(() => $('run').click());
-      const v1 = [vals(), verdict()];
-      await done(() => set($('b-scale'), '2'));
-      out.scaled = [v1, vals(), verdict(), document.querySelector('#result-body').innerText.includes('per iteration of A'), location.hash.includes('bk=2')];
-      set($('b-scale'), '1');
+      const v1 = [vals(), verdict(), document.querySelector('.ab-tp .unit').textContent];
+      const run1 = $('results').dataset.run;
+      $('b-work').value = '2'; $('b-work').dispatchEvent(new Event('input', { bubbles: true })); // typed: no change event yet
+      const v2 = [vals(), verdict(), document.querySelector('.ab-tp .unit').textContent, document.querySelectorAll('.ab-tp .value')[1]?.title ?? ''];
+      await until(() => location.hash.includes('bw=2'));
+      out.scaled = [v1, v2, $('results').dataset.run === run1, [...document.querySelectorAll('.ab-limits tbody tr')].map((tr) => [...tr.cells].map((c) => c.textContent).join(' ').replace(/\\s+/g, ' ').trim()).find((t) => /^Dependencies/.test(t))];
+      // an edit of B's code: the count is marked (and the unit); a visit of the field confirms it
+      set($('code-b'), $('code-b').value + ' ');
+      out.flag = [document.querySelector('.ab-work.flag input')?.id ?? null, $('b-work').getAttribute('aria-invalid')];
+      await done(() => $('run').click());
+      out.flag.push(document.querySelector('.ab-tp .unit').textContent);
+      $('b-work').focus(); $('b-work').blur();
+      out.flag.push(document.querySelector('.ab-work.flag') === null);
+      // B replaced (A → B): its count is A's again; an empty field goes back to the count in use when left
+      $('b-work').value = ''; $('b-work').dispatchEvent(new Event('input', { bubbles: true })); $('b-work').dispatchEvent(new Event('change', { bubbles: true }));
+      out.empty = $('b-work').value;
+      await done(() => $('ab-copy').click());
+      out.reset = [$('b-work').value, vals(), document.querySelector('.ab-tp .unit').textContent, location.hash.includes('bw=')];
+      set($('code-b'), '48 83 c0 01 48 83 c0 01 48 83 c0 01 48 83 c0 01 49 ff cf 75 eb');
+      await done(() => $('run').click());
       // B in assembly
       $('b-mode-asm').click(); await until(() => isAsm('code-b') && !$('code-b').readOnly);
       out.bConverted = [$('code-b').value, $('b-syntax').value];
@@ -213,23 +231,27 @@ try {
       set($('code-b'), 'x:\\n  frobnicate rax\\n'); await done(() => $('run').click()).catch(() => {}); await wait(500);
       out.asmErr = [$('b-messages').innerText, $('code-b').getAttribute('aria-invalid'), vals(), document.querySelector('#result-body .meta')?.textContent];
       out.unlabelled = unlabelled();
-      out.focusable = ['cmp-single', 'cmp-ab', 'ab-swap', 'ab-copy', 'code-b', 'b-arch', 'b-scale', 'b-mode-asm'].every((id) => $(id) && $(id).tabIndex >= 0);
+      out.focusable = ['cmp-single', 'cmp-ab', 'ab-swap', 'ab-copy', 'code-b', 'b-arch', 'a-work', 'b-work', 'b-mode-asm'].every((id) => $(id) && $(id).tabIndex >= 0);
       return out;`);
     check(r.start[0] && r.start[1] === 'none' && r.start[2] === '' && r.start[3], 'ab: the page starts in single mode (assembly), B hidden', JSON.stringify(r.start));
     check(r.entered[0].join() === '2.00,2.00' && r.entered[1] === 'same' && r.entered[2] === r.entered[2] && r.entered[3] && /ab=1/.test(r.entered[4]), 'ab: switching to A–B copies A to B and compares at once', JSON.stringify(r.entered));
     check(r.stale, 'ab: an edit of B marks the result stale');
-    check(r.result.vals.join() === '2.00,1.00' && r.result.verdict === 'better' && r.result.sr === 'A: 2.00 cycles, B: 1.00 cycles, Δ = −1.00 (−50%)' && /B better Δ = −1\.00 cycles \(−50%\) · B is 2\.00× faster/.test(r.result.delta), 'ab: the headline (Ctrl+Enter runs both)', JSON.stringify(r.result));
-    check(r.result.labels === 'throughput,bottleneck,slots,uops,limits,diff,text' && r.result.tables === 2, 'ab: all parts of the comparison', r.result.labels);
+    check(r.result.vals.join() === '2.00,1.00' && r.result.verdict === 'better' && r.result.sr === 'A: 2.00 cycles, B: 1.00 cycles, Δ = −1.00 (−50%)' && /^B better Δ −1\.00 \(−50%\) · 2\.00× faster$/.test(r.result.delta), 'ab: the headline (Ctrl+Enter runs both)', JSON.stringify(r.result));
+    check(r.result.labels === 'throughput,uops,Δ,limits,slots,text' && r.result.tables === 2 && r.result.stacked && r.result.sticky === 'sticky' && r.result.lines <= 2, 'ab: all parts of the comparison: two lines on top, the uop tables stacked (the instruction column sticky), then the folds', JSON.stringify(r.result));
+    check(r.result.tabs === 'diff,bound,try,bytes,deps,mca,sweep,trace', 'ab: the result\'s tabs (diff first, then the views as in single mode)', r.result.tabs);
     check(r.folds.length === 4 && r.folds.every((o) => !o) && !r.lean[0] && r.lean[1], 'ab: lean by default: slots, limits, diff and reports collapsed; no hide-empty control; no counts in the meta line', JSON.stringify([r.folds, r.lean]));
     check(/Dependencies/.test(r.result.bn) && r.result.limits.some((l) => /^Dependencies 2\.00 1\.00 −1\.00$/.test(l)) && r.result.limits.some((l) => /^Issue 0\.75 0\.50 −0\.25$/.test(l)), 'ab: bottlenecks and limits side by side', JSON.stringify([r.result.bn, r.result.limits]));
-    check(r.result.diffHead === 'A B Δ uops Port 0 Port 1 Port 5 Port 6' && r.result.diff.length === 4 && /^ab-modified:~ add rax, 0x1 add rax, 0x2/.test(r.result.diff[0]) && /^ab-removed:− add rax, 0x1 −1 −0\.28/.test(r.result.diff[1]) && /^ab-same:dec r15 dec r15$/.test(r.result.diff[2]) && /^ab-same:jnz 0x\w+ M jnz 0x\w+ M$/.test(r.result.diff[3]), 'ab: the instruction diff (modified, removed, same; branch targets ignored)', JSON.stringify(r.result.diff));
+    check(r.result.diffHead === 'A B Δ uops Port 0 Port 1 Port 5 Port 6' && r.result.diff.length === 4 && /^ab-modified:~ add rax, 0x1 add rax, 0x2/.test(r.result.diff[0]) && /^ab-removed:− add rax, 0x1 −1 −0\.28/.test(r.result.diff[1]) && /^ab-same:dec r15 dec r15$/.test(r.result.diff[2]) && /^ab-same:jnz loop M jnz loop M$/.test(r.result.diff[3]), 'ab: the instruction diff (modified, removed, same; branch targets ignored, shown as labels)', JSON.stringify(r.result.diff));
     check(r.result.overflow <= 0 && /Δ −1\.00/.test(r.result.status), 'ab: no sideways scrolling at 1280px; the status line', JSON.stringify([r.result.overflow, r.result.status]));
     check(r.hash === '#v=1&c=NDggODMgYzAgMDEgNDggODMgYzAgMDEgNDkgZmYgY2YgNzUgZjM&ab=1&bc=NDggODMgYzAgMDIgNDkgZmYgY2YgNzUgZjc', 'ab: both inputs are in the fragment', r.hash);
     check(r.swapped[0].join() === '1.00,2.00' && r.swapped[1] === 'worse' && r.swapped[2] === BETTER && r.swapped[3] === CHAIN, 'ab: swap', JSON.stringify(r.swapped));
     check(r.zen[0] === 2 && /B .*ZEN3/.test(r.zen[1]) && r.zen[2] && r.zen[3], 'ab: another cpu for B (Zen 3): no per-port comparison', JSON.stringify(r.zen));
     check(r.swapArch.join() === 'ZEN3,SKL', 'ab: swap also exchanges the cpus', JSON.stringify(r.swapArch));
     check(r.copied[0] && r.copied[1] === 'same', 'ab: copy A → B', JSON.stringify(r.copied));
-    check(r.scaled[0][0].join() === '2.00,4.00' && r.scaled[0][1] === 'worse' && r.scaled[1].join() === '2.00,4.00' && r.scaled[2] === 'same' && r.scaled[3] && r.scaled[4], 'ab: B unrolled ×2 is compared per iteration of A', JSON.stringify(r.scaled));
+    check(r.scaled[0][0].join() === '2.00,4.00' && r.scaled[0][1] === 'worse' && r.scaled[0][2] === 'cycles/iteration' && r.scaled[1][0].join() === '2.00,2.00' && r.scaled[1][1] === 'same' && r.scaled[1][2] === 'cycles/element'
+      && /4\.00 cycles\/iteration ÷ 2/.test(r.scaled[1][3]) && r.scaled[2] && /^Dependencies 2\.00 2\.00$/.test(r.scaled[3]), 'ab: elements per iteration, applied as typed (no new analysis): the headline and the limits per element', JSON.stringify(r.scaled));
+    check(r.flag[0] === 'b-work' && r.flag[1] === 'true' && r.flag[2] === 'cycles/element?' && r.flag[3], 'ab: an edit of B marks its count until the field is visited', JSON.stringify(r.flag));
+    check(r.empty === '2' && r.reset[0] === '1' && r.reset[1].join() === '2.00,2.00' && r.reset[2] === 'cycles/iteration' && !r.reset[3], 'ab: B replaced by a copy of A: its count is A\'s (1); an empty field keeps the count', JSON.stringify([r.empty, r.reset]));
     check(r.bConverted[0] === 'loop:\n  add rax, 0x1\n  add rax, 0x1\n  add rax, 0x1\n  add rax, 0x1\n  dec r15\n  jnz loop\n' && r.bConverted[1] === 'intel', 'ab: B switched from hex to asm: its code as assembly', JSON.stringify(r.bConverted));
     check(r.asm[0] === '' && r.asm[1].join() === '2.00,1.00' && r.asm[2] === 'better' && r.asm[3], 'ab: B in assembly (no messages when it assembles)', JSON.stringify(r.asm));
     check(/line 2:3: .*frobnicate|invalid instruction/.test(r.asmErr[0]) && r.asmErr[1] === 'true', 'ab: B\'s assembler errors are shown under B', JSON.stringify(r.asmErr));

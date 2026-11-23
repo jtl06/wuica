@@ -19,4 +19,3 @@ button.sm-l:hover { background: var(--accent-dim); border: 0; }
   .sm-l { grid-template-columns: 3ch 2rem 4ch minmax(0, 1fr); }
 }
 
-body.ab-on #srcmap-row { display: none !important; }

@@ -21,7 +21,8 @@ export const DEFAULT_STATE = Object.freeze({
   bSyntax: 'intel',       // 'intel' | 'att'
   bArch: '',              // '' = the same microarchitecture as A
   bText: '',
-  bScale: 1,              // 1..64: one iteration of B does the work of this many iterations of A (e.g. B is unrolled)
+  aWork: 1,               // the elements (or bytes) one iteration of A processes: A–B compares cycles per element
+  bWork: 1,               // the same for B (an old link's bk=N, "B unrolled ×N", is bWork N)
   cost: false,            // the cost column and its variant (insight-view.js)
   costNop: false,
   trace: false,           // the trace is open (trace.js; in A–B mode the traces of both)
@@ -38,7 +39,8 @@ export const LIMITS = Object.freeze({
   alignmentOffset: [0, 63],
   minIterations: [1, 10000],
   minCycles: [1, 100000],
-  bScale: [1, 64],
+  aWork: [1, 65536],
+  bWork: [1, 65536],
   sel: [0, 1000000],
 });
 const MAX_TEXT = 200000; // characters accepted from a link
@@ -97,7 +99,8 @@ export function encodeState(state) {
     if (s.bMode === 'asm') p.push('bm=asm');
     if (s.bMode === 'asm' && s.bSyntax === 'att') p.push('bs=att');
     if (s.bArch) p.push(`ba=${encodeURIComponent(s.bArch)}`);
-    if (s.bScale !== DEFAULT_STATE.bScale) p.push(`bk=${s.bScale}`);
+    if (s.aWork !== DEFAULT_STATE.aWork) p.push(`aw=${s.aWork}`);
+    if (s.bWork !== DEFAULT_STATE.bWork) p.push(`bw=${s.bWork}`);
     if (s.bText !== '') p.push(`bc=${toBase64Url(s.bText)}`);
   }
   if (s.mode === 'asm' && p.length) p.unshift('m=asm');
@@ -156,7 +159,9 @@ export function decodeState(fragment) {
         if (KEY.test(a)) s.bArch = a;
       } catch { /* the same as A */ }
     }
-    if (q.has('bk')) s.bScale = clampInt(q.get('bk'), LIMITS.bScale, DEFAULT_STATE.bScale);
+    if (q.has('bk')) s.bWork = clampInt(q.get('bk'), [1, 64], DEFAULT_STATE.bWork); // older links: B unrolled ×N
+    if (q.has('aw')) s.aWork = clampInt(q.get('aw'), LIMITS.aWork, DEFAULT_STATE.aWork);
+    if (q.has('bw')) s.bWork = clampInt(q.get('bw'), LIMITS.bWork, DEFAULT_STATE.bWork);
     if (q.has('bc')) s.bText = text('bc');
   }
   return s;

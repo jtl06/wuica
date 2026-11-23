@@ -1,7 +1,7 @@
 // Keyboard shortcuts and the `?` overlay that lists them. app.js makes one createKeys({button}) (the ? button in the
 // footer); everything else is done through the page as a click would do it: a row is selected by a click on it
-// (trace-link.js and the instruction card, icard.js, react as to a click: the trace opens too), a view is opened by its
-// <details>, A–B by its radio button. j/k: the next/previous row; n/p: the rows the bound view shades for its resource,
+// (trace-link.js and the instruction card, icard.js, react as to a click: the trace opens too), a tab of the result is
+// picked by a click on it (the digits, in the tabs' order: workspace.js), A–B by its radio button. j/k: the next/previous row; n/p: the rows the bound view shades for its resource,
 // hottest first (else the critical chain's rows).
 // The table (KEYS) and the decision (actionFor, typing) are plain data and functions, testable without a DOM
 // (tests-js/web_keys.mjs); the browser side is tests-js/web_keys_browser.mjs.
@@ -11,6 +11,9 @@
 // arrows, + − 0; the arrows of the code map, the arcs and the table rows): a key a widget handled (defaultPrevented)
 // is left alone.
 
+// the digits: the tabs of the result, in their order (the second press of a tab's digit goes back to the first tab)
+export const TABS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+
 // {show: the keys as shown, label, action (one, or one per key), keys: the KeyboardEvent.key values}; in the overlay's
 // order. Ctrl/⌘+Enter is app.js's (listed only).
 export const KEYS = [
@@ -18,7 +21,7 @@ export const KEYS = [
   { show: ['/'], label: 'code', action: 'code', keys: ['/'] },
   { show: ['j', 'k'], label: 'row ↓ ↑', action: ['next', 'prev'], keys: ['j', 'k'] },
   { show: ['n', 'p'], label: 'hot rows', action: ['hotNext', 'hotPrev'], keys: ['n', 'p'] },
-  { show: ['1–5'], label: 'bound try bytes deps trace', action: ['view:bound', 'view:try', 'view:bytes', 'view:deps', 'view:trace'], keys: ['1', '2', '3', '4', '5'] },
+  { show: ['1–9'], label: 'tabs, in their order', action: TABS.map((n) => `tab:${n}`), keys: TABS.map(String) },
   { show: ['a'], label: 'A–B', action: 'ab', keys: ['a'] },
   { show: ['Esc'], label: 'close', action: 'escape', keys: ['Escape'] },
   { show: ['?'], label: 'keys', action: 'help', keys: ['?'] },
@@ -26,11 +29,6 @@ export const KEYS = [
 
 // key -> action
 export const KEYMAP = new Map(KEYS.flatMap((k) => k.keys.map((key, i) => [key, Array.isArray(k.action) ? k.action[i] : k.action])));
-
-// the views of the digits: the <details> each one opens and closes
-export const VIEWS = {
-  bound: '#bound', try: '#whatif', bytes: '#codemap', deps: '#deps', trace: 'details.trace-panel',
-};
 
 const NOT_TEXT = new Set(['checkbox', 'radio', 'button', 'submit', 'reset', 'image', 'color', 'file', 'range']);
 
@@ -113,13 +111,13 @@ export function createKeys(env = {}) {
     const row = stepIn(items.length ? hotOrder(items) : chain, current(), dir);
     if (row >= 0) select(row);
   }
-  function view(name) {
-    // (not one hidden, e.g. in A–B mode; a closed view of the tabbed workspace, dense.css, has no box but a tab)
-    const shown = (x) => x.getClientRects().length > 0 || !!x.closest('html.dense body:not(.ab-on) #more > .row:not([hidden])');
-    const d = [...document.querySelectorAll(VIEWS[name] ?? '')].find((x) => x.isConnected && shown(x));
-    if (!d) return;
-    d.open = !d.open;
-    if (d.open) d.querySelector('summary')?.scrollIntoView({ block: 'nearest' });
+  // the n-th tab of the result (workspace.js); its digit again: the first tab
+  const tabs = () => [...document.querySelectorAll('#result-body > .view-tabs > .view-tab')];
+  function tab(n) {
+    const all = tabs();
+    const t = all[n - 1];
+    if (!t) return;
+    (t.getAttribute('aria-selected') === 'true' && n > 1 ? all[0] : t).click();
   }
   function ab() {
     const on = document.getElementById('cmp-ab'), off = document.getElementById('cmp-single');
@@ -159,6 +157,9 @@ export function createKeys(env = {}) {
     const inner = document.createElement('div');
     inner.className = 'keys-inner';
     inner.append(head, list);
+    const names = document.createElement('p');
+    names.className = 'keys-tabs';
+    inner.append(names);
     const d = document.createElement('dialog');
     d.id = 'keys';
     d.className = 'keys';
@@ -176,6 +177,14 @@ export function createKeys(env = {}) {
   function show() {
     dialog ??= build();
     if (dialog.open) return;
+    // the tabs there are now, with their digits
+    const names = dialog.querySelector('.keys-tabs');
+    names.replaceChildren(...tabs().slice(0, 9).flatMap((t, i) => {
+      const kbd = document.createElement('kbd');
+      kbd.textContent = String(i + 1);
+      return [i ? ' ' : '', kbd, ` ${t.dataset.tab ?? t.textContent}`];
+    }));
+    names.hidden = !names.firstChild;
     back = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
     dialog.showModal();
     env.button?.setAttribute('aria-expanded', 'true');
@@ -203,7 +212,7 @@ export function createKeys(env = {}) {
   document.addEventListener('keydown', (e) => {
     const action = actionFor(e, { overlay: isOpen() });
     if (!action) return;
-    if (action.startsWith('view:')) view(action.slice(5));
+    if (action.startsWith('tab:')) tab(Number(action.slice(4)));
     else ACTIONS[action]?.();
     if (action !== 'blur') e.preventDefault(); // (Escape: the native close of the dialog does the same)
   });

@@ -29,9 +29,9 @@ export function portSetBlame(response, ps) {
 export function markPorts(root, ports) {
   const ths = root?.querySelectorAll?.('table.uops thead th') ?? [];
   for (const th of ths) {
-    const on = !!ports && ports.includes(th.textContent);
+    const on = !!ports && ports.includes(th.dataset.col ?? th.textContent); // ("Port 0" is shown as "P0": render.js)
     th.classList.toggle('ps-on', on);
-    if (on) th.title = 'in the port set behind the Ports limit'; else if (th.classList.contains('ps-was')) th.removeAttribute('title');
+    if (on) th.title = `${th.dataset.col ?? ''} in the port set behind the Ports limit`.trim(); else if (th.classList.contains('ps-was')) { if (th.dataset.col && th.dataset.col !== th.textContent) th.title = th.dataset.col; else th.removeAttribute('title'); }
     th.classList.toggle('ps-was', on);
   }
 }

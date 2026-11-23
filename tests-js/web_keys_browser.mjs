@@ -4,7 +4,8 @@
 //   a click on the backdrop close it, the focus comes back; the ? button in the footer opens it too
 // - j/k select the next/previous row of the uop table as a click does (the card follows), / goes to the code and
 //   typing j there only types; Escape leaves the code
-// - 1 opens the bound view and n/p step through its hot rows; a toggles A–B
+// - the digits pick the result's tabs in their order (the overlay lists them); a tab's digit again goes back to the first
+//   tab; the bound tab's digit and n/p step through its hot rows; a toggles A–B, where the digits pick A–B's tabs
 // - the overlay at 320 px and in both themes: no sideways scroll
 // - SHA-256 (2,949 instructions): j on the drawn table, the time of the handler (printed; not asserted)
 // Skipped (exit 0) without Chrome.
@@ -33,6 +34,9 @@ const KH = `${HELPERS}
   const dlg = () => $('keys');
   const card = () => { const c = $('icard'); return c && !c.hidden ? Number(c.dataset.row) : -1; };
   const act = () => { const a = document.activeElement; return a ? (a.id || a.tagName) : ''; };
+  const tabNames = () => [...document.querySelectorAll('#result-body > .view-tabs > .view-tab')].map((b) => b.dataset.tab);
+  const selected = () => document.querySelector('.view-tab[aria-selected="true"]')?.dataset.tab;
+  const settled = () => !$('results').hasAttribute('aria-busy') && !$('result-body').classList.contains('stale');
 `;
 
 const dir = copyDist();
@@ -41,6 +45,7 @@ const { browser, close } = await launch(chrome);
 try {
   const page = await Page.open(browser);
   const press = async (k) => page.key(k, KEY[k] ?? letter(k));
+  const digit = async (name) => String(await page.eval(`${KH} return tabNames().indexOf(${JSON.stringify(name)}) + 1;`));
   await page.goto(`${srv.origin}/?nosw=1`);
   await page.ready();
   await page.eval(`${KH} if ($('live').checked) $('live').click(); await done(() => set($('examples'), 'avx')); document.activeElement?.blur(); return 1;`);
@@ -57,6 +62,8 @@ try {
     check(r?.open && r.modal && r.role === 'dialog' && r.aria === 'true' && r.label === 'keys', '?: a labelled modal dialog', JSON.stringify(r));
     check(r?.dt === KEYS.length && r.dd.length === KEYS.length && r.kbd >= KEYS.length && r.dd.every((t) => t.split(/\s+/).length <= 5), '?: every key listed, short labels', JSON.stringify(r?.dd));
     check(r?.inside && r.expanded === 'true', '?: the focus is in the overlay; the button says expanded', JSON.stringify(r));
+    const t = await page.eval(`${KH} return [dlg().querySelector('.keys-tabs')?.textContent, tabNames().map((n, i) => (i + 1) + ' ' + n).join(' ')];`);
+    check(t[0] === t[1] && t[1].startsWith('1 table 2 bound'), '?: the overlay lists the tabs with their digits, in order', JSON.stringify(t));
     await press('j');
     check(await page.eval(`${KH} return sel();`) === -1, 'j behind the overlay: no row selected');
     await press('Escape');
@@ -75,16 +82,30 @@ try {
     await page.eval(`document.activeElement?.blur(); return 1;`);
   }
 
-  // ---- 5 opens the trace tab; 5 again closes it, back to the table (the trace keeps its model for later) -----------------
+  // ---- the digits: the tabs in their order; the trace's digit opens it, again: back to the table -------------------------
+  const tabs = await page.eval(`${KH} return tabNames();`);
+  check(tabs.join() === 'table,bound,try,bytes,deps,mca,sweep,trace', 'the tabs, in their fixed order', tabs.join());
   {
-    await press('5');
+    const seen = [];
+    for (let i = 1; i <= tabs.length; i++) {
+      await page.eval(`document.activeElement?.blur(); return 1;`);
+      await press(String(i));
+      seen.push(await page.eval(`${KH} return selected();`));
+      if (i > 1) { await press(String(i)); seen.push(await page.eval(`${KH} return selected();`)); }
+    }
+    const want = tabs.flatMap((n, i) => (i ? [n, 'table'] : [n]));
+    check(JSON.stringify(seen) === JSON.stringify(want), 'each digit picks its tab; again: the table', JSON.stringify(seen));
+  }
+  const T = await digit('trace'), B = await digit('bound');
+  {
+    await press(T);
     await page.waitFor(`document.querySelector('details.trace-panel')?.open && document.querySelector('details.trace-panel').wuicaTrace`, 'the trace');
     const tab = await page.eval(`return [location.hash, document.querySelector('.view-tab[aria-selected="true"]')?.textContent];`);
-    check(/(^|&)trace=1(&|$)/.test(tab[0].slice(1)) && tab[1] === 'trace', '5 opens the trace (its tab, in the URL)', JSON.stringify(tab));
+    check(/(^|&)trace=1(&|$)/.test(tab[0].slice(1)) && tab[1] === 'trace', 'the trace\'s digit opens it (its tab, in the URL)', JSON.stringify(tab));
     await page.eval(`document.activeElement?.blur(); return 1;`);
-    await press('5');
+    await press(T);
     await page.waitFor(`!document.querySelector('details.trace-panel').open`, 'the trace closed');
-    check(await page.eval(`return document.querySelector('.view-tab[aria-selected="true"]')?.textContent;`) === 'table', '5 again closes it: the table tab');
+    check(await page.eval(`return document.querySelector('.view-tab[aria-selected="true"]')?.textContent;`) === 'table', 'its digit again closes it: the table tab');
   }
 
   // ---- j/k: rows, the card follows ------------------------------------------------------------------------------------------
@@ -104,7 +125,7 @@ try {
     check(/(^|&)sel=0(&|$)/.test(url.slice(1)) || /sel/.test(url), 'the selection is in the URL', url);
     // the selection carries over to the trace tab; j there steps on (the card follows), and the trace with it
     await page.eval(`document.activeElement?.blur(); return 1;`);
-    await press('5');
+    await press(T);
     await page.waitFor(`document.querySelector('details.trace-panel')?.open && document.querySelector('.trace-viewer canvas')`, 'the trace again');
     const inTrace = async () => page.eval(`${KH} await wait(50); return [sel(), card(), document.querySelector('details.trace-panel').wuicaTrace?.selKey ?? null];`);
     const t0 = await inTrace();
@@ -112,7 +133,7 @@ try {
     const t1 = await inTrace();
     check(t0[0] === 0 && t0[1] === 0 && t0[2] === '0/instr' && t1[0] === 1 && t1[1] === 1 && t1[2] === '1/instr', 'the trace tab: the selection carries over (the trace marks it); j selects the next row', JSON.stringify([t0, t1]));
     await page.eval(`document.activeElement?.blur(); return 1;`);
-    await press('5');
+    await press(T);
     await page.waitFor(`!document.querySelector('details.trace-panel').open`, 'the trace closed');
   }
 
@@ -132,10 +153,10 @@ try {
     await page.eval(`${KH} set($('code'), ${JSON.stringify(before[0])}); return 1;`);
   }
 
-  // ---- 1 opens the bound view; n/p through its hot rows; a: A–B -----------------------------------------------------------
+  // ---- the bound tab's digit; n/p through its hot rows; a: A–B, its tabs -----------------------------------------------------
   {
-    await page.eval(`${KH} await done(() => $('run').click()); document.activeElement?.blur(); return 1;`);
-    await press('1');
+    await page.eval(`${KH} await done(() => $('run').click()); await until(settled); document.activeElement?.blur(); return 1;`);
+    await press(B);
     await page.waitFor(`document.querySelector('#bound')?.open && document.querySelector('.bd-item')`, 'the bound view');
     // (the bound view paints again when the details come: wait for them)
     await page.eval(`${KH} await until(() => document.querySelector('.bd-slots'), 10000).catch(() => {}); await wait(50); return 1;`);
@@ -149,8 +170,8 @@ try {
     const i0 = hot.indexOf(start) < 0 ? 0 : hot.indexOf(start) + 1; // the first n: the hottest, or the next after the selected one
     const want = [at(i0), at(i0 + 1), at(i0), at(i0 - 1)];
     check(hot.length > 0 && JSON.stringify(got.map((g) => g[0])) === JSON.stringify(want) && got.every((g) => g[0] === g[1]), 'n/p: the hot rows of the bound view, hottest first; the card follows', JSON.stringify({ hot, start, got, want }));
-    await press('1');
-    check(await page.waitFor(`!document.querySelector('#bound').open`, 'the bound view closed'), '1 again closes it');
+    await press(B);
+    check(await page.waitFor(`!document.querySelector('#bound').open`, 'the bound view closed'), 'its digit again closes it');
 
     await page.eval(`document.activeElement?.blur(); return 1;`);
     await press('a');
@@ -159,6 +180,21 @@ try {
     await press('a');
     const off = await page.eval(`${KH} return [document.body.classList.contains('ab-on'), $('cmp-single').checked];`);
     check(on[0] && on[1] && !off[0] && off[1], 'a toggles A–B', JSON.stringify([on, off]));
+    // A–B: the same places; the first tab is the diff, the views of one side (the switch at the end of the row)
+    await page.eval(`document.activeElement?.blur(); return 1;`);
+    await press('a');
+    await page.waitFor(`document.querySelector('#ab-main') && document.querySelector('.view-tab')?.dataset.tab === 'diff' && !document.getElementById('results').hasAttribute('aria-busy')`, 'the A–B result');
+    const abTabs = await page.eval(`${KH} return tabNames();`);
+    await page.eval(`document.activeElement?.blur(); return 1;`);
+    await press(B);
+    const abBound = await page.eval(`${KH} await until(() => $('bound')?.open); return [selected(), [...document.querySelectorAll('.ws-side-btn')].map((b) => b.textContent + (b.classList.contains('on') ? '*' : '')).join()];`);
+    await press(B);
+    const abBack = await page.eval(`${KH} return [selected(), !document.querySelector('.ws-side')];`);
+    check(abTabs.join() === 'diff,bound,try,bytes,deps,mca,sweep,trace' && abBound[0] === 'bound' && abBound[1] === 'A*,B' && abBack[0] === 'diff' && abBack[1],
+      'A–B: the tabs in the same places (diff first); the bound tab of side A, the side switch; its digit again: the diff', JSON.stringify([abTabs, abBound, abBack]));
+    await page.eval(`document.activeElement?.blur(); return 1;`);
+    await press('a');
+    await page.waitFor(`!document.body.classList.contains('ab-on') && document.querySelector('.view-tab')?.dataset.tab === 'table'`, 'single mode again');
   }
 
   // ---- the overlay at 320 px, both themes ------------------------------------------------------------------------------------
@@ -178,7 +214,10 @@ try {
   // ---- SHA-256: j on the drawn table; the handler's time ---------------------------------------------------------------------
   {
     // (the showcase loads its assembly first, showcase-asm.js: wait for its own result)
-    await page.eval(`${KH} await done(() => set($('examples'), 'sha256')); await until(() => tp() === '744.25' && trs().length >= 200, 60000); document.activeElement?.blur(); return 1;`);
+    // (wait for the state: the SHA-256 result drawn and current, nothing running; not for one run, which may be another's)
+    await page.eval(`${KH} await until(settled, 60000); set($('examples'), 'sha256');
+      await until(() => tp() === '744.25' && trs().length >= 200 && settled() && $('mode-asm').checked && $("code").value.startsWith("loop:\\n  mov qword ptr [rsp+0x98], r8"), 120000);
+      document.activeElement?.blur(); return 1;`);
     const r = await page.eval(`${KH}
       const n = trs().length, ms = [], s0 = sel();
       for (let i = 0; i < 5; i++) { const t0 = performance.now(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', bubbles: true, cancelable: true })); ms.push(performance.now() - t0); }

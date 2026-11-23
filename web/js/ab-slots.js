@@ -1,5 +1,5 @@
 // A–B: the issue slots of both sides (slots.js: issued, or lost to the front end, the ROB, the RS, other), one stacked
-// bar each, under the bottleneck row of the comparison (ab.js). A fold, closed by default: the details of each side
+// bar each, in the diff tab of the comparison (ab.js). A fold, closed by default: the details of each side
 // (one more analysis per side, with `details: true`: details.js) are fetched only while it is open, once per result.
 // app.js calls decorate(body, abView) after each A–B result is drawn.
 //
@@ -76,10 +76,10 @@ export function createABSlots(env) {
         if (open && body.dataset.state !== 'done') fill(view, body, summary);
       });
       const row = h('div', { class: 'row', id: 'ab-slots-row' }, h('div', { class: 'label', text: 'slots' }), h('div', { class: 'field' }, fold));
-      // after the bottleneck row (both sides have a result), else after the throughput
-      const leads = [...root.querySelectorAll(':scope > .row.lead')];
-      const after = leads[1] ?? leads[0];
-      if (after) after.after(row); else root.prepend(row);
+      // where the comparison keeps a place for it (its diff tab, ab.js), else after its first row
+      const slot = root.querySelector('.ab-slots-slot');
+      if (slot) slot.replaceWith(row);
+      else { const lead = root.querySelector(':scope > .row.lead'); if (lead) lead.after(row); else root.prepend(row); }
       if (open) fill(view, body, summary);
     },
   };

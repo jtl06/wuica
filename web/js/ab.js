@@ -1,9 +1,16 @@
-// A–B mode: two versions of a block side by side. Side A is the page's own editor (#code, with the format,
-// examples, cpu and options above it); this module adds the "single / A–B" switch, side B next to A (its own
-// input format, optionally its own cpu), swap and copy, and the comparison view (headline, bottlenecks, limits,
-// an instruction-by-instruction diff and the two uop tables).
+// A–B mode: two versions of a block. Side A is the page's own editor (#code, with the format, examples, cpu and
+// options in the toolbar above it, which is A's row); this module adds the "single / A–B" switch, side B under A (one
+// row of its own: format, cpu, elements per iteration), swap and copy, and the comparison view: a two-line headline,
+// the table of A and B per checked CPU (ab-cpus.js, from app.js), and the "diff" tab of the result workspace
+// (workspace.js): the uop tables of A and B stacked, the instruction-by-instruction difference, the limits, the issue
+// slots and the text reports. The other tabs are the page's views, of one side at a time (app.js).
 //
-// Its state is part of the page's state (url-state.js: ab, bMode, bSyntax, bArch, bText, bScale), so a link
+// Elements per iteration (aWork, bWork): the elements (or bytes) one iteration of each side processes. Given, A and B
+// are compared per element: the headline, the limits and the table per CPU. They apply as they are typed, without a new
+// analysis. Code that replaces a side's code (an import, an example, A → B) resets its count; an edit of the code marks
+// the count (it may no longer be right) until the field is visited.
+//
+// Its state is part of the page's state (url-state.js: ab, bMode, bSyntax, bArch, bText, aWork, bWork), so a link
 // carries both sides. The page (app.js) runs the analyses: inputs() gets the machine code of both sides,
 // analyze() runs them, draw() shows the result. All text goes in through textContent.
 
@@ -12,6 +19,8 @@ import { GROUP_LABEL } from './archs.js';
 import { compareResponses, signed } from './ab-diff.js';
 import { parseHexInput, toHex } from './hex-input.js';
 import { MAX_CODE_BYTES, tooMuchCode } from './assembler.js';
+import { LIMITS } from './url-state.js';
+import { branchLabels } from './branch-label.js';
 
 const PLACEHOLDERS = {
   hex: '48 83 c0 02 49 ff cf 75 f7',
@@ -31,11 +40,14 @@ function percent(p) {
 const sign2 = (v) => (Math.abs(v) < 0.005 ? '0' : `${v < 0 ? '−' : '+'}${Math.abs(v).toFixed(2)}`); // cycle counts
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const ok =(r) => !!r && typeof r === 'object' && !('error' in r) && Array.isArray(r.rows) && Array.isArray(r.columns);
+const WORK_TITLE = 'elements per iteration: the elements (or bytes) one iteration processes; A and B are then compared per element';
 
 // api (from app.js):
-//   state, el: {code, body}, archItems() -> Map, archTitle(key, experimental), ensureAssembler(), ensureTable(key),
+//   state, el: {code, body, toolbar}, archItems() -> Map, archTitle(key, experimental), ensureAssembler(), ensureTable(key),
 //   machineCodeA(runId) -> bytes | null (shows A's messages), getA() / setA({mode, syntax, text}, {run}),
-//   changed({rerun}), toggled() (the mode changed), writeControls(), watchLinks(textarea, side, messages), demo() -> {a, b} | null
+//   changed({rerun}), toggled() (the mode changed), writeControls(), watchLinks(textarea, side, messages), demo() -> {a, b} | null,
+//   redraw() (the shown comparison again: the counts changed), cpusBox (the table per CPU, ab-cpus.js), labels(side) -> the
+//   label of the block's start for its branch targets (branch-label.js)
 export function createAB(api) {
   const { state } = api;
   const buffers = { hex: '', asm: '' }; // B's text of each input mode
@@ -45,41 +57,51 @@ export function createAB(api) {
   // ---- the switch ----------------------------------------------------------------------------------------------
   const rSingle = h('input', { type: 'radio', name: 'compare', value: 'single', id: 'cmp-single' });
   const rAB = h('input', { type: 'radio', name: 'compare', value: 'ab', id: 'cmp-ab' });
-  const swap = h('button', { type: 'button', id: 'ab-swap', title: 'exchange the two sides: code, input format and cpu' }, 'swap');
+  const swap = h('button', { type: 'button', id: 'ab-swap', title: 'exchange the two sides: code, input format, cpu and elements' }, 'swap');
   const copy = h('button', { type: 'button', id: 'ab-copy', title: 'replace B with a copy of A' }, 'A → B');
   const switchRow = h('div', { class: 'ab-switch' },
-    h('div', { class: 'choice', role: 'radiogroup', 'aria-label': 'compare', title: 'one block, or two versions side by side' },
+    h('div', { class: 'choice', role: 'radiogroup', 'aria-label': 'compare', title: 'one block, or two versions' },
       h('label', null, rSingle, 'single'), h('label', null, rAB, 'A–B')),
     h('span', { class: 'ab-tools ab-only' }, swap, copy));
   const heading = document.getElementById('h-input');
   if (heading) heading.after(switchRow); else api.el.code.closest('section')?.prepend(switchRow);
 
-  // ---- side A: a caption over the page's editor ----------------------------------------------------------------
+  // elements per iteration: a small number field of each side's row
+  const workField = (side) => {
+    const input = h('input', { type: 'number', id: `${side}-work`, class: 'ab-work-in', min: 1, max: LIMITS.aWork[1], step: 1, inputmode: 'numeric', value: 1 });
+    const label = h('label', { class: 'inline ab-work', title: WORK_TITLE }, h('span', { class: 'ab-work-k', text: 'elems' }), input);
+    return { input, label };
+  };
+
+  // ---- side A: the page's toolbar is its row (a tag in front, the elements at the end) ------------------------------
   // The editor's own elements go into a column (display: contents outside A–B mode: the layout does not change).
   const field = api.el.code.parentElement;
   const aCol = h('div', { class: 'field ab-a-col' });
   aCol.append(...field.childNodes);
   field.append(aCol);
-  const aDesc = h('span', { class: 'ab-desc', title: 'A uses the input format above and the marked CPU (check a CPU to use it)' });
-  const aHead = h('div', { class: 'ab-head ab-a ab-only' }, h('span', { class: 'ab-tag', text: 'A' }), aDesc);
-  aCol.insertBefore(aHead, api.el.code);
+  const aDesc = h('span', { class: 'ab-desc vh' });
+  const aHead = h('span', { class: 'ab-head ab-a ab-only', title: 'A: the input format here and the marked CPU' }, h('span', { class: 'ab-tag', text: 'A' }), aDesc);
+  const aWork = workField('a');
+  aWork.label.classList.add('ab-only');
+  const toolbar = api.el.toolbar ?? field.previousElementSibling;
+  if (toolbar) { toolbar.prepend(aHead); toolbar.append(aWork.label); } else aCol.prepend(aHead, aWork.label);
 
   // ---- side B ----------------------------------------------------------------------------------------------------
   const bAsm = h('input', { type: 'radio', name: 'b-mode', value: 'asm', id: 'b-mode-asm' });
   const bHex = h('input', { type: 'radio', name: 'b-mode', value: 'hex', id: 'b-mode-hex' });
-  const bSyntax = h('select', { id: 'b-syntax' }, h('option', { value: 'intel', text: 'Intel' }), h('option', { value: 'att', text: 'AT&T' }));
-  const bSyntaxWrap = h('label', { class: 'inline' }, 'syntax', bSyntax);
-  const bArch = h('select', { id: 'b-arch' });
-  const bScale = h('input', { type: 'number', id: 'b-scale', min: 1, max: 64, step: 1, inputmode: 'numeric', value: 1 });
+  const bSyntax = h('select', { id: 'b-syntax', title: 'assembly syntax of B' }, h('option', { value: 'intel', text: 'Intel' }), h('option', { value: 'att', text: 'AT&T' }));
+  const bSyntaxWrap = h('label', { class: 'inline' }, h('span', { class: 'vh', text: 'syntax' }), bSyntax);
+  const bArch = h('select', { id: 'b-arch', title: 'the cpu of B' });
+  const bWork = workField('b');
   const bCode = h('textarea', { id: 'code-b', rows: 9, spellcheck: 'false', autocomplete: 'off', autocapitalize: 'off', autocorrect: 'off', wrap: 'off', 'aria-describedby': 'b-messages' });
   const bMessages = h('div', { id: 'b-messages', class: 'messages', 'aria-live': 'polite' });
   const bSide = h('div', { class: 'ab-b ab-only', role: 'group', 'aria-labelledby': 'ab-b-tag' },
-    h('div', { class: 'ab-head' },
+    h('div', { class: 'ab-head ab-b-head' },
       h('span', { class: 'ab-tag', id: 'ab-b-tag', text: 'B' }),
       h('div', { class: 'choice', role: 'radiogroup', 'aria-label': 'input format of B' }, h('label', null, bAsm, 'asm'), h('label', null, bHex, 'hex')),
       bSyntaxWrap,
       h('label', { class: 'inline' }, 'cpu', bArch),
-      h('label', { class: 'inline', title: 'one iteration of B does the work of this many iterations of A (B is unrolled): B\'s cycles are divided by it' }, 'unrolled ×', bScale)),
+      bWork.label),
     bCode, bMessages);
   field.append(bSide);
   api.watchLinks?.(bCode, 'B', bMessages);
@@ -97,9 +119,25 @@ export function createAB(api) {
       const group = h('optgroup', { label: GROUP_LABEL }, [...items.values()].map((it) => h('option', { value: it.key, text: it.title })));
       bArch.replaceChildren(same, ...(items.size ? [group] : []));
     }
-    bArch.options[0].textContent = `same as A (${state.arch})`;
+    bArch.options[0].textContent = `as A (${state.arch})`;
     bArch.disabled = items.size === 0;
   }
+
+  // the counts: the code each was given for (an edit of the code marks a count that is not 1)
+  const sides = { a: { work: aWork, code: () => api.el.code.value, key: 'aWork', given: '' }, b: { work: bWork, code: () => bCode.value, key: 'bWork', given: '' } };
+  function flagged(s) { const x = sides[s]; return state[x.key] !== 1 && x.code() !== x.given; }
+  function paintWork() {
+    for (const s of ['a', 'b']) {
+      const x = sides[s];
+      if (document.activeElement !== x.work.input || Number(x.work.input.value) !== state[x.key]) x.work.input.value = state[x.key];
+      const flag = flagged(s);
+      x.work.label.classList.toggle('flag', flag);
+      x.work.input.setAttribute('aria-invalid', flag ? 'true' : 'false');
+      x.work.label.title = flag ? `${WORK_TITLE}. ${s.toUpperCase()}'s code changed since it was set: check it` : WORK_TITLE;
+    }
+  }
+  // a count is right for the code shown now (set, confirmed, or the code was replaced)
+  const settle = (s) => { sides[s].given = sides[s].code(); };
 
   function paint() {
     document.body.classList.toggle('ab-on', state.ab);
@@ -116,15 +154,18 @@ export function createAB(api) {
     bCode.setAttribute('aria-label', `B: ${state.bMode === 'asm' ? 'assembly code' : 'machine code (hex)'}`);
     fillArchs();
     bArch.value = archOk(state.bArch) ? state.bArch : '';
-    bScale.value = state.bScale;
     aDesc.textContent = `${state.mode === 'asm' ? `asm (${state.syntax === 'att' ? 'AT&T' : 'Intel'})` : 'hex'} · ${state.arch}`;
+    paintWork();
   }
 
-  function setB({ mode, syntax, text }) {
+  function setB({ mode, syntax, text }, { work = 1 } = {}) {
     state.bMode = mode === 'asm' ? 'asm' : 'hex';
     if (syntax) state.bSyntax = syntax === 'att' ? 'att' : 'intel';
     state.bText = text;
     buffers[state.bMode] = text;
+    if (bCode.value !== text) bCode.value = text;
+    state.bWork = work; // other code: its own count (1 until given)
+    settle('b');
     clearB();
   }
 
@@ -132,10 +173,33 @@ export function createAB(api) {
     if (on === state.ab) return;
     state.ab = on;
     const demo = on && state.bText.trim() === '' ? api.demo?.() : null; // the default example in A, B empty: a demo pair
-    if (demo) { api.setA(demo.a, { run: false }); setB(demo.b); } else if (on && state.bText.trim() === '') setB(api.getA()); // start from a copy of A
+    if (demo) { api.setA(demo.a, { run: false }); setB(demo.b); state.aWork = 1; settle('a'); } else if (on && state.bText.trim() === '') setB(api.getA(), { work: state.aWork }); // start from a copy of A
     paint();
     api.toggled();
   }
+
+  // a count typed: applied at once (no new analysis: the shown result is weighed again); a field left empty or out of
+  // range goes back to the count in use
+  function setWork(s, value, { final = false } = {}) {
+    const x = sides[s];
+    const n = Number(value);
+    const valid = value !== '' && Number.isInteger(n) && n >= LIMITS[x.key][0] && n <= LIMITS[x.key][1];
+    if (!valid) { if (final) x.work.input.value = state[x.key]; return; }
+    settle(s);
+    if (n !== state[x.key]) {
+      state[x.key] = n;
+      paintWork();
+      if (shown) reweigh();
+      api.changed();
+    } else paintWork();
+  }
+  for (const s of ['a', 'b']) {
+    const input = sides[s].work.input;
+    input.addEventListener('input', () => setWork(s, input.value));
+    input.addEventListener('change', () => setWork(s, input.value, { final: true }));
+    input.addEventListener('focus', () => { settle(s); paintWork(); }); // visited: the count is confirmed for this code
+  }
+  api.el.code.addEventListener('input', () => { if (state.ab) paintWork(); });
 
   rSingle.addEventListener('change', () => { if (rSingle.checked) setActive(false); });
   rAB.addEventListener('change', () => { if (rAB.checked) setActive(true); });
@@ -146,6 +210,7 @@ export function createAB(api) {
       state.bMode = mode;
       state.bText = c ? c.text : buffers[mode];
       if (c?.syntax) state.bSyntax = c.syntax;
+      if (c) settle('b'); // the same machine code: its count stays right
       clearB();
       paint();
       if (mode === 'asm') api.ensureAssembler();
@@ -161,15 +226,9 @@ export function createAB(api) {
     if (archOk(state.bArch)) api.ensureTable(state.bArch).catch(() => {}); // reported when it runs
     api.changed({ rerun: true });
   });
-  bScale.addEventListener('change', () => {
-    const n = Number(bScale.value);
-    state.bScale = Number.isInteger(n) ? Math.min(64, Math.max(1, n)) : 1;
-    bScale.value = state.bScale;
-    api.changed({ rerun: true });
-  });
-  bCode.addEventListener('input', () => { state.bText = buffers[state.bMode] = bCode.value; api.changed(); });
+  bCode.addEventListener('input', () => { state.bText = buffers[state.bMode] = bCode.value; paintWork(); api.changed(); });
   copy.addEventListener('click', () => {
-    setB(api.getA());
+    setB(api.getA(), { work: state.aWork });
     paint();
     api.changed({ rerun: true });
     bCode.focus();
@@ -177,9 +236,12 @@ export function createAB(api) {
   swap.addEventListener('click', () => {
     const a = api.getA();
     const b = { mode: state.bMode, syntax: state.bSyntax, text: state.bText };
+    const works = [state.bWork, state.aWork];
     if (archOk(state.bArch) && state.bArch !== state.arch) [state.arch, state.bArch] = [state.bArch, state.arch];
-    setB(a);
+    setB(a, { work: works[1] });
     api.setA(b, { run: false });
+    state.aWork = works[0];
+    settle('a');
     paint();
     api.changed({ rerun: true });
   });
@@ -247,9 +309,19 @@ export function createAB(api) {
     return { a: a ? { bytes: a, arch: state.arch } : null, b: b ? { bytes: b, arch: archB() } : null };
   }
 
+  const weigh = (view) => {
+    view.workA = state.aWork;
+    view.workB = state.bWork;
+    view.scale = state.bWork / state.aWork; // iterations of A per iteration of B (the traces' windows)
+    view.cmp = compareResponses(view.a?.response, view.b?.response, { workA: state.aWork, workB: state.bWork });
+    return view;
+  };
+  // the counts changed: the shown comparison is weighed again and drawn
+  function reweigh() { if (shown) { weigh(shown); if (api.redraw) api.redraw(); else draw(shown); } }
+
   // analyzeFn(hex, archKey) -> response. One side failing does not stop the other.
   async function analyze(input, analyzeFn, current) {
-    const side = async (x) => {
+    const side = async (x, s) => {
       if (!x) return null;
       const hex = toHex(x.bytes);
       const t0 = performance.now();
@@ -261,32 +333,37 @@ export function createAB(api) {
         response = { error: e?.message ?? String(e) };
       }
       const item = api.archItems().get(x.arch);
-      return { response, elapsedMs: performance.now() - t0, hex, byteCount: x.bytes.length, archKey: x.arch,
-        archTitle: api.archTitle(x.arch, !!item?.experimental), experimental: !!item?.experimental };
+      const start = api.labels?.(s) ?? null;
+      return { side: s, response, shown: ok(response) ? branchLabels(response.rows, start ?? 'loop') : null, elapsedMs: performance.now() - t0, hex, byteCount: x.bytes.length, archKey: x.arch,
+        archTitle: api.archTitle(x.arch, !!item?.experimental), experimental: !!item?.experimental,
+        inputMode: s === 'a' ? state.mode : state.bMode, start };
     };
-    const a = await side(input.a);
+    const a = await side(input.a, 'a');
     if (!current()) return null;
-    const b = await side(input.b);
-    return { a, b, scale: state.bScale, cmp: compareResponses(a?.response, b?.response, { scale: state.bScale }) };
+    const b = await side(input.b, 'b');
+    return weigh({ a, b });
   }
 
+  const unitOf = (view) => (view.cmp.perElement ? 'cycles/element' : 'cycles/iteration');
   function summary(view) {
     const t = view.cmp.tp;
     if (!t) return 'compared: one side has no result';
-    return `A ${two(t.a)} · B ${two(t.b)} cycles per iteration${t.verdict === 'same' ? ' (the same)' : ` (Δ ${sign2(t.delta)}, ${percent(t.pct)})`}`;
+    return `A ${two(t.a)} · B ${two(t.b)} ${view.cmp.perElement ? 'cycles per element' : 'cycles per iteration'}${t.verdict === 'same' ? ' (the same)' : ` (Δ ${sign2(t.delta)}, ${percent(t.pct)})`}`;
   }
 
-  // what a result depends on, besides side A and the options (app.js adds this to its own key)
-  const key = () => (state.ab ? JSON.stringify([state.bMode, state.bMode === 'asm' ? state.bSyntax : '', bCode.value, archB(), state.bScale]) : '');
+  // what a result depends on, besides side A and the options (app.js adds this to its own key); not the counts: they
+  // weigh the result without a new analysis
+  const key = () => (state.ab ? JSON.stringify([state.bMode, state.bMode === 'asm' ? state.bSyntax : '', bCode.value, archB()]) : '');
 
   // ---- the view -----------------------------------------------------------------------------------------------------------
-  // By default as lean as single mode: the throughputs and their difference, the bottlenecks, the two uop tables.
-  // The limits, the instruction diff and the text reports are collapsed (one line each); ui.open keeps them open.
+  // On top, two lines: A → B and the verdict; the sides' cpus and the bottlenecks. Under it the result's tabs; this
+  // module draws the first one, "diff": the uop tables of A and B stacked, then the difference, the limits, the slots and
+  // the reports, collapsed (ui.open keeps them open).
   const row = (label, ...content) => h('div', { class: 'row' }, h('div', { class: 'label', text: label }), h('div', { class: 'field' }, ...content));
   // a row whose content says what it is: its label is for screen readers only
   const lead = (label, ...content) => h('div', { class: 'row lead' }, h('div', { class: 'label', text: label }), h('div', { class: 'field' }, ...content));
   const sep = () => h('span', { class: 'sep', text: ' · ' });
-  const tag = (t) => h('span', { class: 'ab-tag', text: t });
+  const tag = (t) => h('span', { class: `ab-tag${t === 'B' ? ' b' : ''}`, text: t });
   const ms = (s) => `${s.elapsedMs < 10 ? s.elapsedMs.toFixed(1) : Math.round(s.elapsedMs)} ms`;
 
   function fold(name, label, summary, ...content) {
@@ -295,7 +372,7 @@ export function createAB(api) {
     return row(label, d);
   }
 
-  // one line per side: the cpu and loop/unrolled; the rest in the tooltip
+  // the cpu and loop/unrolled of a side; the rest in the tooltip
   function sideMeta(t, s) {
     if (!s) return [tag(t), ' no input'];
     const r = s.response;
@@ -310,43 +387,44 @@ export function createAB(api) {
       r.decodeErrors > 0 ? h('span', { class: 'caveat', text: ` ${r.decodeErrors} undecodable skipped` }) : null);
   }
 
+  function bottlenecks(cmp) {
+    const bn = cmp.bottlenecks;
+    const k = h('span', { class: 'k', text: bn.a.length > 1 || bn.b.length > 1 ? 'bottlenecks' : 'bottleneck' });
+    const list = (names, cls) => (names.length ? names.flatMap((n, i) => [i ? ', ' : '', h('span', { class: cls(n), text: n })]) : h('span', { class: 'hint', text: 'unknown' }));
+    if (bn.same) return h('span', { class: 'ab-bn' }, k, ' ', h('span', { class: 'bn', text: bn.a.join(', ') || 'unknown' }), h('span', { class: 'hint', text: ' (both)' }));
+    const change = [bn.gone.length ? `no longer: ${bn.gone.join(', ')}` : '', bn.new.length ? `new: ${bn.new.join(', ')}` : ''].filter(Boolean).join(' · ');
+    return h('span', { class: 'ab-bn', title: change || null }, k, ' ',
+      tag('A'), ' ', list(bn.a, (n) => (bn.b.includes(n) ? 'bn' : 'bn ab-gone')),
+      h('span', { class: 'ab-arrow', 'aria-hidden': 'true', text: ' → ' }),
+      tag('B'), ' ', list(bn.b, (n) => (bn.a.includes(n) ? 'bn' : 'bn ab-new')),
+      change ? h('span', { class: 'ab-sr', text: ` (${change})` }) : null);
+  }
+
   function headline(view) {
     const { a, b, cmp } = view;
     const t = cmp.tp;
-    const val = (s, raw) => (ok(s?.response) ? h('span', { class: 'value', text: two(raw) }) : h('span', { class: 'value ab-none', text: '–' }));
-    const scaled = view.scale !== 1 && t;
-    const big = h('div', { class: 'ab-tp' },
-      tag('A'), val(a, a && ok(a.response) ? Number(a.response.tp) : null),
+    const per = cmp.perElement;
+    const val = (s, v, raw, work) => (ok(s?.response)
+      ? h('span', { class: 'value', title: per ? `${two(raw)} cycles/iteration ÷ ${work}` : null, text: two(v) })
+      : h('span', { class: 'value ab-none', text: '–' }));
+    const okA = ok(a?.response), okB = ok(b?.response);
+    const rawA = okA ? Number(a.response.tp) : null, rawB = okB ? Number(b.response.tp) : null;
+    const flag = flagged('a') || flagged('b');
+    const line = h('div', { class: 'ab-tp' },
+      tag('A'), val(a, okA ? rawA / cmp.workA : null, rawA, cmp.workA),
       h('span', { class: 'ab-arrow', 'aria-hidden': 'true', text: '→' }),
-      tag('B'), val(b, b && ok(b.response) ? Number(b.response.tp) : null),
-      h('span', { class: 'unit', text: 'cycles/iteration' }));
-    const out = [big];
+      tag('B'), val(b, okB ? rawB / cmp.workB : null, rawB, cmp.workB),
+      h('span', { class: `unit${flag ? ' caveat' : ''}`, title: flag ? 'a side\'s code changed since its elements per iteration were set' : (per ? `A: ${cmp.workA}, B: ${cmp.workB} elements per iteration` : null), text: `${unitOf(view)}${flag ? '?' : ''}` }));
     if (t) {
-      const sentence = t.verdict === 'same'
-        ? 'Δ = 0'
-        : `Δ = ${sign2(t.delta)} cycles (${percent(t.pct)}) · B is ${t.speedup >= 1 ? `${t.speedup.toFixed(2)}× faster` : `${(1 / t.speedup).toFixed(2)}× slower`}`;
-      out.push(h('div', { class: `ab-delta ab-${t.verdict}`, 'data-verdict': t.verdict },
-        h('span', { class: 'ab-verdict', text: t.verdict === 'better' ? 'B better' : t.verdict === 'worse' ? 'B worse' : 'no change' }), ' ', sentence));
-      if (scaled) out.push(h('div', { class: 'hint', title: `B's ${two(t.bRaw)} cycles/iteration divided by ${view.scale}`, text: `B per iteration of A (unrolled ×${view.scale})` }));
-      // the same text in one line, for screen readers and for copying
-      out.push(h('p', { class: 'ab-sr', text: `A: ${two(t.a)} cycles, B: ${two(t.b)} cycles, Δ = ${t.verdict === 'same' ? '0' : `${sign2(t.delta)} (${percent(t.pct)})`}` }));
+      const speed = t.speedup >= 1 ? `${t.speedup.toFixed(2)}× faster` : `${(1 / t.speedup).toFixed(2)}× slower`;
+      line.append(h('span', { class: `ab-delta ab-${t.verdict}`, 'data-verdict': t.verdict },
+        h('span', { class: 'ab-verdict', text: t.verdict === 'better' ? 'B better' : t.verdict === 'worse' ? 'B worse' : 'no change' }),
+        t.verdict === 'same' ? null : ` Δ ${sign2(t.delta)} (${percent(t.pct)}) · ${speed}`));
     }
-    out.push(h('div', { class: 'meta' }, sideMeta('A', a), sep(), sideMeta('B', b)));
-    return lead('throughput', ...out);
-  }
-
-  function bottlenecks(cmp) {
-    const bn = cmp.bottlenecks;
-    const list = (names, cls) => (names.length ? names.flatMap((n, k) => [k ? ', ' : '', h('span', { class: cls(n), text: n })]) : h('span', { class: 'hint', text: 'unknown' }));
-    const key = (t) => h('span', { class: 'k', 'aria-hidden': 'true', text: `${t} ` });
-    if (bn.same) return lead(bn.a.length > 1 ? 'bottlenecks' : 'bottleneck', key(bn.a.length > 1 ? 'bottlenecks' : 'bottleneck'), h('span', { class: 'bn', text: bn.a.join(', ') || 'unknown' }), h('span', { class: 'hint', text: ' (both)' }));
-    const change = [bn.gone.length ? `no longer: ${bn.gone.join(', ')}` : '', bn.new.length ? `new: ${bn.new.join(', ')}` : ''].filter(Boolean).join(' · ');
-    return lead('bottleneck',
-      h('div', { class: 'ab-bn', title: change || null }, key('bottleneck'),
-        tag('A'), ' ', list(bn.a, (n) => (bn.b.includes(n) ? 'bn' : 'bn ab-gone')),
-        h('span', { class: 'ab-arrow', 'aria-hidden': 'true', text: ' → ' }),
-        tag('B'), ' ', list(bn.b, (n) => (bn.a.includes(n) ? 'bn' : 'bn ab-new')),
-        change ? h('span', { class: 'ab-sr', text: ` (${change})` }) : null));
+    const meta = h('div', { class: 'meta' }, sideMeta('A', a), sep(), sideMeta('B', b), cmp.okA && cmp.okB ? [sep(), bottlenecks(cmp)] : null);
+    // the same in one line, for screen readers and for copying
+    const sr = t ? h('p', { class: 'ab-sr', text: `A: ${two(t.a)} cycles, B: ${two(t.b)} cycles${per ? ' per element' : ''}, Δ = ${t.verdict === 'same' ? '0' : `${sign2(t.delta)} (${percent(t.pct)})`}` }) : null;
+    return lead('throughput', line, meta, sr);
   }
 
   function deltaCell(d, { lowerIsBetter = true, cycles = false } = {}) {
@@ -354,7 +432,8 @@ export function createAB(api) {
     return h('td', { class: cls, text: cycles ? (d === 0 ? '' : sign2(d)) : signed(d) });
   }
 
-  function limits(cmp) {
+  function limits(view) {
+    const cmp = view.cmp;
     const max = Math.max(1e-9, ...cmp.limits.flatMap((l) => [l.a ?? 0, l.b ?? 0]));
     const gauge = (v, hot) => {
       const g = h('span', { class: 'gauge' + (hot ? ' is-bottleneck' : ''), 'aria-hidden': 'true' }, h('span'));
@@ -372,15 +451,16 @@ export function createAB(api) {
     const table = h('table', { class: 'grid ab-limits' },
       h('thead', null, h('tr', null, h('th', { scope: 'col', class: 'first', text: 'limit' }), h('th', { scope: 'col', text: 'A' }), h('th', { scope: 'col' }),
         h('th', { scope: 'col', text: 'B' }), h('th', { scope: 'col' }), h('th', { scope: 'col', text: 'Δ' }))), body);
-    return fold('limits', 'limits', h('span', { title: 'cycles/iteration if each were the only bottleneck', text: 'A vs B' }),
+    return fold('limits', 'limits', h('span', { title: `${unitOf(view)} if each were the only bottleneck`, text: 'A vs B' }),
       h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Limits of A and B' }, table));
   }
 
-  function instrCell(u) {
+  function instrCell(u, shownLabel) {
     if (!u) return h('td', { class: 'ab-i ab-empty' });
     const extras = u.extras.length ? h('span', { class: 'ab-x', title: `includes ${u.extras.length} uop${u.extras.length === 1 ? '' : 's'} the renamer inserts before it (${u.extras.join(', ')})`, text: ` +${u.extras.length}` }) : null;
     const note = u.notes ? h('span', { class: 'ab-note', title: NOTES[u.notes] ?? null, text: ` ${u.notes}` }) : null;
-    return h('td', { class: 'ab-i' }, h('span', { text: u.label }), note, extras);
+    const text = shownLabel?.get(u.row) ?? u.label;
+    return h('td', { class: 'ab-i' }, h('span', { title: text !== u.label ? u.label : null, text }), note, extras);
   }
 
   function diff(view, archA, archB) {
@@ -391,16 +471,18 @@ export function createAB(api) {
     const only = h('input', { type: 'checkbox', id: 'ab-only-changes', checked: ui.onlyChanges });
     only.checked = ui.onlyChanges;
     only.addEventListener('change', () => { ui.onlyChanges = only.checked; draw(shown); });
+    const labels = new Map(); // row -> its shown label (branch targets as labels)
+    for (const s of [view.a, view.b]) if (s?.shown) s.response.rows.forEach((r, i) => { if (s.shown[i]) labels.set(r, s.shown[i]); });
     const head = h('tr', null, h('th', { scope: 'col', class: 'ab-m first', 'aria-label': 'change' }),
       h('th', { scope: 'col', class: 'ab-i', text: 'A' }), h('th', { scope: 'col', class: 'ab-i', text: 'B' }),
-      d.columns.map((c, k) => h('th', { scope: 'col', class: k === 0 || (k === 1 && d.columns[0].name === 'Issued') ? 'grp' : null, text: c.name === 'Issued' ? 'Δ uops' : c.name })));
+      d.columns.map((c, k) => h('th', { scope: 'col', class: k === 0 || (k === 1 && d.columns[0].name === 'Issued') ? 'grp' : null, title: c.name, text: c.name === 'Issued' ? 'Δ uops' : c.name })));
     const body = h('tbody');
     let hidden = 0;
     for (const r of d.rows) {
       if (ui.onlyChanges && r.status === 'same') { hidden++; continue; }
       body.append(h('tr', { class: `ab-${r.status}`, title: STATUS_TEXT[r.status] },
         h('td', { class: 'ab-m first', text: STATUS_MARK[r.status] }),
-        instrCell(r.a), instrCell(r.b),
+        instrCell(r.a, labels), instrCell(r.b, labels),
         r.deltas.map((v, k) => {
           const td = deltaCell(v);
           if (k === 0 || (k === 1 && d.columns[0].name === 'Issued')) td.classList.add('grp');
@@ -415,25 +497,25 @@ export function createAB(api) {
       }));
     const table = h('table', { class: 'grid ab-diff' }, h('thead', null, head), body, h('tfoot', null, foot));
     const legend = Object.entries(STATUS_MARK).filter(([k]) => k !== 'same').map(([k, m]) => `${m} ${STATUS_TEXT[k]}`).join(' · ');
-    return fold('diff', 'diff', h('span', { title: `${detail}; B − A, uops per iteration`, text: counts || 'no change' }),
+    return fold('diff', 'Δ', h('span', { title: `${detail}; B − A, uops per iteration`, text: counts || 'no change' }),
       h('div', { class: 'table-tools' }, h('label', null, only, ` only changes${hidden ? ` (${hidden} hidden)` : ''}`)),
       h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Instruction-by-instruction difference of A and B (B − A)', title: legend }, table),
       d.portsComparable ? null : h('p', { class: 'hint', text: `${archA} and ${archB} have different ports: uop counts only` }));
   }
 
-  function uops(view) {
-    const notes = new Set();
+  // the uop tables of A and B, one above the other, each the whole width (its instruction column stays in view)
+  function tables(view) {
     const side = (t, s) => {
-      if (!s || !ok(s.response)) return h('div', { class: 'ab-col' }, h('div', { class: 'ab-cap' }, tag(t), ' no result'));
-      const r = uopTable(s.response, true, rowLimit(s.response.rows.length, ui.allRows));
-      for (const k of r.notes) notes.add(k);
-      return h('div', { class: 'ab-col' }, h('div', { class: 'ab-cap' }, tag(t), ` ${s.archKey} · ${two(Number(s.response.tp))}`),
+      const col = h('div', { class: 'ab-col', 'data-side': t.toLowerCase() });
+      if (!s || !ok(s.response)) { col.append(h('div', { class: 'ab-cap' }, tag(t), ' no result')); return col; }
+      const r = uopTable(s.response, true, rowLimit(s.response.rows.length, ui.allRows), { shown: s.shown });
+      col.append(...[h('div', { class: 'ab-cap' }, tag(t), ` ${s.archKey} · ${two(Number(s.response.tp))} cycles/iteration`),
         h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': `Uops per instruction of ${t}, average per iteration` }, r.table),
-        r.more ? moreRows(r.more, s.response.rows.length, () => { ui.allRows = true; draw(shown); }) : null);
+        r.more ? moreRows(r.more, s.response.rows.length, () => { ui.allRows = true; draw(shown); }) : null,
+        r.notes.size ? h('p', { class: 'legend' }, [...r.notes].map((k) => h('span', { title: NOTES[k] }, h('b', { text: k }), ` ${LEGEND[k]}`))) : null].filter(Boolean));
+      return col;
     };
-    const pair = h('div', { class: 'ab-pair' }, side('A', view.a), side('B', view.b));
-    return row('uops', pair,
-      notes.size ? h('p', { class: 'legend' }, [...notes].map((k) => h('span', { title: NOTES[k] }, h('b', { text: k }), ` ${LEGEND[k]}`))) : null);
+    return h('div', { class: 'ab-stack' }, side('A', view.a), side('B', view.b));
   }
 
   function reports(view) {
@@ -446,20 +528,25 @@ export function createAB(api) {
     shown = view;
     if (!view) return;
     const both = view.cmp.okA && view.cmp.okB;
-    const out = [headline(view)];
-    if (both) out.push(bottlenecks(view.cmp));
-    out.push(uops(view));
-    if (both) out.push(limits(view.cmp), diff(view, view.a.archKey, view.b.archKey));
-    out.push(reports(view));
-    api.el.body.replaceChildren(...out);
-    api.drawn?.(api.el.body, view); // more rows of other modules (ab-slots.js)
+    const parts = [tables(view)];
+    if (both) parts.push(diff(view, view.a.archKey, view.b.archKey), limits(view));
+    parts.push(h('div', { class: 'ab-slots-slot', hidden: true }), reports(view));
+    // the first tab of the result (workspace.js): its content says what it is
+    const main = h('div', { class: 'row lead ws-main', id: 'ab-main', 'data-tab': 'diff' }, h('div', { class: 'label', text: 'uops' }), h('div', { class: 'field' }, ...parts));
+    api.el.body.replaceChildren(...[api.cpusBox, headline(view), main].filter(Boolean));
+    api.drawn?.(api.el.body, view); // more parts of other modules (ab-slots.js)
   }
 
   paint();
+  settle('a'); settle('b');
   return {
     active: () => state.ab,
-    paint, inputs, analyze, draw, summary, key,
+    paint, inputs, analyze, draw, summary, key, reweigh,
     setB(code) { setB(code); paint(); api.changed(); },
+    // side A's code was replaced (an example, an import): its count starts again at 1
+    replacedA() { if (state.aWork !== 1) { state.aWork = 1; } settle('a'); paintWork(); },
+    // the root of a side's table (the page's views of that side shade and point at its rows)
+    sideRoot: (s) => api.el.body.querySelector(`#ab-main .ab-col[data-side="${s}"]`),
     getB: () => ({ mode: state.bMode, syntax: state.bSyntax, text: bCode.value }),
     hasMessages: () => state.ab && !!bMessages.firstChild,
     textareaB: bCode,

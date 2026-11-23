@@ -184,7 +184,7 @@ try {
     check(r.arrows[0] === 'rax, 1 cycle' && r.arrows[1] === 'rax, 1 cycle, into the next iteration', 'chain: the arrows say what flows', JSON.stringify(r.arrows));
     check(/[#&]cost=1(&|$)/.test(r.hash), 'cost: in the fragment', r.hash);
     check(JSON.stringify(r.nop) === JSON.stringify(want.chain.nop) && /cost=1&costnop=1/.test(r.nopHash), 'cost: the NOP variant equals independent analyses; remembered', JSON.stringify([r.nop, want.chain.nop, r.nopHash]));
-    check(!r.off.head.includes('Δ') && r.off.head.length === 9 && r.off.rows[0] === 'add rax, 0x1|1|1|1|0.22|0.22|0.29|0.27' && r.off.rows[3] === 'jnz 0xfffffffffffffff5|M' && !/cost/.test(r.off.hash) && r.off.state === 'off' && r.off.select, 'cost: off, the table is as before and the fragment forgets it', JSON.stringify(r.off));
+    check(!r.off.head.includes('Δ') && r.off.head.length === 9 && r.off.rows[0] === 'add rax, 0x1|1|1|1|0.22|0.22|0.29|0.27' && r.off.rows[3] === 'jnz loop|M' && !/cost/.test(r.off.hash) && r.off.state === 'off' && r.off.select, 'cost: off, the table is as before and the fragment forgets it', JSON.stringify(r.off));
     check(r.again[0] === 'done' && JSON.stringify(r.again[1]) === JSON.stringify(want.chain.nop), 'cost: on again, from the cache', JSON.stringify(r.again));
     await page.shot('insight-chain.png');
 

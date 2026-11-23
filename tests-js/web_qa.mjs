@@ -83,11 +83,11 @@ for (let i = 0; i < 500; i++) {
     alignmentOffset: int(...LIMITS.alignmentOffset), initPolicy: pick(['diff', 'same', 'stack']), simpleFrontEnd: r() < 0.5,
     noMicroFusion: r() < 0.5, noMacroFusion: r() < 0.5, minIterations: int(...LIMITS.minIterations), minCycles: int(...LIMITS.minCycles),
     cmpSweep: r() < 0.3, cost: r() < 0.3, costNop: false,
-    ab, bMode: pick(['asm', 'hex']), bSyntax: pick(['intel', 'att']), bArch: pick(['', ...ARCHS]), bText: text(int(0, 30)), bScale: int(...LIMITS.bScale),
+    ab, bMode: pick(['asm', 'hex']), bSyntax: pick(['intel', 'att']), bArch: pick(['', ...ARCHS]), bText: text(int(0, 30)), aWork: int(...LIMITS.aWork), bWork: int(...LIMITS.bWork),
   };
   if (s.mode === 'hex') s.syntax = 'intel';         // the syntax is only kept for assembly
   if (s.cpus === s.arch) s.cpus = '';               // one CPU: no list
-  if (!ab) Object.assign(s, { bMode: 'asm', bSyntax: 'intel', bArch: '', bText: '', bScale: 1 }); // side B only in A–B mode
+  if (!ab) Object.assign(s, { bMode: 'asm', bSyntax: 'intel', bArch: '', bText: '', aWork: 1, bWork: 1 }); // side B only in A–B mode
   else if (s.bMode === 'hex') s.bSyntax = 'intel';
   if (s.cost) s.costNop = r() < 0.5;
   const f = encodeState(s);
@@ -96,7 +96,7 @@ for (let i = 0; i < 500; i++) {
   if (!check(/^[A-Za-z0-9=&_,%.-]*$/.test(f) && JSON.stringify(back) === JSON.stringify(want), `url: random state ${i} round trips`, JSON.stringify({ f, want, back }))) break;
 }
 const PIECES = ['v=1', 'v=2', 'm=asm', 'm=hex', 's=att', 'a=SKL', 'a=%ZZ', 'a=' + 'X'.repeat(40), 'as=all', 'as=,,,', 'as=%E0', 'al=-1', 'al=1e3', 'al=0x10',
-  'mi=', 'mc=99999999999999999999', 'ip=stack', 'sfe=1', 'c=', 'c=!!', 'c=____', 'c=YWJj', 'c=%', 'ab=1', 'bm=asm', 'bk=0', 'bk=65', 'bc=YQ', 'ba=ICL', 'cost=1', '=', '&', '==', 'x'];
+  'mi=', 'mc=99999999999999999999', 'ip=stack', 'sfe=1', 'c=', 'c=!!', 'c=____', 'c=YWJj', 'c=%', 'ab=1', 'bm=asm', 'bk=0', 'bk=65', 'aw=0', 'bw=70000', 'aw=12', 'bc=YQ', 'ba=ICL', 'cost=1', '=', '&', '==', 'x'];
 let threw = 0;
 for (let i = 0; i < 3000; i++) {
   const f = Array.from({ length: int(0, 8) }, () => pick(PIECES)).join(pick(['&', '&&', '']));
@@ -105,7 +105,7 @@ for (let i = 0; i < 3000; i++) {
   if (s === null) continue;
   const valid = ['asm', 'hex'].includes(s.mode) && ['intel', 'att'].includes(s.syntax) && /^[A-Za-z0-9_-]{1,32}$/.test(s.arch) && typeof s.text === 'string'
     && Number.isInteger(s.alignmentOffset) && s.alignmentOffset >= 0 && s.alignmentOffset <= 63 && Number.isInteger(s.minIterations) && s.minIterations >= 1
-    && Number.isInteger(s.minCycles) && s.minCycles >= 1 && ['diff', 'same', 'stack'].includes(s.initPolicy) && Number.isInteger(s.bScale) && s.bScale >= 1 && s.bScale <= 64;
+    && Number.isInteger(s.minCycles) && s.minCycles >= 1 && ['diff', 'same', 'stack'].includes(s.initPolicy) && [s.aWork, s.bWork].every((w) => Number.isInteger(w) && w >= 1 && w <= 65536);
   if (!check(valid, `url: random fragment ${JSON.stringify(f)} gives a valid state`, JSON.stringify(s))) break;
 }
 check(threw === 0, 'url: decodeState never throws', `${threw} times`);

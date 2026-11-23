@@ -1,6 +1,7 @@
 /* The page's layout (html.dense, set in index.html; js/workspace.js): smaller type, tighter spacing, and less chrome
    (no pane titles, no idle status, no tagline, no legend under the table, no "not the bottleneck"); the result pane is
-   a tabbed workspace (table and the views), the window's height on wide screens, with a foldable input pane. */
+   a tabbed workspace (the table or A–B's diff, and the views), the window's height on wide screens, with a foldable
+   input pane. A–B mode has the same workspace: A over B in the input pane, one row of controls each. */
 
 html.dense { font-size: 13px; line-height: 1.4; }
 @media (max-width: 640px) { html.dense { font-size: 14px; } }
@@ -14,9 +15,9 @@ html.dense { font-size: 13px; line-height: 1.4; }
 .dense .bottom { padding-top: 0.6rem; padding-bottom: 1rem; font-size: 0.9rem; }
 .dense .bottom p + p { margin-top: 0.15rem; }
 @media (min-width: 1200px) {
-  .dense body:not(.ab-on) .pane { padding-top: 0.5rem; }
-  .dense body:not(.ab-on) .pane-input { padding-right: 1rem; }
-  .dense body:not(.ab-on) .pane-result { padding-left: 1rem; }
+  .dense .pane { padding-top: 0.5rem; }
+  .dense .pane-input { padding-right: 1rem; }
+  .dense .pane-result { padding-left: 1rem; }
   .dense body:not(.ab-on) #code { height: clamp(14rem, calc(100vh - 13.5rem), 60rem); min-height: 14rem; }
 }
 
@@ -47,13 +48,23 @@ html.dense { font-size: 13px; line-height: 1.4; }
 .dense #result-body .legend { display: none; } /* the notes keep their meaning in the cells' and headers' titles */
 .dense .aside { display: none; }                /* "not the bottleneck": the limits row already says what is */
 
-/* ---- the result as a tabbed workspace (workspace.js): "table" and the views; one shows at a time ---- */
+/* ---- the uop table: tight port columns, the instruction column stays in view while the ports scroll sideways ---- */
+.dense .grid.uops th, .dense .grid.uops td { padding-left: 0.45ch; padding-right: 0.45ch; }
+.dense .grid.uops .first { padding-left: 0.6rem; }
+.dense .grid.uops th.first { position: sticky; left: 0; z-index: 1; background-color: var(--surface); box-shadow: inset -1px 0 var(--border); }
+.dense .grid.uops thead th.first { z-index: 2; }
+/* (opaque tints: the cells scroll under it) */
+.dense .grid.uops tbody tr:hover > th.first, .dense .grid.uops tbody tr.tl-linked > th.first { background-color: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
+.dense .grid.uops tbody tr.tl-sel > th.first { background-color: color-mix(in srgb, var(--accent) 16%, var(--surface)); }
+
+/* ---- the result as a tabbed workspace (workspace.js): the first tab and the views; one shows at a time ---- */
 .dense .view-tabs {
-  display: flex; flex-wrap: wrap; gap: 0 2px; margin: 0.45rem 0 0; padding: 0;
-  border-bottom: 1px solid var(--control-border);
+  display: flex; flex-wrap: nowrap; align-items: flex-end; gap: 0 2px; margin: 0.45rem 0 0; padding: 0;
+  border-bottom: 1px solid var(--control-border); overflow-x: auto; scrollbar-width: none;
 }
+.dense .view-tabs::-webkit-scrollbar { display: none; }
 .dense .view-tab {
-  padding: 0.1rem 0.8rem; margin-bottom: -1px; color: var(--description);
+  flex: none; padding: 0.1rem 0.8rem; margin-bottom: -1px; color: var(--description);
   border: 1px solid var(--border); border-bottom-color: var(--control-border); background: transparent;
 }
 .dense .view-tab:hover:not(:disabled) { background: var(--accent-dim); color: var(--accent-hover); border-color: var(--border); border-bottom-color: var(--control-border); }
@@ -61,7 +72,14 @@ html.dense { font-size: 13px; line-height: 1.4; }
   color: var(--heading); background: var(--surface);
   border-color: var(--control-border); border-bottom-color: var(--surface); border-top: 2px solid var(--accent);
 }
+/* A–B: the side the views show, at the end of the row */
+.dense .ws-side { flex: none; display: inline-flex; gap: 2px; margin: 0 0 0.2rem auto; padding-left: 1rem; }
+.dense .ws-side-btn { padding: 0 0.45em; border: 0; min-width: 1.9em; opacity: 0.4; }
+.dense .ws-side-btn.on { opacity: 1; }
+.dense .ws-side-btn:hover:not(:disabled) { opacity: 0.8; color: var(--background); background: var(--accent); }
+.dense .ws-side-btn.b:hover:not(:disabled) { background: var(--code); }
 .dense #result-body > .row.lead:has(> .field > .table-wrap) { padding-top: 0.35rem; }
+.dense #result-body > .ws-main { padding-top: 0.35rem; }
 /* a view is open: the table and what follows it give way */
 .dense #results.view-on #result-body > .view-tabs ~ * { display: none; }
 .dense #more { padding: 0; margin: 0; border: 0; }
@@ -69,10 +87,6 @@ html.dense { font-size: 13px; line-height: 1.4; }
 .dense #more > .row:has(> .field > details[open]) { display: block; padding: 0.4rem 0 0; }
 .dense #more > .row > .label,
 .dense #more > .row > .field > details[open] > summary { display: none; }
-/* A–B mode has no tabs: the traces of A and B keep their row, label and summary (the other views are of one result) */
-.dense body.ab-on #more > #trace-slot:not([hidden]) { display: grid; padding: 0.12rem 0; }
-.dense body.ab-on #more > #trace-slot > .label { display: block; }
-.dense body.ab-on #more > #trace-slot > .field > details[open] > summary { display: list-item; }
 
 /* ---- the limitations: one paragraph ---- */
 .dense #about > h2 { display: inline; margin: 0 1ch 0 0; }
@@ -80,38 +94,54 @@ html.dense { font-size: 13px; line-height: 1.4; }
 .dense #about ul.terse li { display: inline; color: var(--subtle); }
 .dense #about ul.terse li + li::before { content: " · "; }
 
-/* ---- wide screens: a workspace the window's height; the input pane's code box and the shown tab's scroller
+/* ---- wide screens: a workspace the window's height; the input pane's code boxes and the shown tab's scroller
    (workspace.js) take what is left, the tabs stay at the top of the result pane while it scrolls ---- */
 @media (min-width: 1200px) {
-  .dense body:not(.ab-on) .panes { height: calc(100vh - var(--top-h, 2.4rem)); }
-  .dense body:not(.ab-on) .pane-input { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-  .dense body:not(.ab-on) .pane-input .code-field { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
-  .dense body:not(.ab-on) #code { flex: 1 1 0; height: auto; min-height: 8rem; resize: none; }
-  .dense body:not(.ab-on) .pane-result { overflow-y: auto; min-height: 0; }
-  .dense body:not(.ab-on) .view-tabs { position: sticky; top: -0.5rem; z-index: 3; background: var(--background); padding-top: 0.25rem; }
+  .dense .panes { height: calc(100vh - var(--top-h, 2.4rem)); }
+  .dense .pane-input { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .dense .pane-input .code-field { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+  .dense #code, .dense #code-b { flex: 1 1 0; height: auto; min-height: 6rem; resize: none; }
+  .dense body:not(.ab-on) #code { min-height: 8rem; }
+  /* A–B: A over B, each half of what is left */
+  .dense .code-field.ab-grid > .ab-a-col, .dense .code-field.ab-grid > .ab-b { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+  .dense .pane-result { overflow-y: auto; min-height: 0; }
+  .dense .view-tabs { position: sticky; top: -0.5rem; z-index: 3; background: var(--background); padding-top: 0.25rem; }
 }
 .dense .table-wrap thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); }
+.dense .grid.uops thead th.first { z-index: 2; }
 .dense .table-wrap { overflow-y: auto; }
 
 /* ---- the chain: one line (the whole chain is in the row's tooltip; its length is in the limits) ---- */
 .dense .ins-chain-row > .field { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dense .ins-chain-row > .field > .hint { display: none; } /* its cycles are the Dependencies limit */
 
-/* ---- the input pane folds to a strip (workspace.js; wide screens, single mode) ---- */
+/* ---- the input pane folds to a labelled strip at the left edge (workspace.js; wide screens) ---- */
 .input-fold { display: none; }
 @media (min-width: 1200px) {
-  .dense body:not(.ab-on) .pane-input { position: relative; }
-  .dense body:not(.ab-on) .input-fold {
+  .dense .pane-input { position: relative; }
+  .dense .input-fold {
     display: block; position: absolute; top: 0.45rem; right: 0.15rem; z-index: 4;
     padding: 0 0.35rem; line-height: 1.3; color: var(--subtle); border-color: var(--border);
   }
-  /* folded: no column at all; the button is a thin tab on the result pane's left edge */
-  .dense.input-folded body:not(.ab-on) .panes { grid-template-columns: 0 minmax(0, 1fr); }
-  .dense.input-folded body:not(.ab-on) .pane-input { padding: 0; overflow: visible; }
-  .dense.input-folded body:not(.ab-on) .pane-input > :not(.input-fold) { display: none; }
-  .dense.input-folded body:not(.ab-on) .pane-result { padding-left: 0.9rem; }
-  .dense.input-folded body:not(.ab-on) .input-fold {
-    left: 0; right: auto; top: 0.5rem; width: 0.75rem; padding: 0.6rem 0; text-align: center;
-    color: var(--accent); background: var(--surface); border-left: 0;
+  /* folded: a narrow column with the button: "input ▸", written downwards, the whole height */
+  .dense.input-folded .panes { grid-template-columns: 1.7rem minmax(0, 1fr); }
+  .dense.input-folded .pane-input { padding: 0; overflow: visible; }
+  .dense.input-folded .pane-input > :not(.input-fold) { display: none; }
+  .dense.input-folded .pane-result { padding-left: 0.9rem; }
+  .dense.input-folded .input-fold {
+    left: 0; right: auto; top: 0.5rem; bottom: 0.6rem; width: 1.7rem; padding: 0.7rem 0; text-align: start;
+    writing-mode: vertical-rl; letter-spacing: 0.05em;
+    color: var(--accent); background: var(--surface); border-color: var(--control-border);
   }
+  .dense.input-folded .input-fold:hover { color: var(--accent-hover); background: var(--accent-dim); border-color: var(--accent); }
+}
+
+/* ---- phones: only the checked CPUs, the rest behind "more" (app.js); shorter code boxes ---- */
+.cpu-more { display: none; }
+@media (max-width: 640px) {
+  .dense .cpus:not(.open) .cpu-grid label.cpu:not(:has(input:checked)) { display: none; }
+  .dense .cpus .cpu-more { display: inline; }
+  .dense .cpus { grid-template-columns: repeat(auto-fill, minmax(7ch, 1fr)); }
+  .dense #code { min-height: 7rem; height: 9.5rem; }
+  .dense body.ab-on #code, .dense #code-b { min-height: 6rem; height: 7.5rem; }
 }

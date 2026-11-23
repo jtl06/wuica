@@ -26,6 +26,8 @@ import { createCmpSlots } from './cmp-slots.js';   // the issue slots per CPU in
 import { withRegions } from './asm-regions.js';     // marked regions and .loc lines of pasted assembly
 import { createRegionChip } from './region-chip.js';
 import { createKeys } from './keys.js';           // keyboard shortcuts, the ? overlay
+import { createABCpus } from './ab-cpus.js';       // A–B on every checked CPU
+import { branchLabels, startLabel } from './branch-label.js'; // branch targets as labels in the uop table
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -44,6 +46,7 @@ const el = {
   reset: $('opt-reset'), run: $('run'), copy: $('copy-link'), live: $('live'),
   status: $('status'), statusWrap: $('status-wrap'), statusBar: $('status-bar'),
   results: $('results'), body: $('result-body'), buildId: $('build-id'), updateNote: $('update-note'), reload: $('reload'),
+  toolbar: document.querySelector('#input .toolbar'),
 };
 
 const HINTS = { hex: 'hex or objdump -d', asm: '' };
@@ -119,6 +122,17 @@ const panels = createComparePanels({
   },
   wantResult: () => { if (ready && !lastView && !ab?.active() && el.code.value.trim() !== '') run(); },
 });
+// A–B: A and B on every checked CPU (a table above the comparison, several CPUs checked)
+const abCpus = createABCpus({
+  engine: () => engine,
+  pool: () => getPool(),
+  checked: () => checked.map((k) => archItems.get(k)).filter(Boolean),
+  tableLoaded: (key) => !!engine?.hasArch(archItems.get(key)?.table),
+  ensureTable: (key) => ensureTable(key),
+  onArch: (key) => focusArch(key),
+});
+// A–B: the side the page's views (bound, try, bytes, deps, mca, sweep, source) show; picked in the tab row (workspace.js)
+let abSide = 'a';
 // The critical chain and the cost column on the result (insight-view.js).
 const insight = createInsight({
   engine: () => engine,
@@ -249,10 +263,14 @@ function paintDerived() {
 function runKey() {
   return JSON.stringify([state.mode, state.mode === 'asm' ? state.syntax : '', el.code.value, state.arch, options(), ab?.key() ?? '']);
 }
-function paintStale() {
+// drawn: a result was just drawn; if its input changed while it ran (in A–B mode, e.g. B edited while A and B ran), it
+// dims at once (style.css: otherwise only after a pause in typing)
+function paintStale({ drawn = false } = {}) {
   const stale = !!lastView && runKey() !== lastRunKey;
   el.body.classList.toggle('stale', stale);
-  panels.setStale(stale || !(lastView?.response && !('error' in lastView.response)));
+  if (drawn || !stale) el.body.classList.toggle('stale-now', stale);
+  const shownResponse = lastView?.ab ? abView()?.response : lastView?.response;
+  panels.setStale(stale || !(shownResponse && !('error' in shownResponse)));
 }
 
 function collectState() {
@@ -328,6 +346,7 @@ function setChecked(keys) {
   state.cpus = cpusField();
   paintCpus();
   panels.refreshCpus();
+  if (lastView?.ab) updateABCpus(lastView.ab, { auto: true });
 }
 // the focused CPU changed elsewhere (A–B swap, an example of the mock): it is checked too
 function keepFocusChecked() {
@@ -511,6 +530,7 @@ async function loadExample(ex) {
   }
   const key = state.mode === 'asm' ? state.syntax : 'hex';
   el.code.value = buffers[state.mode] = ex.text[key];
+  if (state.ab) ab.replacedA(); // other code: its elements per iteration start again
   // the mock has the reference's result for this microarchitecture
   if (engine?.capabilities.mock && archItems.has(ex.arch) && state.arch !== ex.arch) focusArch(ex.arch, { rerun: false });
   clearMessages();
@@ -635,7 +655,17 @@ function showTrace(panel) {
 
 function draw() {
   if (!lastView) { showTrace(null); return; }
-  if (lastView.ab) { ab.draw(lastView.ab); abTracePanel.setOpen(state.trace); showTrace(abTracePanel.update(lastView.ab)); paintStale(); return; }
+  if (lastView.ab) {
+    ab.draw(lastView.ab);
+    abTracePanel.setOpen(state.trace);
+    showTrace(abTracePanel.update(lastView.ab));
+    // the page's views show one side (abSide; the other if it has no result)
+    const sv = abView();
+    const root = sv && ab.sideRoot(sv.side);
+    if (root) views.decorate(root, sv);
+    paintStale({ drawn: true });
+    return;
+  }
   tracePanel.setOpen(state.trace); // (opened or closed in A–B mode meanwhile)
   const trace = lastView.response && !lastView.response.error && Array.isArray(lastView.response.rows) ? tracePanel.update(lastView) : null;
   const onUi = (k, v) => { ui[k] = v; if (k === 'hideEmpty' || k === 'allRows') draw(); };
@@ -644,7 +674,7 @@ function draw() {
   insight.decorate(el.body, lastView);
   traceLink.decorate(el.body, lastView, { onUi });
   views.decorate(el.body, lastView);
-  paintStale();
+  paintStale({ drawn: true });
 }
 
 async function machineCode(id) {
@@ -740,6 +770,7 @@ async function run({ auto = false } = {}) {
   const archKey = state.arch;
   const opts = options();
   const item = archItems.get(archKey);
+  const text0 = el.code.value; // (the label of the block's start, for its branch targets)
   let bytes;
   inflight = { id, key };
   if (state.mode === 'asm') setBusy(true, { defer: true }); // a long assembly can be cancelled
@@ -776,6 +807,7 @@ async function run({ auto = false } = {}) {
     lastView = {
       response, request, elapsedMs, hex, byteCount: bytes.length, inputMode: state.mode,
       archKey, archTitle: archTitle(archKey, item.experimental), experimental: item.experimental,
+      shown: response && !response.error && Array.isArray(response.rows) ? branchLabels(response.rows, blockLabel('a', text0) ?? 'loop') : null,
     };
     lastRunKey = key;
     draw();
@@ -845,6 +877,8 @@ async function runCompare(id, key, { auto = false, ctrl = null } = {}) {
     lastView = { ab: view };
     lastRunKey = key;
     draw();
+    updateABCpus(view, { auto });
+    sweepSide({ auto });
     if (!auto) flash(ab.summary(view), { ms: 4000 });
     syncUrl(true);
     prefetchTables();
@@ -862,6 +896,40 @@ async function runCompare(id, key, { auto = false, ctrl = null } = {}) {
     }
   }
 }
+
+// A–B: the side the views show (the other one if it has no result)
+const okSide = (s) => !!s?.response && !s.response.error && Array.isArray(s.response.rows);
+function abView() {
+  const v = lastView?.ab;
+  if (!v) return null;
+  const want = v[abSide], other = v[abSide === 'a' ? 'b' : 'a'];
+  return okSide(want) ? want : okSide(other) ? other : null;
+}
+// the table of A and B per checked CPU (ab-cpus.js); the results of the comparison itself are reused
+const summaryOf = (r) => ({ tp: Number(r.tp), bottlenecks: r.bottlenecks ?? [], mode: r.mode, decodeErrors: Number(r.decodeErrors) || 0, mock: !!r.mock });
+function updateABCpus(view, { auto = false } = {}) {
+  const seed = new Map();
+  for (const s of [view.a, view.b]) if (okSide(s)) seed.set(`${s.side}:${s.archKey}`, summaryOf(s.response));
+  abCpus.update({ a: view.a?.hex ?? null, b: view.b?.hex ?? null, options: options(), workA: view.workA, workB: view.workB, focus: state.arch, seed }, { auto });
+}
+// the sweep (compare-view.js) of the side the views show
+function sweepSide({ auto = true } = {}) {
+  const sv = abView();
+  if (sv) panels.update({ hex: sv.hex, arch: sv.archKey, options: options(), elapsedMs: sv.elapsedMs, response: sv.response }, { auto });
+}
+// the label of a block's start in the code of side s (assembly), for its branch targets; null for machine code
+function blockLabel(s, text) {
+  const asm = s === 'b' ? state.bMode === 'asm' : state.mode === 'asm';
+  return asm ? startLabel(text ?? (s === 'b' ? ab?.getB().text : el.code.value)) : null;
+}
+document.addEventListener('wuica:ab-side', (e) => {
+  const s = e.detail === 'b' ? 'b' : 'a';
+  if (s === abSide) return;
+  abSide = s;
+  document.body.dataset.abSide = s;
+  if (lastView?.ab) { draw(); sweepSide({ auto: false }); }
+});
+document.body.dataset.abSide = abSide;
 
 // Puts code into the page's editor (side A), e.g. from Compiler Explorer or a swap.
 function importCode({ mode, syntax, text }, { run: andRun = true } = {}) {
@@ -954,7 +1022,7 @@ function setupFeatures() {
     importInto(side, code, { alignment = null, undo = false, source = null } = {}) {
       if (alignment !== null) state.alignmentOffset = alignment;
       let analysis = null;
-      if (side === 'B') { ab.setB(code); writeControls(); if (ready && !undo) analysis = run(); } else analysis = importCode(code, { run: !undo });
+      if (side === 'B') { ab.setB(code); writeControls(); if (ready && !undo) analysis = run(); } else { analysis = importCode(code, { run: !undo }); if (state.ab) ab.replacedA(); }
       if (side === 'A') ceSourceOf(source, analysis);
       if (!undo && code.mode === 'hex') importAsAsm(side, code.text, analysis);
     },
@@ -962,7 +1030,9 @@ function setupFeatures() {
   const abSlots = createABSlots({ engine: () => engine, options });
   ab = createAB({
     drawn: (body, view) => abSlots.decorate(body, view),
-    state, el: { code: el.code, body: el.body }, archItems: () => archItems, archTitle, ensureAssembler: assemblerForRun, ensureTable,
+    cpusBox: abCpus.box, redraw: () => { if (lastView?.ab) { draw(); updateABCpus(lastView.ab, { auto: true }); } },
+    labels: (s) => blockLabel(s),
+    state, el: { code: el.code, body: el.body, toolbar: el.toolbar }, archItems: () => archItems, archTitle, ensureAssembler: assemblerForRun, ensureTable,
     machineCodeA: machineCode, changed, writeControls,
     getA: () => ({ mode: state.mode, syntax: state.syntax, text: el.code.value }),
     setA: importCode,
@@ -975,6 +1045,7 @@ function setupFeatures() {
     },
     toggled() { // single <-> A–B
       lastView = null;
+      abCpus.clear();
       showTrace(null);
       paintCpus();
       panels.refreshCpus();
@@ -1109,6 +1180,12 @@ function bind() {
   el.cpuGrid.addEventListener('change', cpusChanged);
   el.cpuAll.addEventListener('click', () => { setChecked([...archItems.keys()]); paintDerived(); syncUrl(true); });
   el.cpuClear.addEventListener('click', () => { setChecked([state.arch]); paintDerived(); syncUrl(true); });
+  // phones: only the checked CPUs show (dense.css); "more" shows them all
+  $('cpu-more')?.addEventListener('click', (e) => {
+    const open = el.cpus.classList.toggle('open');
+    e.currentTarget.textContent = open ? 'less' : 'more';
+    e.currentTarget.setAttribute('aria-expanded', String(open));
+  });
   // the options popover: Escape or a click elsewhere closes it
   el.advanced.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && el.advanced.open) { el.advanced.open = false; el.advanced.querySelector('summary').focus(); }

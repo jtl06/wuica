@@ -192,19 +192,22 @@ try {
         o.trace = Math.max(o.waits, overflow()); o.traceWide = Math.abs(rect(tpanel()).right - rect('#more').right) < 4 && rect(tpanel()).right > rect(tpanel()).left;
         document.querySelector('.tl-waits-box').click(); await wait(50);
         await done(() => $('cmp-ab').click()); await wait(200);
-        o.ab = overflow(); o.abSide = rect('#code-b').left > rect('#code').right; o.abBelow = rect('#results').top > rect('#run').bottom; o.abTable = $('cmp-cpus').offsetParent === null;
-        // the A–B traces (the trace stays open)
+        await until(() => $('ab-cpus').dataset.state === 'done');
+        o.ab = overflow(); o.abStacked = rect('#code-b').top > rect('#code').bottom && Math.abs(rect('#code-b').left - rect('#code').left) < 2;
+        o.abSide = rect('#results').left > rect('#code').right; o.abBelow = rect('#results').top > rect('#run').bottom; o.abTable = $('cmp-cpus').offsetParent === null;
+        o.abCpus = [...document.querySelectorAll('#ab-cpus tbody tr')].map((tr) => tr.dataset.arch).join();
+        // the A–B traces (the trace tab stays open)
         await until(() => tpanel()?.wuicaTraces); await wait(100);
-        o.abTrace = overflow(); o.abTraceBelow = rect(tpanel()).top >= rect('#result-body').bottom && rect(tpanel()).right > rect(tpanel()).left; // (A–B has no tabs: below the A–B result)
+        o.abTrace = overflow(); o.abTraceBelow = document.querySelector('.view-tab[aria-selected="true"]')?.dataset.tab === 'trace' && rect(tpanel()).top >= rect('#result-body').bottom && rect(tpanel()).right > rect(tpanel()).left;
         tpanel().querySelector('summary').click(); await wait(50);
         await done(() => $('cmp-single').click());
         return o;`);
       out.push(m);
     }
     check(out.every((m) => m.sweep[0] === 'sweep' && m.single <= 0 && m.pop <= 0 && m.ab <= 0), 'layout: no sideways scrolling from 320 to 2560 px (single with three CPUs, the sweep and the report open; the options open; A–B)', JSON.stringify(out));
-    check(out.every((m) => m.trace <= 0 && m.traceWide && m.abTrace <= 0 && m.abTraceBelow), 'layout: the trace (with the wait column and a selected row) and the A–B traces: full width below, no sideways scrolling from 320 to 2560 px', JSON.stringify(out.map((m) => [m.w, m.trace, m.traceWide, m.abTrace, m.abTraceBelow])));
+    check(out.every((m) => m.trace <= 0 && m.traceWide && m.abTrace <= 0 && m.abTraceBelow), 'layout: the trace (with the wait column and a selected row) and the A–B traces (their tab): no sideways scrolling from 320 to 2560 px', JSON.stringify(out.map((m) => [m.w, m.trace, m.traceWide, m.abTrace, m.abTraceBelow])));
     check(out.every((m) => m.side === m.w >= 1200), 'layout: input and result side by side from 1200 px, stacked below', JSON.stringify(out.map((m) => [m.w, m.side])));
-    check(out.every((m) => m.abBelow && m.abTable && m.abSide === m.w > 800), 'layout: A–B: A and B side by side (stacked on narrow screens), the result below, no CPU table', JSON.stringify(out.map((m) => [m.w, m.abSide, m.abBelow, m.abTable])));
+    check(out.every((m) => m.abStacked && m.abTable && m.abSide === m.w >= 1200 && (m.w >= 1200 || m.abBelow) && m.abCpus === 'SKL,ZEN3,ADL-P'), 'layout: A–B: A over B, the result beside them from 1200 px (below on narrow screens); its own table of the CPUs, not single mode\'s', JSON.stringify(out.map((m) => [m.w, m.abStacked, m.abSide, m.abBelow, m.abTable, m.abCpus])));
     // the default toolbar (assembly: the syntax menu too) with the options open, around the phone breakpoint and the two panes
     const pop = [];
     for (const w of [320, 641, 660, 700, 900, 1200, 1300]) {
@@ -289,10 +292,18 @@ try {
       await done(() => cpus('SKL', 'ZEN3')); out.two = [focused(), $('status').textContent]; // SKL, checked, gets the focus
       await until(() => tableDone() && rows().length === 2);
       await done(() => $('cmp-ab').click());
-      out.ab = [$('cmp-cpus').offsetParent === null, document.querySelector('.ab-a .ab-desc')?.textContent, document.querySelector('#result-body .meta')?.textContent];
+      await until(() => $('ab-cpus').dataset.state === 'done');
+      out.ab = [$('cmp-cpus').offsetParent === null, document.querySelector('.ab-a .ab-desc')?.textContent, document.querySelector('#result-body .meta')?.textContent,
+        [...document.querySelectorAll('#ab-cpus tbody tr')].map((tr) => tr.dataset.arch + (tr.classList.contains('current') ? '*' : '')).join()];
       // in A–B mode (no table), a CPU that is checked becomes side A's
       await done(() => cpus('SKL', 'ZEN3', 'ICL'));
-      out.abCheck = [focused(), document.querySelector('.ab-a .ab-desc')?.textContent, document.querySelector('#result-body .meta')?.textContent];
+      await until(() => $('ab-cpus').dataset.state === 'done' && document.querySelectorAll('#ab-cpus tbody tr').length === 3);
+      out.abCheck = [focused(), document.querySelector('.ab-a .ab-desc')?.textContent, document.querySelector('#result-body .meta')?.textContent,
+        [...document.querySelectorAll('#ab-cpus tbody tr')].map((tr) => tr.dataset.arch + (tr.classList.contains('current') ? '*' : '')).join()];
+      // a row of A–B's table: that CPU for the comparison below
+      await done(() => document.querySelector('#ab-cpus tr[data-arch="ZEN3"]').click());
+      out.abPick = [focused(), document.querySelector('#result-body .meta')?.textContent, document.querySelector('#ab-cpus tr.current')?.dataset.arch];
+      await done(() => document.querySelector('#ab-cpus tr[data-arch="ICL"]').click());
       await done(() => $('cmp-single').click());
       out.single = [!$('cmp-cpus').hidden, checkedCpus(), focused()];
       return out;`);
@@ -301,6 +312,7 @@ try {
     check(u.clear[0] === 'ZEN3' && u.clear[1] === 'ZEN3' && u.clear[2] && !u.clear[3], 'cpus: "clear" keeps the focused CPU only', JSON.stringify(u.clear));
     check(u.last[0] && u.last[1] === 'ZEN3', 'cpus: the last checked CPU cannot be unchecked', JSON.stringify(u.last));
     check(u.two[0] === 'SKL' && / · SKL · 2 CPUs · /.test(u.two[1]), 'cpus: a checked CPU becomes the focused one (with a table already there)', JSON.stringify(u.two));
+    check(u.ab[3] === 'SKL*,ZEN3' && u.abCheck[3] === 'SKL,ICL*,ZEN3' && u.abPick[0] === 'ZEN3' && /A ZEN3/.test(u.abPick[1]) && u.abPick[2] === 'ZEN3', 'cpus: A–B has a table of A and B per checked CPU; its rows pick the CPU of the comparison', JSON.stringify([u.ab, u.abCheck, u.abPick]));
     check(u.ab[0] && /SKL/.test(u.ab[1]) && /A SKL/.test(u.ab[2]) && u.abCheck[0] === 'ICL' && /ICL/.test(u.abCheck[1]) && /A ICL/.test(u.abCheck[2])
       && u.single[0] && u.single[1] === 'SKL,ICL,ZEN3' && u.single[2] === 'ICL', 'cpus: A–B uses the focused CPU (a newly checked one becomes it) and hides the table; back in single mode it is there again', JSON.stringify([u.ab, u.abCheck, u.single]));
 

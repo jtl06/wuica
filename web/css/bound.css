@@ -47,7 +47,6 @@
 @media (prefers-reduced-motion: reduce) { .grid tbody tr.rj-flash > * { animation: none; background-color: rgb(var(--accent-rgb) / 0.2); } }
 
 /* a view of the single-mode result: not in A–B mode (the "more" section shows the A–B traces there) */
-body.ab-on #bound-row { display: none !important; }
 
 /* the port set behind Ports (js/portset.js) and the issue slots (js/slots.js) */
 .bd-set .bd-share { color: var(--description); font-variant-numeric: tabular-nums; }

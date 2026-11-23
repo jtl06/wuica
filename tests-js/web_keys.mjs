@@ -3,7 +3,7 @@
 // (except Escape), modifiers and handled events are left alone, the overlay takes only ? and Escape, and the hot-row
 // stepping wraps around. The page side: tests-js/web_keys_browser.mjs.
 // Usage: node tests-js/web_keys.mjs
-import { KEYS, KEYMAP, VIEWS, typing, actionFor, stepIn, hotOrder } from '../web/js/keys.js';
+import { KEYS, KEYMAP, TABS, typing, actionFor, stepIn, hotOrder } from '../web/js/keys.js';
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -21,16 +21,17 @@ check(new Set(all).size === all.length, 'no key is taken twice', all.join(' '));
 check(KEYMAP.size === all.length, 'the key map has every key');
 // keys the widgets own when focused: the trace (+ − = _ 0, arrows, Home/End/Page, Enter), the code map, the arcs, the
 // sweep, the table rows (arrows, Home/End, Enter, space)
-for (const k of ['+', '-', '=', '_', '0', ' ', 'Enter', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown']) {
+for (const k of ['+', '-', '=', '_', ' ', 'Enter', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown']) {
   check(!KEYMAP.has(k), `not taken: ${JSON.stringify(k)}`);
 }
 check(KEYS[0].show.join(' ') === 'Ctrl/⌘ Enter' && KEYS[0].keys.length === 0, 'Ctrl/⌘+Enter listed (app.js handles it)');
 for (const [key, action] of [['?', 'help'], ['/', 'code'], ['j', 'next'], ['k', 'prev'], ['n', 'hotNext'], ['p', 'hotPrev'], ['a', 'ab'],
-  ['1', 'view:bound'], ['2', 'view:try'], ['3', 'view:bytes'], ['4', 'view:deps'], ['5', 'view:trace']]) {
+  ['1', 'tab:1'], ['2', 'tab:2'], ['5', 'tab:5'], ['9', 'tab:9']]) {
   check(actionFor(ev(key)) === action, `${key} -> ${action}`, String(actionFor(ev(key))));
 }
-for (const v of Object.keys(VIEWS)) check(KEYMAP.get(String(Object.keys(VIEWS).indexOf(v) + 1)) === `view:${v}`, `view ${v} has its digit`);
-check(actionFor(ev('J')) === null && actionFor(ev('x')) === null && actionFor(ev('6')) === null, 'other keys: nothing');
+for (const n of TABS) check(KEYMAP.get(String(n)) === `tab:${n}`, `tab ${n} has its digit`);
+check(TABS.join() === '1,2,3,4,5,6,7,8,9' && !KEYMAP.has('0'), 'the digits 1–9 pick the tabs in order; 0 is the trace\'s (zoom)');
+check(actionFor(ev('J')) === null && actionFor(ev('x')) === null && actionFor(ev('0')) === null, 'other keys: nothing');
 
 // ---- modifiers, handled events, composition --------------------------------------------------------------------------------
 for (const m of ['ctrlKey', 'metaKey', 'altKey']) check(actionFor(ev('j', { [m]: true })) === null, `j with ${m}: nothing`);

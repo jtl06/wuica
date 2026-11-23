@@ -1,14 +1,20 @@
 // The workspace: loaded synchronously in <head>, like theme.js. The page is dense (index.html sets class "dense" on
 // <html>; css/dense.css), and the result pane is a tabbed workspace: the summary (CPUs, throughput, limits, chain)
-// stays on top; under it a row of tabs, "table" (the uop table, the default) and the views (bound, try, bytes, deps,
-// mca, source, sweep, trace); one tab's content shows at a time. A view tab opens that view's own <details> and closes
-// the others, so the views, their keys and the address behave as before. A picked view loads even past its size limit
-// (the button marked data-gate), since picking the tab already asks for it. On wide screens the panes are the
-// window's height, the shown tab's scroller fills the result pane, and the input pane folds away (a button, or "\").
+// stays on top; under it a row of tabs, the first one the result's own ("table": the uop table; in A–B mode "diff":
+// the uop tables of A and B and their difference, ab.js) and the views (bound, try, bytes, deps, mca, sweep, trace, and
+// source after an import: always in this order, source last); one tab's content shows at a time. A view tab opens that
+// view's own <details> and closes the others, so the views, their keys and the address behave as before. A picked view
+// loads even past its size limit (the button marked data-gate), since picking the tab already asks for it. The keys
+// 1–9 pick the tabs in their order (keys.js). In A–B mode the views are of one side; a switch at the end of the tab row
+// picks it (the event "wuica:ab-side"; app.js). On wide screens the panes are the window's height, the shown tab's
+// scroller fills the result pane, and the input pane folds away (a button, or "\").
 (function () {
   var root = document.documentElement;
 
   var strip = null, moreObs = null, bodyObs = null, lastKey = '', opened = [], busy = false;
+  var abOn = function () { return document.body.classList.contains('ab-on'); };
+  // the views of one side in A–B mode (not the trace: it shows both)
+  var BOTH = { trace: true };
 
   // the views: rows of #more with a label and a details
   function views() {
@@ -48,8 +54,15 @@
     fitSoon();
   }
 
+  // the result's own first section: the uop table (render.js), or A–B's diff (ab.js)
+  function main() {
+    var body = document.getElementById('result-body');
+    return body && (body.querySelector(':scope > .ws-main') || body.querySelector(':scope > .row.lead:has(> .field > .table-wrap)'));
+  }
+
   // Wide screens: the panes are the window's height (dense.css); the scroller of the shown tab (the table, the
   // trace, the dependency graph, the bytes) grows to the bottom of the result pane, so nothing below it is empty.
+  // (A–B's diff and its two traces: the pane scrolls.)
   var wide = window.matchMedia ? window.matchMedia('(min-width: 1200px)') : null;
   var SCROLLERS = '.trace-scroll, .dp-wrap, .ly-wrap, .mca-out';
   var fitted = [], fitFrame = 0;
@@ -60,11 +73,13 @@
     fitted.forEach(function (e) { e.style.removeProperty('max-height'); });
     fitted = [];
     var pane = document.getElementById('results');
-    if (!pane || !wide || !wide.matches || document.body.classList.contains('ab-on')) return;
-    var view = opened[0] ? opened[0] : document.querySelector('#result-body > .row.lead:has(> .field > .table-wrap)');
+    if (!pane || !wide || !wide.matches) return;
+    var view = opened[0] ? opened[0] : main();
     if (!view) return;
-    var scroller = opened[0] ? view.querySelector(SCROLLERS) : view.querySelector('.table-wrap');
-    if (!scroller) return;
+    if (!opened[0] && view.classList.contains('ws-main')) return;
+    var all = opened[0] ? view.querySelectorAll(SCROLLERS) : view.querySelectorAll('.table-wrap');
+    if (all.length !== 1) return;
+    var scroller = all[0];
     var p = pane.getBoundingClientRect(), r = scroller.getBoundingClientRect(), v = view.getBoundingClientRect();
     var below = Math.max(0, v.bottom - r.bottom);         // the view's own lines under its scroller (legends)
     if (!opened[0]) {                                      // the table: the lines after it in the result too
@@ -93,45 +108,79 @@
       if (tr && tr.getClientRects().length) tr.scrollIntoView({ block: 'nearest' });
     });
   }
+  function side() { return document.body.dataset.abSide === 'b' ? 'b' : 'a'; }
+  function pickSide(s) {
+    if (s === side()) return;
+    try { document.dispatchEvent(new CustomEvent('wuica:ab-side', { detail: s })); } catch (e) { /* old browsers */ }
+    paintStrip(true);
+  }
 
   function paintStrip(force) {
     if (!strip) return;
     var list = views();
     var active = opened[0] || null;
-    var key = list.map(function (v) { return v.name + (v.details === active ? '+' : '-'); }).join(' ');
+    var ab = abOn();
+    var activeName = null;
+    list.forEach(function (v) { if (v.details === active) activeName = v.name; });
+    var perSide = ab && !!active && !BOTH[activeName];
+    var key = (ab ? 'ab:' + side() + ':' : '') + list.map(function (v) { return v.name + (v.details === active ? '+' : '-'); }).join(' ');
     if (key === lastKey && !force) return;
     lastKey = key;
     // (drawn anew: the focus stays on the tab it was on, e.g. one picked by Enter or Space)
     var a = document.activeElement;
-    var focusName = a && a.parentNode === strip ? a.textContent : null;
+    var focusName = a && a.parentNode && (a.parentNode === strip || a.parentNode.parentNode === strip) ? a.getAttribute('data-tab') : null;
     strip.textContent = '';
-    var tabs = [{ name: 'table', title: 'uops per instruction', on: !active, pick: function () { choose(null); revealSel(); } }];
+    var first = ab ? { name: 'diff', title: 'the uop tables of A and B, their difference, limits and slots' } : { name: 'table', title: 'uops per instruction' };
+    var tabs = [{ name: first.name, title: first.title, on: !active, pick: function () { choose(null); revealSel(); } }];
     list.forEach(function (v) {
       var summary = v.details.querySelector(':scope > summary');
-      tabs.push({ name: v.name, title: summary ? summary.textContent.replace(/\s+/g, ' ').trim() : v.name,
+      tabs.push({ name: v.name, title: (summary ? summary.textContent.replace(/\s+/g, ' ').trim() : v.name) + (ab && !BOTH[v.name] ? ' (of A or B)' : ''),
         on: v.details === active, pick: function () { choose(v.name); } });
     });
-    tabs.forEach(function (t) {
+    tabs.forEach(function (t, i) {
       var b = document.createElement('button');
       b.type = 'button';
       b.className = 'view-tab';
       b.setAttribute('role', 'tab');
       b.setAttribute('aria-selected', t.on ? 'true' : 'false');
-      b.title = t.title;
+      b.setAttribute('data-tab', t.name);
+      if (i < 9) b.setAttribute('aria-keyshortcuts', String(i + 1));
+      b.title = t.title + (i < 9 ? ' (' + (i + 1) + ')' : '');
       b.textContent = t.name;
       b.addEventListener('click', t.pick);
       strip.appendChild(b);
       if (t.name === focusName) b.focus({ preventScroll: true });
     });
+    // A–B: the side the views show
+    if (perSide) {
+      var g = document.createElement('span');
+      g.className = 'ws-side';
+      g.setAttribute('role', 'group');
+      g.setAttribute('aria-label', 'the side the view shows');
+      ['a', 'b'].forEach(function (s) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'ws-side-btn ab-tag' + (s === 'b' ? ' b' : '') + (s === side() ? ' on' : '');
+        b.setAttribute('aria-pressed', s === side() ? 'true' : 'false');
+        b.setAttribute('data-tab', 'side-' + s);
+        b.title = 'show ' + s.toUpperCase();
+        b.textContent = s.toUpperCase();
+        b.addEventListener('click', function () { pickSide(s); });
+        g.appendChild(b);
+        if (b.getAttribute('data-tab') === focusName) b.focus({ preventScroll: true });
+      });
+      strip.appendChild(g);
+    }
   }
 
-  // the strip sits in the result, right above the uop table (the result is drawn anew on every run)
+  // the strip sits in the result, right above its first section (the result is drawn anew on every run)
   function seat() {
     var body = document.getElementById('result-body');
     if (!body || !strip) return;
-    var table = body.querySelector(':scope > .row.lead:has(> .field > .table-wrap)');
-    if (table) { if (strip.nextSibling !== table || strip.parentNode !== body) body.insertBefore(strip, table); }
+    var first = main();
+    if (first) { if (strip.nextSibling !== first || strip.parentNode !== body) body.insertBefore(strip, first); }
     else if (strip.parentNode) strip.parentNode.removeChild(strip);
+    paintStrip(false);
   }
 
   function place() {
@@ -150,12 +199,15 @@
       moreObs.observe(more, { childList: true, subtree: true, attributes: true, attributeFilter: ['open', 'hidden'] });
       bodyObs = new MutationObserver(function () { seat(); fitSoon(); });
       bodyObs.observe(body, { childList: true });
+      // single <-> A–B: the first tab's name, the side switch
+      new MutationObserver(function () { paintStrip(false); }).observe(document.body, { attributes: true, attributeFilter: ['class', 'data-ab-side'] });
     }
     seat();
     exclusive();
     paintStrip(true);
   }
-  // Wide screens: the input pane folds to a narrow strip, so the result gets the width (a click, or "\\" outside a field)
+  // Wide screens: the input pane folds to a strip at the left edge with its name, so the result gets the width (a click,
+  // or "\\" outside a field)
   var INPUT_KEY = 'wuica-input-folded';
   var folded = false;
   try { folded = localStorage.getItem(INPUT_KEY) === '1'; } catch (e) { /* storage unavailable */ }
@@ -172,7 +224,7 @@
   function paintFold() {
     var b = document.getElementById('input-fold');
     if (!b) return;
-    b.textContent = folded ? '▸' : '◂';
+    b.textContent = folded ? 'input ▸' : '◂';
     b.setAttribute('aria-expanded', folded ? 'false' : 'true');
     b.title = (folded ? 'show the input' : 'hide the input') + ' (\\)';
   }

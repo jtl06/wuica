@@ -245,7 +245,7 @@ try {
       const out = { card0: !!$('icard') && !$('icard').hidden };
       document.querySelector('.bd-item[data-id="Ports"]').click(); await wait(30);
       out.set = document.querySelector('.bd-set')?.innerText.replace(/\\s+/g, ' ').trim();
-      out.cols = [...document.querySelectorAll('table.uops thead th.ps-on')].map((th) => th.textContent);
+      out.cols = [...document.querySelectorAll('table.uops thead th.ps-on')].map((th) => th.dataset.col + '=' + th.textContent);
       out.slots = document.querySelector('.bd-slots')?.innerText.replace(/\\s+/g, ' ').trim();
       out.top = top();
       // a click on a row of the table tab: the card with the details
@@ -264,7 +264,7 @@ try {
       out.notes = trs().map((tr) => tr.querySelector('td.note').textContent).join('');
       return out;`);
     const p = want.details.ports;
-    check(!r.card0 && r.set === `set p6 ${p.uops} uops / ${p.ports.length} = ${p.tp.toFixed(2)}` && r.top[0] === 'dec r15 100%' && r.cols.join() === 'Port 6', 'details: Ports drills down to the port set and its instructions', JSON.stringify(r));
+    check(!r.card0 && r.set === `set p6 ${p.uops} uops / ${p.ports.length} = ${p.tp.toFixed(2)}` && r.top[0] === 'dec r15 100%' && r.cols.join() === 'Port 6=P6', 'details: Ports drills down to the port set and its instructions', JSON.stringify(r));
     check(/^slots issued \d+% front end \d+%/.test(r.slots), 'details: the issue slots', r.slots);
     check(/^add rax, qword ptr \[rsi\] uops\.info ↗ × ports 1\*p0156\+1\*p23 tp 0\.50 uops 2 · 1 fused · MITE 1 · 1 load lat RAX→RAX 1 · mem→RAX 3 · \[RSI\]→RAX 6 chain rax ← add rax, qword ptr \[rsi\] 1 ↻ share 50% of DSB front 3 B @0$/.test(r.card)
       && /^https:\/\/www\.uops\.info\//.test(r.link) && r.sel, 'details: a click on a row shows its card', JSON.stringify(r));
@@ -438,7 +438,7 @@ try {
       out.flash = trs().findIndex((tr) => tr.classList.contains('rj-flash'));
       return out;`);
     check(r.label === 'deps' && r.summary === 'dependency arcs · 3 edges, 2 ↻' && r.order.join() === 'bound-row,whatif-row,codemap-row,deps-row,mca-row,sweep-row,trace-slot', 'deps: a row "deps", open from the link', JSON.stringify(r));
-    check(r.arcs.slice().sort().join() === '0>1!,1>0c!,2>2c' && r.legend.join() === '→ 1,↻ 2,chain 2,slack' && r.nodes === 4, 'deps: add → add, add ↻ add (the chain), dec ↻ dec', JSON.stringify(r));
+    check(r.arcs.slice().sort().join() === '0>1!,1>0c!,2>2c' && r.legend.join() === '→ 1 same iteration,↻ 2 carried,chain 2,slack' && r.nodes === 4, 'deps: add → add, add ↻ add (the chain), dec ↻ dec', JSON.stringify(r));
     check(r.slack.join() === '0,0,1,∞' && r.critNodes === '0,1', 'deps: slack per instruction (the adds are the chain: 0; dec r15 1 of 2 cycles; jnz off every cycle)', JSON.stringify(r));
     check(r.lats.length === 2 && r.lats.every(([t, crit]) => t === '1' && crit), 'deps: latencies on the arcs of the chain', JSON.stringify(r.lats));
     check(r.picked[0] === 'dec r15 slack 1 ← dec r15 ↻ → dec r15 ↻' && r.picked[1] === '1', 'deps: the selected instruction: its slack and its arcs\' latencies', JSON.stringify(r.picked));
@@ -466,7 +466,7 @@ try {
     console.log(`deps: SHA-256: traced and drawn in ${s[2]} ms after the tab; long tasks ${JSON.stringify(s[3])}`);
   }
 
-  // --- A–B mode: the views of the single result are hidden, also when the A–B traces show the "more" section -------------
+  // --- A–B mode: the views are tabs as in single mode, of one side (a switch at the end of the tab row) ----------------------
   {
     const chain = ex('chain');
     await page.goto(`${origin}/?nosw=1#v=1&bound=1&whatif=1&codemap=1&deps=1&trace=1&c=${b64(chain.text.hex)}`);
@@ -484,19 +484,31 @@ try {
       await tab('table');
       trs()[1].cells[2].click(); await wait(100); // a selected row (its card) in single mode
       const cardSingle = !$('icard').hidden;
-      await tab('trace'); // the A–B traces open too: they show the "more" section
+      await tab('trace'); // the A–B traces open too: their tab
       await done(() => $('cmp-ab').click()); await wait(300);
-      const ab = [shown(), getComputedStyle($('more')).display, tabs(), getComputedStyle($('trace-slot')).display];
+      const ab = [tabs(), document.querySelector('.view-tab[aria-selected="true"]')?.textContent, !!document.querySelector('.ws-side'), getComputedStyle($('trace-slot')).display];
+      const abViews = [];
+      for (const name of VIEWS) { await tab(name); abViews.push([shown()[VIEWS.indexOf(name)], document.querySelector('.ws-side-btn.on')?.textContent]); }
+      // the bound view of side A shades A's table; the switch: B's
+      await tab('bound'); await until(() => document.querySelector('.bd-item'), 10000);
+      const hotOf = (s) => document.querySelectorAll('#ab-main .ab-col[data-side="' + s + '"] tbody tr.bd-hot').length;
+      const sideA = [hotOf('a') > 0, hotOf('b')];
+      document.querySelector('.ws-side-btn[data-tab="side-b"]').click(); await wait(200); await until(() => document.querySelector('.bd-item'), 10000);
+      const sideB = [document.body.dataset.abSide, document.querySelector('.ws-side-btn.on')?.textContent, hotOf('a'), hotOf('b') > 0, $('bound').open];
+      document.querySelector('.ws-side-btn[data-tab="side-a"]').click(); await wait(100);
+      await tab('diff');
       // a click on a row of A's table in A–B mode: no card (not the single result's)
-      document.querySelector('table.uops tbody tr')?.cells[2]?.click(); await wait(300);
+      document.querySelector('#ab-main table.uops tbody tr')?.cells[2]?.click(); await wait(300);
       const cards = [...document.querySelectorAll('.ic')].filter((c) => !c.hidden && c.offsetParent !== null).length;
       await done(() => $('cmp-single').click()); await wait(300);
       const back = [];
       for (const name of VIEWS) { await tab(name); back.push(shown()[VIEWS.indexOf(name)]); }
-      return { open, single, ab, back, backTabs: tabs(), cardSingle, cards };`);
+      return { open, single, ab, abViews, sideA, sideB, back, backTabs: tabs(), cardSingle, cards };`);
     check(r.open.length === 1, 'A–B section: five views from a link, one stays open', JSON.stringify(r.open));
-    check(r.single.every(Boolean) && r.ab[0].every((x) => !x) && r.ab[1] !== 'none' && r.ab[2].length === 0 && r.ab[3] !== 'none' && r.back.every(Boolean)
-      && ['bound', 'try', 'bytes', 'deps'].every((t) => r.backTabs.includes(t)), 'A–B mode: the views are hidden, no tabs (the A–B traces open), back in single mode they are there', JSON.stringify(r));
+    check(r.single.every(Boolean) && r.ab[0].join() === 'diff,bound,try,bytes,deps,mca,sweep,trace' && r.ab[1] === 'trace' && !r.ab[2] && r.ab[3] !== 'none'
+      && r.abViews.every((v) => v[0] && v[1] === 'A') && r.back.every(Boolean) && r.backTabs.join() === 'table,bound,try,bytes,deps,mca,sweep,trace',
+    'A–B mode: the views are tabs in the same places (the A–B traces stay open; no side switch for them); each view of side A; back in single mode they are there', JSON.stringify(r));
+    check(r.sideA[0] && r.sideA[1] === 0 && r.sideB[0] === 'b' && r.sideB[1] === 'B' && r.sideB[2] === 0 && r.sideB[3] && r.sideB[4], 'A–B mode: the bound view shades its side\'s table; the switch shows B\'s', JSON.stringify([r.sideA, r.sideB]));
     check(r.cardSingle && r.cards === 0, 'A–B mode: no instruction card', JSON.stringify(r));
   }
 

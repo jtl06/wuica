@@ -109,50 +109,55 @@ function limitsView(r) {
   return box;
 }
 
-// limit: the number of rows drawn (a long block draws its first rows; a button draws the rest); the totals are of all rows
-export function uopTable(r, hideEmpty, limit = Infinity) { // (also used by the A–B view, ab.js)
+// A column's header as shown: "Port 0" as "P0" (the table fits more ports; the full name in the title and data-col)
+export const shortColumn = (name) => { const m = /^Port (\w+)$/.exec(name); return m ? `P${m[1]}` : name; };
+
+// limit: the number of rows drawn (a long block draws its first rows; a button draws the rest); the totals are of all rows.
+// shown: the label shown for each row instead of its own, or null (branch targets as labels: branch-label.js)
+export function uopTable(r, hideEmpty, limit = Infinity, { shown = null } = {}) { // (also used by the A–B view, ab.js)
   const n = r.columns.length;
   const totals = new Array(n).fill(0);
   for (const x of r.rows) for (let i = 0; i < n; i++) totals[i] += Number(x.values?.[i]) || 0;
   const kinds = r.columns.map(columnKind);
-  const shown = [];
-  for (let i = 0; i < n; i++) if (!hideEmpty || totals[i] !== 0) shown.push(i);
+  const cols = [];
+  for (let i = 0; i < n; i++) if (!hideEmpty || totals[i] !== 0) cols.push(i);
   // a thin line where a group of columns starts
   const groupStart = new Set();
-  shown.forEach((i, k) => { if (k === 0 || kinds[i] !== kinds[shown[k - 1]]) groupStart.add(i); });
+  cols.forEach((i, k) => { if (k === 0 || kinds[i] !== kinds[cols[k - 1]]) groupStart.add(i); });
   const cls = (i, extra = '') => [extra, groupStart.has(i) ? 'grp' : ''].filter(Boolean).join(' ') || null;
 
   const head = h('tr', null,
     h('th', { scope: 'col', class: 'first', text: 'Instruction' }),
     h('th', { scope: 'col', class: 'note', text: 'Notes' }),
-    shown.map((i) => h('th', { scope: 'col', class: cls(i), text: r.columns[i] })));
+    cols.map((i) => h('th', { scope: 'col', class: cls(i), 'data-col': r.columns[i], title: shortColumn(r.columns[i]) !== r.columns[i] ? r.columns[i] : null, text: shortColumn(r.columns[i]) })));
 
   const body = h('tbody');
-  for (const x of r.rows.length > limit ? r.rows.slice(0, limit) : r.rows) {
+  (r.rows.length > limit ? r.rows.slice(0, limit) : r.rows).forEach((x, k) => {
     const extra = x.kind !== 'instr';
-    let label = x.label;
+    const text = shown?.[k] ?? x.label;
+    let label = text;
     if (!extra && typeof x.url === 'string' && x.url.startsWith(UOPS_INFO)) {
-      label = h('a', { href: x.url, rel: 'noopener noreferrer', target: '_blank', title: x.instrStr ? `${x.instrStr} on uops.info` : 'uops.info', text: x.label });
-    }
+      label = h('a', { href: x.url, rel: 'noopener noreferrer', target: '_blank', title: `${x.instrStr ? `${x.instrStr} on uops.info` : 'uops.info'}${text !== x.label ? ` (${x.label})` : ''}`, text });
+    } else if (text !== x.label) label = h('span', { title: x.label, text });
     const tr = h('tr', { class: [extra ? 'extra' : '', x.notes === 'X' ? 'unsupported' : ''].filter(Boolean).join(' ') || null },
       h('th', { scope: 'row', class: 'first' }, label),
       h('td', { class: 'note', title: NOTES[x.notes] ?? null, text: x.notes ?? '' }));
-    for (const i of shown) {
+    for (const i of cols) {
       const v = Number(x.values?.[i]) || 0;
       const td = h('td', { class: cls(i, kinds[i] === 'port' && v !== 0 ? 'heat' : ''), text: fmt(v) });
       if (kinds[i] === 'port' && v !== 0) td.style.setProperty('--h', Math.min(1, Math.max(0.12, v)).toFixed(2));
       tr.append(td);
     }
     body.append(tr);
-  }
+  });
 
   const foot = h('tr', null,
     h('th', { scope: 'row', class: 'first', text: 'Total' }),
     h('td', { class: 'note' }),
-    shown.map((i) => h('td', { class: cls(i), text: fmt(totals[i]) })));
+    cols.map((i) => h('td', { class: cls(i), text: fmt(totals[i]) })));
 
   const table = h('table', { class: 'grid uops' }, h('thead', null, head), body, h('tfoot', null, foot));
-  return { table, hidden: n - shown.length, notes: new Set(r.rows.map((x) => x.notes).filter((k) => NOTES[k])), more: Math.max(0, r.rows.length - limit) };
+  return { table, hidden: n - cols.length, notes: new Set(r.rows.map((x) => x.notes).filter((k) => NOTES[k])), more: Math.max(0, r.rows.length - limit) };
 }
 
 // A long block (thousands of rows) draws its first rows at once; the rest on request (one long layout otherwise).
@@ -224,7 +229,7 @@ export function renderResult(root, view) {
     }
 
     // empty columns are left out, as in uiCA's table
-    const { table, notes, more } = uopTable(r, view.ui.hideEmpty ?? true, rowLimit(r.rows.length, view.ui.allRows));
+    const { table, notes, more } = uopTable(r, view.ui.hideEmpty ?? true, rowLimit(r.rows.length, view.ui.allRows), { shown: view.shown });
     out.push(leadRow('uops', // the table says what it is: it gets the whole width
       h('div', { class: 'table-tools' }), // filled by other views (e.g. the cost toggle of insight-view.js); empty otherwise
       h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Uops per instruction, average per iteration',

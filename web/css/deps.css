@@ -27,4 +27,3 @@
 .dp-sl.zero { fill: var(--date); font-weight: 600; }
 .dp-node.crit text:not(.dp-sl) { fill: var(--date); }
 .dp-k.sl { color: var(--subtle); }
-body.ab-on #deps-row { display: none !important; }

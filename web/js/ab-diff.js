@@ -119,16 +119,18 @@ export function verdict(delta) {
   return Math.abs(delta) < EPS ? 'same' : delta < 0 ? 'better' : 'worse';
 }
 
-// The comparison of two responses. scale: one iteration of B does the work of `scale` iterations of A (B is
-// unrolled), so B's cycle counts are divided by it before they are compared.
+// The comparison of two responses. workA, workB: the elements (or bytes) one iteration of A and of B processes; the
+// cycle counts are divided by them before they are compared (cycles per element). scale (older form): B does the work
+// of `scale` iterations of A, i.e. workA = 1, workB = scale.
 // Either response may be an error ({error}) or missing: then only what can be compared is filled in.
-export function compareResponses(ra, rb, { scale = 1 } = {}) {
+export function compareResponses(ra, rb, { workA = 1, workB = null, scale = 1 } = {}) {
+  const wa = workA > 0 ? workA : 1, wb = workB > 0 ? workB : scale > 0 ? scale : 1;
   const okA = okResponse(ra), okB = okResponse(rb);
-  const out = { okA, okB, scale, tp: null, bottlenecks: null, limits: [], diff: null };
+  const out = { okA, okB, workA: wa, workB: wb, scale: wb / wa, perElement: wa !== 1 || wb !== 1, tp: null, bottlenecks: null, limits: [], diff: null };
   if (!okA || !okB) return out;
-  const a = Number(ra.tp), b = Number(rb.tp) / scale;
+  const a = Number(ra.tp) / wa, b = Number(rb.tp) / wb;
   const delta = round(b - a);
-  out.tp = { a, b, bRaw: Number(rb.tp), delta, pct: a > 0 ? (100 * delta) / a : null, speedup: b > 0 ? a / b : null, verdict: verdict(delta) };
+  out.tp = { a, b, aRaw: Number(ra.tp), bRaw: Number(rb.tp), delta, pct: a > 0 ? (100 * delta) / a : null, speedup: b > 0 ? a / b : null, verdict: verdict(delta) };
 
   const ba = ra.bottlenecks ?? [], bb = rb.bottlenecks ?? [];
   out.bottlenecks = { a: ba, b: bb, same: ba.length === bb.length && ba.every((x) => bb.includes(x)),
@@ -137,7 +139,7 @@ export function compareResponses(ra, rb, { scale = 1 } = {}) {
   const names = [...new Set([...(ra.limits ?? []).map((l) => l.name), ...(rb.limits ?? []).map((l) => l.name)])];
   out.limits = names.map((name) => {
     const la = ra.limits.find((l) => l.name === name), lb = rb.limits.find((l) => l.name === name);
-    const va = la ? Number(la.tp) : null, vb = lb ? Number(lb.tp) / scale : null;
+    const va = la ? Number(la.tp) / wa : null, vb = lb ? Number(lb.tp) / wb : null;
     return { name, a: va, b: vb, delta: va !== null && vb !== null ? round(vb - va) : null,
       bottleneckA: ba.includes(name), bottleneckB: bb.includes(name) };
   });

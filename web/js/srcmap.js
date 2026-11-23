@@ -100,9 +100,8 @@ export function createSrcMap(env) {
     body = h('div', { class: 'sm-body' });
     details.append(body);
     row = h('div', { class: 'row', id: 'srcmap-row' }, h('div', { class: 'label', text: 'source' }), h('div', { class: 'field' }, details));
-    const more = document.getElementById('more');
-    const after = document.getElementById('bound-row');
-    if (after?.parentNode === more) after.after(row); else more?.prepend(row);
+    // the last view (its tab is last: it comes only with an import, and the other tabs keep their places)
+    document.getElementById('more')?.append(row);
     return row;
   }
 

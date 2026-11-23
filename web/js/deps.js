@@ -225,8 +225,8 @@ export function createDeps(env) {
     describe(sel);
     const c = g.edges.filter((e) => e.dist).length;
     const legend = h('p', { class: 'dp-legend hint' },
-      h('span', { class: 'dp-k same', title: 'a value produced and used in the same iteration', text: `→ ${g.edges.length - c}` }),
-      h('span', { class: 'dp-k carried', title: 'a value carried into a later iteration', text: `↻ ${c}` }),
+      h('span', { class: 'dp-k same', title: 'arcs of a value produced and used in the same iteration', text: `→ ${g.edges.length - c} same iteration` }),
+      h('span', { class: 'dp-k carried', title: 'arcs of a value carried into a later iteration', text: `↻ ${c} carried` }),
       g.edges.some((e) => e.critical) ? h('span', { class: 'dp-k crit', title: 'the critical loop-carried chain, its latency per iteration; the numbers on the arcs are latencies in cycles', text: g.slack ? `chain ${+Number(g.slack.period).toFixed(2)}` : 'chain' }) : null,
       slack ? h('span', { class: 'dp-k sl', title: `slack (the column left of the arcs): cycles an instruction could be delayed in every iteration without lengthening the chain; 0 on the chain, ∞ off every loop-carried cycle${g.slack.partial ? '; too large a graph to compute' : ''}`, text: 'slack' }) : null);
     body.replaceChildren(legend, h('div', { class: 'dp-wrap' }, svg), info);

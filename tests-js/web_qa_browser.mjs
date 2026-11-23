@@ -118,15 +118,15 @@ try {
       out.swapped = [$('code').value === ${JSON.stringify(d4.text.intel)}, $('code-b')?.value === ${JSON.stringify(d1.text.intel)}];
       await done(() => set($('b-arch'), 'ZEN3'));
       out.bArch = [$('b-arch').value, [...document.querySelectorAll('#result-body .ab-side')].map((e) => e.textContent).join(' | ')];
-      await done(() => set($('b-scale'), '4'));
-      out.scale = $('result-body').textContent.match(/×\s*4|4\s*×|scale|per 4/i)?.[0] ?? $('result-body').textContent.slice(0, 200);
+      set($('b-work'), '4'); // (no new analysis: the result is weighed again)
+      out.scale = [document.querySelector('.ab-tp .unit')?.textContent, document.querySelectorAll('.ab-tp .value')[1]?.title];
       await done(() => $('cmp-single').click());
       out.single = [!!$('cmp-cpus'), focused()];
       return out;`);
     check(r.demo[0] > 2 && r.demo[1] > 2 && /\d+\.\d\d/.test(r.demo[2]), 'A–B: the demo pair is analyzed', JSON.stringify(r.demo));
     check(r.swapped[0] && r.swapped[1], 'A–B: swap exchanges the two sides', JSON.stringify(r.swapped));
     check(r.bArch[0] === 'ZEN3' && /B ZEN3/.test(r.bArch[1]) && /A SKL/.test(r.bArch[1]), 'A–B: side B on its own CPU', JSON.stringify(r.bArch));
-    console.log('A–B with scale 4:', r.scale);
+    check(r.scale[0] === 'cycles/element' && / ÷ 4$/.test(r.scale[1]), 'A–B: B does 4 elements per iteration: per element', JSON.stringify(r.scale));
   }
 
   // ---- keyboard ------------------------------------------------------------------------------------------------------------------

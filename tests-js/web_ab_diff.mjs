@@ -68,6 +68,11 @@ const resp = (rows, extra = {}) => ({ arch: 'SKL', tp: 1, mode: 'loop', decodeEr
   check(j(c.limits.map((l) => [l.name, l.a, l.b, l.delta])) === j([['Ports', 1.5, 1.5, 0], ['Dependencies', 2, 1, -1], ['LSD', null, 1.25, null]]) && c.limits[1].bottleneckA && c.limits[0].bottleneckB, 'compare: limits of both (also those of one side only)', j(c.limits));
   const unrolled = compareResponses({ ...A, tp: 2 }, { ...B, tp: 3.5 }, { scale: 2 });
   check(unrolled.tp.b === 1.75 && unrolled.tp.bRaw === 3.5 && unrolled.tp.delta === -0.25 && unrolled.tp.verdict === 'better', 'compare: B unrolled ×2 is compared per iteration of A', j(unrolled.tp));
+  // elements per iteration: A does 8, B does 32; both per element (limits too)
+  const work = compareResponses({ ...A, tp: 4, limits: [{ name: 'Ports', tp: 4 }] }, { ...B, tp: 8, limits: [{ name: 'Ports', tp: 8 }] }, { workA: 8, workB: 32 });
+  check(work.tp.a === 0.5 && work.tp.b === 0.25 && work.tp.aRaw === 4 && work.tp.bRaw === 8 && work.tp.speedup === 2 && work.tp.verdict === 'better' && work.perElement && work.scale === 4
+    && work.limits[0].a === 0.5 && work.limits[0].b === 0.25, 'compare: per element (8 and 32 elements per iteration)', j([work.tp, work.limits]));
+  check(!compareResponses(A, B).perElement && compareResponses(A, B, { workA: 2, workB: 2 }).perElement, 'compare: per element only when given');
   check(compareResponses({ ...A, tp: 2 }, { ...B, tp: 2.004 }).tp.verdict === 'same' && verdict(0.01) === 'worse', 'compare: differences below 0.005 are none');
   const failedB = compareResponses(A, { error: 'no instructions found' });
   check(failedB.okA && !failedB.okB && failedB.tp === null && failedB.diff === null, 'compare: one side failed', j(failedB));
@@ -86,11 +91,12 @@ const resp = (rows, extra = {}) => ({ arch: 'SKL', tp: 1, mode: 'loop', decodeEr
   const single = { ...DEFAULT_STATE, mode: 'hex', text: '48 01 d8', arch: 'ZEN3', bText: 'ignored', bMode: 'asm' };
   check(encodeState(single) === 'v=1&a=ZEN3&c=NDggMDEgZDg', 'url: a single-mode link is as before (B is left out)', encodeState(single));
   check(j(decodeState('v=1&a=ZEN3&c=NDggMDEgZDg')) === j({ ...DEFAULT_STATE, mode: 'hex', text: '48 01 d8', arch: 'ZEN3' }), 'url: old links decode as before (hex)');
-  const s = { ...DEFAULT_STATE, ab: true, text: 'add rax, 1\n', mode: 'asm', bMode: 'asm', bSyntax: 'att', bArch: 'ADL-P', bText: 'loop:\n  addq $2, %rax ✓\n', bScale: 2 };
+  const s = { ...DEFAULT_STATE, ab: true, text: 'add rax, 1\n', mode: 'asm', bMode: 'asm', bSyntax: 'att', bArch: 'ADL-P', bText: 'loop:\n  addq $2, %rax ✓\n', aWork: 8, bWork: 32 };
   const f = encodeState(s);
-  check(/^[A-Za-z0-9=&_-]+$/.test(f) && f.includes('&ab=1&bm=asm&bs=att&ba=ADL-P&bk=2&bc='), 'url: side B in the fragment', f);
+  check(/^[A-Za-z0-9=&_-]+$/.test(f) && f.includes('&ab=1&bm=asm&bs=att&ba=ADL-P&aw=8&bw=32&bc='), 'url: side B in the fragment', f);
   check(j(decodeState(f)) === j(s), 'url: round trip of both sides', j(decodeState(f)));
-  check(decodeState('v=1&ab=1&bm=x&bs=y&ba=%3Cx%3E&bk=999&bc=!!').bScale === 64 && j(decodeState('v=1&ab=1&bm=x&bs=y&ba=%3Cx%3E&bk=0&bc=!!')) === j({ ...DEFAULT_STATE, mode: 'hex', ab: true, bMode: 'hex', bScale: 1 }), 'url: bad B values fall back to the defaults');
+  check(decodeState('v=1&ab=1&bm=x&bs=y&ba=%3Cx%3E&bk=999&bc=!!').bWork === 64 && decodeState('v=1&ab=1&aw=0&bw=99999999').bWork === 65536 && j(decodeState('v=1&ab=1&bm=x&bs=y&ba=%3Cx%3E&bk=0&aw=x&bc=!!')) === j({ ...DEFAULT_STATE, mode: 'hex', ab: true, bMode: 'hex' }), 'url: bad B values fall back to the defaults');
+  check(decodeState('v=1&ab=1&bk=4').bWork === 4 && decodeState('v=1&ab=1&bk=4').aWork === 1, 'url: an older link\'s B unrolled ×4 is B doing 4 elements per iteration of A');
   check(decodeState('v=1&bm=asm&bc=eA').bText === '' && !decodeState('v=1&bm=asm').ab, 'url: B is only read in A–B mode');
 }
 
