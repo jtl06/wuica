@@ -200,7 +200,7 @@ try {
     const themes = [];
     for (const theme of ['light', 'dark']) {
       themes.push(await page.eval(`${HELPERS}
-        if (document.documentElement.getAttribute('data-theme') !== ${JSON.stringify(theme)}) $('theme-toggle').click();
+        if ($('theme-toggle').textContent !== ${JSON.stringify(theme)}) $('theme-toggle').click(); // the shown theme (the system's, until one is chosen)
         await wait(50);
         return [document.documentElement.getAttribute('data-theme'), getComputedStyle(document.documentElement).backgroundColor, getComputedStyle(document.body).color, $('theme-toggle').textContent, localStorage.getItem('wuica-theme')];`));
     }
