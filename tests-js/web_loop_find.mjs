@@ -110,6 +110,10 @@ if (!fs.existsSync(asmPath)) {
   check(!semi2.ok, "(LLVM alone rejects '; one')");
   const typo = await an('  add rax, 1 ; addd rbx, 2\n');
   check(!typo.ok && /invalid instruction mnemonic 'addd'/.test(typo.diagnostics[0].message), "after ';', a mistyped instruction stays an error", j(typo.diagnostics));
+  const prose = await an('  add rax, [rdi] ; a[i], next\n  add rbx, 1 ; rax = sum\n');
+  check(prose.ok && prose.bytes.length === 7, "';' comments with brackets, commas and '=' in them", j(prose.diagnostics));
+  const typo2 = await an('  add rax, 1 ; incc rax\n');
+  check(!typo2.ok, "after ';', a mistyped instruction with a register stays an error", j(typo2.diagnostics));
   const semiPlain = await A.assemble('  add rax, 1 ; one\n', 'intel');
   check(semiPlain.ok && hex(semiPlain.bytes) === '4883c001', "';' comments also without loop finding (the converter)", j(semiPlain.diagnostics));
 

@@ -225,6 +225,9 @@ export interface Wuica {
   analyze(arch: string, request: AnalyzeRequest): Promise<AnalyzeResult | Failure>;
   /** Single-object form: `arch` in the request (default "SKL"). */
   analyze(request: AnalyzeRequest & { arch?: string }): Promise<AnalyzeResult | Failure>;
+  /** The machine code an analysis of assembly text gets (as the web page reads it: the loop of a whole function, objdump
+   * lines, exits as not taken, ';' comments, a marked region); `bytes` and `hex` of the analyzed code, `loop` what was picked. */
+  machineCode(source: string, syntax?: Syntax, loop?: LoopChoice): Promise<{ code: 0; hex: string; bytes: Uint8Array; stderr: StderrLine[]; loop: LoopInfo | null } | Failure>;
   /** POST /api/compare: one block on several microarchitectures (default: all of archs()); assembled once. The
    * microarchitectures are analyzed on worker threads (CreateOptions.threads); the response is the same either way. */
   compare(request: CompareRequest): Promise<CompareResult | Failure>;

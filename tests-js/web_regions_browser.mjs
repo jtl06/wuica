@@ -260,6 +260,24 @@ try {
     await page.cmd('Page.close');
   }
 
+  // --- links: lp=whole analyzes the whole text; an alignment offset in the link stays (not the address's) ------------------
+  {
+    const OBJDUMP = fs.readFileSync(path.join(here, 'fixtures/loop-find/psum.noraw'), 'utf8');
+    const page = await openPage();
+    await page.goto(`${origin}/?nosw=1#v=1&m=asm&lp=whole&c=${b64(MARKED.replace(/^# LLVM-MCA-.*$/gm, ''))}`);
+    const w = await page.eval(`${HELPERS}
+      await until(() => document.querySelector('.tp .value') && instrRows().length);
+      return { rows: instrRows().length, loop: loopChip() };`);
+    check(w.rows > 6 && w.loop === 'whole', 'a link with lp=whole: the whole text', JSON.stringify(w));
+    await page.goto(`${origin}/?nosw=1#v=1&m=asm&al=8&c=${b64(OBJDUMP)}`);
+    const a = await page.eval(`${HELPERS}
+      await until(() => document.querySelector('.tp .value') && instrRows().length);
+      return { rows: instrRows().length, align: $('opt-align').value, loop: loopChip() };`);
+    check(a.rows === 5 && a.align === '8' && a.loop === 'loop 0x10', 'an objdump link with al=8: the offset of the link stays', JSON.stringify(a));
+    check(page.problems.length === 0, 'no console errors (links)', page.problems.join('\n'));
+    await page.cmd('Page.close');
+  }
+
   // --- phone width, dark: no sideways scrolling ----------------------------------------------------------------------------
   {
     const page = await openPage({ width: 320, height: 700, mobile: true });

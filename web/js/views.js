@@ -32,6 +32,8 @@ export function createViews(env) {
     decorate(root, view) { last = [root, view]; for (const p of parts) p.decorate(root, view); },
     // the source of an import arrived after the result was drawn
     refreshSource() { if (last) srcmap.decorate(...last); },
+    // the checked CPUs changed (the try tab's best N per CPU)
+    refreshCpus() { if (last) whatif.decorate(...last); },
     setOpen(state) { bound.setOpen(state.bound); whatif.setOpen(state.whatif); codemap.setOpen(state.codemap); deps.setOpen(state.deps); srcmap.setOpen(state.srcmap); mca.setOpen(state.mca); },
   };
 }

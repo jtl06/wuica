@@ -250,8 +250,13 @@ function paintDerived() {
   paintStale();
 }
 
-function runKey() {
-  return JSON.stringify([state.mode, state.mode === 'asm' ? state.syntax : '', el.code.value, state.mode === 'asm' ? state.loop : '', state.arch, options(), ab?.key() ?? '']);
+// The input of a run. input: the parts a run captured at its start ({mode, syntax, text, arch, ab}); the loop and the
+// options are always the current ones (the assembly can set the loop back to auto and the alignment offset).
+function runInput() {
+  return { mode: state.mode, syntax: state.syntax, text: el.code.value, arch: state.arch, ab: ab?.key() ?? '' };
+}
+function runKey(input = runInput()) {
+  return JSON.stringify([input.mode, input.mode === 'asm' ? input.syntax : '', input.text, input.mode === 'asm' ? state.loop : '', input.arch, options(), input.ab]);
 }
 // The input does not assemble (or parse): the result shown is for an older input. Dimmed (paintStale), and said.
 let inputErrorNote = null;
@@ -343,6 +348,7 @@ function setChecked(keys) {
   state.cpus = cpusField();
   paintCpus();
   panels.refreshCpus();
+  views.refreshCpus(); // the try tab's best number of accumulators per checked CPU
 }
 // the focused CPU changed elsewhere (A–B swap, an example of the mock): it is checked too
 function keepFocusChecked() {
@@ -753,7 +759,8 @@ async function run({ auto = false } = {}) {
   if (!auto) { liveRunner.cancel(); cancelledKey = ''; settleMode(); }
   if (!ready || el.run.disabled) return;
   if (ce?.linkBox()) return; // a box that holds only a Compiler Explorer link is imported (analyze()), never analyzed
-  let key = runKey();
+  const input = runInput();
+  let key = runKey(input);
   const messages = !!el.messages.firstChild || !!ab?.hasMessages();
   if (auto && ((busy && key === inflight.key) || key === cancelledKey || (lastView && key === lastRunKey && !messages))) return;
   // a newer request replaces the one that is running (an assembly is always stopped: its input is out of date)
@@ -781,12 +788,14 @@ async function run({ auto = false } = {}) {
   if (!bytes || id !== runSeq) {
     if (inflight.id === id) inflight = { id: 0, key: '' };
     if (id === runSeq && busy) setBusy(false);
-    if (id === runSeq) inputError(true);
+    // (only for an error shown: not for a cancelled assembly or a missing assembler)
+    if (id === runSeq && el.code.getAttribute('aria-invalid') === 'true') inputError(true);
     return;
   }
   inputError(false);
-  // the assembly can set the alignment offset (from the text's addresses) and the loop (back to auto)
-  if (runKey() !== key) { key = runKey(); opts = options(); syncUrl(); }
+  // the assembly can set the alignment offset (from the text's addresses) and the loop (back to auto): the key of the
+  // input this run assembled, with those
+  if (runKey(input) !== key) { key = runKey(input); opts = options(); syncUrl(); }
   const hex = toHex(bytes);
 
   setBusy(true, { defer: auto });
@@ -1109,6 +1118,8 @@ function restore(fragment) {
   const s = decodeState(fragment);
   if (!s) return false;
   Object.assign(state, s);
+  // an alignment offset in the link is kept (not replaced by one from the text's addresses)
+  if (s.alignmentOffset !== DEFAULT_STATE.alignmentOffset) autoAlignText = s.text;
   buffers.hex = buffers.asm = '';
   buffers[state.mode] = s.text;
   delete state.text;

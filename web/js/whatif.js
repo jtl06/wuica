@@ -306,7 +306,8 @@ export function createWhatIf(env) {
     if (!open) { body.replaceChildren(); body.dataset.state = 'closed'; runner.cancel(); return; }
     const options = { ...view.request };
     delete options.hex; delete options.arch; delete options.includeTrace;
-    const others = (env.cpus?.() ?? []).filter((a) => a !== view.archKey);
+    // the other checked CPUs (only with the worker pool: their analyses run there)
+    const others = env.pool?.() ? (env.cpus?.() ?? []).filter((a) => a !== view.archKey) : [];
     const key = `${resultKey(view.hex, view.archKey, options)}|${others.join(',')}`;
     if (!job || job.key !== key) {
       const exps = experiments(r, view.hex, options);

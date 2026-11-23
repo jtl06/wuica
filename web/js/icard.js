@@ -91,7 +91,8 @@ export function bottleneckShare(response, row, details = null) {
   if (!res) return null;
   const b = (res === 'Ports' ? portSetBlame(response, details?.ports) : null) ?? blame(response, res);
   if (!b || !(b.total > 0)) return null;
-  return { resource: res, share: (b.weights[row] ?? 0) / b.total, unit: b.unit };
+  // (the divider's bottleneck is the Div column: named as the loop's bottleneck)
+  return { resource: res === 'col:Div' ? 'Divider' : res.replace(/^col:/, ''), share: (b.weights[row] ?? 0) / b.total, unit: b.unit };
 }
 
 // the front-end facts as short tags: [{text, title}]

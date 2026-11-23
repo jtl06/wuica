@@ -72,7 +72,7 @@ export function srcModel(response, src, hex) {
     const e = per.get(line);
     lines.push({ line, text: noText ? (src.file ? `${src.file}:${line}` : `line ${line}`) : text[line - 1] ?? '', share: e && total > 0 ? e.value / total : 0, rows: e?.rows ?? [], top: e ? e.top : -1 });
   });
-  return { resource: resource ?? 'Issued', unit, lines, unmapped: total > 0 ? unmapped / total : 0, total };
+  return { resource: resource === 'col:Div' ? 'Divider' : resource ?? 'Issued', unit, lines, unmapped: total > 0 ? unmapped / total : 0, total };
 }
 
 // ---- the view ----------------------------------------------------------------------------------------------------

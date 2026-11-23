@@ -284,13 +284,14 @@ async function assembleOnce(assemble, text, prep) {
   return { ok: false, diagnostics: [{ line: plan.region.line, column: null, severity: 'error', message: 'the marked region is not in .text' }] };
 }
 
-// A ';' whose rest the assembler rejected is a comment, unless that rest looks like an instruction (operands with a
-// comma, brackets or AT&T prefixes): a typo after a separator stays an error.
+// A ';' whose rest the assembler rejected is a comment, unless that rest looks like an instruction (a word, then a
+// register, a memory operand or a number: "addd rbx, 2"): a typo after a separator stays an error.
+const OPERAND = /^(?:%?(?:[re]?(?:ax|bx|cx|dx|si|di|sp|bp)|[abcd][lh]|(?:si|di|sp|bp)l|r(?:[89]|1[0-5])[dwb]?|[xyz]mm\d+|k[0-7]),?|(?:byte|word|dword|qword|xmmword|ymmword|zmmword|tbyte)|[[(]|\$|-?(?:0x[0-9a-f]+|\d+),?)/i;
 export function commentFixes(diagnostics, text) {
   const fixes = semicolonFixes(diagnostics, text);
   for (const [line, fixed] of fixes) {
-    const after = fixed.slice(fixed.lastIndexOf('#') + 1);
-    if (/[,[%$]/.test(after)) fixes.delete(line);
+    const words = fixed.slice(fixed.lastIndexOf('#') + 1).trim().split(/\s+/);
+    if (words.length > 1 && /^[a-z][a-z0-9.]*$/i.test(words[0]) && OPERAND.test(words[1])) fixes.delete(line);
   }
   return fixes;
 }

@@ -71,6 +71,10 @@ const near = (a, b, eps = 1e-9) => Math.abs(a - b) < eps;
   check(b && b.total === 5 && b.max === 4 && b.set.name === 'p0156' && b.ports.join() === 'p0,p1,p5,p6' && b.unit === 'uops', 'port set: blame', JSON.stringify(b));
   check(portSetBlame(r, { ...ps, rows: [1] }) === null && portSetBlame(r, null) === null && portSetBlame(r, { ...ps, rows: [0, 0, 0, 0] }) === null, 'port set: wrong or empty');
   check(setName(['ALU0', 'ALU1']) === 'ALU0 ALU1', 'port set: other names');
+  // the divider: the share of the Div column, named as the loop's bottleneck
+  const rdiv = { tp: 6, mode: 'loop', bottlenecks: ['Divider'], limits: [{ name: 'Ports', tp: 2 }], columns: ['Div', 'Port 0'], rows: [{ kind: 'instr', label: 'div ecx', opcode: 'f7f1', values: [6, 2] }, { kind: 'instr', label: 'jnz 0x0', opcode: '75fc', values: [0, 1] }] };
+  const sd = bottleneckShare(rdiv, 0, null);
+  check(sd?.resource === 'Divider' && sd.share === 1 && sd.unit === 'cycles', 'card: share of the Divider bottleneck', JSON.stringify(sd));
   // the card's share of the bottleneck: Ports by the port set when the details have it, else the busiest ports
   const rp = { ...r, tp: 2, bottlenecks: ['Ports'], limits: [{ name: 'Ports', tp: 2 }] };
   const s0 = bottleneckShare(rp, 0, null), s1 = bottleneckShare(rp, 0, { ports: ps });
