@@ -218,7 +218,8 @@ The fields from `arch` to `trace` are the analysis response of the WebAssembly m
 repository: `rows[].values[i]` belongs to `columns[i]`, and `notes` is `M` macro-fused, `J` JCC erratum or `X`
 unsupported). `hex` is present when `source` was given and holds the assembled bytes. `stderr` holds the assembler's
 warnings and the warning "N position(s) could not be decoded". `insights` (REST only; the library's `analyze()` result
-does not have it, `insights(r)` computes it) is the diagnosis described under the compact form below.
+does not have it, `insights(r)` computes it) is the diagnosis described under the compact form below, with `portSet`
+and `issueSlots` when `options.details` is true.
 
 **Plain text** (CE's `Accept: text/plain`): the response is `text` (uiCA's report), or the `stderr` lines on failure.
 In the library this is `r.text`; the MCP tool takes `format: "text"`.
