@@ -246,5 +246,6 @@ export function createPool({ size, spawn, tableOf, tableBytes, maxTables = Infin
 
     get workers() { return slots.length; },
     get waiting() { return queue.length; },
+    get busy() { return queue.length > 0 || slots.some((s) => !!s.job); },
   };
 }

@@ -759,12 +759,43 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function registerServiceWorker() {
   if (!swUsable()) return;
   const hadController = !!navigator.serviceWorker.controller;
+  for (const type of ['keydown', 'input', 'change']) document.addEventListener(type, () => { lastInput = performance.now(); }, { capture: true, passive: true });
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (hadController) el.updateNote.hidden = false; // a new deploy took over while this page was open
+    if (hadController) updated(); // a new deploy took over while this page was open
   });
   try {
     await navigator.serviceWorker.register('sw.js');
   } catch { /* the page works without it, just not offline */ }
+}
+
+// A new deploy: its service worker takes over at once (skipWaiting and clients.claim in sw.js), but this page is still
+// the old build, served from the old cache. It reloads itself, when that loses nothing: once the analyzer is ready and
+// idle (no analysis running, nothing on the pool) and nothing was typed for UPDATE_QUIET_MS, after writing the state
+// into the URL fragment. At most once per build (sessionStorage), so a reload that comes back to the old build cannot
+// loop. If that cannot be ensured (no session storage, the fragment could not be written, already reloaded for this
+// build), the note in the footer stays: reload by hand.
+const UPDATE_KEY = 'wuica-update-reload';
+const UPDATE_QUIET_MS = 1200;
+let lastInput = 0;     // performance.now() of the last keystroke or change
+let updating = false;
+
+async function updated() {
+  if (updating) return;
+  updating = true;
+  el.updateNote.hidden = false;
+  let next = null; // the new build's version: its worker answers from its own cache
+  try { next = (await (await fetch('manifest.json', { cache: 'no-store' })).json())?.version ?? null; } catch { /* unknown */ }
+  if (next === manifest.version) { el.updateNote.hidden = true; updating = false; return; } // the same build again
+  const mark = typeof next === 'string' ? next : `after ${manifest.version}`;
+  try { if (sessionStorage.getItem(UPDATE_KEY) === mark) return; } catch { return; }
+  while (!ready || busy || pool?.busy || performance.now() - lastInput < UPDATE_QUIET_MS) await sleep(250);
+  syncUrl(true);
+  if (location.hash.replace(/^#/, '') !== lastFragment) return; // the address does not hold the state
+  try {
+    sessionStorage.setItem(UPDATE_KEY, mark);
+    if (sessionStorage.getItem(UPDATE_KEY) !== mark) return;
+  } catch { return; }
+  location.reload();
 }
 
 // After the first result: fetch the remaining instruction tables when the browser is idle, so that switching the

@@ -3,6 +3,8 @@
 // site's files), so a new deploy is a new worker with a new, empty cache, and the old cache is deleted.
 //   install:   the page itself, the analyzer and uarch.json are fetched into the cache (the list is manifest.json)
 //   fetch:     cache first; what is not cached yet (instruction tables, the assembler) is fetched and added
+// A new worker takes over open pages at once (skipWaiting, clients.claim); such a page is still the old build, and
+// reloads itself once when it is idle (app.js, updated()), or shows a note asking for a reload.
 const VERSION = '__WUICA_VERSION__';
 const CACHE = `wuica-${VERSION}`;
 const LAZY = /^(data\/arch\/|wuica_asm\.wasm$)/; // large, fetched when needed (the page prefetches the tables)
