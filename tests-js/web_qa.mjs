@@ -47,6 +47,14 @@ if (fs.existsSync(path.join(dist, 'wuica_asm.wasm'))) {
       check(same && r.diagnostics.length === 0, `example ${ex.id}: the ${syntax} text assembles to its machine code`, JSON.stringify([hex, ex.hex, r.diagnostics]));
     }
   }
+  // a byte order mark at the start is dropped; ';' is not a comment: the error says so
+  const bom = await asm.assemble('\uFEFFadd rax, rbx\n', 'intel');
+  check(bom.ok && toHex(bom.bytes) === '4801d8', 'assembler: a byte order mark at the start is dropped', JSON.stringify(bom));
+  const semi = await asm.assemble('add rax, 1 ; one more\nnop\n', 'intel');
+  check(!semi.ok && semi.diagnostics[0].line === 1 && /^invalid instruction mnemonic 'one' \(';' separates instructions; comments start with '#'\)$/.test(semi.diagnostics[0].message),
+    "assembler: an error after ';' explains that it is not a comment", JSON.stringify(semi.diagnostics));
+  const other = await asm.assemble('frobnicate rax\n', 'intel');
+  check(!other.ok && !/separates/.test(other.diagnostics[0].message), "assembler: other errors get no ';' hint", JSON.stringify(other.diagnostics));
 } else console.log('(no assembler in web/dist: the examples were not assembled)');
 const t0 = performance.now();
 for (const arch of ARCHS) {
