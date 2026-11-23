@@ -857,11 +857,18 @@ impl<'a> Sim<'a> {
     /// `Scheduler.getReadyForDispatchCycle`
     fn get_ready_for_dispatch_cycle(&mut self, clock: i64, u: u32) -> Result<Option<i64>, SimError> {
         let mut op_ready_cycle = -1;
+        let folded_in = self.uops[u as usize].folded_in;
+        // (only shifts and rotates have folded inputs)
+        let fold_delay = self.cfg.folded_shift_delay;
+        let ren_start = self.uops[u as usize].ren;
         for j in self.uops[u as usize].ren_in() {
             let r = self.ren_lists[j as usize];
             match self.get_ready_cycle(r) {
                 None => return Ok(None),
-                Some(c) => {
+                Some(mut c) => {
+                    if folded_in & (1u32.checked_shl(j - ren_start).unwrap_or(0)) != 0 {
+                        c += fold_delay;
+                    }
                     if c > op_ready_cycle {
                         op_ready_cycle = c;
                     }

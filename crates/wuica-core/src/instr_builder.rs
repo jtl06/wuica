@@ -1177,6 +1177,11 @@ fn compute_uop_properties(instructions: &mut [Instr], operands: &mut Vec<Operand
             props.mem_addr = mem_addr;
             props.forward_delay = config.store_forward_delay;
             props.forward_fail_delay = config.store_forward_fail_delay;
+            if let Some(d) = config.load_op_forward_delay {
+                if !non_mem_pcs.is_empty() && instr.output_mem_operands.is_empty() {
+                    props.forward_delay = d;
+                }
+            }
             if !instr.output_mem_operands.is_empty() {
                 props.forward_delay = config.rmw_forward_delay;
                 if non_mem_pcs.len() == 1 && !instr.mem_renaming {

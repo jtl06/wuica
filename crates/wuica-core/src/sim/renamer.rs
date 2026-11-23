@@ -669,6 +669,9 @@ impl<'a> Sim<'a> {
 
             let ren_in_start = self.ren_lists.len() as u32;
             let (in_start, n_in) = self.prep.props[prop_id].in_keys;
+            // foldedInputs: a register whose value was computed by the renamer, read by an instruction that gets it later
+            let fold_delay = self.prep.props[prop_id].has(pf::FOLD_SHIFT) && self.cfg.folded_shift_delay != 0;
+            let mut folded_in = 0u32;
             for i in in_start..in_start + n_in {
                 let k = &self.prep.in_key_list[i as usize];
                 let (op, is_pseudo, key) = (k.op, k.is_pseudo, k.key);
@@ -680,10 +683,14 @@ impl<'a> Sim<'a> {
                         None => return Err(crash("KeyError: curInstrPseudoOpDict")),
                     }
                 } else {
+                    if fold_delay && self.rn.folded_width[key as usize].is_some() && i - in_start < 32 {
+                        folded_in |= 1 << (i - in_start);
+                    }
                     self.rename_dict_setdefault(key).renamed_op
                 };
                 self.ren_lists.push(ren_op);
             }
+            self.uops[u as usize].folded_in = folded_in;
             let ren_out_start = self.ren_lists.len() as u32;
             // (at most 255 operands: checked in Prep::new)
             self.uops[u as usize].ren = ren_in_start;
