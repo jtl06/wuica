@@ -218,6 +218,153 @@ fn line_of(m: &MemAddr) -> Line {
     (m.base.clone(), m.index.clone(), m.scale, m.disp.unwrap_or(0).div_euclid(64))
 }
 
+fn reg_of(operands: &[Operand], id: OpId) -> &str {
+    match &operands[id as usize] {
+        Operand::Reg { reg, .. } => reg,
+        other => panic!("not a register operand: {other:?}"),
+    }
+}
+
+/// `affineDelta(instr, reg)`: the constant that the instruction adds to the 32- or 64-bit general-purpose register `reg` (index of
+/// [`gp_reg_index`]), or `None` if it changes it otherwise
+fn affine_delta(instr: &Instr, operands: &[Operand], reg: usize) -> Option<i64> {
+    let mnemonic = instr.instr_str.split(' ').next().unwrap_or("");
+    if !instr.output_reg_operands.iter().any(|&op| {
+        let r = reg_of(operands, op);
+        gp_reg_index(r) == Some(reg) && matches!(reg_size(r), 32 | 64)
+    }) {
+        return None;
+    }
+    if (mnemonic == "ADD" || mnemonic == "SUB")
+        && instr.immediate.is_some()
+        && instr.input_reg_operands.first().is_some_and(|&op| gp_reg_index(reg_of(operands, op)) == Some(reg))
+        && instr.input_mem_operands.is_empty()
+    {
+        let imm = instr.immediate.expect("checked");
+        return Some(if mnemonic == "ADD" { imm } else { -imm });
+    }
+    if (mnemonic == "INC" || mnemonic == "DEC") && instr.input_mem_operands.is_empty() && instr.output_mem_operands.is_empty() {
+        return Some(if mnemonic == "INC" { 1 } else { -1 });
+    }
+    None
+}
+
+/// (version, offset) of each general-purpose register (index of [`gp_reg_index`]), relative to the start of an iteration
+type RegState = [(i64, i64); 16];
+
+/// `registerVersions`: the values of the general-purpose registers in one iteration, relative to their values at its start, as
+/// (version, offset): adding an immediate (ADD, SUB, INC, DEC) changes the offset, any other write gives a new version. Returns the
+/// state before each instruction and the state at the end of the iteration.
+fn register_versions(instructions: &[Instr], operands: &[Operand]) -> (Vec<RegState>, RegState) {
+    let mut state: RegState = [(0, 0); 16];
+    let mut before = Vec::with_capacity(instructions.len());
+    let mut n_versions = 0;
+    for instr in instructions {
+        before.push(state);
+        for &op in &instr.output_reg_operands {
+            let Some(reg) = gp_reg_index(reg_of(operands, op)) else { continue };
+            match affine_delta(instr, operands, reg) {
+                Some(d) => state[reg].1 += d,
+                None => {
+                    n_versions += 1;
+                    state[reg] = (n_versions, 0);
+                }
+            }
+        }
+    }
+    (before, state)
+}
+
+/// `addressLineKey`: (registers with their versions, scale, cache line of the offset) of an address
+type LineKey = (Option<String>, Option<i64>, Option<String>, Option<i64>, Option<i64>, i64);
+
+fn address_line_key(m: &MemAddr, state: &RegState) -> LineKey {
+    // getCanonicalReg; registers that are not general-purpose registers (RIP) have the state (0, 0)
+    let reg_state = |r: &str| gp_reg_index(r).map_or((0, 0), |i| state[i]);
+    let (vb, ob) = m.base.as_deref().map_or((None, 0), |b| {
+        let (v, o) = reg_state(b);
+        (Some(v), o)
+    });
+    let (vi, oi) = m.index.as_deref().map_or((None, 0), |x| {
+        let (v, o) = reg_state(x);
+        (Some(v), o)
+    });
+    (
+        m.base.as_deref().map(canonical_reg),
+        vb,
+        m.index.as_deref().map(canonical_reg),
+        vi,
+        m.scale,
+        (ob + m.scale.unwrap_or(0) * oi + m.disp.unwrap_or(0)).div_euclid(64),
+    )
+}
+
+/// `splitLoadPatterns`: sets `split_load_pattern` of the loads that cross a 64-byte line in some iterations. Loads are grouped by their
+/// address registers; a group's registers must be changed only by adding immediates (register_versions), which gives the offset of each
+/// load from the group's unknown start address and the stride per iteration. The start address is assumed to have the alignment (mod
+/// 64) with the fewest crossing loads.
+fn split_load_patterns(instructions: &mut [Instr], operands: &[Operand], before: &[RegState], end: &RegState) {
+    fn gcd(a: i64, b: i64) -> i64 {
+        if b == 0 { a } else { gcd(b, a % b) }
+    }
+    // (sorted (register, coefficient) pairs, [(instruction, offset, size, stride)]) in the order of the first load of each group
+    let mut groups: Vec<(Vec<(String, i64)>, Vec<(usize, i64, i64, i64)>)> = Vec::new();
+    for (i, instr) in instructions.iter().enumerate() {
+        for &op in &instr.input_mem_operands {
+            let m = mem_addr_of(operands, op);
+            let size = mem_width(&instr.instr_str).unwrap_or(0).div_euclid(8);
+            if size < 2 || ["PUSH", "POP", "LEA", "PREFETCH", "NOP"].iter().any(|p| instr.instr_str.starts_with(p)) {
+                continue;
+            }
+            let mut regs: Vec<(String, i64)> = Vec::new();
+            if let Some(b) = m.base.as_deref().filter(|b| !b.is_empty()) {
+                regs.push((canonical_reg(b), 1));
+            }
+            if let Some(x) = m.index.as_deref().filter(|x| !x.is_empty()) {
+                regs.push((canonical_reg(x), m.scale.filter(|&s| s != 0).unwrap_or(1)));
+            }
+            let mut ok = true;
+            let (mut offset, mut stride) = (m.disp.unwrap_or(0), 0);
+            for (r, c) in &regs {
+                match gp_reg_index(r) {
+                    Some(k) if before[i][k].0 == 0 && end[k].0 == 0 => {
+                        offset += c * before[i][k].1;
+                        stride += c * end[k].1;
+                    }
+                    _ => ok = false,
+                }
+            }
+            if !ok {
+                continue;
+            }
+            regs.sort();
+            match groups.iter_mut().find(|(k, _)| *k == regs) {
+                Some((_, loads)) => loads.push((i, offset, size, stride)),
+                None => groups.push((regs, vec![(i, offset, size, stride)])),
+            }
+        }
+    }
+    for (_, loads) in &groups {
+        let stride = loads[0].3.rem_euclid(64);
+        let period = 64 / gcd(stride, 64);
+        let crossings = |r: i64| -> Vec<Vec<bool>> {
+            loads.iter().map(|&(_, off, size, _)| (0..period).map(|k| (r + off + stride * k).rem_euclid(64) + size > 64).collect()).collect()
+        };
+        let count = |r: i64| crossings(r).iter().map(|p| p.iter().filter(|&&b| b).count()).sum::<usize>();
+        // min(range(64), key=...): the first minimum
+        let best = (0..64).min_by_key(|&r| count(r)).expect("non-empty range");
+        for (&(i, _, _, _), pattern) in loads.iter().zip(crossings(best)) {
+            if pattern.iter().any(|&b| b) {
+                let instr = &mut instructions[i];
+                instr.split_load_pattern = Some(match instr.split_load_pattern.take() {
+                    None => pattern,
+                    Some(old) => old.iter().zip(&pattern).map(|(&a, &b)| a || b).collect(),
+                });
+            }
+        }
+    }
+}
+
 fn mem_addr_of(operands: &[Operand], id: OpId) -> &MemAddr {
     match &operands[id as usize] {
         Operand::Mem { mem_addr } => mem_addr,
@@ -284,6 +431,7 @@ fn unknown_instr(d: &DecodedInstr) -> Instr {
         mem_renaming: false,
         tp_key: TpKey::InstrStr(String::new()),
         op_cache_fields: 0,
+        split_load_pattern: None,
         is_next_to_last_instr: false,
         is_last_instr: false,
         uop_properties_list: Vec::new(),
@@ -495,12 +643,16 @@ fn get_instructions(
         }
     }
 
+    let mut reg_before: Option<Vec<RegState>> = None;
     if !config.store_line_restricted_ports.is_empty() {
-        let stores: Vec<(usize, Line)> = instructions
+        // two stores of an iteration write the same line if their address registers hold the same values (register versions, see
+        // register_versions; e.g., 'inc [rsp+rdx*4]' twice with 'movzx edx, al' between them: different lines)
+        let before = &*reg_before.insert(register_versions(&instructions, operands).0);
+        let stores: Vec<(usize, LineKey)> = instructions
             .iter()
             .enumerate()
             .flat_map(|(i, instr)| instr.output_mem_operands.iter().map(move |&op| (i, op)))
-            .map(|(i, op)| (i, line_of(mem_addr_of(operands, op))))
+            .map(|(i, op)| (i, address_line_key(mem_addr_of(operands, op), &before[i])))
             .collect();
         for (i, line) in &stores {
             if stores.iter().any(|(i2, l)| i2 != i && l == line) {
@@ -525,6 +677,12 @@ fn get_instructions(
                 }
             }
         }
+    }
+
+    if config.split_load_cycles != 0 {
+        let (before, end) = register_versions(&instructions, operands);
+        let before = reg_before.get_or_insert(before);
+        split_load_patterns(&mut instructions, operands, before, &end);
     }
 
     if config.narrow_store_penalty != 0 {
@@ -970,6 +1128,7 @@ fn known_instr(
         mem_renaming: false,
         tp_key: TpKey::InstrStr(entry.string.clone()),
         op_cache_fields: 0,
+        split_load_pattern: None,
         is_next_to_last_instr: false,
         is_last_instr: false,
         uop_properties_list: Vec::new(),

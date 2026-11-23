@@ -25,6 +25,15 @@ On the branch `model-r8`, the reference is the fork's branch `improve-r8` (model
 microcoded instruction holds at most 4 macro-ops), `rotateCarryRMWForwardDelay` (ICX: store-forwarding delay of the loads of
 read-modify-write RCL/RCR) and in the instruction data `AMD_NARROW_RMW_MEM_LATENCY` (ZEN3: ADC/SBB on 8/16-bit memory).
 
+On the branch `model-r9`, the reference is the fork's branch `improve-r9` (the changes of round 9 on top of `improve-r8`). New since
+round 8, in `instructions.py`: `registerVersions` / `addressLineKey` (the values of the address registers within an iteration, as a
+version and an offset; ZEN3's store-line rule `storeLineRestrictedPorts` now compares them instead of the register names) and
+`splitLoadPatterns` with `splitLoadCycles` (ZEN3 2, ADL-P 3, ICX 2: a load that crosses a 64-byte line in some iterations, where the
+loop's addresses make it knowable, blocks its load port for that many cycles in those iterations; `Instr.splitLoadPattern`, exported
+in the instruction fixtures only when set); in `uiCA.py` the FP non-scheduling queue (`fpSchedulerSize` 56 and `fpSchedulerPorts` for
+ZEN3: at most that many uops for the FP ports wait in the scheduler, younger ones wait in order and are not dispatched before they
+enter it). Ported in `instr_builder.rs` (`register_versions`, `address_line_key`, `split_load_patterns`) and `sim/scheduler.rs`.
+
 Not ported:
 
 - the `CLX_SimplePorts*` configurations (they use Python's `random.choice`; they are ablation variants of the uiCA paper);

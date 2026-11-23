@@ -161,6 +161,10 @@ pub struct Instr {
     pub tp_key: TpKey,
     #[serde(rename = "opCacheFields")]
     pub op_cache_fields: i64,
+    /// `splitLoadPattern`: for a load that crosses a 64-byte line in some iterations, whether it does in each iteration of a period
+    /// (see `splitLoadCycles`); absent otherwise
+    #[serde(rename = "splitLoadPattern", default, skip_serializing_if = "Option::is_none")]
+    pub split_load_pattern: Option<Vec<bool>>,
     #[serde(rename = "isNextToLastInstr")]
     pub is_next_to_last_instr: bool,
     #[serde(rename = "isLastInstr")]
