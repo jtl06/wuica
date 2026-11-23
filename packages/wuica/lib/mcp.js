@@ -19,14 +19,16 @@ const ASSUMPTIONS =
   "uiCA's Intel models (SNB through RKL).";
 
 const INPUT_NOTE =
-  'Give the block either as `source` (x86-64 assembly, Intel syntax without % prefixes by default, one instruction per ' +
+  'Give the block either as `source` (x86-64 assembly in Intel (noprefix) or AT&T syntax: detected unless `syntax` says; one instruction per ' +
   'line; labels and directives are allowed, e.g. "loop: add rax, [rsi]\\n dec rcx\\n jnz loop") or as `hex` (machine ' +
   'code bytes, e.g. "4801d8"). A whole function (gcc -S or clang -S output, objdump -d lines with addresses, with or ' +
   'without the bytes) is fine: by default (`loop: "auto"`) its innermost loop is analyzed (the first one in the code), ' +
-  'or the body without prologue and epilogue if it has no loop; branches out of the loop count as not taken (so an exit ' +
+  'or the body without prologue and epilogue if it is a compiler\'s function without a loop; the deepest loop is ' +
+  'preferred (clang\'s "Inner Loop Header" notes count), among equals the first; branches out of the loop count as not taken (so an exit ' +
   'to a label that is not in the text assembles); with addresses, the alignment offset is the loop\'s address mod 64 ' +
   'unless options.alignmentOffset is given. The response\'s `loop` says what was analyzed (index, count, name, lines, ' +
-  'address). `loop: "whole"` analyzes the whole text; `loop: N` the N-th loop (innermost first, in code order).';
+  'address, function, depth). `loop: "whole"` analyzes the whole text; `loop: N` the N-th loop (0-based: deepest first, ' +
+  'then in code order); `loop: ".LBB0_12"` a loop by its label; `func: "name"` only the loops of that function.';
 
 const ERRORS_NOTE =
   'Failures are tool errors whose JSON is {code, error, stderr}: code 1 = bad request (e.g. unknown arch, bad hex), ' +
@@ -36,8 +38,9 @@ const ERRORS_NOTE =
 const codeShape = {
   source: z.string().optional().describe('x86-64 assembly text of the basic block (give source or hex)'),
   hex: z.string().optional().describe('machine code as hex bytes, e.g. "4801d84801c349ffcf75f5" (spaces allowed)'),
-  syntax: z.enum(['intel', 'att']).optional().describe('syntax of `source`: "intel" (default, noprefix) or "att"'),
-  loop: z.union([z.enum(['auto', 'whole']), z.number().int().min(0)]).optional().describe('what of `source` is analyzed: "auto" (default: the innermost loop of a whole function, else the text), "whole", or the index of a loop'),
+  syntax: z.enum(['auto', 'intel', 'att']).optional().describe('syntax of `source`: "auto" (default: detected from the text), "intel" (noprefix) or "att"'),
+  loop: z.union([z.enum(['auto', 'whole']), z.number().int().min(0), z.string().min(1)]).optional().describe('what of `source` is analyzed: "auto" (default: the deepest loop of a whole function, else the text), "whole", the index of a loop (0-based), or its label'),
+  func: z.string().min(1).optional().describe('only the loops of this function (a label of `source`)'),
 };
 
 const optionsShape = z.object({
@@ -166,6 +169,7 @@ export function createServer(w) {
       annotations: readOnly,
     },
     async ({ arch, variants, ...request }) => result(await whatIf((a, req) => w.analyze(a, req), arch ?? 'SKL', request, variants ?? VARIANTS, { assemble: (text) => w.assemble(text, 'intel') })),
+
   );
 
   server.registerTool(
@@ -194,7 +198,7 @@ export function createServer(w) {
       description:
         'Assembles x86-64 assembly text with LLVM\'s assembler (LLVM 22, the same bytes as llvm-mc) and returns ' +
         '{code: 0, hex, length, stderr} (stderr: warnings), or the assembler\'s errors as {code: 2, error, stderr} with ' +
-        'line/column tags. Intel syntax (noprefix) by default; the text may switch with .intel_syntax noprefix / ' +
+        'line/column tags. The syntax is detected unless given (Intel noprefix or AT&T); the text may switch with .intel_syntax noprefix / ' +
         '.att_syntax. Only .text is returned.',
       inputSchema: z.object({
         source: z.string().describe('the assembly text'),
@@ -202,7 +206,7 @@ export function createServer(w) {
       }).strict(),
       annotations: readOnly,
     },
-    async ({ source, syntax }) => result(omitBytes(await w.assemble(source, syntax ?? 'intel'))),
+    async ({ source, syntax }) => result(omitBytes(await w.assemble(source, syntax ?? 'auto'))),
   );
 
   return server;

@@ -95,6 +95,23 @@ function renameText(text, map) {
   return bad ? null : out;
 }
 
+// Instructions whose first operand is only written (with a 32- or 64-bit general register or a whole vector register:
+// a byte or word write keeps the rest of the register; a legacy movss/movsd between registers keeps the upper part).
+const WRITE_ONLY = /^(?:v?mov(?:aps|apd|ups|upd|dqa\w*|dqu\w*|ss|sd|d|q)|mov|movzx|movsx\w*|lea|vbroadcast\w+|vpbroadcast\w+|v?pmov[sz]x\w+|v?cvt\w+|pop)$/;
+const MERGES = /^(?:movss|movsd|cvt\w+)$/; // legacy forms that merge into the destination
+// true if `label` writes register family `base` as its first operand and does not read it
+export function writesOnly(label, base) {
+  const { mnemonic, operands } = splitInstr(label);
+  if (!WRITE_ONLY.test(mnemonic)) return false;
+  const ops = operands.split(',').map((o) => o.trim());
+  const f = family(ops[0]);
+  if (!f || f.base !== base) return false;
+  if (f.kind === 'gpr' && f.size > 1) return false;
+  if (ops.slice(1).some((o) => regsIn(o).some((r) => family(r)?.base === base))) return false;
+  if (MERGES.test(mnemonic) && ops.length === 2 && !/\[/.test(ops[1])) return false;
+  return true;
+}
+
 // XED's Intel syntax where LLVM's reads it differently (as asm-text.js's llvmSyntax).
 function llvmSyntax(asm) {
   return asm
@@ -138,12 +155,14 @@ export function accumulatorText(response, hex, n) {
   const addressed = new Set(ins.flatMap((i) => [...i.label.matchAll(/\[([^\]]*)\]/g)].flatMap((m) => regsIn(m[1]))).map((r) => family(r)?.base));
   const induction = chain.bases.find((b) => addressed.has(b));
   if (induction) return { ok: false, reason: `the chain is the induction variable ${chain.names[chain.bases.indexOf(induction)]} (used in an address), not an accumulator` };
-  // the chain's register used by an instruction off the chain (a store of a running sum): renaming would change it
+  // the chain's register read by an instruction off the chain (a store of a running sum): splitting the chain would
+  // change what it reads. Writing it off the chain is sound (clang reuses the chain's registers for loads: the copy's
+  // registers are renamed as a whole, the load with them).
   const onChain = new Set(response.criticalPath.edges.flatMap((e) => [e.from, e.to]));
   for (const i of ins) {
     if (onChain.has(i.row)) continue;
-    const b = chain.bases.find((x) => usesOf.get(i).has(x));
-    if (b) return { ok: false, reason: `${chain.names[chain.bases.indexOf(b)]} is also used off the chain (${i.label})` };
+    const b = chain.bases.find((x) => usesOf.get(i).has(x) && !writesOnly(i.label, x));
+    if (b) return { ok: false, reason: `${chain.names[chain.bases.indexOf(b)]}'s running value is also read off the chain (${i.label}): it cannot be split` };
   }
   // free registers for the copies after the first
   const freeGpr = GPR_FREE.filter((r) => !used.has(r) && !implicit.has(r));

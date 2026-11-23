@@ -349,7 +349,7 @@ export function separatorNotes(text) {
 // the text's addresses, or null), and the notes (exits, undefined jump targets) among its diagnostics.
 export async function assembleMarked(assemble, text, opts = {}) {
   const analysis = opts.loop !== undefined && opts.loop !== null;
-  const prep = analysis ? preparePaste(text, { loop: opts.loop }) : null;
+  const prep = analysis ? preparePaste(text, { loop: opts.loop, func: opts.func }) : null;
   if (prep?.error) return { ok: false, diagnostics: [{ line: null, column: null, severity: 'error', message: prep.error }] };
   let work = prep ? prep.text : normalizeText(text);
   const fallback = new Map(prep?.fallback ?? []);

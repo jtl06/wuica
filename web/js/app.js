@@ -25,7 +25,7 @@ import { createABSlots } from './ab-slots.js';     // A–B: the issue slots of 
 import { createCmpSlots } from './cmp-slots.js';   // the issue slots per CPU in the CPU table (bound view open)
 import { withRegions } from './asm-regions.js';     // marked regions and .loc lines of pasted assembly
 import { createRegionChip, createLoopChip } from './region-chip.js';
-import { replacesText } from './loop-find.js';
+import { replacesText, detectSyntax } from './loop-find.js';
 import { createKeys } from './keys.js';           // keyboard shortcuts, the ? overlay
 import { createABCpus } from './ab-cpus.js';       // A–B on every checked CPU
 import { branchLabels, analyzedLines } from './branch-label.js'; // branch targets as labels in the uop table
@@ -159,6 +159,7 @@ let bLoop = 'auto';
 let bLoopChip = null;
 // (a text that replaces the box's text: loop-find.js, replacesText)
 let textA = '', textB = '';
+let syntaxChosen = false; // the user picked the syntax (not the page from a pasted text)
 function newTextA() { state.loop = 'auto'; if (alignBy === 'manual') alignBy = null; textA = el.code.value; }
 function newTextB() { bLoop = 'auto'; textB = document.getElementById('code-b')?.value ?? ''; }
 const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o),
@@ -1275,6 +1276,7 @@ function bind() {
   el.modeAsm.addEventListener('change', () => switchMode('A', 'asm', buffers.asm, (c) => setMode('asm', c)));
   el.modeHex.addEventListener('change', () => switchMode('A', 'hex', buffers.hex, (c) => setMode('hex', c)));
   el.syntax.addEventListener('change', () => {
+    syntaxChosen = true; // the user's choice: a pasted text no longer switches it
     const old = state.syntax;
     state.syntax = el.syntax.value === 'att' ? 'att' : 'intel';
     // an untouched example follows the syntax
@@ -1289,7 +1291,12 @@ function bind() {
   });
   el.code.addEventListener('input', (e) => {
     buffers[state.mode] = el.code.value;
-    if (state.mode === 'asm' && replacesText(textA, el.code.value)) newTextA(); else textA = el.code.value;
+    if (state.mode === 'asm' && replacesText(textA, el.code.value)) {
+      newTextA();
+      // a pasted text in the other syntax (clang -S, objdump: AT&T) switches the select, unless the user chose it
+      const syn = detectSyntax(el.code.value);
+      if (syn && syn !== state.syntax && !syntaxChosen) { state.syntax = syn; el.syntax.value = syn; }
+    } else textA = el.code.value;
     changed({ now: replaced(e) });
   });
   el.align.addEventListener('change', () => { alignBy = 'manual'; });

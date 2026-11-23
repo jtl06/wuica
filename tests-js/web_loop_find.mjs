@@ -23,7 +23,7 @@ const j = JSON.stringify;
   check(crc.choice === 0 && crc.loops.length === 1 && crc.loops[0].label === '.L3' && crc.choosable, 'gcc -S: the loop .L3', j(crc.loops));
   check(preparePaste(fx('crc_a.s'), { loop: 'whole' }).pick === null, "loop 'whole': no pick");
   check(/not the index of a loop/.test(preparePaste(fx('crc_a.s'), { loop: 3 }).error), 'loop 3 of 1: an error');
-  check(/is not "auto"/.test(preparePaste('nop', { loop: 'x' }).error), 'loop: a bad value');
+  check(/is not the label of a loop/.test(preparePaste('nop', { loop: 'x' }).error) && /is not "auto"/.test(preparePaste('nop', { loop: -1 }).error), 'loop: a bad value');
   const one = preparePaste('.L1:\n  add rax, 1\n  dec rcx\n  jnz .L1\n');
   check(one.choice === null && !one.choosable && one.loops.length === 1, 'one loop and nothing else: no pick, no choice', j(one));
   const pre = preparePaste('  mov ecx, 100\n.L1:\n  add rax, 1\n  dec rcx\n  jnz .L1\n');

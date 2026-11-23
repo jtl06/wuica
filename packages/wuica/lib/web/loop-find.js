@@ -60,6 +60,24 @@ export function statements(line) {
   return out;
 }
 
+// The syntax of assembly text: 'att' or 'intel' (null: no sign of either). A directive (.att_syntax, .intel_syntax
+// [noprefix]) before the first instruction decides; else the signs: AT&T's %registers, $immediates and (%base,...)
+// memory operands against Intel's "ptr [" and [register...] operands. Comments are left out.
+export function detectSyntax(text) {
+  const lines = normalizeText(text).split('\n');
+  let att = 0, intel = 0;
+  for (const l of lines) {
+    const code = l.replace(/(?:#|\/\/).*$/, '');
+    const d = /^\s*\.(att|intel)_syntax\b/i.exec(code);
+    if (d && att + intel === 0) return d[1].toLowerCase();
+    att += (code.match(/%(?:[re]?(?:[abcd]x|[sd]i|[sb]p|ip)|[abcd][lh]|(?:[sd]i|[sb]p)l|r(?:[89]|1[0-5])[dwb]?|[xyz]mm\d+|k[0-7]|[cdefgs]s)\b/gi) ?? []).length;
+    att += (code.match(/(?:^|[\s,])\$-?(?:0x[0-9a-f]+|\d+)\b/gi) ?? []).length;
+    intel += (code.match(/\bptr\s*\[|\[\s*(?:[re]?(?:[abcd]x|[sd]i|[sb]p|ip)|r(?:[89]|1[0-5]))\b/gi) ?? []).length;
+    if (!/%/.test(code)) intel += (code.match(/^\s*(?:\w+:\s*)*[a-z]\w*\s+(?:[re]?(?:[abcd]x|[sd]i|[sb]p)|r(?:[89]|1[0-5])[dwb]?|[xyz]mm\d+)\s*,/gi) ?? []).length;
+  }
+  return att > intel ? 'att' : intel > att ? 'intel' : null;
+}
+
 // CRLF and a lone CR as LF (lines stay).
 export const normalizeText = (text) => String(text ?? '').replace(/\r\n?/g, '\n');
 
@@ -125,6 +143,9 @@ export function fromObjdump(text) {
   }
 
   const parsed = lines.map((l) => {
+    // a function's header ("0000000000000020 <fir8>:") becomes its label (the loops' function), if it is a plain name
+    const fh = /^\s*[0-9a-fA-F]+\s+<([A-Za-z_][\w.$]*)>:\s*$/.exec(l);
+    if (fh) return { kind: 'keep', text: `${fh[1]}:` };
     if (OD_HEADER.test(l) || OD_NOISE.test(l)) return { kind: 'blank' };
     const m = OD_ADDR.exec(l);
     // other lines of a listing (objdump -S: the source) are not code
@@ -181,7 +202,11 @@ export const isText = (args) => { const n = sectionName(args); return n === '.te
 // {labels: Map name -> line, symbols: Set (assigned with = / .set / .equ), instrs: [{line, col, mnemonic, operands,
 // kind: 'jcc' | 'jmp' | 'call' | 'ret' | 'other', target}], numeric: [{name, line}]}. Lines 1-based; only .text code.
 export function scan(text) {
+  const raw = String(text).split('\n');
   const lines = blankBlockComments(String(text)).split('\n');
+  // clang's loop notes on a label's line or the comment line after it ("# =>This Inner Loop Header: Depth=2",
+  // "#   in Loop: Header=BB0_4 Depth=1"): label -> text
+  const notes = new Map();
   const labels = new Map(), symbols = new Set(), instrs = [], numeric = [], functions = new Set();
   let inText = true, prev = true, directives = 0;
   const stack = [];
@@ -194,7 +219,11 @@ export function scan(text) {
       while ((m = LABEL_ONE.exec(head))) {
         const name = m[1];
         if (/^\d+$/.test(name)) numeric.push({ name, line: i + 1, inText });
-        else if (!labels.has(name)) labels.set(name, { line: i + 1, inText });
+        else if (!labels.has(name)) {
+          labels.set(name, { line: i + 1, inText });
+          const note = `${raw[i] ?? ''} ${/^\s*#/.test(raw[i + 1] ?? '') ? raw[i + 1] : ''}`;
+          if (/Loop Header|in Loop:|Parent Loop/.test(note)) notes.set(name, note);
+        }
       }
       const body = st.text.slice(lead).trim();
       if (!body) continue;
@@ -230,7 +259,7 @@ export function scan(text) {
       instrs.push({ line: i + 1, col: st.at + lead, end: st.at + st.text.length, mnemonic, operands, kind, target, body });
     }
   }
-  return { labels, symbols, instrs, numeric, functions, directives };
+  return { labels, symbols, instrs, numeric, functions, directives, notes };
 }
 
 // The line a branch target refers to (a label, or a numeric label "1b" / "1f" seen from `line`), or null.
@@ -263,8 +292,43 @@ export function findLoops(s) {
     || s.instrs.some((x) => (x.kind === 'call' || x.kind === 'jmp' || x.kind === 'jcc') && x.target === name && (x.line < l.begin || x.line > l.end)));
   const real = loops.filter((l) => !s.instrs.some((x) => x.kind === 'ret' && x.line > l.begin && x.line < l.end)
     && ![...s.labels].some(([name, d]) => d.line > l.begin && d.line <= l.end && fn(name, l)));
-  for (const l of real) l.inner = !real.some((o) => o !== l && o.begin >= l.begin && o.end <= l.end && (o.begin !== l.begin || o.end !== l.end));
-  return real.sort((a, b) => Number(b.inner) - Number(a.inner) || a.begin - b.begin || a.end - b.end);
+  // clang's notes: the loops whose labels belong to one loop header (its blocks, "in Loop: Header=BB0_4") are one loop,
+  // named after its header, at clang's depth
+  let merged = real;
+  if (s.notes?.size) {
+    const keyOf = (label) => {
+      const n = s.notes.get(label) ?? '';
+      if (/This (?:Inner )?Loop Header/.test(n) || !/Header=(\w+)/.test(n)) return label.replace(/^\.L/, '');
+      return /Header=(\w+)/.exec(n)[1];
+    };
+    const groups = new Map();
+    for (const l of real) {
+      const k = keyOf(l.label);
+      const g = groups.get(k);
+      if (g) { g.begin = Math.min(g.begin, l.begin); g.end = Math.max(g.end, l.end); } else groups.set(k, { ...l, key: k });
+    }
+    merged = [...groups.values()].map((g) => {
+      const header = `.L${g.key}`;
+      const label = s.labels.has(header) ? header : g.label;
+      const note = s.notes.get(label) ?? '';
+      const d = /Loop Header: Depth=(\d+)/.exec(note) ?? /Depth=(\d+)/.exec(note);
+      return { begin: g.begin, end: g.end, label, ...(d ? { clangDepth: Number(d[1]) } : {}) };
+    });
+  }
+  for (const l of merged) {
+    l.inner = !merged.some((o) => o !== l && o.begin >= l.begin && o.end <= l.end && (o.begin !== l.begin || o.end !== l.end));
+    // nesting depth: 1 for a loop in no other (clang's Depth when it says)
+    l.depth = l.clangDepth ?? 1 + merged.filter((o) => o !== l && o.begin <= l.begin && o.end >= l.end && (o.begin !== l.begin || o.end !== l.end)).length;
+    delete l.clangDepth;
+    l.instructions = s.instrs.filter((x) => x.line >= l.begin && x.line <= l.end).length;
+    // the function it is in: the last label before it that is not local
+    let fname = null, at = -1;
+    for (const [name, d] of s.labels) if (d.line <= l.begin && d.line > at && !name.startsWith('.L') && !/^\d+$/.test(name) && !name.startsWith('wuica')) { fname = name; at = d.line; }
+    l.function = fname;
+  }
+  // the innermost and deepest first; among equals, the first in the code (gcc puts the main loop first, clang often its
+  // remainder loop: -loops lists them all)
+  return merged.sort((a, b) => Number(b.inner) - Number(a.inner) || b.depth - a.depth || a.begin - b.begin || a.end - b.end);
 }
 
 const PROLOGUE = [
@@ -304,7 +368,7 @@ export function functionBody(s) {
 //   loop or the body: a choice matters), pick: {begin, end} | null,
 //   body: {begin, end} | null, alignment: number | null, address: number | null, stubs: [names],
 //   notes: [{line, column, severity, message}], fallback: Map line -> text, error?}
-export function preparePaste(text, { loop = 'auto' } = {}) {
+export function preparePaste(text, { loop = 'auto', func = null } = {}) {
   let t = leadingSemicolons(normalizeText(text).replace(/^﻿/, ''));
   const od = fromObjdump(t);
   if (od.objdump) t = od.text;
@@ -314,7 +378,20 @@ export function preparePaste(text, { loop = 'auto' } = {}) {
   const s = scan(t);
   const marked = MARKER.test(t) || IACA.test(t);
   const all = findLoops(s);
-  const loops = marked ? [] : all;
+  let loops = marked ? [] : all;
+  // -func: the loops of one function
+  if (func !== null && func !== undefined && func !== '') {
+    const fnames = new Set(all.map((l) => l.function).filter(Boolean));
+    if (!s.labels.has(func)) return { error: `func: ${JSON.stringify(func)} is not a label of the text${fnames.size ? ` (functions with loops: ${[...fnames].join(', ')})` : ''}`, loops: [] };
+    loops = loops.filter((l) => l.function === func);
+  }
+  const named = (l) => (l.label.startsWith('.Lwuica_a') ? `0x${l.label.slice(9)}` : l.label);
+  // a loop by its label ("-loop .LBB0_12", "-loop 0x10"): as its index
+  if (typeof loop === 'string' && loop !== 'auto' && loop !== 'whole') {
+    const k = loops.findIndex((l) => named(l) === loop || l.label === loop || named(l) === `.${loop}` || (/^0x/i.test(loop) && named(l).toLowerCase() === loop.toLowerCase()));
+    if (k < 0) return { error: `loop: ${JSON.stringify(loop)} is not the label of a loop${func ? ` in ${func}` : ''} (${loops.length ? `the loops: ${loops.map(named).join(', ')}` : 'the text has none'})`, loops: [] };
+    loop = k;
+  }
   // objdump lines with their bytes are assembled as those bytes (the exact encodings); their text is only read
   let asm = t;
   if (od.objdump && od.bytes.size) {
@@ -322,15 +399,15 @@ export function preparePaste(text, { loop = 'auto' } = {}) {
     for (const [line, b] of od.bytes) lines[line - 1] = b;
     asm = lines.join('\n');
   }
-  const out = { text: asm, objdump: od.objdump, loops: loops.map(({ begin, end, label }) => ({ begin, end, label: label.startsWith('.Lwuica_a') ? `0x${label.slice(9)}` : label })),
+  const out = { text: asm, objdump: od.objdump, loops: loops.map((l) => ({ begin: l.begin, end: l.end, label: named(l), function: l.function, instructions: l.instructions, depth: l.depth, inner: l.inner })),
     choice: null, choosable: false, pick: null, body: null, alignment: null, address: null, stubs: [], notes: [], fallback: new Map() };
   if (loop !== 'auto' && loop !== 'whole' && !(Number.isInteger(loop) && loop >= 0)) {
-    out.error = `loop: ${JSON.stringify(loop)} is not "auto", "whole" or the index of a loop`;
+    out.error = `loop: ${JSON.stringify(loop)} is not "auto", "whole", the index of a loop (0-based) or its label`;
     return out;
   }
   const code = s.instrs;
   if (Number.isInteger(loop) && loop >= loops.length) {
-    out.error = `loop: ${loop} is not the index of a loop (the text has ${loops.length === 0 ? 'none' : loops.length})`;
+    out.error = `loop: ${loop} is not the index of a loop (0-based; the text has ${loops.length === 0 ? 'none' : `${loops.length}: 0 to ${loops.length - 1}`})`;
     return out;
   }
   if (!marked) {

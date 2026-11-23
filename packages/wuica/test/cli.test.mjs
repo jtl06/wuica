@@ -70,7 +70,7 @@ test('-arch all prints a table', () => {
   const r = run([asmFile, '-arch', 'all']);
   assert.equal(r.code, 0, r.err);
   const lines = r.out.split('\n');
-  assert.match(lines[0], /^Arch\s+Model\s+Year\s+TP\s+Bottlenecks$/);
+  assert.match(lines[0], /^Arch\s+Model\s+Year\s+TP\s+Bottlenecks\s+Notes$/);
   assert.match(r.out, /\nSKL\s+Skylake\s+2015\s+2\.00\s+Dependencies\n/);
   assert.match(r.out, /\nZEN3\s+AMD Zen 3\s+2020\s+2\.00\s+Dependencies\s+\[prototype\]\n/);
   assert.equal(lines.filter((l) => /\d\.\d\d/.test(l)).length, 15);
@@ -99,12 +99,16 @@ test('-arch all and lists: the same output on threads as one after another (-thr
 });
 
 test('-arch with a list of microarchitectures', () => {
-  const r = run([HEX, '-arch', 'skl,ZEN3, adlp,K8']);
-  assert.equal(r.code, 1); // K8: unknown
+  // an unknown name is rejected before anything is read or analyzed
+  const k8 = run([HEX, '-arch', 'skl,ZEN3, adlp,K8']);
+  assert.equal(k8.code, 1);
+  assert.equal(k8.out, '');
+  assert.match(k8.err, /^unknown microarchitecture: K8 \(known: SNB/);
+  const r = run([HEX, '-arch', 'skl,ZEN3, adlp']);
+  assert.equal(r.code, 0);
   const lines = r.out.split('\n');
-  assert.match(lines[0], /^Arch\s+Model\s+Year\s+TP\s+Bottlenecks$/);
-  assert.deepEqual(lines.slice(1, 5).map((l) => l.split(/\s+/)[0]), ['SKL', 'ZEN3', 'ADL-P', 'K8']);
-  assert.match(lines[4], /error: unknown microarchitecture: K8/);
+  assert.match(lines[0], /^Arch\s+Model\s+Year\s+TP\s+Bottlenecks\s+Notes$/);
+  assert.deepEqual(lines.slice(1, 4).map((l) => l.split(/\s+/)[0]), ['SKL', 'ZEN3', 'ADL-P']);
   const tp = run([HEX, '-arch', 'ICL,SKL,', '-TPonly']);
   assert.equal(tp.code, 0);
   assert.equal(tp.out, 'ICL   2.00\nSKL   2.00\n');
@@ -123,8 +127,8 @@ test('arch names trimmed, a repeated one once; -details without -json says it is
   const d = run([HEX, '-arch', 'SKL', '-details']);
   assert.equal(d.code, 0);
   assert.equal(d.out, reference.out);
-  assert.match(d.err, /^-details: shown only with -json and one microarchitecture; ignored\n$/);
-  assert.equal(run([HEX, '-arch', 'SKL', '-json', '-details']).err, '');
+  assert.match(d.err, /^-details: shown only with -json and one microarchitecture; ignored\nanalyzed: 11 bytes of machine code from the argument "4801d84801c349ffcf75f5" \(not a file\)\n$/);
+  assert.doesNotMatch(run([HEX, '-arch', 'SKL', '-json', '-details']).err, /ignored/);
 });
 
 test('-list and -arch list', () => {
@@ -143,7 +147,7 @@ test('errors: exit code = result code, message on stderr', () => {
     [[HEX, '-arch', 'K8'], '', /unknown microarchitecture: K8/, 1],
     [['-bogus'], '', /unknown option -bogus/, 1],
     [['/no/such/file.s'], '', /no such file/, 1],
-    [[], 'nop\nfrobnicate rax\n', /^<input>:2:1: error: invalid instruction mnemonic 'frobnicate'\nfrobnicate rax\n\^~+\n$/, 2],
+    [[], 'nop\nfrobnicate rax\n', /^<stdin>:2:1: error: invalid instruction mnemonic 'frobnicate'\nfrobnicate rax\n\^~+\n$/, 2],
     [['-hex'], 'zz', /hex/, 1],
     [['-hex'], ' \n', /`hex` is empty: no machine code/, 1],
     [['-arch'], '', /-arch needs a value/, 1],
