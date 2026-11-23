@@ -282,8 +282,11 @@ try {
       out.csp = document.querySelector('meta[http-equiv=Content-Security-Policy]').content.match(/connect-src [^;]*/)[0];
       out.noButton = !document.querySelector('#ce-open, #b-import, dialog');
       // one pane, one loop: imported at once, analyzed; the box then gets the assembly; undo gives the link back
+      // a fresh visit analyzes the default example by itself: wait for that run, and count only the runs after it
+      await until(() => document.querySelector('.tp .value') && !$('results').hasAttribute('aria-busy'));
+      const run0 = $('results').dataset.run;
       const first = [];
-      const obs = new MutationObserver(() => { if (!first.length && document.querySelector('.tp .value')) first.push(isAsm('code'), $('code').value.split('\\n')[0], $('results').dataset.run); });
+      const obs = new MutationObserver(() => { if (!first.length && $('results').dataset.run !== run0 && document.querySelector('.tp .value')) first.push(isAsm('code'), $('code').value.split('\\n')[0], $('results').dataset.run); });
       obs.observe($('result-body'), { childList: true, subtree: true });
       paste($('code'), ${JSON.stringify(links.countSetBits)});
       out.busy = [line('code'), $('code').value === ${JSON.stringify(links.countSetBits)}];
