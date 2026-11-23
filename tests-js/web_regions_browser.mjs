@@ -252,7 +252,7 @@ try {
       return out;`);
     check(r.rows === 5 && r.loop === 'loop 0x10' && /at 0x10/.test(r.title) && r.align === '16' && /(^|&)al=16(&|$)/.test(r.hash.slice(1)), 'objdump: the loop at 0x10 and the alignment offset 16 from its address', JSON.stringify(r));
     check(r.manual === '0', 'the alignment offset changed by hand stays', r.manual);
-    check(r.stale.note === 'stale: the input has an error' && r.stale.dim && r.stale.rows === 3, 'an input error: the old result stays, dimmed, and says so', JSON.stringify(r.stale));
+    check(r.stale.note === 'stale: the input has an error' && r.stale.dim && r.stale.rows === 5, 'an input error: the old result stays, dimmed, and says so', JSON.stringify(r.stale));
     check(!r.fixed.note && !r.fixed.dim && r.fixed.rows === 3, 'the input fixed: a current result, no note', JSON.stringify(r.fixed));
     check(r.scan.rows === 7 && /\.Lout is not in the code/.test(r.scan.messages) && r.scan.caveats.join() === 'exit mispredict', "';' comments and an exit to .Lout: they assemble, a note, the exit caveat", JSON.stringify(r.scan));
     await page.shot('regions-objdump.png');
