@@ -1,0 +1,58 @@
+{
+  "name": "wuica",
+  "version": "0.1.0",
+  "description": "x86-64 basic-block throughput prediction in WebAssembly: a bit-exact Rust/WebAssembly port of uiCA, as a library, a CLI and an MCP server",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "wuica": "bin/wuica.js",
+    "wuica-mcp": "bin/wuica-mcp.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "dist/",
+    "licenses/",
+    "index.d.ts",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "./build.sh",
+    "test": "node --test test/*.test.mjs"
+  },
+  "keywords": [
+    "uica",
+    "x86",
+    "x86-64",
+    "throughput",
+    "basic-block",
+    "performance",
+    "simulator",
+    "assembly",
+    "webassembly",
+    "mcp"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "zod": "4.6.7"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jtl06/wuica.git",
+    "directory": "packages/wuica"
+  },
+  "homepage": "https://wuica.jacen.li"
+}
