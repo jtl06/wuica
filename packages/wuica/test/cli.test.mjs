@@ -117,6 +117,16 @@ test('-arch with a list of microarchitectures', () => {
   assert.match(run([HEX, '-arch', 'all'], '', { WUICA_THREADS: 'x' }).err, /WUICA_THREADS: expected a non-negative integer/);
 });
 
+test('arch names trimmed, a repeated one once; -details without -json says it is ignored', () => {
+  assert.equal(run([HEX, '-arch', 'skl ', '-TPonly']).out, '2.00\n');
+  assert.equal(run([HEX, '-arch', 'SKL, ICL,skl ,icl', '-TPonly']).out, 'SKL   2.00\nICL   2.00\n');
+  const d = run([HEX, '-arch', 'SKL', '-details']);
+  assert.equal(d.code, 0);
+  assert.equal(d.out, reference.out);
+  assert.match(d.err, /^-details: shown only with -json and one microarchitecture; ignored\n$/);
+  assert.equal(run([HEX, '-arch', 'SKL', '-json', '-details']).err, '');
+});
+
 test('-list and -arch list', () => {
   const r = run(['-list']);
   assert.equal(r.code, 0);

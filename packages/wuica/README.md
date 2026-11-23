@@ -263,7 +263,7 @@ Every call can fail like a compiler run in Compiler Explorer, with a non-zero `c
 
 ### Compare: `POST /api/compare`
 
-The request is the same as for analyze, plus an optional `archs` (ids; the default is all listed ones). The response:
+The request is the same as for analyze, plus an optional `archs` (ids; missing or empty: all listed ones; a repeated id counts once). The response:
 
 ```json
 {

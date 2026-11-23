@@ -25,8 +25,9 @@ Options:
   -minCycles N           simulate at least N cycles (default: 500)";
 
 /// The configuration key for an architecture name: the exact key, else the key that matches ignoring case and `-` (as the
-/// npm package, the API server and the page accept them: `adlp` and `adl-p` are `ADL-P`).
+/// npm package, the API server and the page accept them: `adlp` and `adl-p` are `ADL-P`); whitespace around it is ignored.
 fn resolve_arch<'a>(name: &str, keys: impl Iterator<Item = &'a String> + Clone) -> Option<String> {
+    let name = name.trim();
     let norm = |k: &str| k.to_uppercase().replace('-', "");
     keys.clone().find(|k| k.as_str() == name).or_else(|| keys.into_iter().find(|k| norm(k) == norm(name))).cloned()
 }
@@ -85,13 +86,16 @@ fn main() {
     let uarch_path = data_dir.join("uarch.json");
     let uarch = std::fs::read_to_string(&uarch_path).unwrap_or_else(|e| fail(&format!("{}: {e} (set -data or WUICA_DATA)", uarch_path.display())));
     engine.load_uarch(&uarch).unwrap_or_else(|e| fail(&e));
-    if request.arch == "list" {
+    if request.arch.trim() == "list" {
         for (key, config) in &engine.uarch().unwrap().configs {
             println!("{key}{}", if config.experimental { " (experimental)" } else { "" });
         }
         return;
     }
     let hex = hex.unwrap_or_else(|| fail(USAGE));
+    if request.details && !json {
+        eprintln!("-details: shown only with -json; ignored");
+    }
     request.hex = normalize_hex(&hex).unwrap_or(hex); // anything else: the analyzer's own message
     request.arch = resolve_arch(&request.arch, engine.uarch().unwrap().configs.keys()).unwrap_or_else(|| fail(&format!("unknown microarchitecture: {} (see -arch list)", request.arch)));
     let table = engine.table_name(&request.arch).unwrap().to_string();
@@ -135,6 +139,9 @@ mod tests {
         assert_eq!(r("clx_nolsd").as_deref(), Some("CLX_noLSD"));
         assert_eq!(r("SKX"), None);
         assert_eq!(r(""), None);
+        assert_eq!(r("skl ").as_deref(), Some("SKL"));
+        assert_eq!(r(" adl-p\t").as_deref(), Some("ADL-P"));
+        assert_eq!(r(" "), None);
     }
 
     #[test]

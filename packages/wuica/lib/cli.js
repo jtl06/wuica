@@ -85,6 +85,7 @@ function parseArgs(argv) {
         o.input = a;
     }
   }
+  o.arch = o.arch.trim();
   if (o.arch === 'list') o.list = true;
   // several microarchitectures: all, or a comma-separated list
   if (o.arch.toLowerCase() === 'all') o.archs = [];
@@ -148,6 +149,7 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
     const w = await createWuica({ ...(o.data ? { dataDir: o.data } : {}), ...(o.threads ? { threads: o.threads } : {}) });
     if (o.list) { printList(w, o, out); return 0; }
     const input = await readInput(o, io);
+    if (o.options.details && (!o.json || o.archs)) err.write('-details: shown only with -json and one microarchitecture; ignored\n');
 
     if (o.archs) {
       const c = await w.compare({ ...input, ...(o.archs.length ? { archs: o.archs } : {}), options: o.options });

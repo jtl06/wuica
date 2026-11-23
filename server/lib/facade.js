@@ -92,6 +92,12 @@ export class Facade {
     if (Array.isArray(request?.archs) && request.archs.length > n) {
       return refuse(400, `\`archs\` lists ${request.archs.length} microarchitectures; at most ${n} are allowed`);
     }
+    // repeated names count once (as in the library), before the parts are made (the limit above counts the list as given)
+    if (Array.isArray(request?.archs) && request.archs.length > 1) {
+      const seen = new Set();
+      const archs = request.archs.filter((a) => { const k = this.resolveArch(a) ?? `?${String(a).trim()}`; return !seen.has(k) && seen.add(k); });
+      if (archs.length < request.archs.length) request = { ...request, archs };
+    }
     ctx.arch = Array.isArray(request?.archs) && request.archs.length ? request.archs.map(String).join(',').slice(0, 200) : 'all';
     const bad = this.#check(request);
     if (bad) return bad;
