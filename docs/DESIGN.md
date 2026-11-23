@@ -45,7 +45,7 @@ All entities of a simulation live until its end (the results need them), so noth
 ## Fixtures: the three boundaries
 
 Each stage is checked on its own, so that a difference is found where it is introduced. Corpus: 329 files (random loops, BHive
-basic blocks, all zenbench microbenchmarks, blocks of 10/100/1000 instructions).
+basic blocks, all microbench microbenchmarks, blocks of 10/100/1000 instructions).
 
 | Boundary | Fixture | Exported by | Checked by |
 |---|---|---|---|
