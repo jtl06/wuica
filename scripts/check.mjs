@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Runs the test suites of the repository in parallel; called by scripts/check.sh (which sets up PATH, sccache and --remote).
 //
-//   node scripts/check.mjs [quick|full] [--only PATTERN] [--jobs N] [--chrome-jobs N] [--no-wasm-build] [--wasm-only] [--list]
+//   node scripts/check.mjs [quick|full] [--only PATTERN] [--jobs N] [--chrome-jobs N] [--no-wasm-build] [--wasm-only] [--no-skip] [--list]
 //
 // - Builds first, each skipped while its inputs are unchanged (content hash stamps in target/check/stamps/): the Rust test
 //   binaries (profile check-fast, cargo decides), the WebAssembly module (./build-wasm.sh, release profile), the site
@@ -14,12 +14,15 @@
 // - Each suite's output goes to target/check/<suite>.log; at the end one table, and the tail of the logs of failed suites.
 //   The exit status is 1 if anything failed.
 // --only PATTERN: only the suites whose name matches the regular expression (and the builds they need).
+// --no-skip: a skipped suite (e.g. no Chrome, or a suite that skipped itself) counts as a failure (CI).
+// With $GITHUB_STEP_SUMMARY set (GitHub Actions), the table is also appended to that file as Markdown.
 import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { findChrome } from '../tests-js/chrome.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TARGET = path.join(ROOT, 'target');
@@ -32,7 +35,7 @@ const PROFILE = 'check-fast';
 
 // ---- options
 const argv = process.argv.slice(2);
-const opts = { mode: 'quick', only: null, jobs: 0, chromeJobs: 2, noWasmBuild: false, wasmOnly: false, list: false };
+const opts = { mode: 'quick', only: null, jobs: 0, chromeJobs: 2, noWasmBuild: false, wasmOnly: false, noSkip: false, list: false };
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === 'quick' || a === 'full') opts.mode = a;
@@ -41,8 +44,9 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--chrome-jobs') opts.chromeJobs = Number(argv[++i]);
   else if (a === '--no-wasm-build') opts.noWasmBuild = true;
   else if (a === '--wasm-only') opts.wasmOnly = true;
+  else if (a === '--no-skip') opts.noSkip = true;
   else if (a === '--list') opts.list = true;
-  else { console.error(`check: unknown argument ${a}\nusage: scripts/check.sh [quick|full] [--only PATTERN] [--jobs N] [--chrome-jobs N] [--remote HOST] [--list]`); process.exit(2); }
+  else { console.error(`check: unknown argument ${a}\nusage: scripts/check.sh [quick|full] [--only PATTERN] [--jobs N] [--chrome-jobs N] [--no-skip] [--remote HOST] [--list]`); process.exit(2); }
 }
 const QUICK = opts.mode === 'quick';
 const CPUS = os.availableParallelism ? os.availableParallelism() : os.cpus().length;
@@ -86,12 +90,6 @@ function hashInputs(paths, extra = []) {
   paths.forEach(walk);
   for (const x of extra) h.update(`${x}\0`);
   return h.digest('hex');
-}
-
-function findChrome() {
-  const c = [process.env.CHROME, '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium',
-    '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].filter(Boolean);
-  return c.find(exists) || null;
 }
 
 let previous = {};
@@ -367,7 +365,7 @@ for (const [name, r] of results) if (r.time > 0 && (r.status === 'pass' || r.sta
 fs.writeFileSync(path.join(OUT, 'times.json'), JSON.stringify(times, null, 1) + '\n');
 
 const rows = plan.map((t) => [t.name, results.get(t.name)]);
-const failed = rows.filter(([, r]) => r.status === 'fail' || r.status === 'not run');
+const failed = rows.filter(([, r]) => r.status === 'fail' || r.status === 'not run' || (opts.noSkip && r.status === 'skip'));
 for (const [name, r] of failed) {
   if (!r.log) continue;
   const lines = fs.readFileSync(r.log, 'utf8').trimEnd().split('\n');
@@ -379,5 +377,12 @@ console.log(`\n${'suite'.padEnd(w)}  result   time     count`);
 console.log(`${'-'.repeat(w)}  -------  -------  ${'-'.repeat(40)}`);
 for (const [name, r] of rows) console.log(`${name.padEnd(w)}  ${r.status.toUpperCase().padEnd(7)}  ${(r.time ? fmtTime(r.time) : '-').padStart(7)}  ${String(r.count).slice(0, 110)}`);
 const count = (s) => rows.filter(([, r]) => r.status === s).length;
-console.log(`\ncheck ${opts.mode}: ${failed.length ? 'FAILED' : 'ok'}: ${count('pass')} passed, ${count('fail')} failed, ${count('not run')} not run, ${count('skip')} skipped; ${fmtTime(total)} with ${JOBS} jobs`);
+const verdict = `check ${opts.mode}: ${failed.length ? 'FAILED' : 'ok'}: ${count('pass')} passed, ${count('fail')} failed, ${count('not run')} not run, ${count('skip')} skipped${opts.noSkip && count('skip') ? ' (--no-skip: skips fail)' : ''}; ${fmtTime(total)} with ${JOBS} jobs`;
+console.log(`\n${verdict}`);
+if (process.env.GITHUB_STEP_SUMMARY) {
+  const cell = (x) => String(x).replace(/\|/g, '\\|');
+  const md = [`### ${verdict}`, '', '| suite | result | time | count |', '|---|---|---:|---|',
+    ...rows.map(([name, r]) => `| ${cell(name)} | ${r.status.toUpperCase()} | ${r.time ? fmtTime(r.time) : '-'} | ${cell(String(r.count).slice(0, 110))} |`), ''];
+  try { fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md.join('\n') + '\n'); } catch (e) { console.error(`check: cannot write the job summary: ${e.message}`); }
+}
 process.exit(failed.length ? 1 : 0);

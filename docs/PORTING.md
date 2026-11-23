@@ -46,6 +46,24 @@ What makes it fast:
   modification time changes; `WUICA_FIXTURE_CACHE=off` reads the gzipped files directly, `WUICA_FIXTURE_CACHE=DIR` puts the
   cache elsewhere (e.g. one for several worktrees). New fixture tests should read files with `wuica_testkit::lines`.
 
+## CI
+
+`.github/workflows/ci.yml` runs `scripts/check.sh full --no-skip` (a skipped suite fails) on GitHub Actions (ubuntu-latest,
+Rust 1.100, Node 22, the runner's clang and Chrome) for pushes to main and pull requests; the table goes to the job summary,
+the logs of a failed run are uploaded as the artifact `check-logs`. The generated files are not in git: the workflow
+downloads them from the pre-release named in `ci/data-asset.txt` (`data/`, the four fixture files the suites read, and
+`assembler/dist/wuica_asm.wasm`, whose LLVM build is too heavy for CI) and checks their sha256.
+
+When the data, the fixtures or the assembler change, publish a new asset (the old release stays for older commits):
+
+    ci/make-data-asset.sh ci-data-v2 [SRC]   # SRC: a checkout with the files (default: this one); updates ci/data-asset.txt
+    gh release create ci-data-v2 target/ci-data/wuica-ci-data.tar.xz --prerelease \
+      --title "CI data (generated test fixtures and tables)" \
+      --notes $'Generated from uiCA with tools/export_*.py;\nused by the CI workflow.'
+
+then commit `ci/data-asset.txt` with the change that needs it. A new fixture file that a default suite reads also has to be
+added to the list in `ci/make-data-asset.sh`.
+
 ## The reference
 
 - Read: `reference/uiCA/*.py` (the exact commit the fixtures come from). The decoder's C code that produces the decoded records

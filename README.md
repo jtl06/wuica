@@ -1,5 +1,7 @@
 # wuica (WebAssembly uiCA)
 
+[![CI](https://github.com/jtl06/wuica/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jtl06/wuica/actions/workflows/ci.yml)
+
 An independent Rust/WebAssembly port of [uiCA](https://github.com/andreas-abel/uiCA), the uops.info Code Analyzer by Andreas Abel
 and Jan Reineke, which predicts the throughput of x86-64 basic blocks with a detailed pipeline simulation. The goal is uiCA in the
 browser: paste assembly or machine code, get the prediction, with nothing sent to a server.
@@ -38,6 +40,8 @@ reference needs 40–55 ms plus startup). See [docs/DESIGN.md](docs/DESIGN.md) f
 
 `data/` (instruction tables, configurations) and `fixtures/generated/` are generated from a uiCA installation with
 `tools/export_data.py` and `tools/export_fixtures.py`.
+
+CI (GitHub Actions, `.github/workflows/ci.yml`) runs `scripts/check.sh full` on every push to main and every pull request.
 
 ## How correctness is checked
 

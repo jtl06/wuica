@@ -3,11 +3,12 @@
 # "Checks"). The work is done by scripts/check.mjs; this wrapper sets up PATH and sccache, and runs the check on another
 # host with --remote.
 #
-#   scripts/check.sh [quick|full] [--only PATTERN] [--jobs N] [--chrome-jobs N] [--list] [--remote HOST]
+#   scripts/check.sh [quick|full] [--only PATTERN] [--jobs N] [--chrome-jobs N] [--no-skip] [--list] [--remote HOST]
 #
 #   quick (default)  subsets, about a minute: before every commit of work in progress
 #   full             everything: the gate before a commit to main or a deploy
 #   --only PATTERN   only the suites whose name matches (a regular expression; --list shows the names)
+#   --no-skip        a skipped suite (no Chrome, or one that skipped itself) counts as failed (CI uses this)
 #   --remote HOST    copy the tree to ~/wuica-check on HOST (rsync), and run the check there under a perfq lease (shared);
 #                    the WebAssembly module is built here and copied (the host needs no wasm32 target)
 #

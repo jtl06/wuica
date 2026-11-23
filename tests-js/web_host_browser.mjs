@@ -10,16 +10,14 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { findChrome } from './chrome.mjs';
 import { hostHandler } from './static-host.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : null; };
 const dist = path.resolve(opt('--dist') ?? path.join(here, '../web/dist'));
-const chrome = opt('--chrome') || process.env.CHROME || [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
-].find((p) => fs.existsSync(p));
+const chrome = findChrome(opt('--chrome'));
 if (!chrome) { console.log('Chrome not found (use --chrome PATH): skipped'); process.exit(0); }
 if (!fs.existsSync(path.join(dist, 'manifest.json'))) { console.error('web/dist is missing: run web/build.sh'); process.exit(1); }
 
