@@ -17,6 +17,7 @@ import { createAB } from './ab.js';                 // A–B comparison
 import { createCeImport } from './godbolt-ui.js';   // import from Compiler Explorer
 import { createInsight } from './insight-view.js';
 import { createPool, poolSize } from './pool.js';  // workers for the views with many analyses
+import { createConverter } from './asm-text.js';  // hex <-> asm
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -388,10 +389,11 @@ function showAssemblerMissing() {
 
 // ---- input modes -------------------------------------------------------------------------------------------------
 
-function setMode(mode) {
+function setMode(mode, converted = null) { // converted: the code in the new format (switchMode), or null: its own text
   if (mode === state.mode) return;
   buffers[state.mode] = el.code.value;
   state.mode = mode;
+  if (converted) { buffers[mode] = converted.text; if (converted.syntax) state.syntax = converted.syntax; }
   clearMessages();
   writeControls();
   if (mode === 'asm') {
@@ -712,7 +714,52 @@ function importCode({ mode, syntax, text }, { run: andRun = true } = {}) {
   clearMessages();
   writeControls();
   changed();
-  if (andRun && ready) run();
+  return andRun && ready ? run() : null;
+}
+
+// ---- hex <-> asm (asm-text.js): machine code that comes in (an import) becomes assembly of exactly those bytes, and
+// a click on asm / hex converts the code, unless the box's text for that format already is the same machine code.
+let decoderPromise = null;
+const converter = createConverter({
+  // the decoder in an instance of its own on this thread (the analyzer's worker can be busy, or be stopped)
+  decoder: () => (decoderPromise ??= wasmModule ? WasmEngine.create(wasmModule).catch(() => { decoderPromise = null; return null; })
+    : Promise.resolve(engine instanceof WasmEngine ? engine : null)),
+  assembler: () => ensureAssembler(),
+});
+// The shown result stays current through a change of the text that keeps the machine code (the conversion checked it).
+function keepResult(apply) {
+  const current = !!lastView && lastRunKey === runKey();
+  apply();
+  if (current) { lastRunKey = runKey(); paintStale(); }
+}
+const switching = { A: 0, B: 0 };
+// side A or B, the new format, the box's text for it, apply(converted | null): the switch
+async function switchMode(side, mode, other, apply) {
+  const box = side === 'B' ? $('code-b') : el.code;
+  const radio = side === 'B' ? $('b-mode-asm') : el.modeAsm;
+  const get = () => (side === 'B' ? ab.getB() : { mode: state.mode, syntax: state.syntax, text: el.code.value });
+  const before = get();
+  const seq = ++switching[side];
+  box.readOnly = false;
+  if (!ready || before.text.trim() === '' || ce?.isLink(before.text)) { apply(null); return; }
+  box.readOnly = true;
+  let c = null;
+  try { c = await converter.convert(before, mode, other); } catch { c = null; } finally { box.readOnly = false; }
+  const now = get();
+  if (seq !== switching[side] || now.mode !== before.mode || radio.checked !== (mode === 'asm')) return; // clicked again, or an import
+  if (now.text !== before.text) { if (side === 'B') ab.paint(); else writeControls(); return; } // edited meanwhile: the format stays
+  if (c) keepResult(() => apply(c.same ? null : c)); else apply(null); // the result is kept only for the same machine code
+}
+// After an import of machine code, and its analysis: the box gets the assembly, if the box still has the import.
+async function importAsAsm(side, text, analysis) {
+  const box = () => (side === 'B' ? ab.getB() : { mode: state.mode, text: el.code.value });
+  const unchanged = () => box().mode === 'hex' && box().text === text;
+  const p = parseHexInput(text);
+  if (!p.ok) return;
+  await analysis;
+  const c = ready && unchanged() ? await converter.fromBytes(p.bytes).catch(() => null) : null;
+  if (!c || !unchanged()) return; // undo, an edit or another import meanwhile
+  keepResult(() => { if (side === 'B') { ab.setB(c); writeControls(); changed(); } else importCode(c, { run: false }); });
 }
 
 function setupFeatures() {
@@ -721,7 +768,9 @@ function setupFeatures() {
     getCode: (side) => (side === 'B' ? ab.getB() : { mode: state.mode, syntax: state.syntax, text: el.code.value }),
     importInto(side, code, { alignment = null, undo = false } = {}) {
       if (alignment !== null) state.alignmentOffset = alignment;
-      if (side === 'B') { ab.setB(code); writeControls(); if (ready && !undo) run(); } else importCode(code, { run: !undo });
+      let analysis = null;
+      if (side === 'B') { ab.setB(code); writeControls(); if (ready && !undo) analysis = run(); } else analysis = importCode(code, { run: !undo });
+      if (!undo && code.mode === 'hex') importAsAsm(side, code.text, analysis);
     },
   });
   ab = createAB({
@@ -746,6 +795,7 @@ function setupFeatures() {
       else renderEmpty(el.body);
     },
     watchLinks: (textarea, side, messages) => ce.watch(textarea, side, messages),
+    switchMode: (mode, other, apply) => switchMode('B', mode, other, apply),
   });
   ce.watch(el.code, 'A', el.messages);
 }
@@ -821,8 +871,8 @@ function showNotice(...paragraphs) {
 }
 
 function bind() {
-  el.modeAsm.addEventListener('change', () => setMode('asm'));
-  el.modeHex.addEventListener('change', () => setMode('hex'));
+  el.modeAsm.addEventListener('change', () => switchMode('A', 'asm', buffers.asm, (c) => setMode('asm', c)));
+  el.modeHex.addEventListener('change', () => switchMode('A', 'hex', buffers.hex, (c) => setMode('hex', c)));
   el.syntax.addEventListener('change', () => {
     const old = state.syntax;
     state.syntax = el.syntax.value === 'att' ? 'att' : 'intel';

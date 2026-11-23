@@ -140,13 +140,17 @@ export function createAB(api) {
   rAB.addEventListener('change', () => { if (rAB.checked) setActive(true); });
   const setBMode = (mode) => {
     if (mode === state.bMode) return;
-    buffers[state.bMode] = bCode.value;
-    state.bMode = mode;
-    state.bText = buffers[mode];
-    clearB();
-    paint();
-    if (mode === 'asm') api.ensureAssembler();
-    api.changed();
+    const apply = (c = null) => { // c: B's code converted to `mode` by the page (switchMode), or null: B's own text for it
+      buffers[state.bMode] = bCode.value;
+      state.bMode = mode;
+      state.bText = c ? c.text : buffers[mode];
+      if (c?.syntax) state.bSyntax = c.syntax;
+      clearB();
+      paint();
+      if (mode === 'asm') api.ensureAssembler();
+      api.changed();
+    };
+    if (api.switchMode) api.switchMode(mode, buffers[mode], apply); else apply();
   };
   bAsm.addEventListener('change', () => setBMode('asm'));
   bHex.addEventListener('change', () => setBMode('hex'));
