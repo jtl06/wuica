@@ -1,0 +1,84 @@
+/* The cycle-by-cycle trace view (js/trace.js). Every colour is one of the page's custom properties, so the view
+   follows the theme; the canvas reads the same properties (through .trace-probe) and redraws when they change. */
+
+.trace-panel > summary .hint { margin-left: 0.5ch; }
+.trace-body { padding-top: 0.5rem; }
+.trace-msg { color: var(--description); }
+.trace-msg.loading { color: var(--subtle); }
+
+.trace-viewer { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.4rem; min-width: 0; }
+.trace-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1.5rem; color: var(--subtle); }
+.trace-tools label.inline { min-width: 0; max-width: 100%; }
+.trace-tools select { min-width: 0; max-width: 100%; color: var(--text); }
+.trace-mode { display: inline-flex; gap: 1rem; }
+.trace-mode label { cursor: pointer; }
+.trace-mode label:has(input:checked) { color: var(--accent); }
+.trace-zoomtools { display: inline-flex; align-items: center; gap: 0.35rem; }
+.trace-zoom { padding: 0 0.6rem; min-width: 2.4rem; }
+.trace-scale { color: var(--subtle); margin-left: 0.5ch; font-variant-numeric: tabular-nums; }
+
+.trace-chart { position: relative; min-width: 0; }
+.trace-scroll {
+  overflow: auto;
+  max-height: min(70vh, 34rem);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  overscroll-behavior: contain;
+}
+.trace-sizer { position: relative; min-height: 4rem; }
+.trace-canvas { display: block; position: sticky; left: 0; top: 0; cursor: crosshair; touch-action: pan-x pan-y; }
+.trace-canvas:active { cursor: grabbing; }
+.trace-canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.trace-probe { position: absolute; width: 0; height: 0; overflow: hidden; visibility: hidden; }
+
+.trace-tip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  max-width: min(30rem, calc(100% - 1rem));
+  background: var(--background);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  padding: 0.35rem 0.6rem;
+  font-size: 0.8667rem;
+  line-height: 1.4;
+}
+.trace-tip .tt-head { color: var(--code); overflow-wrap: anywhere; }
+.trace-tip .tt-sub { color: var(--description); }
+.trace-tip .tt-wait { color: var(--caveat); margin-top: 0.2rem; }
+.trace-tip .tt-stages { display: grid; grid-template-columns: max-content max-content max-content max-content; column-gap: 1.2ch; margin-top: 0.2rem; }
+.trace-tip .tt-stages dt { color: var(--subtle); }
+.trace-tip .tt-stages dd { margin: 0; color: var(--text); font-variant-numeric: tabular-nums; }
+.trace-tip .tt-stages dd[data-stage="port"] { color: var(--accent); }
+.trace-tip .tt-deps { margin-top: 0.1rem; color: var(--text); }
+.trace-tip .tt-deps li { padding-left: 1.5ch; text-indent: -1.5ch; overflow-wrap: anywhere; }
+.trace-tip .tt-deps li::before { content: "← "; color: var(--heading); }
+
+.trace-legend { display: flex; flex-wrap: wrap; gap: 0.15rem 2ch; color: var(--subtle); font-size: 0.8667rem; }
+.trace-legend li { display: inline-flex; align-items: center; gap: 0.6ch; }
+.trace-legend .sw { display: inline-block; width: 1.6rem; height: 0.7rem; flex: none; position: relative; }
+.trace-legend .sw-q { height: 1px; background: var(--subtle); }
+.trace-legend .sw-sched { background: var(--subtle); opacity: 0.55; height: 0.25rem; }
+.trace-legend .sw-dep { background: repeating-linear-gradient(135deg, var(--caveat) 0 1.5px, transparent 1.5px 5px); border-bottom: 1px solid var(--caveat); height: 0.5rem; }
+.trace-legend .sw-port { background: var(--external); height: 0.4rem; }
+.trace-legend .sw-exec { background: var(--accent); }
+.trace-legend .sw-rob { height: 1px; background: var(--description); }
+.trace-legend .sw-ret { width: 3px; background: var(--heading); }
+.trace-legend .sw-elim { width: 0.55rem; height: 0.55rem; border: 1.5px solid var(--accent); transform: rotate(45deg); margin: 0 0.5rem; }
+
+.trace-note { font-size: 0.8667rem; }
+.trace-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+.trace-tabletools { margin-bottom: 0.35rem; }
+.trace-tablewrap { max-height: min(70vh, 34rem); overflow: auto; }
+.trace-table caption { text-align: left; color: var(--subtle); padding: 0.3rem 0.75rem; caption-side: top; }
+.trace-table thead th { position: sticky; top: 0; background: var(--surface); }
+.trace-table tbody th { color: var(--code); text-align: left; }
+.trace-table td:last-child, .trace-table th:last-child { text-align: left; color: var(--description); }
+.trace-copybuf { position: fixed; opacity: 0; }
+
+@media (max-width: 640px) {
+  .trace-tools { gap: 0.4rem 1rem; }
+  .trace-tip .tt-stages { grid-template-columns: max-content max-content; }
+}

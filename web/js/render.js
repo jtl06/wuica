@@ -223,6 +223,7 @@ export function renderResult(root, view) {
     out.push(row('text',
       textBlock('listing', 'objdump', formatListing(r.rows).text, listingOpen, (open) => view.onUi('listingOpen', { ...view.ui.listingOpen, [view.inputMode]: open })),
       textBlock('report', 'uiCA report', typeof r.text === 'string' ? r.text : '', view.ui.reportOpen, (open) => view.onUi('reportOpen', open))));
+    if (view.trace) out.push(row('trace', view.trace)); // the cycle-by-cycle trace panel (trace.js)
   }
 
   root.replaceChildren(...out);

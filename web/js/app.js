@@ -12,6 +12,7 @@ import { WasmAssembler, isWasm } from './assembler.js';
 import { renderResult, renderEmpty, renderFailure, copyText, h } from './render.js';
 import { latestWins } from './compare.js';
 import { createComparePanels } from './compare-view.js';
+import { createTracePanel } from './trace.js';
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -90,6 +91,7 @@ const panels = createComparePanels({
   },
   wantResult: () => { if (ready && !lastView && el.code.value.trim() !== '') run(); },
 });
+const tracePanel = createTracePanel({ analyze: (request) => engine.analyze(request), config: (v) => uarch?.configs?.[v.archKey] });
 
 // ---- status line and progress ----------------------------------------------------------------------------------
 
@@ -396,7 +398,8 @@ function nextFrame() { // lets the busy state paint before the (synchronous) ana
 
 function draw() {
   if (!lastView) return;
-  renderResult(el.body, { ...lastView, ui, onUi: (k, v) => { ui[k] = v; if (k === 'hideEmpty') draw(); } });
+  const trace = lastView.response && !lastView.response.error ? tracePanel.update(lastView) : null;
+  renderResult(el.body, { ...lastView, trace, ui, onUi: (k, v) => { ui[k] = v; if (k === 'hideEmpty') draw(); } });
   paintStale();
 }
 
@@ -484,11 +487,12 @@ async function run({ auto = false } = {}) {
     if (!auto || !engine.capabilities.cancel) await nextFrame();
     if (id !== runSeq) return;
     const t0 = performance.now();
-    const response = await engine.analyze(makeRequest(hex, archKey, opts));
+    const request = makeRequest(hex, archKey, opts);
+    const response = await engine.analyze(request);
     const elapsedMs = performance.now() - t0;
     if (id !== runSeq) return;
     lastView = {
-      response, elapsedMs, hex, byteCount: bytes.length, inputMode: state.mode,
+      response, request, elapsedMs, hex, byteCount: bytes.length, inputMode: state.mode,
       archKey, archTitle: archTitle(archKey, item.experimental), experimental: item.experimental,
     };
     lastRunKey = key;
