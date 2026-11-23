@@ -14,7 +14,8 @@
 // carries both sides. The page (app.js) runs the analyses: inputs() gets the machine code of both sides,
 // analyze() runs them, draw() shows the result. All text goes in through textContent.
 
-import { h, uopTable, NOTES, LEGEND, rowLimit, moreRows, watchFit } from './render.js';
+import { h, uopTable, NOTES, LEGEND, rowLimit, moreRows, watchFit, nearestLimit } from './render.js';
+import { caveats } from './caveats.js';
 import { GROUP_LABEL } from './archs.js';
 import { compareResponses, signed, cycles, signedCycles } from './ab-diff.js';
 import { parseHexInput, toHex } from './hex-input.js';
@@ -393,17 +394,37 @@ export function createAB(api) {
       r.decodeErrors > 0 ? h('span', { class: 'caveat', text: ` ${r.decodeErrors} undecodable skipped` }) : null);
   }
 
-  function bottlenecks(cmp) {
+  function bottlenecks(view) {
+    const cmp = view.cmp;
     const bn = cmp.bottlenecks;
     const k = h('span', { class: 'k', text: bn.a.length > 1 || bn.b.length > 1 ? 'bottlenecks' : 'bottleneck' });
-    const list = (names, cls) => (names.length ? names.flatMap((n, i) => [i ? ', ' : '', h('span', { class: cls(n), text: n })]) : h('span', { class: 'hint', text: 'unknown' }));
-    if (bn.same) return h('span', { class: 'ab-bn' }, k, ' ', h('span', { class: 'bn', text: bn.a.join(', ') || 'unknown' }), h('span', { class: 'hint', text: ' (both)' }));
+    // none named: the nearest limit of that side (per element when counted so), as single mode says it
+    const unknown = (s, w) => { const n = nearestLimit(s?.response, w); return h('span', { class: 'hint', title: 'no single limit explains the throughput', text: n ? `unknown · nearest ${n}` : 'unknown' }); };
+    const list = (names, cls, s, w) => (names.length ? names.flatMap((n, i) => [i ? ', ' : '', h('span', { class: cls(n), text: n })]) : unknown(s, w));
+    if (bn.same && bn.a.length) return h('span', { class: 'ab-bn' }, k, ' ', h('span', { class: 'bn', text: bn.a.join(', ') }), h('span', { class: 'hint', text: ' (both)' }));
     const change = [bn.gone.length ? `no longer: ${bn.gone.join(', ')}` : '', bn.new.length ? `new: ${bn.new.join(', ')}` : ''].filter(Boolean).join(' · ');
     return h('span', { class: 'ab-bn', title: change || null }, k, ' ',
-      tag('A'), ' ', list(bn.a, (n) => (bn.b.includes(n) ? 'bn' : 'bn ab-gone')),
+      tag('A'), ' ', list(bn.a, (n) => (bn.b.includes(n) ? 'bn' : 'bn ab-gone'), view.a, cmp.workA),
       h('span', { class: 'ab-arrow', 'aria-hidden': 'true', text: ' → ' }),
-      tag('B'), ' ', list(bn.b, (n) => (bn.a.includes(n) ? 'bn' : 'bn ab-new')),
+      tag('B'), ' ', list(bn.b, (n) => (bn.a.includes(n) ? 'bn' : 'bn ab-new'), view.b, cmp.workB),
       change ? h('span', { class: 'ab-sr', text: ` (${change})` }) : null);
+  }
+
+  // the model's known blind spots the blocks meet (caveats.js), on the second line: once, tagged with the side when one
+  // side only has it
+  function notModelled(view) {
+    const seen = new Map();
+    for (const [t, s] of [['A', view.a], ['B', view.b]]) {
+      if (!ok(s?.response)) continue;
+      for (const c of caveats(s.response, api.config?.(s.archKey) ?? null)) {
+        const x = seen.get(c.id) ?? seen.set(c.id, { c, sides: [] }).get(c.id);
+        x.sides.push(t);
+      }
+    }
+    if (!seen.size) return null;
+    return h('span', { class: 'cv-line ab-cv' }, sep(), h('span', { class: 'k', text: 'not modelled' }), ' ',
+      [...seen.values()].flatMap(({ c, sides }, k) => [k ? ' · ' : '', h('span', { class: 'cv', 'data-cv': c.id, title: c.title, text: c.text }),
+        sides.length === 1 ? [' ', tag(sides[0])] : null]));
   }
 
   function headline(view) {
@@ -427,7 +448,7 @@ export function createAB(api) {
         h('span', { class: 'ab-verdict', text: t.verdict === 'better' ? 'B better' : t.verdict === 'worse' ? 'B worse' : 'no change' }),
         t.verdict === 'same' ? null : ` Δ ${sign2(t.delta)} (${percent(t.pct)}) · ${speed}`));
     }
-    const meta = h('div', { class: 'meta' }, sideMeta('A', a), sep(), sideMeta('B', b), cmp.okA && cmp.okB ? [sep(), bottlenecks(cmp)] : null);
+    const meta = h('div', { class: 'meta' }, sideMeta('A', a), sep(), sideMeta('B', b), cmp.okA && cmp.okB ? [sep(), bottlenecks(view), notModelled(view)] : null);
     // the same in one line, for screen readers and for copying
     const sr = t ? h('p', { class: 'ab-sr', text: `A: ${two(t.a)} cycles, B: ${two(t.b)} cycles${per ? ' per element' : ''}, Δ = ${t.verdict === 'same' ? '0' : `${sign2(t.delta)} (${percent(t.pct)})`}` }) : null;
     return lead('throughput', line, meta, sr);

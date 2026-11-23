@@ -1125,6 +1125,7 @@ function setupFeatures() {
     replaced,
     drawn: (body, view) => abSlots.decorate(body, view),
     cpusBox: abCpus.box,
+    config: (arch) => uarch?.configs?.[arch] ?? null,
     // the counts changed: the shown result weighed again (A–B: the comparison; single: A's elements per iteration)
     redraw: () => { if (lastView?.ab) { draw(); updateABCpus(lastView.ab, { auto: true }); } else if (lastView && !state.ab) { draw(); panels.redrawCpus(); } },
     srcA: () => srcA,

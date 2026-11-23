@@ -270,7 +270,7 @@ try {
       out.notes = trs().map((tr) => tr.querySelector('td.note').textContent).join('');
       return out;`);
     const p = want.details.ports;
-    check(!r.card0 && r.set === `set p6 ${p.uops} uops / ${p.ports.length} = ${p.tp.toFixed(2)}` && r.top[0] === 'dec r15 100%' && r.cols.join() === 'Port 6=P6', 'details: Ports drills down to the port set and its instructions', JSON.stringify(r));
+    check(!r.card0 && r.set === `set p6 ${p.uops} uops / ${p.ports.length} = ${p.tp.toFixed(2)}` && r.top[0] === 'dec r15 100%' && r.cols.join() === 'Port 6=6', 'details: Ports drills down to the port set and its instructions', JSON.stringify(r));
     check(/^slots issued \d+% front end \d+%/.test(r.slots), 'details: the issue slots', r.slots);
     check(/^add rax, qword ptr \[rsi\] uops\.info ↗ × ports 1\*p0156\+1\*p23 tp 0\.50 uops 2 · 1 fused · MITE 1 · 1 load lat RAX→RAX 1 · mem→RAX 3 · \[RSI\]→RAX 6 chain rax ← add rax, qword ptr \[rsi\] 1 ↻ share 50% of DSB front 3 B @0$/.test(r.card)
       && /^https:\/\/www\.uops\.info\//.test(r.link) && r.sel, 'details: a click on a row shows its card', JSON.stringify(r));
@@ -510,9 +510,14 @@ try {
       const sideB = [document.body.dataset.abSide, document.querySelector('.ws-side-btn.on')?.textContent, hotOf('a'), hotOf('b') > 0, $('bound').open];
       document.querySelector('.ws-side-btn[data-tab="side-a"]').click(); await wait(100);
       await tab('diff');
-      // a click on a row of A's table in A–B mode: no card (not the single result's)
-      document.querySelector('#ab-main table.uops tbody tr')?.cells[2]?.click(); await wait(300);
-      const cards = [...document.querySelectorAll('.ic')].filter((c) => !c.hidden && c.offsetParent !== null).length;
+      // a click on a row of A's table in A–B mode: the card of that row of A, under A's table; one of B's: none (the
+      // views show A)
+      document.querySelector('#ab-main .ab-col[data-side="a"] table.uops tbody tr')?.cells[2]?.click(); await wait(300);
+      const vis = () => [...document.querySelectorAll('.ic')].filter((c) => !c.hidden && c.offsetParent !== null);
+      const cards = [vis().length, vis()[0]?.closest('.ab-col')?.dataset.side ?? null, vis()[0]?.querySelector('.ic-ins')?.textContent ?? null,
+        document.querySelector('#ab-main .ab-col[data-side="a"] table.uops tbody tr')?.cells[0].textContent];
+      document.querySelector('#ab-main .ab-col[data-side="b"] table.uops tbody tr')?.cells[2]?.click(); await wait(300);
+      cards.push(vis().length === 1 && vis()[0].closest('.ab-col')?.dataset.side === 'a');
       await done(() => $('cmp-single').click()); await wait(300);
       const back = [];
       for (const name of VIEWS) { await tab(name); back.push(shown()[VIEWS.indexOf(name)]); }
@@ -522,7 +527,7 @@ try {
       && r.abViews.every((v) => v[0] && v[1] === 'A') && r.back.every(Boolean) && r.backTabs.join() === 'table,bound,try,bytes,deps,mca,sweep,trace',
     'A–B mode: the views are tabs in the same places (the A–B traces stay open; no side switch for them); each view of side A; back in single mode they are there', JSON.stringify(r));
     check(r.sideA[0] && r.sideA[1] === 0 && r.sideB[0] === 'b' && r.sideB[1] === 'B' && r.sideB[2] === 0 && r.sideB[3] && r.sideB[4], 'A–B mode: the bound view shades its side\'s table; the switch shows B\'s', JSON.stringify([r.sideA, r.sideB]));
-    check(r.cardSingle && r.cards === 0, 'A–B mode: no instruction card', JSON.stringify(r));
+    check(r.cardSingle && r.cards[0] === 1 && r.cards[1] === 'a' && r.cards[2] === r.cards[3] && r.cards[4], 'A–B mode: the card of a row of the side the views show (the whole instruction)', JSON.stringify(r.cards));
   }
 
   // --- copy: Markdown, CSV, JSON of the result -------------------------------------------------------------------------------

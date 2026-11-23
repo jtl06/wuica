@@ -165,7 +165,7 @@ try {
       await done(() => $('cmp-single').click());
       const back = await snap();
       return { single, ab, back };`);
-    check(r.ab.tp && /ab=1/.test(r.ab.hash) && r.ab.cards === 0, 'ab: A–B mode with the views open: a result, no instruction card', JSON.stringify(r.ab));
+    check(r.ab.tp && /ab=1/.test(r.ab.hash) && r.ab.cards === 0, 'ab: A–B mode with the views open: a result, no card of single mode\'s selected row', JSON.stringify(r.ab));
     // (the A–B demo put its pair in the code boxes: another result, the same views)
     check(r.back.tp && r.single.open.join() === r.back.open.join(), 'ab: back in single mode, the views are open as before', JSON.stringify([r.single.open, r.back]));
     check(page.take().length === 0, 'ab: no console errors');

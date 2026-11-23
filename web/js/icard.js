@@ -123,11 +123,12 @@ export function createICard(env) {
 
   const table = () => root?.querySelector('table.uops');
   const trs = () => table()?.tBodies[0]?.rows ?? [];
-  // a row of the decorated (single-mode) table: not of the A–B view's tables (as trace-link.js)
+  // a row of the decorated table: single mode's (linked to the trace: trace-link.js), or in A–B mode the table of the
+  // side the views show (views.js is decorated with that side)
   const abOn = () => document.body.classList.contains('ab-on');
   const rowOf = (tr) => {
     const t = tr?.parentElement?.parentElement;
-    return tr && !abOn() && t === table() && t.classList.contains('tl-linkable') && tr.parentElement.tagName === 'TBODY' ? tr.sectionRowIndex : -1;
+    return tr && t === table() && (abOn() || t.classList.contains('tl-linkable')) && tr.parentElement.tagName === 'TBODY' ? tr.sectionRowIndex : -1;
   };
   const align = () => Number(view?.request?.alignmentOffset) || 0;
   const ok = () => !!view?.response && !view.response.error && Array.isArray(view.response.rows);
@@ -214,7 +215,7 @@ export function createICard(env) {
   function paintPlain(row) { card?.querySelector('.ic-l.hint')?.remove(); if (root && shown === row) root.dataset.icard = 'basic'; }
 
   function show(row) {
-    if (!ok() || abOn() || row < 0 || row >= view.response.rows.length) { hide(); return; }
+    if (!ok() || row < 0 || row >= view.response.rows.length) { hide(); return; }
     closed = false;
     paint(row);
   }
@@ -227,6 +228,7 @@ export function createICard(env) {
       const tr = e.target.closest?.('tr');
       if (rowOf(tr) < 0 || e.target.closest('a, button, input, select, textarea, label, summary')) return;
       const row = rowOf(tr), sel = env.getSel?.() ?? -1;
+      if (abOn()) { if (!getSelection()?.toString()) { closed = false; show(row); } return; } // (A–B: no trace selects it)
       if (sel === row) show(sel); // trace-link.js selected it (it ignores a click that selects text)
     });
     target.addEventListener('focusin', (e) => {
@@ -252,7 +254,7 @@ export function createICard(env) {
       if (!ok() || !table()) return;
       bind(root);
       badges();
-      const sel = env.getSel?.() ?? -1;
+      const sel = abOn() ? -1 : env.getSel?.() ?? -1; // (the selected row is single mode's)
       if (sel >= 0 && !closed) show(sel);
     },
     shown: () => shown,

@@ -68,6 +68,7 @@ body.ab-on .toolbar .choice, .ab-head .choice { gap: 0.25rem 0.8rem; }
 .meta .ab-tag { min-width: 1.4em; line-height: 1.25; }
 
 .ab-bn .bn { color: var(--heading); }
+.meta .ab-cv { display: inline; }
 .ab-bn .ab-gone { color: var(--subtle); text-decoration: line-through; }
 .ab-bn .ab-new { color: var(--code); }
 

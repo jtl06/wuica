@@ -25,4 +25,4 @@
 .grid td.note[data-hz]::after { content: " " attr(data-hz); color: var(--caveat); font-size: 0.85em; }
 .grid td.note[data-hz] { cursor: help; }
 
-body.ab-on .ic { display: none !important; }
+/* (A–B: the card of a row of the side the views show: icard.js) */
