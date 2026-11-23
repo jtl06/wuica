@@ -425,33 +425,33 @@ struct AbstractValue {
 }
 
 /// `AbstractValueGenerator(initPolicy)` of `utils.py`, without `loadValueNumbering` (which `facile.py` does not use). The keys
-/// are register names that are borrowed from the operands where possible.
-struct AbstractValueGenerator<'a> {
+/// (register names) are the numbers of [`Names`].
+struct AbstractValueGenerator {
     /// `initPolicy == 'diff'`
     diff: bool,
     next_base: u64,
     init_value: AbstractValue,
-    /// canonical register -> value (only looked up)
-    abstract_value_dict: FastMap<Cow<'a, str>, AbstractValue>,
+    /// canonical register -> value (only looked up), indexed by name
+    abstract_value_dict: Vec<Option<AbstractValue>>,
     /// in the order of the Python dict
-    cur_instr_rnd_abstract_value_dict: Vec<(Cow<'a, str>, AbstractValue)>,
+    cur_instr_rnd_abstract_value_dict: Vec<(NameId, AbstractValue)>,
 }
 
-impl<'a> AbstractValueGenerator<'a> {
-    fn new(init_policy: &str) -> Self {
+impl AbstractValueGenerator {
+    fn new(init_policy: &str, names: &Names) -> Self {
         let mut g = AbstractValueGenerator {
             diff: init_policy == "diff",
             next_base: 0,
             init_value: AbstractValue { base: 0, offset: 0 },
-            abstract_value_dict: FastMap::default(),
+            abstract_value_dict: vec![None; names.len()],
             cur_instr_rnd_abstract_value_dict: Vec::new(),
         };
         g.init_value = g.generate_fresh_abstract_value();
         if init_policy == "stack" {
             let v = g.generate_fresh_abstract_value();
-            g.abstract_value_dict.insert(Cow::Borrowed("RSP"), v);
+            g.abstract_value_dict[names.rsp as usize] = Some(v);
             let v = g.generate_fresh_abstract_value();
-            g.abstract_value_dict.insert(Cow::Borrowed("RBP"), v);
+            g.abstract_value_dict[names.rbp as usize] = Some(v);
         }
         g
     }
@@ -462,23 +462,23 @@ impl<'a> AbstractValueGenerator<'a> {
         v
     }
 
-    /// `getAbstractValueForReg(reg)`
-    fn get_abstract_value_for_reg(&mut self, reg: Option<&'a str>) -> Option<AbstractValue> {
-        Some(self.get_abstract_value_for_canonical_reg(canonical_reg_cow(reg?)))
+    /// `getAbstractValueForReg(reg)`, for the name of the canonical register of `reg` (`None`: `reg` is None)
+    fn get_abstract_value_for_reg(&mut self, canonical: Option<NameId>) -> Option<AbstractValue> {
+        Some(self.get_abstract_value_for_canonical_reg(canonical?))
     }
 
     /// `getAbstractValueForReg(reg)`, for the canonical register of `reg`
-    fn get_abstract_value_for_canonical_reg(&mut self, key: Cow<'a, str>) -> AbstractValue {
-        if let Some(&v) = self.abstract_value_dict.get(&*key) {
+    fn get_abstract_value_for_canonical_reg(&mut self, key: NameId) -> AbstractValue {
+        if let Some(v) = self.abstract_value_dict[key as usize] {
             return v;
         }
         let v = if self.diff { self.generate_fresh_abstract_value() } else { self.init_value };
-        self.abstract_value_dict.insert(key, v);
+        self.abstract_value_dict[key as usize] = Some(v);
         v
     }
 
     /// `setAbstractValueForCurInstr(key, instr)`
-    fn set_abstract_value_for_cur_instr(&mut self, key: Cow<'a, str>, instr: &Instr, canon: &CanonicalRegs<'a>) {
+    fn set_abstract_value_for_cur_instr(&mut self, key: NameId, instr: &Instr, canon: &CanonicalRegs) {
         let v = self.compute_abstract_value(instr, canon);
         match self.cur_instr_rnd_abstract_value_dict.iter_mut().find(|(k, _)| *k == key) {
             Some((_, value)) => *value = v,
@@ -489,14 +489,14 @@ impl<'a> AbstractValueGenerator<'a> {
     /// `finishCurInstr()`
     fn finish_cur_instr(&mut self) {
         for (k, v) in self.cur_instr_rnd_abstract_value_dict.drain(..) {
-            self.abstract_value_dict.insert(k, v);
+            self.abstract_value_dict[k as usize] = Some(v);
         }
     }
 
     /// `__computeAbstractValue(instr)`
-    fn compute_abstract_value(&mut self, instr: &Instr, canon: &CanonicalRegs<'a>) -> AbstractValue {
+    fn compute_abstract_value(&mut self, instr: &Instr, canon: &CanonicalRegs) -> AbstractValue {
         if let Some(&first) = instr.input_reg_operands.first() {
-            let abs_val = self.get_abstract_value_for_canonical_reg(canon.get(first).clone());
+            let abs_val = self.get_abstract_value_for_canonical_reg(canon.reg(first));
             let s = instr.instr_str.as_str();
             if has(s, "MOV") && !has(s, "CMOV") {
                 abs_val
@@ -517,34 +517,84 @@ impl<'a> AbstractValueGenerator<'a> {
     }
 }
 
-/// The canonical register of each register operand (`getCanonicalReg(op.reg)`), computed once.
+/// The number of a string that the latency graph uses as a key (a register name, canonical or as written, or the flags of a flag
+/// operand): equal strings have equal numbers.
+type NameId = u32;
+const NO_NAME: NameId = u32::MAX;
+
+/// The strings of [`NameId`].
+struct Names<'a> {
+    ids: FastMap<Cow<'a, str>, NameId>,
+    /// the numbers of "RSP" and "RBP"
+    rsp: NameId,
+    rbp: NameId,
+}
+
+impl<'a> Names<'a> {
+    fn new() -> Self {
+        let mut names = Names { ids: FastMap::default(), rsp: 0, rbp: 0 };
+        names.rsp = names.id(Cow::Borrowed("RSP"));
+        names.rbp = names.id(Cow::Borrowed("RBP"));
+        names
+    }
+
+    fn id(&mut self, s: Cow<'a, str>) -> NameId {
+        let next = self.ids.len() as NameId;
+        *self.ids.entry(s).or_insert(next)
+    }
+
+    fn len(&self) -> usize {
+        self.ids.len()
+    }
+}
+
+/// The keys of the operands, computed once: for a register operand the name of its canonical register
+/// (`getCanonicalReg(op.reg)`), for a flag operand the name of its flags, and for a memory operand the names of the canonical
+/// registers of its base and index and of the base and index as written.
 struct CanonicalRegs<'a> {
     operands: &'a [Operand],
-    canon: Vec<Option<Cow<'a, str>>>,
+    /// the name of each register or flag operand (NO_NAME for the others)
+    name: Vec<NameId>,
+    /// for each memory operand: canonical base, canonical index, base as written, index as written (NO_NAME: none)
+    mem: Vec<[NameId; 4]>,
 }
 
 impl<'a> CanonicalRegs<'a> {
-    fn new(operands: &'a [Operand]) -> Self {
-        let canon = operands
-            .iter()
-            .map(|o| match o {
-                Operand::Reg { reg, .. } => Some(canonical_reg_cow(reg)),
-                _ => None,
-            })
-            .collect();
-        CanonicalRegs { operands, canon }
+    fn new(operands: &'a [Operand], names: &mut Names<'a>) -> Self {
+        let mut name = Vec::with_capacity(operands.len());
+        let mut mem = Vec::with_capacity(operands.len());
+        for o in operands {
+            let (n, m) = match o {
+                Operand::Reg { reg, .. } => (names.id(canonical_reg_cow(reg)), [NO_NAME; 4]),
+                Operand::Flag { flags } => (names.id(Cow::Borrowed(flags)), [NO_NAME; 4]),
+                Operand::Mem { mem_addr } => {
+                    let mut id = |r: &'a Option<String>, canonical: bool| match r {
+                        Some(r) => names.id(if canonical { canonical_reg_cow(r) } else { Cow::Borrowed(r.as_str()) }),
+                        None => NO_NAME,
+                    };
+                    let m = [id(&mem_addr.base, true), id(&mem_addr.index, true), id(&mem_addr.base, false), id(&mem_addr.index, false)];
+                    (NO_NAME, m)
+                }
+                Operand::Pseudo => (NO_NAME, [NO_NAME; 4]),
+            };
+            name.push(n);
+            mem.push(m);
+        }
+        CanonicalRegs { operands, name, mem }
     }
 
     /// `getCanonicalReg(op.reg)`; Python raises an `AttributeError` for operands that are not registers (see [`reg_of`])
-    fn get(&self, op: OpId) -> &Cow<'a, str> {
-        match &self.canon[op as usize] {
-            Some(c) => c,
-            None => {
-                reg_of(self.operands, op);
-                unreachable!()
-            }
+    fn reg(&self, op: OpId) -> NameId {
+        if !matches!(self.operands[op as usize], Operand::Reg { .. }) {
+            reg_of(self.operands, op);
         }
+        self.name[op as usize]
     }
+}
+
+/// `Some(id)` unless `id` is NO_NAME
+fn some_name(id: NameId) -> Option<NameId> {
+    (id != NO_NAME).then_some(id)
 }
 
 /// `op.reg`: Python raises an `AttributeError` for operands that are not registers.
@@ -682,9 +732,10 @@ impl DenseGraph {
 /// The value of `getOpKey(op)`: the canonical register of a register operand or the flags of a flag operand (both strings in
 /// Python), the abstract address of a memory operand, and `None` for other operands. The strings are borrowed from the operands
 /// where possible.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum OpKey<'a> {
-    Str(Cow<'a, str>),
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum OpKey {
+    /// a string (see [`Names`])
+    Str(NameId),
     Mem(Option<AbstractValue>, Option<AbstractValue>, Option<i64>, Option<i64>),
     None,
 }
@@ -705,21 +756,23 @@ struct LatencyGraphBuilder<'a> {
     prev_non_eliminated_write_for_move: Vec<Option<usize>>,
     output_of_move_renamed_by_32bit_move: Vec<bool>,
     /// only looked up
-    prev_write_to_key: FastMap<OpKey<'a>, PrevWrite>,
-    abs_val_gen: AbstractValueGenerator<'a>,
+    prev_write_to_key: FastMap<OpKey, PrevWrite>,
+    abs_val_gen: AbstractValueGenerator,
     rsp_implicitly_changed: bool,
     canon: CanonicalRegs<'a>,
+    /// the number of "RSP"
+    rsp: NameId,
 }
 
 impl<'a> LatencyGraphBuilder<'a> {
-    fn get_op_key(&mut self, op: OpId) -> OpKey<'a> {
+    fn get_op_key(&mut self, op: OpId) -> OpKey {
         let instrs = self.instrs;
         match &instrs.operands[op as usize] {
-            Operand::Reg { .. } => OpKey::Str(self.canon.get(op).clone()),
-            Operand::Flag { flags } => OpKey::Str(Cow::Borrowed(flags)),
+            Operand::Reg { .. } | Operand::Flag { .. } => OpKey::Str(self.canon.name[op as usize]),
             Operand::Mem { mem_addr } => {
-                let base = self.abs_val_gen.get_abstract_value_for_reg(mem_addr.base.as_deref());
-                let index = self.abs_val_gen.get_abstract_value_for_reg(mem_addr.index.as_deref());
+                let [base, index, _, _] = self.canon.mem[op as usize];
+                let base = self.abs_val_gen.get_abstract_value_for_reg(some_name(base));
+                let index = self.abs_val_gen.get_abstract_value_for_reg(some_name(index));
                 OpKey::Mem(base, index, mem_addr.scale, mem_addr.disp)
             }
             Operand::Pseudo => OpKey::None,
@@ -728,9 +781,9 @@ impl<'a> LatencyGraphBuilder<'a> {
 
     /// The instruction that last wrote the register `reg` of an address (looked up by its name as written), with eliminated
     /// moves replaced by the instruction they copy from, and whether it is a move whose output was renamed by a 32-bit move.
-    fn writer_of_addr_reg(&self, reg: Option<&'a String>) -> (Option<usize>, bool) {
-        let key = match reg {
-            Some(r) => OpKey::Str(Cow::Borrowed(r)),
+    fn writer_of_addr_reg(&self, reg: NameId) -> (Option<usize>, bool) {
+        let key = match some_name(reg) {
+            Some(r) => OpKey::Str(r),
             None => OpKey::None,
         };
         match self.prev_write_to_key.get(&key) {
@@ -748,9 +801,11 @@ impl<'a> LatencyGraphBuilder<'a> {
         let instr = &instrs.instrs[idx];
         let mut fast_ptr_chasing = false;
         if self.config.fast_pointer_chasing && !instr.input_mem_operands.is_empty() {
-            let mem_addr = mem_addr_of(&instrs.operands, instr.input_mem_operands[0]);
-            let (base_instr, base_renamed_by_32bit_move) = self.writer_of_addr_reg(mem_addr.base.as_ref());
-            let (index_instr, _) = self.writer_of_addr_reg(mem_addr.index.as_ref());
+            let mem_op = instr.input_mem_operands[0];
+            let mem_addr = mem_addr_of(&instrs.operands, mem_op);
+            let [_, _, base_as_written, index_as_written] = self.canon.mem[mem_op as usize];
+            let (base_instr, base_renamed_by_32bit_move) = self.writer_of_addr_reg(base_as_written);
+            let (index_instr, _) = self.writer_of_addr_reg(index_as_written);
             fast_ptr_chasing = lat_reduced_due_to_fast_ptr_chasing(
                 self.config,
                 mem_addr,
@@ -767,7 +822,7 @@ impl<'a> LatencyGraphBuilder<'a> {
             .iter()
             .chain(&instr.mem_addr_operands)
             .chain(&instr.output_reg_operands)
-            .any(|&op| self.canon.get(op) == "RSP")
+            .any(|&op| self.canon.reg(op) == self.rsp)
         {
             self.rsp_implicitly_changed = false;
         }
@@ -775,8 +830,7 @@ impl<'a> LatencyGraphBuilder<'a> {
         for &out_op in instr.output_reg_operands.iter().chain(&instr.output_flag_operands).chain(&instr.output_mem_operands) {
             let key = self.get_op_key(out_op);
             let write = PrevWrite { instr: idx, out_op, fast_ptr_chasing, iteration };
-            if let (Operand::Reg { .. }, OpKey::Str(reg)) = (&instrs.operands[out_op as usize], &key) {
-                let reg = reg.clone();
+            if let (Operand::Reg { .. }, OpKey::Str(reg)) = (&instrs.operands[out_op as usize], key) {
                 self.prev_write_to_key.insert(key, write);
                 self.abs_val_gen.set_abstract_value_for_cur_instr(reg, instr, &self.canon);
             } else {
@@ -814,16 +868,18 @@ fn build_latency_graph(instrs: &InstrList, config: &UArchConfig, init_policy: &s
     let mut prev_non_eliminated_write_for_move: Vec<Option<usize>> = vec![None; n];
     let mut output_of_move_renamed_by_32bit_move = vec![false; n];
 
-    let canon = CanonicalRegs::new(ops);
-    // only looked up
-    let mut prev_write_to_reg: FastMap<Cow<str>, usize> = FastMap::default();
+    let mut names = Names::new();
+    let canon = CanonicalRegs::new(ops, &mut names);
+    // canonical register -> instruction (usize::MAX: none)
+    let mut prev_write_to_reg: Vec<usize> = vec![usize::MAX; names.len()];
     for _ in 0..2 {
         for (idx, instr) in instrs.instrs.iter().enumerate() {
             if instr.may_be_eliminated {
-                prev_write_for_move[idx] = prev_write_to_reg.get(&**canon.get(instr.input_reg_operands[0])).copied();
+                let w = prev_write_to_reg[canon.reg(instr.input_reg_operands[0]) as usize];
+                prev_write_for_move[idx] = (w != usize::MAX).then_some(w);
             }
             for &out_op in &instr.output_reg_operands {
-                prev_write_to_reg.insert(canon.get(out_op).clone(), idx);
+                prev_write_to_reg[canon.reg(out_op) as usize] = idx;
             }
         }
     }
@@ -860,9 +916,10 @@ fn build_latency_graph(instrs: &InstrList, config: &UArchConfig, init_policy: &s
         prev_non_eliminated_write_for_move,
         output_of_move_renamed_by_32bit_move,
         prev_write_to_key: FastMap::default(),
-        abs_val_gen: AbstractValueGenerator::new(init_policy),
+        abs_val_gen: AbstractValueGenerator::new(init_policy, &names),
         rsp_implicitly_changed: false,
         canon,
+        rsp: names.rsp,
     };
 
     for _ in 0..2 {
@@ -895,7 +952,7 @@ fn build_latency_graph(instrs: &InstrList, config: &UArchConfig, init_policy: &s
                             l -= 1;
                         } else if b.rsp_implicitly_changed
                             && instr.input_reg_operands.iter().chain(&instr.mem_addr_operands).any(|&o| o == prev_in_op)
-                            && b.canon.get(prev_in_op) == "RSP"
+                            && b.canon.reg(prev_in_op) == b.rsp
                             && !matches!(ops[prev_in_op as usize], Operand::Reg { is_implicit_stack_operand: true, .. })
                         {
                             l += 1;
