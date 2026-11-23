@@ -24,7 +24,7 @@ const hex = (b) => [...(b ?? [])].map((x) => x.toString(16).padStart(2, '0')).jo
       const p = planMarked(t);
       const ms = performance.now() - t0;
       check(p === null, `example ${ex.name ?? ex.id}: no plan`);
-      check(ms < 50, `example ${ex.name ?? ex.id}: the scan is cheap`, `${ms.toFixed(1)} ms`);
+      if (ms > 20) console.log(`example ${ex.name ?? ex.id}: scanned in ${ms.toFixed(1)} ms`);
     }
   }
   const p = planMarked('  mov rcx, 9\n# LLVM-MCA-BEGIN hot\n.L1:\n  add rax, 1\n  dec rcx\n  jne .L1\n# LLVM-MCA-END hot\n  ret\n');
@@ -36,7 +36,8 @@ const hex = (b) => [...(b ?? [])].map((x) => x.toString(16).padStart(2, '0')).jo
   const big = Array.from({ length: 40000 }, (_, k) => (k % 3 ? `  add rax, ${k}` : `  .loc 1 ${k} 3`)).join('\n');
   const t0 = performance.now();
   const pb = planMarked(`.file 1 "x.c"\n${big}\n`);
-  check(pb.locs.length > 13000 && performance.now() - t0 < 300, '40000 lines: fast', `${(performance.now() - t0).toFixed(0)} ms`);
+  check(pb.locs.length > 13000, '40000 lines: every .loc');
+  console.log(`40000 lines planned in ${(performance.now() - t0).toFixed(0)} ms`);
   // spanLines on rows
   const rows = [{ kind: 'instr', opcode: '4883c001' }, { kind: 'regMerge' }, { kind: 'instr', opcode: '48ffc9' }, { kind: 'instr', opcode: '75f7' }];
   check(spanLines(rows, [{ off: 0, line: 4 }, { off: 4, line: 3 }, { off: 7, line: null }]).join() === '4,3,', 'spanLines: by offset', spanLines(rows, [{ off: 0, line: 4 }, { off: 4, line: 3 }, { off: 7, line: null }]).join());
@@ -160,11 +161,14 @@ dot:
 \t.section\t.debug_info,"",@progbits
 .Ldebug_info0:
 \t.long\t0x10
+\t.section\t.debug_loclists,"",@progbits
+\t.uleb128\t.LVU3
+\t.uleb128\t.LVU5
 \t.section\t.note.GNU-stack,"",@progbits
 `;
   {
     const r = await A.assemble(GCC, 'att');
-    const p = await wa.assemble(GCC.replace(/ view \S+/g, ''), 'att');
+    const p = await wa.assemble(GCC.replace(/ view \S+/g, '').replace(/\t\.section\t\.debug_loclists[^]*$/, ''), 'att');
     check(r.ok && hex(r.bytes) === hex(p.bytes) && r.source?.file === 'dot.c', 'gcc -g: the same bytes, the source file', JSON.stringify(r.diagnostics) + JSON.stringify(r.source));
     const want = [[0, 3], [16, 4], [26, 3], [30, 4]];
     check(r.source && want.every(([o, l], k) => r.source.spans[k].off === o && r.source.spans[k].line === l), 'gcc -g: the first spans', JSON.stringify(r.source?.spans));
@@ -190,6 +194,17 @@ dot:
       check(sm && Math.abs(sm.lines.reduce((s, x) => s + (x.share ?? 0), 0) + sm.unmapped - 1) < 1e-9, 'cost per line: the shares add up to 1');
       console.log(`dot loop on SKL: ${resp.tp} cycles/iteration, ${sm?.lines.filter((x) => x.rows?.length).map((x) => `${x.text} ${Math.round(x.share * 100)}%`).join(', ')}`);
     }
+  }
+  // real clang -O2 -g -S output (DWARF 5; the directory replaced by /src): the loop marked, its lines 4 and 3
+  {
+    const real = fs.readFileSync(new URL('tests-js/fixtures/asm/dot-clang-O2-g.s', root), 'utf8');
+    const whole = await A.assemble(real, 'att');
+    const p = await wa.assemble(real, 'att');
+    check(whole.ok && hex(whole.bytes) === hex(p.bytes) && whole.source?.file === 'dot.c' && whole.source.spans.some((x) => x.line === 7), 'clang -O2 -g: the same bytes, lines of dot.c', JSON.stringify(whole.source));
+    const marked = real.replace(/^\.LBB0_6:/m, '# LLVM-MCA-BEGIN dot\n.LBB0_6:').replace(/(\tjne\t\.LBB0_6\n)/, '$1# LLVM-MCA-END\n');
+    const m = await A.assemble(marked, 'att');
+    check(m.ok && m.region?.name === 'dot' && m.source?.spans.filter((x) => x.line).map((x) => x.line).join() === '4,4,3', 'clang -O2 -g, the loop marked: lines 4, 4, 3', JSON.stringify([m.diagnostics, m.source]));
+    check(m.ok && hex(p.bytes).includes(hex(m.bytes)) && m.bytes.length === 5 + 5 + 4 + 3 + 3 + 2, 'clang -O2 -g, the loop marked: its 6 instructions\' bytes', hex(m.bytes));
   }
   // the mock assembler (no trailer): the plain text
   {

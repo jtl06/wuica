@@ -379,7 +379,7 @@ function scheduleRun() {
 // ---- messages next to the input ---------------------------------------------------------------------------------
 
 function clearMessages() {
-  regionChip.show(null);
+  regionChip.sync(state.mode === 'asm' ? el.code.value : null); // kept only for the text it was shown for
   el.messages.replaceChildren();
   delete el.messages.dataset.key;
   el.code.removeAttribute('aria-invalid');
@@ -440,6 +440,7 @@ function setMode(mode, converted = null) { // converted: the code in the new for
   if (converted) { buffers[mode] = converted.text; if (converted.syntax) state.syntax = converted.syntax; }
   clearMessages();
   writeControls();
+  regionChip.sync(state.mode === 'asm' ? el.code.value : null); // back to the marked text (asm -> hex -> asm)
   if (mode === 'asm') {
     ensureAssembler().then((a) => { if (!a && state.mode === 'asm') showAssemblerMissing(); paintDerived(); });
   }
@@ -659,7 +660,7 @@ async function machineCode(id) {
   if (r.ok && r.bytes.length === 0) items.push({ line: null, column: null, severity: 'error', message: 'No machine code' });
   if (r.ok && r.bytes.length && assembler.mock) items.push({ line: null, column: null, severity: 'note', message: 'mock assembler' });
   if (items.length) showMessages(items); else clearMessages();
-  if (r.ok && r.bytes.length) { regionChip.show(r.region ?? null); pastedSource = r.source ? { ...r.source, hex: toHex(r.bytes) } : null; }
+  if (r.ok && r.bytes.length) { regionChip.show(r.region ?? null, text); pastedSource = r.source ? { ...r.source, hex: toHex(r.bytes) } : null; }
   return r.ok && r.bytes.length ? r.bytes : null;
 }
 

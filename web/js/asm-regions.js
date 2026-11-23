@@ -14,7 +14,7 @@
 // at the end of .text that holds a magic word and the distance of each label to the trailer:
 //   .text / .Lwuica_z: / .long MAGIC, .Lwuica_z-.Lwuica_0, ...
 // The trailer is cut off again; the distances give the offsets. gcc's ".loc ... view N" (which LLVM rejects) loses
-// its view operand. No line is added or removed (diagnostics keep their
+// its view operand (its symbol is set to 0). No line is added or removed (diagnostics keep their
 // line numbers; columns are corrected where a label was put in front of a statement). If that text does not assemble
 // for a reason of its own (a region or a .loc in another section), the plain text is assembled instead.
 
@@ -66,7 +66,7 @@ export function planMarked(text) {
   const inserts = []; // {line, col, label}
   const regions = [];
   let region = null, pendingBegin = false, error = null;
-  const locs = [], files = new Map();
+  const locs = [], files = new Map(), views = new Set();
   let inText = true, prev = false;
   const stack = [];
   let iaca = null; // {kind: '111' | '222', line, col} of a mov that can be an IACA marker
@@ -135,8 +135,13 @@ export function planMarked(text) {
           const m = /^(\d+)\s+(\d+)/.exec(args);
           if (m && inText) locs.push({ label: label(i, col), file: Number(m[1]), line: Number(m[2]) });
           // gcc's "view N" operand, which LLVM rejects ("unknown sub-directive"): blanked (the columns stay)
-          const v = /\bview\s+\S+/.exec(body);
-          if (v) { const at = col + v.index; lines[i] = lines[i].slice(0, at) + ' '.repeat(v[0].length) + lines[i].slice(at + v[0].length); }
+          // (a symbol of it, which the debug sections can use, is defined as 0 in the trailer)
+          const v = /\bview\s+(\S+)/.exec(body);
+          if (v) {
+            const at = col + v.index;
+            lines[i] = lines[i].slice(0, at) + ' '.repeat(v[0].length) + lines[i].slice(at + v[0].length);
+            if (/^[A-Za-z_.$][\w.$]*$/.test(v[1])) views.add(v[1]);
+          }
         } else if (name === 'file') {
           const m = /^(\d+)\s/.exec(args);
           const q = quoted(args);
@@ -175,7 +180,8 @@ export function planMarked(text) {
   const lineCount = lines.length;
   const parts = [];
   for (let k = 0; k < labels.length; k += 32) parts.push(`.long ${labels.slice(k, k + 32).map((n) => `.Lwuica_z-${n}`).join(', ')}`);
-  const out = `${lines.join('\n')}\n.text\n.Lwuica_z:\n.long ${MAGIC}\n${parts.join('\n')}\n`;
+  const sets = [...views].map((n) => `.set ${n}, 0\n`).join('');
+  const out = `${lines.join('\n')}\n${sets}.text\n.Lwuica_z:\n.long ${MAGIC}\n${parts.join('\n')}\n`;
   if (region) delete region.closed;
   return { text: out, labels, regions, region, locs, files, shifts, lineCount, error };
 }
@@ -234,7 +240,7 @@ export function cutPlan(plan, code, offsets) {
   let source = null;
   if (plan.locs.length) {
     const at = plan.locs.map((l) => ({ off: offsets[l.label], file: l.file, line: l.line }))
-      .filter((x) => x.off >= start && x.off <= end);
+      .filter((x) => x.off >= start && x.off < end);
     // the .loc in force at the region's start (the last one before it) counts too
     const before = plan.locs.map((l) => ({ off: offsets[l.label], file: l.file, line: l.line })).filter((x) => x.off < start).pop();
     if (before) at.unshift({ ...before, off: start });

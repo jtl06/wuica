@@ -160,12 +160,21 @@ try {
       setCode(${JSON.stringify(MARKED)});
       await done(() => $('run').click());
       out.again = { rows: instrRows().length, chip: chip() };
+      // asm -> hex -> asm keeps the result (the same machine code): the chip goes in hex and comes back
+      $('mode-hex').click();
+      await until(() => !c.readOnly && !/LLVM-MCA/.test(c.value) && c.value.trim() !== '');
+      out.hex = { chip: chip(), lines: c.value.trim().split('\\n').length };
+      $('mode-asm').click();
+      await until(() => !c.readOnly && c.value === ${JSON.stringify(MARKED)});
+      out.back = { chip: chip(), rows: instrRows().length };
       return out;`);
     check(r.rows === 3 && r.chip === '▣ hot 1/2', 'marked: the 3 instructions of the first region, the chip', JSON.stringify(r));
     check(/LLVM-MCA-BEGIN/.test(r.title) && /IACA/.test(r.title) && r.messages === '', 'the chip\'s tooltip lists the markers; no messages', JSON.stringify(r));
     check(r.sel === '# LLVM-MCA-BEGIN hot', 'a click on the chip selects the BEGIN line', JSON.stringify(r.sel));
     check(r.after.rows > 6 && r.after.chip === null, 'no markers: the whole listing, no chip', JSON.stringify(r.after));
     check(r.again.rows === 3 && r.again.chip === '▣ hot 1/2', 'markers again: the region', JSON.stringify(r.again));
+    check(r.hex.chip === null && r.hex.lines === 3, 'to hex: the region\'s 3 instructions, no chip', JSON.stringify(r.hex));
+    check(r.back.chip === '▣ hot 1/2' && r.back.rows === 3, 'back to asm: the marked text, the chip again', JSON.stringify(r.back));
     await page.shot('regions-marked.png');
     check(page.problems.length === 0, 'no console errors', page.problems.join('\n'));
     await page.cmd('Page.close');
