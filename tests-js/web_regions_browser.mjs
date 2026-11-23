@@ -260,6 +260,23 @@ try {
     await page.cmd('Page.close');
   }
 
+  // --- the split-load caveat per CPU (the page passes configs[arch] to caveats.js): gcc's FIR warns on SKL, not on ZEN3
+  // (its model charges the crossings of loads advanced by add rax, imm) ------------------------------------------------------
+  {
+    const FIR = fs.readFileSync(path.join(here, 'fixtures/caveats/fir8.s'), 'utf8');
+    const got = {};
+    for (const arch of ['SKL', 'ZEN3']) {
+      const page = await openPage();
+      await page.goto(`${origin}/?nosw=1#v=1&m=asm&a=${arch}&c=${b64(FIR)}`);
+      got[arch] = await page.eval(`${HELPERS}
+        await until(() => document.querySelector('.tp .value') && instrRows().length);
+        return { arch: location.hash.match(/[#&]a=([^&]*)/)?.[1] ?? 'SKL', caveats: [...document.querySelectorAll('.cv-line .cv')].map((x) => x.textContent) };`);
+      check(page.problems.length === 0, `no console errors (split caveat, ${arch})`, page.problems.join('\n'));
+      await page.cmd('Page.close');
+    }
+    check(got.SKL.caveats.join() === 'split loads? (7)' && got.ZEN3.arch === 'ZEN3' && got.ZEN3.caveats.length === 0, 'split loads: SKL warns, ZEN3 (splitLoadCycles 2) does not', JSON.stringify(got));
+  }
+
   // --- links: lp=whole analyzes the whole text; an alignment offset in the link stays (not the address's) ------------------
   {
     const OBJDUMP = fs.readFileSync(path.join(here, 'fixtures/loop-find/psum.noraw'), 'utf8');
