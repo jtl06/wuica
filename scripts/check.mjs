@@ -146,7 +146,8 @@ function rustCount(out) {
   return `${passed} passed${failed ? `, ${failed} failed` : ''}${info ? `; ${info}` : ''}`;
 }
 function nodeTestCount(out) {
-  const g = (k) => (out.match(new RegExp(`^ℹ ${k} (\\d+)`, 'm')) || [])[1];
+  // the spec reporter prints "ℹ tests 32", the TAP reporter (Node 22 without a terminal) "# tests 32"
+  const g = (k) => (out.match(new RegExp(`^(?:ℹ|#) ${k} (\\d+)`, 'm')) || [])[1];
   return `${g('tests') ?? '?'} tests, ${g('pass') ?? '?'} pass, ${g('fail') ?? '?'} fail${+g('skipped') ? `, ${g('skipped')} skipped` : ''}`;
 }
 function jsCount(out) {
