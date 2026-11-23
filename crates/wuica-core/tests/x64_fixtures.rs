@@ -1,13 +1,13 @@
 //! Compares the register helpers and `mem_width` with the Python reference (fixtures/x64_helpers.txt.gz: lines
 //! "REG canonicalReg regSize" for registers, and "S instrStr | memWidth" for all instruction strings of the ADL-P table).
 
-use std::io::{BufRead, BufReader};
+use std::io::BufRead;
 use wuica_core::x64;
 
 #[test]
 fn helpers_match_python_reference() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/x64_helpers.txt.gz");
-    let reader = BufReader::new(flate2::read::GzDecoder::new(std::fs::File::open(path).unwrap()));
+    let reader = wuica_testkit::open(path);
     let (mut regs, mut strings) = (0, 0);
     for line in reader.lines() {
         let line = line.unwrap();

@@ -29,7 +29,7 @@ rm -rf "$PKG/dist" "$PKG/licenses"
 mkdir -p "$PKG/dist/data/arch" "$PKG/licenses"
 
 # brotli (quality 11, 24-bit window) with Node's zlib, so no extra tool is needed; Node decompresses it at run time.
-node --input-type=module - "$PKG/dist" "$WASM" "$ASM_WASM" "$DATA" <<'EOF'
+UV_THREADPOOL_SIZE="${UV_THREADPOOL_SIZE:-8}" node --input-type=module - "$PKG/dist" "$WASM" "$ASM_WASM" "$DATA" <<'EOF'
 import fs from 'node:fs'; import path from 'node:path'; import zlib from 'node:zlib'; import crypto from 'node:crypto';
 const [out, wasm, asmWasm, data] = process.argv.slice(2);
 const files = [[wasm, 'wuica_wasm.wasm'], [asmWasm, 'wuica_asm.wasm'], [path.join(data, 'uarch.json'), 'data/uarch.json']];
@@ -37,9 +37,13 @@ for (const f of fs.readdirSync(path.join(data, 'arch')).filter((f) => f.endsWith
 const { BROTLI_PARAM_QUALITY: Q, BROTLI_PARAM_LGWIN: W, BROTLI_PARAM_SIZE_HINT: S } = zlib.constants;
 const manifest = { files: {} };
 let raw = 0, packed = 0;
-for (const [src, name] of files) {
-  const bytes = fs.readFileSync(src);
-  const br = zlib.brotliCompressSync(bytes, { params: { [Q]: 11, [W]: 24, [S]: bytes.length } });
+// compressed in parallel on libuv's thread pool (largest first); the manifest keeps the order of `files`
+const brotli = (bytes) => new Promise((ok, fail) => zlib.brotliCompress(bytes, { params: { [Q]: 11, [W]: 24, [S]: bytes.length } }, (e, r) => (e ? fail(e) : ok(r))));
+const inputs = files.map(([src, name]) => ({ name, bytes: fs.readFileSync(src) }));
+const packedFiles = new Map();
+await Promise.all([...inputs].sort((a, b) => b.bytes.length - a.bytes.length).map(async ({ name, bytes }) => packedFiles.set(name, await brotli(bytes))));
+for (const { name, bytes } of inputs) {
+  const br = packedFiles.get(name);
   fs.writeFileSync(path.join(out, name + '.br'), br);
   manifest.files[name] = { size: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex') };
   raw += bytes.length; packed += br.length;

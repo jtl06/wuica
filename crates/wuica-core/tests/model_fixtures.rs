@@ -1,7 +1,7 @@
 //! Checks that the data model holds everything that the instruction fixtures of the Python reference contain, and that the
 //! configurations load.
 
-use std::io::{BufRead, BufReader};
+use std::io::BufRead;
 use wuica_core::{config::UArch, jsoncmp, model::InstrList};
 
 fn root() -> &'static str {
@@ -11,7 +11,7 @@ fn root() -> &'static str {
 #[test]
 fn model_round_trips_the_instruction_fixtures() {
     let path = format!("{}/fixtures/generated/instr_fixtures.jsonl.gz", root());
-    let reader = BufReader::new(flate2::read::GzDecoder::new(std::fs::File::open(path).expect("run tools/export_fixtures.py")));
+    let reader = wuica_testkit::open(path);
     let (mut cases, mut instrs) = (0, 0);
     for line in reader.lines() {
         let case: serde_json::Value = serde_json::from_str(&line.unwrap()).unwrap();

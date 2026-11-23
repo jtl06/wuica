@@ -13,7 +13,6 @@
 
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
-use std::io::{BufRead, BufReader};
 use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -58,8 +57,7 @@ fn instr_key(file: &str, arch: &str, options: &serde_json::Value) -> String {
 }
 
 fn lines(path: &str) -> impl Iterator<Item = String> {
-    let file = std::fs::File::open(path).unwrap_or_else(|e| panic!("{path}: {e} (run tools/export_fixtures.py)"));
-    BufReader::with_capacity(1 << 20, flate2::read::GzDecoder::new(file)).lines().map(|l| l.unwrap())
+    wuica_testkit::lines(path)
 }
 
 #[derive(Default)]

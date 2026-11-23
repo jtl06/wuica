@@ -27,6 +27,8 @@ reference needs 40–55 ms plus startup). See [docs/DESIGN.md](docs/DESIGN.md) f
 
 ## Building
 
+    scripts/check.sh                           # builds what changed, runs the tests in parallel (quick subset, ~1 min)
+    scripts/check.sh full                      # all suites: Rust, WebAssembly, web page, npm package (see docs/PORTING.md)
     cargo test --release                       # all Rust tests (needs data/ and fixtures/generated/, see below)
     cargo run --release -p wuica-cli -- 4801d84801c349ffcf75f5 -arch SKL
     ./build-wasm.sh                            # WebAssembly; needs clang with the wasm32 target (not Apple's clang)

@@ -3,6 +3,8 @@
 // Usage: node tests-js/analyze_fixtures.mjs [EVERY_NTH=7] [WASM]
 import fs from 'node:fs'; import zlib from 'node:zlib'; import readline from 'node:readline';
 const every = Number(process.argv[2] || 7);
+// WUICA_SHARD=k/n (scripts/check.sh runs shards in parallel): only the k-th of every n sampled cases
+const [shard, shards] = (process.env.WUICA_SHARD || '0/1').split('/').map(Number);
 const wasmPath = process.argv[3] || 'target/wasm32-unknown-unknown/release/wuica_wasm.wasm';
 const { instance } = await WebAssembly.instantiate(fs.readFileSync(wasmPath), {});
 const e = instance.exports, enc = new TextEncoder(), dec = new TextDecoder();
@@ -23,7 +25,7 @@ let n = 0, bad = 0, refErr = 0, i = 0, tAnalyze = 0;
 for (const set of ['sim_fixtures', 'extra_sim_fixtures']) {
   const rl = readline.createInterface({ input: fs.createReadStream(`fixtures/generated/${set}.jsonl.gz`).pipe(zlib.createGunzip()), crlfDelay: Infinity });
   for await (const line of rl) {
-    if (i++ % every) continue;
+    if (i++ % every || ((i - 1) / every) % shards !== shard) continue;
     // the large `json` field (the trace) is not needed: cut it off before parsing
     const cut = line.indexOf(', "json": ');
     const c = JSON.parse(cut < 0 ? line : line.slice(0, cut) + '}');

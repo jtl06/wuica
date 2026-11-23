@@ -202,6 +202,7 @@ dependencies = [
  "serde",
  "serde_json",
  "wuica-core",
+ "wuica-testkit",
  "wuica-xed",
 ]
 
@@ -221,6 +222,14 @@ dependencies = [
  "indexmap",
  "serde",
  "serde_json",
+ "wuica-testkit",
+]
+
+[[package]]
+name = "wuica-testkit"
+version = "0.1.0"
+dependencies = [
+ "flate2",
 ]
 
 [[package]]
@@ -239,6 +248,7 @@ dependencies = [
  "flate2",
  "serde_json",
  "wuica-core",
+ "wuica-testkit",
 ]
 
 [[package]]

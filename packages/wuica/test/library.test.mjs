@@ -13,6 +13,8 @@ const ASM = 'top:\n  add rax, rbx\n  add rbx, rax\n  dec r15\n  jnz top\n';
 // uiCA's report from the Rust CLI: `cargo run` as in the repository's README, else the binary already built there.
 function rustReport(hex, arch) {
   const args = [hex, '-arch', arch];
+  // scripts/check.sh passes the binary it built
+  if (process.env.WUICA_CLI) return execFileSync(process.env.WUICA_CLI, args, { cwd: ROOT, encoding: 'utf8' });
   try {
     return execFileSync('cargo', ['run', '--release', '-q', '-p', 'wuica-cli', '--', ...args], {
       cwd: ROOT, encoding: 'utf8', timeout: 600_000, stdio: ['ignore', 'pipe', 'ignore'],

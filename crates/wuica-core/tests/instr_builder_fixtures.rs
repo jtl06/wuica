@@ -8,7 +8,6 @@
 //! instruction-fixture file, separated by a space.
 
 use std::collections::{BTreeMap, HashMap};
-use std::io::{BufRead, BufReader};
 use std::sync::Mutex;
 use wuica_core::config::UArch;
 use wuica_core::data::ArchData;
@@ -22,9 +21,7 @@ fn root() -> &'static str {
 }
 
 fn lines(path: &str) -> impl Iterator<Item = String> {
-    let full = if path.starts_with('/') { path.to_string() } else { format!("{}/{path}", root()) };
-    let file = std::fs::File::open(full).unwrap_or_else(|e| panic!("{path}: {e} (see docs/PORTING.md)"));
-    BufReader::new(flate2::read::GzDecoder::new(file)).lines().map(|l| l.unwrap())
+    wuica_testkit::lines(path)
 }
 
 #[derive(serde::Deserialize)]

@@ -1,11 +1,11 @@
 //! Compares the decoder with the Python reference (fixtures/decode_fixtures.jsonl.gz, made by tools/export_decode_fixtures.py).
 
-use std::io::{BufRead, BufReader};
+use std::io::BufRead;
 
 #[test]
 fn decoder_matches_python_reference() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/decode_fixtures.jsonl.gz");
-    let reader = BufReader::new(flate2::read::GzDecoder::new(std::fs::File::open(path).expect("fixtures")));
+    let reader = wuica_testkit::open(path);
     let (mut cases, mut instrs) = (0, 0);
     for line in reader.lines() {
         let case: serde_json::Value = serde_json::from_str(&line.unwrap()).unwrap();

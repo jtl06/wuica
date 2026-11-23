@@ -2,7 +2,6 @@
 //! 1000 instructions) to the complete text that the reference prints. Cases in which the reference raises an exception must
 //! give an error or, where it only fails while writing the `-json` file, are not compared.
 
-use std::io::{BufRead, BufReader};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use wuica::{Engine, Request};
@@ -35,9 +34,8 @@ fn reproduces_the_text_output_of_the_reference() {
 
     let mut lines: Vec<String> = Vec::new();
     for set in ["sim_fixtures", "extra_sim_fixtures"] {
-        let file = std::fs::File::open(format!("{}/fixtures/generated/{set}.jsonl.gz", root())).expect("run tools/export_fixtures.py");
-        // only the fields of `Case` are needed; the large `json` field is skipped by the deserializer
-        lines.extend(BufReader::with_capacity(1 << 20, flate2::read::GzDecoder::new(file)).lines().map(|l| l.unwrap()));
+        // only the fields of `Case` are needed: the large `json` field is left out
+        lines.extend(wuica_testkit::lines_without_json(format!("{}/fixtures/generated/{set}.jsonl.gz", root())));
     }
 
     let next = AtomicUsize::new(0);

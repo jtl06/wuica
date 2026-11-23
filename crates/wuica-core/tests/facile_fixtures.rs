@@ -27,9 +27,7 @@ fn root() -> &'static str {
 }
 
 fn lines(path: &str) -> impl Iterator<Item = String> {
-    let path = format!("{}/{path}", root());
-    let file = std::fs::File::open(&path).unwrap_or_else(|e| panic!("{path}: {e} (run tools/export_fixtures.py)"));
-    BufReader::new(flate2::read::GzDecoder::new(file)).lines().map(|l| l.unwrap())
+    wuica_testkit::lines(path)
 }
 
 #[derive(Deserialize)]
@@ -214,7 +212,7 @@ impl Stats {
 
 fn load_sim_cases(path: &str, uarch: &UArch, stats: &mut Stats) -> HashMap<Key, Vec<SimCase>> {
     let mut cases: HashMap<Key, Vec<SimCase>> = HashMap::new();
-    for line in lines(path) {
+    for line in wuica_testkit::lines_without_json(path) {
         let l: SimLine = serde_json::from_str(&line).unwrap();
         stats.count("simulation cases");
         if l.error.is_some() {
