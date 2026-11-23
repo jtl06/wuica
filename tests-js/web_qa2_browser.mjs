@@ -134,7 +134,7 @@ try {
       document.querySelectorAll('table.uops tbody tr')[1].cells[2].click();
       const single = await snap();
       await done(() => $('cmp-ab').click());
-      await wait(800);
+      await until(() => document.querySelector('.ab-tp') && !$('results').hasAttribute('aria-busy') && /ab=1/.test(location.hash), 30000).catch(() => {});
       const ab = { tp: document.querySelector('.ab-tp')?.innerText.replace(/\\s+/g, ' ').trim(), hash: location.hash, more: [...document.querySelectorAll('#more > .row')].filter((r) => !r.hidden && r.offsetParent).map((r) => r.id),
         cards: [...document.querySelectorAll('.ic')].filter((c) => !c.hidden && c.offsetParent !== null).length };
       await done(() => $('cmp-single').click());
@@ -179,7 +179,7 @@ try {
       await page.eval(`${HELPERS} if (document.documentElement.getAttribute('data-theme') !== ${JSON.stringify(theme)}) $('theme-toggle').click(); return 1;`);
       for (const w of [320, 375, 414, 768, 1024, 1280, 1440, 1920, 2560]) {
         await page.size(w, 900, w < 768);
-        const r = await page.eval(`${HELPERS} await wait(120); return { o: overflow(), t: document.documentElement.getAttribute('data-theme'),
+        const r = await page.eval(`${HELPERS} for (let k = 0; k < 2; k++) await new Promise((f) => requestAnimationFrame(f)); return { o: overflow(), t: document.documentElement.getAttribute('data-theme'),
           wide: [...document.querySelectorAll('#bound, #whatif, #codemap, #deps, #icard')].filter((e) => e.offsetParent && e.getBoundingClientRect().right > innerWidth + 1).map((e) => e.id) };`);
         if (r.o > 0 || r.t !== theme || r.wide.length) bad.push({ theme, w, ...r });
       }
@@ -251,15 +251,19 @@ try {
       if ($('live').checked) $('live').click();
       paste($('code'), ${JSON.stringify(links.countSetBits)});
       await until(() => /^imported/.test(line('code')) && !$('results').hasAttribute('aria-busy') && tp() && isAsm('code'));
-      await wait(300);
-      document.querySelector('#srcmap summary').click(); await wait(100);
+      const soft = (f, ms = 10000) => until(f, ms).catch(() => {}); // the check below says what was there
+      await soft(() => $('srcmap-row') && !$('srcmap-row').hidden);
+      document.querySelector('#srcmap summary').click();
+      await soft(() => srcLines().length > 0);
+      $('copy-link').click();
       const out = { tp: tp(), lines: srcLines(), href: location.href, code: $('code').value };
       // to hex and back: the same text, the same lines
-      $('mode-hex').click(); await wait(300);
+      $('mode-hex').click(); await soft(() => !isAsm('code'));
       out.hex = { asm: isAsm('code'), text: $('code').value.split('\\n')[0], src: $('srcmap-row')?.hidden };
-      $('mode-asm').click(); await wait(300);
+      $('mode-asm').click(); await soft(() => isAsm('code') && $('code').value === out.code);
       out.back = { asm: isAsm('code'), same: $('code').value === out.code, src: !$('srcmap-row')?.hidden && $('srcmap').open };
-      await done(() => $('run').click()); await wait(200);
+      await done(() => $('run').click());
+      await soft(() => !$('results').hasAttribute('aria-busy') && srcLines().length > 0);
       out.back.lines = srcLines();
       return out;`);
     check(r.tp && r.lines.length > 0 && /[#&]src=1(&|$)/.test(new URL(r.href).hash), 'ce: an import, its cost per source line, src=1 in the link', JSON.stringify(r));
@@ -269,7 +273,7 @@ try {
     p2.ignore.push(/godbolt\.org/);
     await p2.goto(r.href);
     await p2.ready();
-    const n = await p2.eval(`${HELPERS} ${CE} await until(() => tp() || errorBox(), 60000); await wait(300);
+    const n = await p2.eval(`${HELPERS} ${CE} await until(() => (tp() || errorBox()) && !$('results').hasAttribute('aria-busy'), 60000);
       return { tp: tp(), err: errorBox(), srcHidden: $('srcmap-row')?.hidden ?? true, lines: srcLines(), code: $('code').value };`);
     check(n.tp === r.tp && !n.err && n.code === r.code, 'ce: the link of an import reopens with the same result', JSON.stringify(n));
     check(n.srcHidden || JSON.stringify(n.lines) === JSON.stringify(r.lines), 'ce: the reopened link shows the same source lines or none', JSON.stringify(n));
