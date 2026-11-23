@@ -249,6 +249,18 @@ pub(crate) struct Renamer {
 }
 
 impl Renamer {
+    /// `AbstractValueGenerator.__init__` with initPolicy 'stack': RSP and RBP get fresh abstract values (the other registers start
+    /// with the common initial value); a register without a key is not used by the block
+    pub fn seed_stack_registers(&mut self, rsp: Option<Key>, rbp: Option<Key>) {
+        let g = &mut self.abs_val_gen;
+        for k in [rsp, rbp] {
+            let v = g.generate_fresh_abstract_value();
+            if let Some(k) = k {
+                g.abstract_value_dict[k as usize] = Some(v);
+            }
+        }
+    }
+
     /// `window`: `moveEliminationPipelineLength`
     /// `n_mem_addrs`: the number of address expressions (`Prep::mem_addrs`)
     pub fn new(init_policy: InitPolicy, load_value_numbering: bool, n_keys: usize, window: i64, n_mem_addrs: usize) -> Renamer {
@@ -454,6 +466,7 @@ impl<'a> Sim<'a> {
                 let ii = prop.instr as usize;
                 if prop.has(pf::ELIM_CANDIDATE) {
                     let Some(canonical_inp_reg) = self.prep.info[ii].in_reg0 else {
+                        // unreachable: mayBeEliminated requires one input register operand, which is kept for such instructions
                         return Err(crash("IndexError: list index out of range (inputRegOperands)"));
                     };
                     let key_info = &self.prep.keys.info[canonical_inp_reg as usize];
@@ -527,8 +540,10 @@ impl<'a> Sim<'a> {
         if self.uops[u as usize].eliminated {
             let info = &self.prep.info[ii];
             let is_32bit_move = info.has(inf::OUT_REG0_IS_32);
+            // unreachable: mayBeEliminated requires one input register operand, which is kept for such instructions
             let canonical_inp_reg = info.in_reg0.ok_or_else(|| crash("IndexError: list index out of range (inputRegOperands)"))?;
             if info.out_regs.1 == 0 {
+                // unreachable: mayBeEliminated requires one output register operand
                 return Err(crash("IndexError: list index out of range (outputRegOperands)"));
             }
             let canonical_out_reg = self.prep.out_reg_list[info.out_regs.0 as usize].0;
@@ -606,16 +621,18 @@ impl<'a> Sim<'a> {
             if is_store_addr || is_store_data {
                 let sbe = self.rn.cur_store_buffer_entry;
                 if sbe == NONE {
+                    // unreachable: the store-address uop of an instruction precedes its store-data uops and is never eliminated
+                    // (eliminable moves have one non-memory uop in the tables)
                     return Err(crash("AttributeError: 'NoneType' object has no attribute 'uops'"));
                 }
                 self.uops[u as usize].store_buffer_entry = sbe;
                 self.rn.sbes[sbe as usize].uops.push(u);
             }
-            if is_load {
-                let key = self.get_store_buffer_key(mem_addr_id, mem_addr.as_ref());
-                let Some(mem_addr) = mem_addr else {
-                    return Err(crash("AttributeError: 'NoneType' object has no attribute 'get'"));
-                };
+            // a load uop without an address (the port data of an instruction without a memory input operand has a load port, e.g.
+            // PCMPESTRI with register operands on SNB/IVB, OUT, INS) reads no store and gets no fast pointer chasing (fork fix; upstream:
+            // AttributeError)
+            if let (true, Some(mem_addr)) = (is_load, mem_addr) {
+                let key = self.get_store_buffer_key(mem_addr_id, Some(&mem_addr));
                 let base_entry = mem_addr.base.and_then(|k| self.rn.rename_dict[k as usize]);
                 let instr_of = |sim: &Sim, e: Option<RenameDictEntry>| -> Option<usize> {
                     let uop = sim.ren_ops[e?.renamed_op as usize].uop;
@@ -658,6 +675,8 @@ impl<'a> Sim<'a> {
                 let ren_op = if is_pseudo {
                     match self.rn.cur_instr_pseudo_op_dict.iter().find(|e| e.0 == op) {
                         Some(e) => e.1,
+                        // unreachable: a pseudo operand is written by an earlier uop of the same instruction; only move
+                        // elimination skips a write, and eliminable moves have a single uop (tables)
                         None => return Err(crash("KeyError: curInstrPseudoOpDict")),
                     }
                 } else {
@@ -668,7 +687,7 @@ impl<'a> Sim<'a> {
             let ren_out_start = self.ren_lists.len() as u32;
             // (at most 255 operands: checked in Prep::new)
             self.uops[u as usize].ren = ren_in_start;
-            self.uops[u as usize].n_in = (ren_out_start - ren_in_start) as u8;
+            self.uops[u as usize].n_in = (ren_out_start - ren_in_start) as u16;
             let (out_start, n_out) = self.prep.props[prop_id].out_keys;
             for i in out_start..out_start + n_out {
                 let k = &self.prep.out_key_list[i as usize];
@@ -684,7 +703,7 @@ impl<'a> Sim<'a> {
                     }
                 }
             }
-            self.uops[u as usize].n_out = (self.ren_lists.len() as u32 - ren_out_start) as u8;
+            self.uops[u as usize].n_out = (self.ren_lists.len() as u32 - ren_out_start) as u16;
         } else {
             // e.g., xor rax, rax
             let (out_start, n_out) = self.prep.info[ii].out_regs;
@@ -730,6 +749,9 @@ impl<'a> Sim<'a> {
                                         Some(p) => {
                                             e.1.remove(p);
                                         }
+                                        // unreachable: every SIMD register renamed to an operand in multiUseSIMDDict is in its
+                                        // set (eliminated moves add both registers; the tables have no eliminable GPR<->SIMD
+                                        // move)
                                         None => return Err(crash("KeyError: multiUseSIMDDict")),
                                     }
                                 }
