@@ -64,6 +64,23 @@ When the data, the fixtures or the assembler change, publish a new asset (the ol
 then commit `ci/data-asset.txt` with the change that needs it. A new fixture file that a default suite reads also has to be
 added to the list in `ci/make-data-asset.sh`.
 
+## Speed
+
+- `cargo run --release -p wuica --example phases -- ARCH N HEXFILE...`: the time and the allocations of each phase (native).
+- `cargo run --release -p wuica --example load -- [N] [TABLE...]`: the time of `load_uarch` and of `load_arch` for each table.
+- The WebAssembly module: `node --cpu-prof` on a script that calls `wuica_analyze` in a loop; the profile names the module's
+  functions (from its name section). A function that is inlined into its caller does not appear on its own.
+- Report numbers from aethia under an exclusive perfq lease; the Mac varies by a factor of two when other work runs there.
+- Before optimizing, check that every response stays the same, including the trace and the fields that
+  `analyze_fixtures.mjs` does not compare: `examples/golden.rs` writes every fixture response; compare its output before and
+  after the change.
+- Known costs (aethia, node 22, round 3): V8 compiles a function when it is first called, with its baseline compiler first. The
+  first analysis in a new instance therefore takes 17.5 ms for a small block, where later analyses take 1.9 ms, and 107 ms for
+  the SHA-256 showcase, where later ones take 40 ms. Node has no code cache for WebAssembly modules (`v8.serialize` of a
+  module gives an empty result). Loading a table takes 2.3 to 15 ms (85 ms for all 15 tables) in a new instance, nearly all of it
+  `serde_json`. The scheduler re-checks no uop: every uop in `nonReadyUops` and `pendingUops` is visited once (counted on the
+  blocks of the benchmark), so its work per cycle is proportional to the uops in flight, not to the size of the block.
+
 ## The reference
 
 - Read: `reference/uiCA/*.py` (the exact commit the fixtures come from). The decoder's C code that produces the decoded records
