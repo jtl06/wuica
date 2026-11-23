@@ -19,4 +19,12 @@
 .dp-map.picking .dp-arc:not(.on) { opacity: 0.25; }
 .dp-map.picking .dp-arc.on { stroke: var(--accent); opacity: 1; }
 .dp-info { overflow-wrap: anywhere; color: var(--description); }
+/* latencies on the arcs (the chain's always, the selected instruction's), slack per instruction (js/deps-slack.js) */
+.dp-lat { font-size: 10px; paint-order: stroke; stroke: var(--surface); stroke-width: 3px; }
+.dp-lat.crit { fill: var(--date); }
+.dp-lat.on { fill: var(--accent); }
+.dp-sl { fill: var(--subtle); font-size: 11px; }
+.dp-sl.zero { fill: var(--date); font-weight: 600; }
+.dp-node.crit text:not(.dp-sl) { fill: var(--date); }
+.dp-k.sl { color: var(--subtle); }
 body.ab-on #deps-row { display: none !important; }

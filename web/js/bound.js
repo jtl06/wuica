@@ -9,6 +9,7 @@ import { h, columnKind } from './render.js';
 import { jumpToRow, finishJump } from './rowjump.js';
 import { portSetBlame, setLine, markPorts } from './portset.js';
 import { slotsLine } from './slots.js';
+import { rangeGroup, onRange } from './trace-range-view.js'; // a cycle range of the trace replaces the steady state
 
 const EPS = 0.005; // values are shown with two decimals
 const GROUPS = Object.freeze([['front', 'front end'], ['issue', 'issue'], ['ports', 'ports'], ['deps', 'chain'], ['other', 'other']]);
@@ -159,6 +160,7 @@ export function createBound(env = {}) {
   let root = null, view = null;
   let shaded = [];     // the cells that carry a shade
   let detailsTimer = 0;
+  onRange(() => { if (open) paint(); });
 
   function ensureRow() {
     if (row?.isConnected) return row;
@@ -226,6 +228,8 @@ export function createBound(env = {}) {
     hint.textContent = m.next ? ` · next ${m.next.name} ≤×${m.next.speedup.toFixed(1)}` : '';
     hint.title = m.next ? `without the bottleneck, at best ${f2(m.next.tp)} cycles/iteration (the next limit): up to ${m.next.speedup.toFixed(2)}× faster` : '';
     if (!open) { body.replaceChildren(); clean(); if (root) root.dataset.bound = 'closed'; return; }
+    const rg = rangeGroup(view);
+    if (rg) { body.replaceChildren(rg); clean(); if (root) root.dataset.bound = 'range'; return; }
     if (!m.items.some((x) => x.id === selected && x.group !== 'other')) selected = defaultResource(m);
     const groups = [];
     for (const [g, label] of GROUPS) {

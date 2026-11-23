@@ -2,6 +2,7 @@
 // Compiler Explorer link, the compiler's source lines next to the share of the binding resource (bound.js: blame of the
 // bottleneck) that their instructions have. The lines come with the import (CE's asm[].source.line, main file only);
 // the view shows only while the analyzed block is the imported one (same bytes, one row per imported instruction).
+// Pasted assembly with .loc lines (asm-regions.js) has a source too: spans of bytes, file:line rows without the text.
 // Opt-in (a row of the "more" section, there only after an import; its open state in the URL); a click on a line jumps
 // to its costliest row.
 //
@@ -10,6 +11,7 @@
 import { h } from './render.js';
 import { boundModel, blame, defaultResource } from './bound.js';
 import { jumpToRow } from './rowjump.js';
+import { spanLines } from './asm-regions.js';
 
 const CONTEXT = 1;      // source lines shown around the mapped ones
 const MAX_LINES = 400;  // at most this many source lines
@@ -18,7 +20,9 @@ const MAX_LINES = 400;  // at most this many source lines
 // top}], unmapped, total} or null (not the imported block, or nothing to attribute).
 export function srcModel(response, src, hex) {
   const rows = response?.rows;
-  if (!Array.isArray(rows) || !src || !Array.isArray(src.lines) || (src.hex && hex && src.hex !== hex)) return null;
+  if (!Array.isArray(rows) || !src || (src.hex && hex && src.hex !== hex)) return null;
+  if (Array.isArray(src.spans)) src = { ...src, lines: spanLines(rows, src.spans) }; // pasted asm with .loc (asm-regions.js)
+  if (!Array.isArray(src.lines)) return null;
   const instrRows = [];
   rows.forEach((x, row) => { if (x.kind === 'instr') instrRows.push(row); });
   if (instrRows.length !== src.lines.length || !src.lines.some((l) => l > 0)) return null;
@@ -53,18 +57,20 @@ export function srcModel(response, src, hex) {
     if (value > e.topValue) { e.top = row; e.topValue = value; }
     per.set(line, e);
   });
+  const noText = src.text == null; // pasted asm: no source text, its file:line instead, no context
   const text = String(src.text ?? '').split('\n');
+  const ctx = noText ? 0 : CONTEXT;
   // the mapped lines with CONTEXT lines around each; a gap between two windows is one line {gap: n} (an inlined helper
   // far from the loop does not hide it); at most MAX_LINES source lines
   const mapped = [...per.keys()].sort((a, b) => a - b);
   const show = new Set();
-  for (const l of mapped) for (let k = Math.max(1, l - CONTEXT); k <= l + CONTEXT && k <= Math.max(text.length, l); k++) show.add(k);
+  for (const l of mapped) for (let k = Math.max(1, l - ctx); k <= l + ctx && k <= Math.max(text.length, l); k++) show.add(k);
   const order = [...show].sort((a, b) => a - b).slice(0, MAX_LINES);
   const lines = [];
   order.forEach((line, k) => {
     if (k > 0 && line > order[k - 1] + 1) lines.push({ gap: line - order[k - 1] - 1 });
     const e = per.get(line);
-    lines.push({ line, text: text[line - 1] ?? '', share: e && total > 0 ? e.value / total : 0, rows: e?.rows ?? [], top: e ? e.top : -1 });
+    lines.push({ line, text: noText ? (src.file ? `${src.file}:${line}` : `line ${line}`) : text[line - 1] ?? '', share: e && total > 0 ? e.value / total : 0, rows: e?.rows ?? [], top: e ? e.top : -1 });
   });
   return { resource: resource ?? 'Issued', unit, lines, unmapped: total > 0 ? unmapped / total : 0, total };
 }

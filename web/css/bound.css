@@ -65,3 +65,8 @@ body.ab-on #bound-row { display: none !important; }
 
 /* the columns of the port set (js/portset.js) */
 .grid thead th.ps-on { color: var(--heading); box-shadow: inset 0 -2px var(--accent); }
+
+/* the issue slots per CPU in the CPU table (js/cmp-slots.js), A–B (js/ab-slots.js) */
+.cmp-cpus td.cs-col { width: 7rem; }
+.cs-bar { width: 6rem; cursor: help; }
+@media (max-width: 640px) { .cmp-cpus .cs-col { width: 3.5rem; } .cs-bar { width: 3rem; } }

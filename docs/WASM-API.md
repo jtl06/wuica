@@ -210,3 +210,26 @@ limited to 250,000 instructions simulated: a few tens of ms natively; the page's
 
 Assembly text is turned into machine code by a separate, lazily loaded module (`assembler/`, LLVM's x86 assembler); its interface
 is described in `assembler/README.md`. The page passes the resulting bytes to `wuica_analyze` as `hex`.
+
+### Marked regions and `.loc` lines (the page)
+
+Before the assembler, the page looks for region markers in pasted assembly (`web/js/asm-regions.js`); without any, the text is
+assembled as it is. With a marked region, only its bytes are analyzed (the first region, if there are several; a chip `▣ name 1/3`
+under the input names it, its tooltip lists the markers, a click selects its BEGIN line). Markers:
+
+| Convention | Start | End |
+|---|---|---|
+| llvm-mca | `# LLVM-MCA-BEGIN [name]` | `# LLVM-MCA-END [name]` |
+| wuica | `# wuica-begin [name]` | `# wuica-end` |
+| IACA / OSACA (bytes) | `mov ebx, 111` + `.byte 0x64, 0x67, 0x90` | `mov ebx, 222` + `.byte 0x64, 0x67, 0x90` |
+
+Comment markers may start with `#`, `//` or `;`, in Intel or AT&T syntax (AT&T IACA: `movl $111, %ebx`); the IACA markers
+themselves are not part of the region. An END without a name, or with the region's name, ends it; a region without an END runs
+to the end of the code. The whole text is still assembled (labels, directives and branches outside the region keep their
+meaning and their encodings): local labels at the region's ends and a trailer at the end of `.text` give the offsets, and are
+cut off again. A region outside `.text`, or without instructions, is an error at its BEGIN line.
+
+Compiler output with debug lines (`gcc -g -S`, `clang -g -S`: `.file N ["dir"] "name" [md5 …]`, `.loc N LINE …`) gives each
+instruction the line of the `.loc` before it, the same way; the cost per source line (`src=1`, `web/js/srcmap.js`) then shows
+`file:line` rows (the source text is not in the listing) for the main file, the one with the most lines in the analyzed code.
+gcc's `view` operand of `.loc`, which LLVM rejects, is dropped.

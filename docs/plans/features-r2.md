@@ -1,6 +1,6 @@
 # Features, round 2: simulator details, instruction cards, drill-downs, source lines, API
 
-Continues [features-r1.md](features-r1.md) (the ranked list and the research behind it). Branch `features-r2`, built on
+Continues [features-r1.md](features-r1.md) (the ranked list and the research behind it); round 3: [features-r3.md](features-r3.md). Branch `features-r2`, built on
 `48fbd47`. Status as there: **r2** = built in this round; **next** = not started.
 
 ## Built in this round (branch `features-r2`)

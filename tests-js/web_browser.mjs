@@ -171,14 +171,13 @@ try {
         document.body.innerText.match(/(?<!un)official|AGPL|Plex|OFL|Typeface|license/gi)?.join(',') ?? ''];
       out.focusable = ['code', 'run', 'copy-link', 'examples', 'mode-asm', 'mode-hex', 'cpu-all'].every((id) => $(id).tabIndex >= 0) && [...document.querySelectorAll('#cpu-grid input')].every((b) => b.tabIndex >= 0);
       out.labelled = [...document.querySelectorAll('input, select, textarea')].filter((e) => !(e.labels?.length || e.getAttribute('aria-label') || e.getAttribute('aria-labelledby'))).map((e) => e.id || e.name);
-      out.empty = $('result-body').innerText;
+      await until(() => tp()); out.empty = [tp(), $('results').dataset.run]; // a fresh visit analyzes the first example by itself
       out.start = [$('mode-asm').checked, $('code').value.split('\\n')[1]]; // assembly is the default
       $('mode-hex').click(); await wait(50); // the rest of this part is in hex
       out.csp = document.querySelector('meta[http-equiv=Content-Security-Policy]').content;
       // Ctrl+Enter runs
       $('code').focus();
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }));
-      await until(() => tp());
+      await done(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true })));
       out.tp = tp(); out.meta = $('result-body').innerText; out.mode = mode();
       out.listing = [listing(), listingOpen()];
       let copied = null; navigator.clipboard.writeText = async (t) => { copied = t; };
@@ -209,10 +208,10 @@ try {
       && r.arch[0] === 'SKL' && r.arch[1] === 'SKL', 'mock: the CPU checkboxes (in order of release; prototypes marked; names in the accessible name); SKL checked', JSON.stringify([r.groups, r.arch]));
     check(r.start[0] && r.start[1] === '  add rax, 1', 'mock: assembly is the default input, with the first example', JSON.stringify(r.start));
     check(r.examples === ',chain,loadstore,avx,stack,saxpy,dot1,dot4,popcnt,ptrchase,strlen,crc32,memcpy,gemm,sha256,synthetic,error' && r.exGroups === 'basics,classic loops,showcase,mock', 'mock: the examples menu', JSON.stringify([r.examples, r.exGroups]));
-    check(/^unofficial port of uiCA by Andreas Abel and Jan Reineke\. data from uops\.info\. repo at jtl06\/wuica v\d+\.\d+\.\d+(-\S+)? · LLVM 22\.1\.2 · Intel XED · build \S+$/.test(r.footer[0])
+    check(/^unofficial port of uiCA by Andreas Abel and Jan Reineke\. data from uops\.info\. repo at jtl06\/wuica v\d+\.\d+\.\d+(-\S+)? · LLVM 22\.1\.2 · Intel XED · build \S+ · \?$/.test(r.footer[0])
       && r.footer[1] === 'https://github.com/andreas-abel/uiCA https://www.uops.info/ https://github.com/jtl06/wuica' && r.footer[2] === 'Source on GitHub https://github.com/jtl06/wuica' && r.footer[3] === '', 'mock: the footer (credit, the repository, versions; no license or font text); GitHub at the right end of the top bar', JSON.stringify(r.footer));
     check(r.focusable && r.labelled.length === 0, 'mock: controls are focusable and labelled', JSON.stringify(r.labelled));
-    check(r.empty === '', 'mock: empty state', r.empty);
+    check(r.empty[0] === '2.00' && r.empty[1] === '1', 'mock: a fresh visit analyzes the first example once', JSON.stringify(r.empty));
     check(/script-src 'self' 'wasm-unsafe-eval' https:\/\/static\.cloudflareinsights\.com;/.test(r.csp) && /connect-src 'self' https:\/\/cloudflareinsights\.com https:\/\/godbolt\.org;/.test(r.csp) && !/unsafe-inline/.test(r.csp), 'mock: the CSP allows the Cloudflare beacon and Compiler Explorer (link import), nothing else', r.csp);
     check(r.tp === '2.00' && /cycles\/iteration/.test(r.meta) && r.mode === 'loop' && /mock data/.test(r.meta) && /Dependencies/.test(r.meta), 'mock: Ctrl+Enter gives the result of the first example', r.meta.slice(0, 300));
     check(r.listing[0] === CHAIN && !r.listing[1], 'mock: the objdump listing (closed for hex input)', JSON.stringify(r.listing));

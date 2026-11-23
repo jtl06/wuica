@@ -452,6 +452,7 @@ export function createAB(api) {
     if (both) out.push(limits(view.cmp), diff(view, view.a.archKey, view.b.archKey));
     out.push(reports(view));
     api.el.body.replaceChildren(...out);
+    api.drawn?.(api.el.body, view); // more rows of other modules (ab-slots.js)
   }
 
   paint();

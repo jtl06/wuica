@@ -16,6 +16,7 @@
 // cut off by the end of the simulation.
 
 import { ISSUE_H, issueLog, issueShare, drawIssueStrip, issueText } from './trace-issue.js'; // the issue strip (details)
+import { attachRange } from './trace-range-view.js'; // a cycle range for the bound view (viewer.ext: its hooks)
 
 // ---- the model (no DOM) ----------------------------------------------------------------------------------------
 
@@ -570,6 +571,7 @@ export class Viewer {
       ? el('div', { class: 'trace-viewer', 'data-tag': this.tag }, this.chart, this.tableBox, this.live) // A–B: the panel has the tools and the legend
       : el('div', { class: 'trace-viewer' }, tools, this.chart, this.legend, this.note, this.tableBox, this.live);
     if (this.tag) this.canvas.setAttribute('aria-label', `${this.tag}: timeline of the uops by cycle. Arrow keys move between uops; + and − zoom.`);
+    if (!this.fixed) attachRange(this, tools); // trace-range-view.js
 
     this.scroller.addEventListener('scroll', () => {
       this.state.scrollLeft = this.scroller.scrollLeft;
@@ -609,6 +611,7 @@ export class Viewer {
     this.themeObserver.disconnect();
     this.mq.removeEventListener?.('change', this.repaintColors);
     cancelAnimationFrame(this.frame);
+    this.ext?.destroy();
   }
 
   // called when the element is (again) in the document: the scroll position is lost when it is moved
@@ -886,8 +889,9 @@ export class Viewer {
       ctx.fillText('cycle', 6, AXIS_H / 2 - 1);
     }
     ctx.font = `10px ${C.font.slice(5)}`;
-    const span = this.c1 - this.c0 + 1;
-    const pc0 = this.dataC(this.c0), pc1 = this.dataC(this.c1);
+    const R = this.ext?.range(); // a selected cycle range: the shares are its own
+    const span = R ? R.b - R.a + 1 : this.c1 - this.c0 + 1;
+    const pc0 = R ? R.a : this.dataC(this.c0), pc1 = R ? R.b : this.dataC(this.c1);
     for (let p = 0; p < this.ports.length; p++) {
       const port = this.ports[p];
       const y = AXIS_H + p * PORT_H + PORT_H / 2;
@@ -912,6 +916,7 @@ export class Viewer {
     ctx.fillStyle = C.border;
     ctx.fillRect(0, H - 1, W, 1);
     ctx.fillRect(G - 1, 0, 1, Hv);
+    this.ext?.draw(ctx);
     this.lastDrawMs = performance.now() - t0;
     this.root.dataset.drawMs = this.lastDrawMs.toFixed(2);
   }
@@ -1122,6 +1127,7 @@ export class Viewer {
 
   onPointerDown(e) {
     this.canvas.focus({ preventScroll: true });
+    if (this.ext?.down(e)) return; // a drag over the head selects cycles
     if (e.pointerType === 'mouse' && e.button === 0) {
       this.drag = { x: e.clientX, y: e.clientY, sl: this.scroller.scrollLeft, st: this.scroller.scrollTop, moved: false };
       this.canvas.setPointerCapture?.(e.pointerId);
@@ -1177,6 +1183,7 @@ export class Viewer {
   }
 
   onKey(e) {
+    if (this.ext?.key(e)) return; // [ ] Esc: the cycle range
     const n = this.rows.length;
     const page = Math.max(1, Math.floor((this.viewH - this.headH()) / ROW_H) - 1);
     let r = this.active;

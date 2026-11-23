@@ -136,9 +136,10 @@ try {
     await page.goto(`${origin}/?nosw=1`);
     await page.ready();
     const r = await page.eval(`${HELPERS}
-      const out = { mode: $('mode-asm').checked, code: $('code').value.split('\\n')[1], empty: $('result-body').innerText };
+      const out = { mode: $('mode-asm').checked, code: $('code').value.split('\\n')[1] };
       out.before = [rect('#results'), rect('#code')];
-      await done(() => $('run').click());
+      await until(() => tp()); // a fresh visit analyzes the default example by itself
+      out.auto = [tp(), $('results').dataset.run];
       out.after = rect('#results');
       out.scrollY = scrollY; out.h = innerHeight; out.overflow = overflow();
       out.tp = [tp(), rect('.tp .value')]; out.uops = rect('table.uops'); out.run = rect('#run');
@@ -157,7 +158,7 @@ try {
       $('opt-align').focus(); $('opt-align').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await wait(50);
       out.popClosed = [!$('advanced').open, document.activeElement === document.querySelector('#advanced summary')];
       return out;`);
-    check(r.mode && r.code === '  add rax, 1' && r.empty === '', 'layout: assembly is the default input (the first example), nothing analyzed yet', JSON.stringify([r.mode, r.code, r.empty]));
+    check(r.mode && r.code === '  add rax, 1' && r.auto[0] === '2.00' && r.auto[1] === '1', 'layout: assembly is the default input (the first example), analyzed without a click', JSON.stringify([r.mode, r.code, r.auto]));
     check(r.before[0].top === r.after.top && r.before[0].left > r.before[1].right, 'layout: at 1440 px the result is beside the input; it does not move when the result arrives', JSON.stringify([r.before, r.after]));
     check(r.scrollY === 0 && r.tp[0] === '2.00' && r.tp[1].bottom <= r.h && r.uops.top >= 0 && r.uops.bottom <= r.h && r.overflow <= 0, 'layout: at 1440×900 the throughput and the whole uop table are visible without scrolling', JSON.stringify([r.tp, r.uops, r.h]));
     check(r.run.bottom <= r.h && r.cpuGrid.bottom <= r.h && r.codeLines >= 20, 'layout: the code box (20+ lines), the CPUs and Analyze fit in the window', JSON.stringify([r.run, r.cpuGrid, r.codeLines]));

@@ -21,6 +21,11 @@ import { createInsight } from './insight-view.js';
 import { createPool, poolSize, tableCap } from './pool.js';  // workers for the views with many analyses
 import { createConverter } from './asm-text.js';  // hex <-> asm
 import { createViews } from './views.js';         // the opt-in views below the result
+import { createABSlots } from './ab-slots.js';     // A–B: the issue slots of both sides
+import { createCmpSlots } from './cmp-slots.js';   // the issue slots per CPU in the CPU table (bound view open)
+import { withRegions } from './asm-regions.js';     // marked regions and .loc lines of pasted assembly
+import { createRegionChip } from './region-chip.js';
+import { createKeys } from './keys.js';           // keyboard shortcuts, the ? overlay
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -91,7 +96,9 @@ const liveRunner = latestWins(() => run({ auto: true }));
 // The compare views (compare-view.js): the table of the checked CPUs (several checked) and the alignment sweep. They
 // get every successful result of single mode; in A–B mode they are hidden (ab.css), keep their state, and wait for
 // the next single-mode result.
+const cmpSlots = createCmpSlots({ engine: () => engine, pool: () => getPool(), enabled: () => state.bound });
 const panels = createComparePanels({
+  decorateCpus: (table, input) => cmpSlots.decorate(table, input),
   els: {
     cpus: $('cmp-cpus'), cpusInfo: $('cmp-cpus-info'), cpusBody: $('cmp-cpus-body'),
     sweep: $('cmp-sweep'), sweepInfo: $('cmp-sweep-info'), sweepBody: $('cmp-sweep-body'),
@@ -118,7 +125,9 @@ const insight = createInsight({
   pool: () => getPool(),
   onToggle: () => { const o = insight.open(); state.cost = o.cost; state.costNop = o.cost && o.nop; syncUrl(true); },
 });
-const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o), onToggle: (open) => { Object.assign(state, open); syncUrl(true); }, getSel: () => state.sel, getSource: () => ceSource });
+let pastedSource = null; // the .loc lines of pasted assembly (asm-regions.js), bound to its bytes
+const regionChip = createRegionChip(el.messages, (line) => selectLine(line));
+const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o), onToggle: (open) => { Object.assign(state, open); syncUrl(true); if ('bound' in open) cmpSlots.decorate(); }, getSel: () => state.sel, getSource: () => (ceSource && (!pastedSource || ceSource.hex === lastView?.hex) ? ceSource : pastedSource) });
 // The trace (trace.js), below both panes; linked to the uop table (trace-link.js). Its open state and the selected row
 // are in the URL.
 const traceOpened = (open) => { if (state.trace === open) return; state.trace = open; syncUrl(true); };
@@ -375,6 +384,7 @@ function scheduleRun() {
 // ---- messages next to the input ---------------------------------------------------------------------------------
 
 function clearMessages() {
+  regionChip.sync(state.mode === 'asm' ? el.code.value : null); // kept only for the text it was shown for
   el.messages.replaceChildren();
   delete el.messages.dataset.key;
   el.code.removeAttribute('aria-invalid');
@@ -435,6 +445,7 @@ function setMode(mode, converted = null) { // converted: the code in the new for
   if (converted) { buffers[mode] = converted.text; if (converted.syntax) state.syntax = converted.syntax; }
   clearMessages();
   writeControls();
+  regionChip.sync(state.mode === 'asm' ? el.code.value : null); // back to the marked text (asm -> hex -> asm)
   if (mode === 'asm') {
     ensureAssembler().then((a) => { if (!a && state.mode === 'asm') showAssemblerMissing(); paintDerived(); });
   }
@@ -442,7 +453,7 @@ function setMode(mode, converted = null) { // converted: the code in the new for
 }
 
 function ensureAssembler() {
-  assemblerPromise ??= (async () => {
+  assemblerPromise ??= (async () => withRegions(await (async () => {
     if (manifest.assembler !== false) { // false: build.sh found no module, so do not even ask for it
       try {
         const bytes = await download('assembler', PATHS.assembler);
@@ -466,7 +477,7 @@ function ensureAssembler() {
     }
     assemblerMissing = true;
     return null;
-  })();
+  })()))();
   return assemblerPromise;
 }
 
@@ -620,6 +631,7 @@ function draw() {
 
 async function machineCode(id) {
   const text = el.code.value;
+  pastedSource = null; regionChip.show(null);
   if (state.mode === 'hex') {
     const p = parseHexInput(text);
     if (!p.ok) {
@@ -653,6 +665,7 @@ async function machineCode(id) {
   if (r.ok && r.bytes.length === 0) items.push({ line: null, column: null, severity: 'error', message: 'No machine code' });
   if (r.ok && r.bytes.length && assembler.mock) items.push({ line: null, column: null, severity: 'note', message: 'mock assembler' });
   if (items.length) showMessages(items); else clearMessages();
+  if (r.ok && r.bytes.length) { regionChip.show(r.region ?? null, text); pastedSource = r.source ? { ...r.source, hex: toHex(r.bytes) } : null; }
   return r.ok && r.bytes.length ? r.bytes : null;
 }
 
@@ -928,7 +941,9 @@ function setupFeatures() {
       if (!undo && code.mode === 'hex') importAsAsm(side, code.text, analysis);
     },
   });
+  const abSlots = createABSlots({ engine: () => engine, options });
   ab = createAB({
+    drawn: (body, view) => abSlots.decorate(body, view),
     state, el: { code: el.code, body: el.body }, archItems: () => archItems, archTitle, ensureAssembler: assemblerForRun, ensureTable,
     machineCodeA: machineCode, changed, writeControls,
     getA: () => ({ mode: state.mode, syntax: state.syntax, text: el.code.value }),
@@ -1151,6 +1166,7 @@ async function start() {
   writeControls();
   fillExamples();
   bind();
+  createKeys({ button: $('keys-btn') });
   setupFeatures();
 
   manifest = await fetchManifest();
@@ -1202,7 +1218,26 @@ async function start() {
   paintDerived();
   if (hadState && el.code.value.trim() !== '' && !el.run.disabled) run();
   else if (liveOn && touched && el.code.value.trim() !== '' && !el.run.disabled) run({ auto: true });
-  else renderEmpty(el.body);
+  else {
+    renderEmpty(el.body);
+    if (!hadState && !touched) autoFirst(); // a fresh visit: the default example
+  }
+}
+
+// A fresh visit (no state in the link, nothing typed): the default example is analyzed once, after the next frame
+// (the analysis runs in the worker; a key press meanwhile goes first, and live mode or Analyze replace this run). The
+// address stays without a fragment while nothing was changed.
+function autoFirst() {
+  const go = async () => {
+    if (lastView || busy || touched || el.code.value.trim() === '' || el.run.disabled) return;
+    const pristine = encodeState(collectState());
+    await run({ auto: true });
+    if (encodeState(collectState()) !== pristine || location.hash.replace(/^#/, '') !== lastFragment) return;
+    clearTimeout(syncTimer);
+    lastFragment = '';
+    try { history.replaceState(null, '', location.pathname + location.search); } catch { /* kept */ }
+  };
+  requestAnimationFrame(() => setTimeout(go, 0));
 }
 
 start();
