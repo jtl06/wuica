@@ -23,6 +23,7 @@ import { RateLimiter } from './ratelimit.js';
 import { versionInfo } from './version.js';
 
 const SITE = 'https://wuica.jacen.li';
+const MAX_MCP_BATCH = 16; // JSON-RPC messages in one POST /mcp
 
 class HttpError extends Error {
   constructor(status, message, headers = {}) { super(message); this.status = status; this.headers = headers; }
@@ -175,11 +176,14 @@ export async function createApp(options = {}) {
     }
     const body = await readJson(req);
     const msgs = Array.isArray(body) ? body : [body];
+    if (msgs.length > MAX_MCP_BATCH) {
+      return send(res, 400, { jsonrpc: '2.0', error: { code: -32600, message: `a batch may hold at most ${MAX_MCP_BATCH} messages` }, id: null });
+    }
     ctx.rpc = msgs.map((m) => (typeof m?.method === 'string' ? m.method.slice(0, 40) : 'response')).join(',').slice(0, 200);
     const call = msgs.find((m) => m?.method === 'tools/call');
     if (call && typeof call.params?.name === 'string') ctx.tool = call.params.name.slice(0, 40);
     const cost = msgs.reduce((n, m) => n + (m?.method === 'tools/call' && m.params?.name === 'compare_archs' ? cfg.compareCost : 1), 0);
-    rateLimit(req, ctx, Math.max(1, Math.min(cost, cfg.compareCost * 4)));
+    rateLimit(req, ctx, Math.max(1, cost));
     const server = createMcpServer(facade.forRequest(ctx));
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => { transport.close().catch(() => {}); server.close().catch(() => {}); });

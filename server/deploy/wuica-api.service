@@ -29,8 +29,10 @@ RestartSec=2
 KillSignal=SIGTERM
 TimeoutStopSec=25
 
-# Memory: 2 workers x (analyzer <= 2 GiB + assembler <= 256 MiB + ~0.2 GiB for V8 and the tables) + ~0.2 GiB for
-# the main thread = ~5.1 GiB at most; the analyzer cap keeps one input from taking more. 12 GB VM.
+# Memory: 2 workers x (one analyzer instance <= 2 GiB + assembler <= 256 MiB + instruction counter <= ~0.1 GiB +
+# ~0.2 GiB for V8 and the tables) + ~0.2 GiB for the main thread = ~5.3 GiB at most. The analyzer cap keeps one input
+# from taking more, and a worker frees a trapped instance (forced GC) before it creates the next one. Measured on the
+# Mac: one worker, a compare that hits the 2 GiB cap on all 15 models: 1.8 GB peak RSS for the whole process. 12 GB VM.
 MemoryHigh=6G
 MemoryMax=7G
 MemorySwapMax=0

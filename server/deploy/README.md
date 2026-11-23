@@ -128,7 +128,7 @@ Check from anywhere:
 
 ```sh
 curl -s https://api.wuica.jacen.li/healthz
-curl -s https://api.wuica.jacen.li/api/archs?fields=id,name
+curl -s 'https://api.wuica.jacen.li/api/archs?fields=id,name'
 curl -s -X POST https://api.wuica.jacen.li/api/analyze/SKL -d '{"source":"loop: add rax, [rsi]\n add rsi, 8\n dec rcx\n jnz loop"}'
 claude mcp add --transport http wuica https://api.wuica.jacen.li/mcp
 ```

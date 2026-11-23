@@ -54,6 +54,10 @@ test('more than 10,000 instructions: 400', async () => {
   const rept = await post(s.base, '/api/analyze/SKL', { source: '.rept 20000\nadd rax, rbx\n.endr\n' });
   assert.equal(rept.status, 400);
   assert.match(rept.json.error, /too many instructions: 20000/);
+  // GNU as's {load} hint is removed at the start of a line, before the directive
+  const hinted = await post(s.base, '/api/analyze/SKL', { source: '{load}.rept 20000\nnop\n{load}.endr\n' });
+  assert.equal(hinted.status, 400, hinted.text.slice(0, 200));
+  assert.match(hinted.json.error, /too many instructions: 20000/);
   // expands to more than 15 bytes per allowed instruction: refused without decoding
   const fill = await post(s.base, '/api/analyze/SKL', { source: '.fill 200000, 1, 0x90\n' });
   assert.equal(fill.status, 400);

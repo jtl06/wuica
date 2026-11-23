@@ -8,6 +8,15 @@
 //
 // Both hooks wrap globals of the worker's own isolate (WebAssembly.compile and WebAssembly.Instance) before the library
 // is imported; the main thread is not affected.
+//
+// After a trap the library drops the analyzer instance and creates a new one, but the dropped instance's memory is only
+// released when it is garbage-collected: a compare that traps on every microarchitecture would otherwise hold 15 capped
+// memories at once. So a GC is forced before a new analyzer instance is created. (The memories are tracked with strong
+// references to the current instance of each module, not with WeakRefs: a WeakRef keeps its target alive until the end
+// of the current job, and a compare runs as one job.)
+
+import v8 from 'node:v8';
+import vm from 'node:vm';
 
 const PAGE = 65536;
 
@@ -57,8 +66,14 @@ export function capMemory(bytes, maxPages) {
   return b;
 }
 
-const live = new Set(); // WeakRefs of the memories of instances created in this isolate
+const current = new Map(); // module -> memory of its most recent instance (the one the library uses)
 let analyzerModule = null;
+
+let gc = null;
+try {
+  v8.setFlagsFromString('--expose-gc');
+  gc = vm.runInNewContext('gc');
+} catch { /* without it, dropped instances are collected whenever V8 decides */ }
 
 // The unhooked constructor (for instances that should not be tracked, such as the instruction counter's).
 export const RawInstance = WebAssembly.Instance;
@@ -77,8 +92,13 @@ export function installWasmLimits(analyzerMaxBytes) {
   const Instance = WebAssembly.Instance;
   WebAssembly.Instance = new Proxy(Instance, {
     construct(target, args) {
+      const module = args[0];
+      if (module === analyzerModule && current.has(module)) {
+        current.delete(module); // the previous instance trapped and was dropped by the library: release its memory
+        gc?.();
+      }
       const inst = new target(...args);
-      if (inst.exports.memory instanceof WebAssembly.Memory) live.add(new WeakRef(inst.exports.memory));
+      if (inst.exports.memory instanceof WebAssembly.Memory) current.set(module, inst.exports.memory);
       return inst;
     },
   });
@@ -87,14 +107,9 @@ export function installWasmLimits(analyzerMaxBytes) {
 // The analyzer module as compiled (with the memory limit), for the instruction counter.
 export const getAnalyzerModule = () => analyzerModule;
 
-// Total size of the memories of the instances that are still reachable (instances dropped after a trap may be counted
-// until they are collected).
+// Total size of the memories of the instances in use (the most recent instance of each module).
 export function wasmMemoryBytes() {
   let total = 0;
-  for (const ref of live) {
-    const m = ref.deref();
-    if (m) total += m.buffer.byteLength;
-    else live.delete(ref);
-  }
+  for (const m of current.values()) total += m.buffer.byteLength;
   return total;
 }

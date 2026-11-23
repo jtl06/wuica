@@ -5,7 +5,7 @@ import { createWuica } from 'wuica';
 import http from 'node:http';
 import { start, post, postHttp, get, HEX, ASM, TRAP, plain, fixtureSources } from './helpers.mjs';
 
-const HEAVY = { hex: '4801d8'.repeat(3000), options: { minIterations: 1000 } }; // ~1.5 s, ~1 GB of analyzer memory
+const HEAVY = { hex: '4801d8'.repeat(3000), options: { minIterations: 1000 } }; // seconds and GBs of analyzer memory
 
 const w = await createWuica();
 
@@ -57,6 +57,26 @@ test('the analyzer\'s memory limit turns a huge simulation into a trap; grown wo
     assert.equal(m.json.code, 0);
     assert.deepEqual(m.json, plain(await w.analyze('SKL', mid)));
     assert.ok(s.app.pool.stats.recycled >= 1, JSON.stringify(s.app.pool.stats));
+    assert.equal((await post(s.base, '/api/analyze/SKL', { hex: HEX })).json.code, 0);
+  } finally { await s.close(); }
+});
+
+test('a compare that traps on every microarchitecture holds one capped analyzer memory at a time', async () => {
+  const s = await start({ workers: 1, analyzerMemoryMb: 256, timeoutMs: 60_000 });
+  try {
+    const base = process.memoryUsage.rss();
+    let peak = base;
+    const iv = setInterval(() => { peak = Math.max(peak, process.memoryUsage.rss()); }, 5);
+    const r = await post(s.base, '/api/compare', HEAVY);
+    clearInterval(iv);
+    assert.equal(r.json.code, 0);
+    assert.equal(r.json.results.length, 15);
+    for (const row of r.json.results) {
+      assert.equal(row.code, 3, row.arch);
+      assert.match(row.error, /trapped/, row.arch); // each microarchitecture ran (on a fresh instance) and trapped
+    }
+    // without the forced GC, the 15 dropped instances add up to ~2 GB
+    assert.ok(peak - base < 768 * 2 ** 20, `peak ${Math.round((peak - base) / 2 ** 20)} MB above the start`);
     assert.equal((await post(s.base, '/api/analyze/SKL', { hex: HEX })).json.code, 0);
   } finally { await s.close(); }
 });

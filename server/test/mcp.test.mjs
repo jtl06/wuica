@@ -68,6 +68,13 @@ test('invalid arguments are rejected by the tool schema', async () => {
   assert.equal(r.isError, true);
 });
 
+test('batches: more than 16 messages are refused', async () => {
+  const msg = (id) => ({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'analyze', arguments: { hex: HEX } } });
+  const r = await post(s.base, '/mcp', Array.from({ length: 17 }, (_, i) => msg(i)), { Accept: 'application/json, text/event-stream' });
+  assert.equal(r.status, 400);
+  assert.match(r.json.error.message, /at most 16/);
+});
+
 test('stateless transport: GET and DELETE are 405; no session id; CORS', async () => {
   assert.equal((await get(s.base, '/mcp', { Accept: 'text/event-stream' })).status, 405);
   assert.equal((await fetch(s.base + '/mcp', { method: 'DELETE' })).status, 405);

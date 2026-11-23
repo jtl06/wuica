@@ -71,8 +71,6 @@ function countInstructions(bytes, chip) {
   }
 }
 
-// A directive (or a dot label) anywhere: the source may expand (.rept, .fill, .p2align, macros, ...).
-const DIRECTIVE = /(?:^|[\s;:,])\.[A-Za-z_]/;
 
 // The machine code of a request, without analyzing it: {bytes} (to be counted), {small: true} (assembly text that
 // cannot hold more than maxInstructions instructions), or null (malformed: the library reports it).
@@ -86,8 +84,9 @@ async function code(req) {
     return hex === null ? null : { bytes: Buffer.from(hex, 'hex') };
   }
   if (typeof source !== 'string') return null;
-  // every instruction takes at least 2 characters plus a separator, and only directives make code out of nothing
-  if (source.length <= cfg.maxInstructions && !DIRECTIVE.test(source)) return { small: true };
+  // every instruction takes at least 2 characters plus a separator, and only directives (which all contain a '.':
+  // .rept, .fill, .p2align, .macro, ...) make code out of nothing; any '.' takes the slow path (assemble and count)
+  if (source.length <= cfg.maxInstructions && !source.includes('.')) return { small: true };
   const a = await w.assemble(source, req.syntax ?? 'intel');
   return a.code === 0 ? { bytes: a.bytes } : null;
 }
