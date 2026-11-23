@@ -41,6 +41,7 @@ export class Pool {
   get queued() { return this.#queue.length; }
   get busy() { return this.#slots.filter((s) => s?.job).length; }
   get ready() { return this.#slots.filter((s) => s?.ready).length; }
+  get idle() { return this.#slots.filter((s) => s?.ready && !s.job).length; }
 
   #spawn(i) {
     return new Promise((resolve, reject) => {
