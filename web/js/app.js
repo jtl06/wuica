@@ -16,11 +16,14 @@ import { createTracePanel } from './trace.js';
 import { createAB } from './ab.js';                 // A–B comparison
 import { createCeImport } from './godbolt-ui.js';   // import from Compiler Explorer
 import { createInsight } from './insight-view.js';
+import { createPool, poolSize } from './pool.js';  // workers for the views with many analyses
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
 const MOCK = query.get('mock') === '1';       // ?mock=1: do not load the analyzer, use the mock (for work on the page)
 const NO_SW = query.get('nosw') === '1';      // ?nosw=1: do not register the service worker
+// ?pool=N: N workers for the compare panels and the cost column (0: none, they share the main analyzer's worker)
+const POOL_SIZE = query.has('pool') ? Math.max(0, Math.min(16, Number.parseInt(query.get('pool'), 10) || 0)) : poolSize();
 const VERSION = '0.1.1';                   // the page's version (footer); bump it here
 
 const el = {
@@ -50,6 +53,9 @@ let manifest = { version: 'dev', files: {}, tables: [], assembler: null };
 let uarch = null;
 let archItems = new Map(); // key -> {key, title, table, chip, experimental}
 let engine = null;
+let wasmModule = null;  // the compiled analyzer, shared by every worker
+let uarchBytes = null;
+let pool = null;        // the worker pool (pool.js): made when a view with many analyses first needs it
 let ready = false;
 let runSeq = 0;
 let busy = false;
@@ -57,6 +63,7 @@ let lastView = null;
 let lastRunKey = '';
 let lastFragment = null;
 const tables = new Map(); // table name -> promise of "loaded into the engine"
+const tableData = new Map(); // table name -> promise of its bytes (the main engine and the pool's workers share them)
 let assemblerPromise = null;
 let assemblerMissing = false; // true: this build has no assembler (final); a failed load of an existing one is not
 let assemblerError = '';
@@ -82,6 +89,7 @@ const panels = createComparePanels({
     sweep: $('cmp-sweep'), sweepInfo: $('cmp-sweep-info'), sweepBody: $('cmp-sweep-body'),
   },
   engine: () => engine,
+  pool: () => getPool(),
   items: () => [...archItems.values()],
   tableLoaded: (key) => !!engine?.hasArch(archItems.get(key)?.table),
   ensureTable: (key) => ensureTable(key),
@@ -99,6 +107,7 @@ const panels = createComparePanels({
 // The critical chain and the cost column on the result (insight-view.js).
 const insight = createInsight({
   engine: () => engine,
+  pool: () => getPool(),
   onToggle: () => { const o = insight.open(); state.cost = o.cost; state.costNop = o.cost && o.nop; syncUrl(true); },
 });
 const tracePanel = createTracePanel({ analyze: (request) => engine.analyze(request), config: (v) => uarch?.configs?.[v.archKey] });
@@ -390,18 +399,47 @@ function fillArchs() {
   el.arch.disabled = false;
 }
 
+// The bytes of a table, downloaded once (they are kept: the engines load them again after a restart).
+function tableBytes(name) {
+  let p = tableData.get(name);
+  if (!p) {
+    p = download(`${name} table`, PATHS.table(name));
+    tableData.set(name, p);
+    p.catch(() => tableData.delete(name)); // a later attempt may succeed (e.g. back online)
+  }
+  return p;
+}
+
+// Loads the table of a microarchitecture into the main engine.
 function ensureTable(archKey) {
   const name = archItems.get(archKey).table;
   let p = tables.get(name);
   if (!p) {
-    p = (async () => {
-      const bytes = await download(`${name} table`, PATHS.table(name));
-      await engine.loadArch(name, bytes);
-    })();
+    p = (async () => { await engine.loadArch(name, await tableBytes(name)); })();
     tables.set(name, p);
-    p.catch(() => tables.delete(name)); // a later attempt may succeed (e.g. back online)
+    p.catch(() => tables.delete(name));
   }
   return p;
+}
+
+const spawnWorker = () => new Worker(new URL('./engine-worker.js', import.meta.url), { type: 'module' });
+
+// The worker pool, or null: none in mock mode, with ?pool=0, or when the analyzer runs on the page's thread. Making it
+// starts no worker yet; the pool starts them when jobs come in.
+function getPool() {
+  if (pool || !ready || POOL_SIZE === 0 || !wasmModule || !(engine instanceof WorkerEngine)) return pool;
+  pool = createPool({
+    size: POOL_SIZE,
+    tableOf: (arch) => archItems.get(arch)?.table ?? arch,
+    tableBytes,
+    async spawn() {
+      const e = await WorkerEngine.create(wasmModule, spawnWorker);
+      await e.loadUarch(uarchBytes);
+      return e;
+    },
+  });
+  window.__wuicaPool = pool; // for the tests (tests-js/web_pool_browser.mjs)
+  return pool;
 }
 
 // ---- analysis ------------------------------------------------------------------------------------------------------
@@ -791,7 +829,7 @@ async function start() {
   try {
     const wasmBytes = MOCK ? null : download('analyzer', PATHS.wasm);
     wasmBytes?.catch(() => {}); // reported below
-    const uarchBytes = await download('configurations', PATHS.uarch);
+    uarchBytes = await download('configurations', PATHS.uarch);
     uarch = JSON.parse(new TextDecoder().decode(uarchBytes));
     fillArchs();
     writeControls();
@@ -805,11 +843,11 @@ async function start() {
       let bytes;
       try { bytes = await wasmBytes; } catch (e) { throw new Error(`the analyzer could not be loaded (${e?.message ?? e})`); }
       if (!isWasm(bytes)) throw new Error('the analyzer could not be loaded (wuica_wasm.wasm is not a WebAssembly module)');
-      const module = await WebAssembly.compile(bytes);
+      wasmModule = await WebAssembly.compile(bytes);
       try {
-        engine = await WorkerEngine.create(module, () => new Worker(new URL('./engine-worker.js', import.meta.url), { type: 'module' }));
+        engine = await WorkerEngine.create(wasmModule, spawnWorker);
       } catch {
-        engine = await WasmEngine.create(module); // no module workers here: run it on the page's own thread
+        engine = await WasmEngine.create(wasmModule); // no module workers here: run it on the page's own thread
       }
       if (!engine.capabilities.analyze) throw new Error('this build of the analyzer has no simulator (wuica_analyze is missing)');
     }

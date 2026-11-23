@@ -141,6 +141,20 @@ const root = new URL('../', import.meta.url);
   await v.idle();
   check(ran === 1 && sawStale === true && !v.waiting, 'latest: cancel', JSON.stringify([ran, sawStale]));
 
+  // the signal aborts as soon as the run is stale (a new request or cancel), so a task can settle at once
+  const signals = [];
+  const sg = latestWins(async ({ signal }) => {
+    signals.push(signal);
+    await new Promise((r) => { const t = setTimeout(r, 200); signal.addEventListener('abort', () => { clearTimeout(t); r(); }); });
+  });
+  const t0 = Date.now();
+  sg.schedule(0); await sleep(5);
+  check(signals.length === 1 && !signals[0].aborted, 'latest: a running task\'s signal is not aborted');
+  sg.schedule(0); await sleep(10);
+  check(signals[0].aborted && signals.length === 2 && !signals[1].aborted, 'latest: a new request aborts it; the next run starts with a fresh signal');
+  sg.cancel(); await sg.idle();
+  check(signals[1].aborted && Date.now() - t0 < 100, 'latest: cancel aborts it', String(Date.now() - t0));
+
   // a failing task does not stop the scheduler
   const errors = [];
   let n = 0;

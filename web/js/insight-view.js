@@ -1,8 +1,9 @@
 // The insight views on the result: the critical dependency chain (a line under the limits, a marker on its rows) and
 // the cost column (Δ cycles/iteration without each instruction). They decorate the result after render.js has drawn
 // it (app.js calls decorate() after renderResult): the rows of `table.uops tbody` are the response's rows, in order.
-// The cost analyses run in the analyzer's worker, one at a time, after the main result; they stop as soon as their
-// input is out of date and are cached (insight.js has the data side).
+// The cost analyses run after the main result, on the worker pool (pool.js) if the page has one, otherwise in the
+// analyzer's worker, one at a time; they stop as soon as their input is out of date and are cached (insight.js has the
+// data side).
 
 import { h } from './render.js';
 import { makeRequest } from './engine.js';
@@ -15,7 +16,7 @@ const MAX_STEPS = 8;      // instructions shown in the chain line
 const isCancel = (e) => e?.name === 'CancelledError';
 const yieldToPage = () => new Promise((r) => setTimeout(r, 0));
 
-// env: { engine() }, onToggle() (the cost toggle or variant changed: the URL keeps them) }
+// env: { engine(), pool() (the worker pool or null), onToggle() (the cost toggle or variant changed: the URL keeps them) }
 export function createInsight(env) {
   const cache = new ResultCache();
   const open = { cost: false, nop: false };
@@ -116,19 +117,53 @@ export function createInsight(env) {
     }
   }
 
-  const runner = latestWins(async ({ isStale }) => {
+  const runner = latestWins(async ({ isStale, signal }) => {
     if (!job || !open.cost) return;
     const j = job;
     const stale = () => isStale() || job !== j || !open.cost;
     if (doneKey === j.key) { setState('done'); return; }
     const todo = j.jobs.filter((x) => !results.has(x.unit));
-    if (todo.length && j.estimate > BUDGET_MS && forcedKey !== j.key) { waitingKey = j.key; setState('waiting'); paintTools('waiting'); return; }
-    await runJobs(j, todo, stale);
+    if (todo.length && j.estimate / parallel(todo.length) > BUDGET_MS && forcedKey !== j.key) { waitingKey = j.key; setState('waiting'); paintTools('waiting'); return; }
+    await runJobs(j, todo, stale, signal);
   },{ onError: () => { setState('idle'); paintTools('idle'); } });
 
-  async function runJobs(j, todo, stale) {
+  const parallel = (n) => Math.max(1, Math.min(n, env.pool?.()?.size ?? 1)); // analyses that run at once
+
+  function finished(j, t0) {
+    doneKey = j.key;
+    runs++;
+    if (root) { root.dataset.costRuns = String(runs); root.dataset.costMs = (performance.now() - t0).toFixed(1); }
+    setState('done');
+    paintTools('done');
+  }
+
+  async function runJobs(j, todo, stale, signal) {
     setState('running');
     paintTools('running');
+    const t0 = performance.now();
+    const pool = env.pool?.();
+    if (pool) {
+      const same = new Map(); // resultKey -> the units whose blocks are the same (e.g. without one of two equal instructions)
+      for (const x of todo) {
+        const rk = resultKey(x.hex, j.arch, j.options);
+        const c = cache.get(rk);
+        if (c) results.set(x.unit, c); else if (same.has(rk)) same.get(rk).units.push(x.unit); else same.set(rk, { rk, units: [x.unit], request: makeRequest(x.hex, j.arch, j.options) });
+      }
+      paint();
+      const ok = await pool.run([...same.values()], {
+        signal, isStale: stale,
+        onResult: ({ rk, units }, response, error) => {
+          const r = error ? { error: error.message ?? String(error), transient: true } : summarize(response);
+          if (!r.transient) cache.set(rk, r);
+          if (job !== j) return;
+          for (const u of units) results.set(u, r);
+          paint();
+          paintTools('running');
+        },
+      });
+      if (ok && !stale()) finished(j, t0);
+      return;
+    }
     const engine = env.engine();
     for (const x of todo) {
       if (stale()) return;
@@ -150,11 +185,7 @@ export function createInsight(env) {
       paintTools('running');
     }
     if (stale()) return;
-    doneKey = j.key;
-    runs++;
-    if (root) root.dataset.costRuns = String(runs);
-    setState('done');
-    paintTools('done');
+    finished(j, t0);
   }
 
   // ---- decorate -------------------------------------------------------------------------------------------------------

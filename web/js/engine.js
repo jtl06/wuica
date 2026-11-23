@@ -144,6 +144,9 @@ export class WasmEngine {
   hasUarch() { return this.#uarch !== null; }
   hasArch(name) { return this.#tables.has(name); }
 
+  // The size of the instance's memory in bytes (WebAssembly memory only grows: the most it has used); 0 after a trap.
+  async memory() { return this.#x?.memory.buffer.byteLength ?? 0; }
+
   // request: see "Analysis request" in docs/WASM-API.md ({hex, arch, ...}). Resolves to the response object.
   // A failed analysis is a response with an `error` field, not an exception; that includes an input on which
   // the module traps (`trapped: true` is set then, and the module is restarted before the next call).
