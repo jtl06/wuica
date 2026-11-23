@@ -151,6 +151,8 @@ export class WorkerEngine {
 
   hasUarch() { return this.#uarch !== null; }
   hasArch(name) { return this.#tables.has(name); }
+  // calls that have not been answered yet (recycle() and cancel() would reject them)
+  get pending() { return this.#pending.size + (this.#starting ? 1 : 0); }
 
   async analyze(request) {
     await this.#live();

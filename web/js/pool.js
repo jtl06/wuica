@@ -27,7 +27,9 @@
 // taken); its waiting jobs are dropped at once, a running one is left to finish (its result is ignored) unless it
 // is still running after GRACE_MS: then its worker is stopped (WorkerEngine.cancel(): the next call starts a new
 // worker and loads the same tables into it). A worker whose analysis traps is replaced the same way; a job whose
-// worker failed is tried once more.
+// worker failed is tried once more. A worker whose WebAssembly memory grew beyond MEMORY_LIMIT in a job (a huge block:
+// the memory never shrinks) is replaced too (WorkerEngine.recycle, keeping its tables), as the API server does; only
+// after a job that took at least MEMORY_CHECK_MS (growing the memory that much takes longer), so small jobs pay nothing.
 //
 // No DOM: spawn() and tableBytes() are passed in, so the tests run it with fake workers (tests-js/web_pool.mjs).
 
@@ -35,6 +37,8 @@ export const POOL_MAX = 6;
 export const STEAL = 2;
 export const GRACE_MS = 500;
 export const TABLE_SPARE = 2;
+export const MEMORY_LIMIT = 512 * 2 ** 20;
+export const MEMORY_CHECK_MS = 20;
 
 export function poolSize(cores = globalThis.navigator?.hardwareConcurrency, max = POOL_MAX) {
   const n = Number.isFinite(cores) && cores > 0 ? Math.floor(cores) - 1 : 1;
@@ -55,8 +59,9 @@ const message = (e) => (e instanceof Error ? e.message : String(e));
 //   tableOf(arch)        the table a configuration needs (configs[arch].name)
 //   tableBytes(name)     resolves to the bytes of a table (the page's copy: nothing is fetched twice)
 //   maxTables            the most tables a worker keeps (tableCap); evicting needs engine.recycle(keep). Default: no limit
-//   steal, graceMs, now, timers   (tests)
-export function createPool({ size, spawn, tableOf, tableBytes, maxTables = Infinity, steal = STEAL, graceMs = GRACE_MS, now = () => performance.now(), timers = globalThis }) {
+//   memoryLimit          a worker with more WebAssembly memory after a job is replaced (needs engine.memory and recycle)
+//   steal, graceMs, memoryCheckMs, now, timers   (tests)
+export function createPool({ size, spawn, tableOf, tableBytes, maxTables = Infinity, steal = STEAL, graceMs = GRACE_MS, memoryLimit = MEMORY_LIMIT, memoryCheckMs = MEMORY_CHECK_MS, now = () => performance.now(), timers = globalThis }) {
   const slots = [];  // {id, engine: promise, tables: Map (loaded or loading) -> last use, job, phase, since, evicted}
   let queue = [];    // waiting jobs, oldest first: {batch, item, request, table, attempts}
   let ids = 0;
@@ -64,7 +69,7 @@ export function createPool({ size, spawn, tableOf, tableBytes, maxTables = Infin
   let spawnFailed = false; // a worker could not be started: no more are started while others run
   const cap = Math.max(1, maxTables);
   const sizes = new Map(); // table -> bytes, for stats()
-  const counts = { spawned: 0, tableLoads: 0, analyses: 0, cancels: 0, traps: 0, retries: 0, recycles: 0 };
+  const counts = { spawned: 0, tableLoads: 0, analyses: 0, cancels: 0, traps: 0, retries: 0, recycles: 0, memoryRecycles: 0 };
 
   const owners = (table) => slots.reduce((n, s) => n + (s.tables.has(table) ? 1 : 0), 0);
   const waiting = (table) => queue.reduce((n, j) => n + (j.table === table ? 1 : 0), 0);
@@ -171,6 +176,13 @@ export function createPool({ size, spawn, tableOf, tableBytes, maxTables = Infin
         response = await engine.analyze(j.request);
         counts.analyses++;
         if (response?.trapped) { counts.traps++; engine.cancel(); } // a fresh worker, with the same tables, for the next job
+        else if (now() - s.since >= memoryCheckMs && typeof engine.memory === 'function' && typeof engine.recycle === 'function') {
+          const bytes = await engine.memory().catch(() => 0);
+          if (bytes > memoryLimit) { // a new worker with the same tables gives the memory back
+            engine.recycle([...s.tables.keys()].filter((t) => engine.hasArch(t)));
+            counts.memoryRecycles++;
+          }
+        }
       }
     } catch (e) {
       error = e;

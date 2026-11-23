@@ -2,6 +2,8 @@
 // through tests-js/cdp.mjs) with the real analyzer and assembler:
 // - the assembler runs in a worker: a .rept that takes seconds to assemble does not freeze the page; a new edit in live
 //   mode stops it and analyzes the new input at once; Cancel stops it; asm -> hex conversion still works
+// - analyzer memory: after a block that grows the WebAssembly memory beyond 512 MB, the analyzer's worker and the pool's
+//   workers are replaced (the memory never shrinks otherwise); the next runs work, on the same and on other CPUs
 // Skipped (exit 0) without Chrome.
 //
 //   node tests-js/web_robust_browser.mjs [--chrome PATH]
@@ -29,6 +31,27 @@ const GAPS = `
     return Math.max(max, performance.now() - last);
   };`;
 const BIG = '.rept 10000000\\nnop\\n.endr'; // about 3.5 s in one run of the assembler, then "Too much machine code"
+
+// The size of every WebAssembly memory in the page's dedicated workers that run engine-worker.js, in MB.
+async function engineMemory(page) {
+  const sessions = [];
+  const h = (m) => { if (m.method === 'Target.attachedToTarget' && m.sessionId === page.sessionId) sessions.push(m.params); };
+  page.browser.on(h);
+  await page.cmd('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
+  await new Promise((r) => setTimeout(r, 300));
+  const out = [];
+  for (const s of sessions) {
+    if (s.targetInfo.type !== 'worker' || !/engine-worker\.js/.test(s.targetInfo.url)) continue;
+    const send = (method, params) => page.browser.send(method, params, s.sessionId);
+    const proto = await send('Runtime.evaluate', { expression: 'WebAssembly.Memory.prototype' });
+    const objs = await send('Runtime.queryObjects', { prototypeObjectId: proto.result.objectId });
+    const r = await send('Runtime.callFunctionOn', { objectId: objs.objects.objectId, functionDeclaration: 'function () { return this.map((m) => m.buffer.byteLength); }', returnByValue: true });
+    out.push(Math.round(Math.max(0, ...r.result.value) / 2 ** 20));
+    await page.browser.send('Target.detachFromTarget', { sessionId: s.sessionId }).catch(() => {});
+  }
+  await page.cmd('Target.setAutoAttach', { autoAttach: false, waitForDebuggerOnStart: false, flatten: true });
+  return out;
+}
 
 const srv = await serve(dir);
 const { browser, close } = await launch(chrome);
@@ -91,6 +114,38 @@ try {
     check(r1.supersede < 2500, `... without waiting for the old assembly (${r1.supersede.toFixed(0)} ms)`);
     check(r1.cancelText === 'Cancel' && r1.cancel < 1000 && /cancelled/.test(r1.status) && r1.afterCancel === '', `Cancel stops a long assembly (${r1.cancel.toFixed(0)} ms)`, JSON.stringify(r1));
     check(r1.tp2 === '2.00' && r1.hex === 4, 'the assembler works afterwards; asm -> hex conversion', JSON.stringify(r1));
+  }
+  // ---- 2. analyzer memory: 5,000 `div rcx` grow the analyzer to about 800 MB (and the pool's worker for the CPU table)
+  {
+    await page.goto(link({ mode: 'hex', text: CHAIN.text.hex, cpus: 'HSW,SKL' }));
+    await page.ready();
+    await page.waitFor(`document.querySelector('#result-body .tp .value')`, 'the first result', 60000);
+    const big = '48f7f1'.repeat(5000);
+    const r2 = await page.eval(`${HELPERS}
+      await done(() => { set($('code'), '${big}'); $('run').click(); }, 120000);
+      const out = { tp: tp() };
+      // the CPU table's other row (HSW) comes from the pool
+      await until(() => [...document.querySelectorAll('#cmp-cpus-body tr')].some((r) => /HSW/.test(r.textContent) && /\\d\\.\\d\\d/.test(r.textContent)), 120000);
+      await wait(1500);
+      out.poolRecycles = window.__wuicaPool?.counts.memoryRecycles;
+      return out;`, { timeout: 300000 });
+    // the replacement waits until nothing else uses the worker: poll (a busy machine can take a while)
+    let after = await engineMemory(page);
+    for (let t0 = Date.now(); !(after.length >= 1 && after.every((mb) => mb < 512)) && Date.now() - t0 < 30000;) {
+      await new Promise((r) => setTimeout(r, 1000));
+      after = await engineMemory(page);
+    }
+    check(r2.tp === '16000.00' || Number(r2.tp) > 1000, 'a huge block: a result', JSON.stringify(r2));
+    // (a replaced pool worker starts again with its next job: it may not be running now)
+    check(after.length >= 1 && after.every((mb) => mb < 512), `after a huge block every analyzer worker is below 512 MB (MB: ${after.join(', ')})`);
+    check(r2.poolRecycles >= 1, 'the pool replaced its grown worker', JSON.stringify(r2));
+    const r3 = await page.eval(`${HELPERS}
+      await done(() => { set($('code'), ${JSON.stringify(CHAIN.text.hex)}); $('run').click(); });
+      const out = { skl: tp() };
+      await done(() => cpus('HSW', 'SKL', 'ZEN3'));
+      return { ...out, rows: [...document.querySelectorAll('#cmp-cpus-body tr')].filter((r) => /\\d\\.\\d\\d/.test(r.textContent)).length };`);
+    check(r3.skl === '2.00', 'the next run after the analyzer was replaced works', JSON.stringify(r3));
+    check(r3.rows >= 3, 'the CPU table works afterwards (pool workers replaced)', JSON.stringify(r3));
   }
   const problems = page.take();
   check(problems.length === 0, 'no console errors', problems.join('\n'));

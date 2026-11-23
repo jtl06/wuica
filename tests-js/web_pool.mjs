@@ -45,13 +45,14 @@ function world({ loadMs = 5, ms = () => 3, failSpawn = 0, recycle = true } = {})
         w.analyses.push([e.id, request.arch, request.alignmentOffset]);
         if (e.crashNext > 0) { e.crashNext--; reject(new Error("the analyzer's worker failed")); return; }
         if (request.hex === 'cc') { resolve({ error: 'the analysis failed for this input', trapped: true }); return; }
+        if (request.hex === 'big') e.grown = true; // a huge block: the memory grows (and never shrinks)
         resolve({ tp: request.alignmentOffset + request.arch.length / 100, arch: request.arch, engine: e.id });
       }, ms(request));
     });
-    e.cancel = () => { e.restarts++; for (const p of [...e.pending]) { e.pending.delete(p); p.reject(new CancelledError()); } };
+    e.cancel = () => { e.restarts++; e.grown = false; for (const p of [...e.pending]) { e.pending.delete(p); p.reject(new CancelledError()); } };
     e.recycles = 0;
     if (recycle) e.recycle = (keep) => { e.recycles++; for (const t of [...e.tables]) if (!keep.includes(t)) e.tables.delete(t); e.cancel(); };
-    e.memory = async () => 1048576 * (1 + e.tables.size);
+    e.memory = async () => (e.grown ? 600 : 1 + e.tables.size) * 1048576;
     w.engines.push(e);
     return e;
   };
@@ -176,6 +177,23 @@ const collect = () => { const got = []; return { got, onResult: (item, response,
   const trap = c.got.find((g) => g.item.k === 0);
   check(trap?.response?.trapped === true && !trap.error && c.got.find((g) => g.item.k === 1)?.response.tp === 1.03, 'trap: an error response, then the next job works', JSON.stringify(c.got));
   check(w.engines[0].restarts === 1 && pool.counts.traps === 1 && w.loads.length === 1, 'trap: the worker was restarted, the pool did not load the table again');
+}
+
+// a job that leaves a worker with more memory than the limit: that worker is replaced with the same tables (only after
+// a job that took long enough to grow it); small jobs are not checked
+{
+  const w = world({ ms: (r) => (r.hex === 'big' ? 40 : 3) });
+  const pool = w.pool({ size: 1 });
+  const c = collect();
+  await pool.run([req('SKL', 0), req('HSW', 1), req('SKL', 2, 'big'), req('SKL', 3), req('HSW', 4)], c);
+  const e = w.engines[0];
+  check(c.got.length === 5 && c.got.every((g) => !g.error), 'memory: every job has its result', JSON.stringify(c.got));
+  check(pool.counts.memoryRecycles === 1 && e.recycles === 1 && !e.grown, 'memory: the grown worker was replaced once', JSON.stringify([pool.counts, e.recycles]));
+  check(e.hasArch('SKL') && e.hasArch('HSW') && w.loads.length === 2, 'memory: its tables stay (loaded again by the new worker, not by the pool)', JSON.stringify(w.loads));
+  const small = world({ ms: () => 3 });
+  const p2 = small.pool({ size: 1, memoryLimit: 0 }); // every worker is "too large", but small jobs are not checked
+  await p2.run([req('SKL', 0), req('SKL', 1)], collect());
+  check(p2.counts.memoryRecycles === 0, 'memory: no check after a short job');
 }
 
 // a worker that fails: the job is tried once more; twice: an error for that job, the others go on

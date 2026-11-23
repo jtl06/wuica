@@ -544,6 +544,28 @@ function ensureTable(archKey) {
 }
 
 const spawnWorker = () => new Worker(new URL('./engine-worker.js', import.meta.url), { type: 'module' });
+
+// WebAssembly memory never shrinks: after a huge block (20,000 `div rcx`: 2.6 GB) the analyzer's worker would keep it
+// until the page is reloaded. After a run, a worker with more than this is replaced by a new one with only the tables
+// of the CPUs shown (WorkerEngine.recycle), as the API server does; once nothing else waits on it (the views below the
+// result also use it). The pool does the same for its workers (pool.js).
+const ENGINE_MEMORY_LIMIT = 512 * 2 ** 20;
+let memoryTimer = 0;
+function checkMemory(delay = 0) {
+  if (!(engine instanceof WorkerEngine)) return;
+  clearTimeout(memoryTimer);
+  memoryTimer = setTimeout(async () => {
+    let bytes = 0;
+    try { bytes = await engine.memory(); } catch { return; }
+    if (bytes <= ENGINE_MEMORY_LIMIT) return;
+    if (busy || assembling || engine.pending > 0) { checkMemory(500); return; } // later, when nothing waits on it
+    const shown = lastView?.ab ? [lastView.ab.a?.archKey, lastView.ab.b?.archKey] : [lastView?.archKey];
+    const keep = [...new Set([state.arch, ...shown].map((k) => archItems.get(k)?.table).filter(Boolean))];
+    engine.recycle(keep);
+    for (const name of [...tables.keys()]) if (!keep.includes(name)) tables.delete(name); // loaded again when needed
+    engine.memory().catch(() => {}); // the new worker starts now, not with the next run
+  }, delay);
+}
 const spawnAsmWorker = () => new Worker(new URL('./assembler-worker.js', import.meta.url), { type: 'module' });
 
 // The worker pool, or null: none in mock mode, with ?pool=0, or when the analyzer runs on the page's thread. Making it
@@ -732,6 +754,7 @@ async function run({ auto = false } = {}) {
     }
     syncUrl(true);
     prefetchTables();
+    checkMemory();
   } catch (e) {
     if (id !== runSeq) return;
     lastView = null;
@@ -788,6 +811,7 @@ async function runCompare(id, key, { auto = false, ctrl = null } = {}) {
     if (!auto) flash(ab.summary(view), { ms: 4000 });
     syncUrl(true);
     prefetchTables();
+    checkMemory();
   } catch (e) {
     if (!current()) return;
     lastView = null;
