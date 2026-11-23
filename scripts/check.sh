@@ -22,8 +22,8 @@ for d in "$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin" "$HOME/.carg
   if [ -d "$d" ]; then PATH="$d:$PATH"; fi
 done
 export PATH
-# a shared compiler cache, if installed (not required)
-if [ -z "${RUSTC_WRAPPER:-}" ] && command -v sccache >/dev/null 2>&1; then
+# a shared compiler cache, if installed (not required; WUICA_SCCACHE=0 to leave it out)
+if [ -z "${RUSTC_WRAPPER:-}" ] && [ "${WUICA_SCCACHE:-1}" != 0 ] && command -v sccache >/dev/null 2>&1; then
   export RUSTC_WRAPPER="$(command -v sccache)"
 fi
 

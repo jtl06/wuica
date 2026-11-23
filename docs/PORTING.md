@@ -36,8 +36,10 @@ What makes it fast:
   WebAssembly module and everything deployed keep `release` (fat LTO).
 - The WebAssembly module, `web/dist` and `packages/wuica/dist` are rebuilt only when their inputs change (content hashes in
   `target/check/stamps/`). The test binaries are run directly, without cargo.
-- `sccache` is used as `RUSTC_WRAPPER` when it is installed (`brew install sccache`). It caches the dependencies (registry
-  crates) across target directories and worktrees; the workspace crates are incremental, which sccache does not cache.
+- `sccache` is used as `RUSTC_WRAPPER` when it is installed (`brew install sccache`; `WUICA_SCCACHE=0` turns it off). It
+  helps a clean rebuild at the same path (12 s -> about 10 s: XED's C files and the registry crates are cached). In another
+  worktree only the registry crates hit (paths differ, so XED's C files miss) and a clean build is about 2 s slower than
+  without it; the workspace crates are incremental, which sccache does not cache.
 - The Rust fixture tests read the fixtures through `wuica-testkit` (a dev-dependency): the smaller gzipped files are
   decompressed once into `target/fixture-cache/`, and tests that do not use the `json` field of the simulation fixtures
   (1.3 of their 1.4 GB) read a copy without it (`lines_without_json`). Copies are remade when a fixture's size or
