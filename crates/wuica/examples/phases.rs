@@ -2,7 +2,7 @@
 //!
 //!     cargo run --release -p wuica --example phases -- ARCH ITERATIONS HEXFILE...
 //!
-//! For each file: the mean time of each phase over ITERATIONS runs, and the number of allocations and allocated bytes of one run
+//! For each file: the time of each phase (the mean over a batch of ITERATIONS/5 runs, the fastest of 5 batches), and the number of allocations and allocated bytes of one run
 //! (deterministic). "assembly" is the rest of `wuica_core::analyze::analyze` (the full analysis without decoding), "json" the
 //! serialization of the response, "total" `Engine::analyze_json` (request JSON in, response JSON out), "total-sim" everything but
 //! the simulation (the phases of the analysis that are not the simulator; the standalone phases are a breakdown of it, while
@@ -68,11 +68,26 @@ fn measure<T>(iters: usize, mut f: impl FnMut() -> T) -> Stat {
     COUNTING.store(false, Relaxed);
     let (allocs, bytes) = ((ALLOCS.load(Relaxed) - a0) as f64, (BYTES.load(Relaxed) - b0) as f64);
     drop(r);
-    let t = Instant::now();
-    for _ in 0..iters {
-        std::hint::black_box(f());
+    // the fastest of 5 batches (the least disturbed by other work on the machine)
+    let batch = iters.div_ceil(5).max(1);
+    let mut ns = f64::INFINITY;
+    for _ in 0..5 {
+        let t = Instant::now();
+        for _ in 0..batch {
+            std::hint::black_box(f());
+        }
+        ns = ns.min(t.elapsed().as_nanos() as f64 / batch as f64);
     }
-    Stat { ns: t.elapsed().as_nanos() as f64 / iters as f64, allocs, bytes }
+    Stat { ns, allocs, bytes }
+}
+
+/// [`measure`] if `run`, otherwise nothing (zeros)
+fn measure_if<T>(run: bool, iters: usize, f: impl FnMut() -> T) -> Stat {
+    if run {
+        measure(iters, f)
+    } else {
+        Stat::default()
+    }
 }
 
 fn main() {
@@ -83,6 +98,9 @@ fn main() {
     }
     let arch = args[1].as_str();
     let iters: usize = args[2].parse().expect("ITERATIONS");
+    // PHASES=dep,table (for example) times only these phases (for profiling)
+    let only: Option<Vec<String>> = std::env::var("PHASES").ok().map(|s| s.split(',').map(str::to_string).collect());
+    let run = |i: usize| only.as_ref().is_none_or(|o| o.iter().any(|p| p == PHASES[i]));
     let uarch_json = std::fs::read_to_string("data/uarch.json").unwrap();
     let uarch = UArch::from_json(&uarch_json).unwrap();
     let config = &uarch.configs[arch];
@@ -111,24 +129,24 @@ fn main() {
         let response = wuica_core::analyze::analyze(&decoded.instrs, decoded.errors, &request, &uarch, &data).unwrap();
 
         let mut s = [Stat::default(); PHASES.len()];
-        s[0] = measure(iters, || wuica_xed::decode(&code, &config.xed_name).unwrap());
-        s[1] = measure(iters, || build_instructions(&decoded.instrs, config, &uarch, &data, 0, false, false));
-        s[2] = measure(iters, || sim::simulate(&instrs, config, &uarch, &sim::SimOptions::default()).unwrap());
-        s[3] = measure(iters, || r.uops_table());
-        s[4] = measure(iters, || facile::compute_dependency_limit(&instrs, config, "diff"));
-        s[5] = measure(iters, || sim_summary(&r));
+        s[0] = measure_if(run(0), iters, || wuica_xed::decode(&code, &config.xed_name).unwrap());
+        s[1] = measure_if(run(1), iters, || build_instructions(&decoded.instrs, config, &uarch, &data, 0, false, false));
+        s[2] = measure_if(run(2), iters, || sim::simulate(&instrs, config, &uarch, &sim::SimOptions::default()).unwrap());
+        s[3] = measure_if(run(3), iters, || r.uops_table());
+        s[4] = measure_if(run(4), iters, || facile::compute_dependency_limit(&instrs, config, "diff"));
+        s[5] = measure_if(run(5), iters, || sim_summary(&r));
         // the report as `analyze` makes it (from the result of the simulation; "summary" is not part of the analysis)
-        s[6] = measure(iters, || facile::format_bottlenecks(&facile::bottleneck_values_for(&instrs, &decoded.instrs, config, 0, dep, &r)));
+        s[6] = measure_if(run(6), iters, || facile::format_bottlenecks(&facile::bottleneck_values_for(&instrs, &decoded.instrs, config, 0, dep, &r)));
         let _ = facile::bottleneck_report(&instrs, &decoded.instrs, config, 0, dep, &summary);
-        s[7] = measure(iters, || wuica_core::analyze::analyze(&decoded.instrs, decoded.errors, &request, &uarch, &data).unwrap());
+        s[7] = measure_if(run(7), iters, || wuica_core::analyze::analyze(&decoded.instrs, decoded.errors, &request, &uarch, &data).unwrap());
         let parts = [1, 2, 3, 4, 6];
         s[8] = Stat {
             ns: s[7].ns - parts.iter().map(|&i| s[i].ns).sum::<f64>(),
             allocs: s[7].allocs - parts.iter().map(|&i| s[i].allocs).sum::<f64>(),
             bytes: s[7].bytes - parts.iter().map(|&i| s[i].bytes).sum::<f64>(),
         };
-        s[9] = measure(iters, || serde_json::to_string(&response).unwrap());
-        s[10] = measure(iters, || engine.analyze_json(&request_json));
+        s[9] = measure_if(run(9), iters, || serde_json::to_string(&response).unwrap());
+        s[10] = measure_if(run(10), iters, || engine.analyze_json(&request_json));
         s[11] = Stat { ns: s[10].ns - s[2].ns, allocs: s[10].allocs - s[2].allocs, bytes: s[10].bytes - s[2].bytes };
 
         let name = std::path::Path::new(file).file_stem().unwrap().to_string_lossy().to_string();
