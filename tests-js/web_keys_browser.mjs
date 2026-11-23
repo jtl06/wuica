@@ -99,7 +99,7 @@ try {
   const T = await digit('trace'), B = await digit('bound');
   {
     await press(T);
-    await page.waitFor(`document.querySelector('details.trace-panel')?.open && document.querySelector('details.trace-panel').wuicaTrace`, 'the trace');
+    await page.waitFor(`document.querySelector('details.trace-panel')?.open && document.querySelector('details.trace-panel').wuicaTrace && /(^|&)trace=1(&|$)/.test(location.hash.slice(1))`, 'the trace (and its state in the address: the toggle event comes after the click)');
     const tab = await page.eval(`return [location.hash, document.querySelector('.view-tab[aria-selected="true"]')?.textContent];`);
     check(/(^|&)trace=1(&|$)/.test(tab[0].slice(1)) && tab[1] === 'trace', 'the trace\'s digit opens it (its tab, in the URL)', JSON.stringify(tab));
     await page.eval(`document.activeElement?.blur(); return 1;`);

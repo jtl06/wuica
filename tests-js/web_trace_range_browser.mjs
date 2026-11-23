@@ -10,7 +10,7 @@
 // Skips (exit 0) if Chrome is not found.
 import fs from 'node:fs';
 import path from 'node:path';
-import { findChrome, checker, copyDist, serve, launch, Page, HELPERS, DIST } from './cdp.mjs';
+import { findChrome, checker, copyDist, serve, launch, Page, HELPERS, DIST, LONG_TASK_MS } from './cdp.mjs';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES } from '../web/js/examples.js';
 import { loadTrace } from '../web/js/trace.js';
@@ -189,7 +189,7 @@ try {
   // the bound tab paints the range: in the long-task count too
   await tab('bound');
   const s = await run(`await until(() => rangeView()); await wait(300); return { long: window.__long, range: rangeView().dataset.range, ports: rangeView().querySelectorAll('.tr-item').length };`);
-  check(s.long.every((ms) => ms < 100) && s.ports > 0, 'SHA-256: selecting a range, then the bound tab: no task of 100 ms or more', JSON.stringify(s));
+  check(s.long.every((ms) => ms < LONG_TASK_MS) && s.ports > 0, `SHA-256: selecting a range, then the bound tab: no task of ${LONG_TASK_MS} ms or more`, JSON.stringify(s));
   console.log(`SHA-256: range ${s.range}, long tasks while dragging ${JSON.stringify(s.long)} ms`);
   const problems = page.take();
   check(problems.length === 0, 'no console errors', JSON.stringify(problems));

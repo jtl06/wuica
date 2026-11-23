@@ -5,6 +5,7 @@
 //    node tests-js/web_views_browser.mjs [--chrome PATH] [--shots DIR]
 //
 // Skips (exit 0) if Chrome is not found.
+import { LONG_TASK_MS } from './cdp.mjs'; // (the bound of the long-task checks)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -230,7 +231,7 @@ try {
     for (const e of edges) lat.set(e.from, (lat.get(e.from) ?? 0) + e.latency);
     const order = [...lat].sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, 5).map((x) => x[0]);
     check(r.tp === '744.25' && r.closed[0] === false && r.closed[1] === 0 && r.closed[2] === 'closed' && r.closed[3] === 0, 'bound: SHA-256: closed, nothing computed or shaded', JSON.stringify(r.closed));
-    check(r.long.every((ms) => ms < 100) && r.switchMs < 100 && r.items > 5 && r.hot > 0 && r.rows === 200, 'bound: SHA-256: opening and switching: no task of 100 ms or more', JSON.stringify(r));
+    check(r.long.every((ms) => ms < LONG_TASK_MS) && r.switchMs < LONG_TASK_MS && r.items > 5 && r.hot > 0 && r.rows === 200, `bound: SHA-256: opening and switching: no task of ${LONG_TASK_MS} ms or more`, JSON.stringify(r));
     check(r.top === Math.min(5, order.length) && order[0] >= 200 && r.afterJump[0] === 2949 && r.afterJump[1] === order[0], 'bound: SHA-256: a jump to a chain row beyond the drawn ones draws all rows and flashes it', JSON.stringify([r.top, r.afterJump, order]));
     console.log(`bound: SHA-256: long tasks while opening ${JSON.stringify(r.long)} ms, switch ${r.switchMs.toFixed(1)} ms; chain top rows ${order.join(',')}`);
   }
@@ -291,7 +292,7 @@ try {
       await until(() => $('result-body').dataset.icard === 'details', 20000);
       await wait(100);
       return { long, hz: document.querySelectorAll('td.note[data-hz]').length, sticky: $('icard').classList.contains('stick') };`);
-    check(s.long.every((ms) => ms < 100) && s.sticky, 'details: SHA-256: the bound tab, then a card with details, no task of 100 ms or more', JSON.stringify(s));
+    check(s.long.every((ms) => ms < LONG_TASK_MS) && s.sticky, `details: SHA-256: the bound tab, then a card with details, no task of ${LONG_TASK_MS} ms or more`, JSON.stringify(s));
     console.log(`details: SHA-256: long tasks ${JSON.stringify(s.long)} ms`);
     await page.goto(`${origin}/?nosw=1#v=1&m=hex`);
   }
@@ -356,7 +357,7 @@ try {
     const ops = (await analyze(sha.hex)).rows.filter((x) => x.kind === 'instr').map((x) => x.opcode.toLowerCase());
     const u = ops.slice(0, -2).join('').repeat(2) + ops.slice(-2).join('');
     const want = (await analyze(u, 'SKL')).tp / 2;
-    check(r.long.every((ms) => ms < 100) && r.u2 === want.toFixed(2), 'what if: SHA-256: no long task on the page; unroll ×2 equals an analysis made here', JSON.stringify([r, want]));
+    check(r.long.every((ms) => ms < LONG_TASK_MS) && r.u2 === want.toFixed(2), 'what if: SHA-256: no long task on the page; unroll ×2 equals an analysis made here', JSON.stringify([r, want]));
     console.log(`what if: SHA-256: ${r.waited ? 'waited for a click, then ' : ''}all experiments in ${r.ms} ms; long tasks ${JSON.stringify(r.long)}`);
   }
 
@@ -409,7 +410,7 @@ try {
       const ms = performance.now() - t0;
       await wait(200);
       return { ms: Math.round(ms), long: [...long], n: document.querySelectorAll('.ly-ins').length, lines: document.querySelectorAll('.ly-line').length, o: overflow() };`);
-    check(s.n === 2949 && s.lines === Math.ceil(11602 / 64) && s.long.every((ms) => ms < 100) && s.o <= 0, 'code map: SHA-256: every instruction, no task of 100 ms or more', JSON.stringify(s));
+    check(s.n === 2949 && s.lines === Math.ceil(11602 / 64) && s.long.every((ms) => ms < LONG_TASK_MS) && s.o <= 0, `code map: SHA-256: every instruction, no task of ${LONG_TASK_MS} ms or more`, JSON.stringify(s));
     console.log(`code map: SHA-256 drawn in ${s.ms} ms; long tasks ${JSON.stringify(s.long)}`);
   }
 

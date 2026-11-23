@@ -5,6 +5,7 @@
 //    node tests-js/web_layout_browser.mjs [--chrome PATH]
 //
 // Skips (exit 0) if Chrome is not found.
+import { LONG_TASK_MS } from './cdp.mjs'; // (the bound of the long-task checks)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -360,7 +361,7 @@ try {
     check(r.costWait[0] === 'waiting' && /compute \(\d{4} analyses\)/.test(r.costWait[1] ?? ''), 'showcase: the cost column waits for a click', JSON.stringify(r.costWait));
     check(r.all[0] === 2949 && r.all[2], 'showcase: "show all" draws every row', JSON.stringify(r.all));
     check(r.cpus.map((x) => x.join(':')).join() === 'SKL:744.25,ZEN3:620.75,ADL-P:587.00', 'showcase: the table of three CPUs (as uiCA: 744.25, 620.75, 587)', JSON.stringify([r.cpus, r.cpusInfo]));
-    check(r.long.every((ms) => ms <= 100), 'showcase: no long task over 100 ms while it loads', JSON.stringify(r.long));
+    check(r.long.every((ms) => ms < LONG_TASK_MS), `showcase: no long task of ${LONG_TASK_MS} ms or more while it loads`, JSON.stringify(r.long));
     console.log(`showcase: example to result ${r.ms.toFixed(0)} ms (${r.status}); long tasks meanwhile ${JSON.stringify(r.long)} ms; all rows drawn in ${r.all[1]} ms; three CPUs: ${r.cpusInfo}`);
   }
 

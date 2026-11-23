@@ -16,7 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { findChrome, launch, serve, copyDist, Page, HELPERS, checker, ROOT } from './cdp.mjs';
+import { findChrome, launch, serve, copyDist, Page, HELPERS, checker, ROOT, LONG_TASK_MS } from './cdp.mjs';
 
 const chrome = findChrome();
 if (!fs.existsSync(path.join(ROOT, 'web/dist/manifest.json'))) { console.log('web/dist is missing: run web/build.sh first'); process.exit(1); }
@@ -241,7 +241,7 @@ try {
       await tab('trace'); await until(() => trace().wuicaTrace?.model, 60000); open.push(snapOpen()); await wait(500);
       return { long: viewsLong, traceLong: long.slice(viewsLong.length), tp: s.tp, open, card: !!s.card };`);
     check(r.tp === '744.25' && r.open.join() === 'bound,whatif,codemap,deps,trace' && r.card, 'showcase: SHA-256 with each view in turn and a card', JSON.stringify(r));
-    const longLimit = 200; // (the check runs suites side by side, CI runners are shared: a bound with room for that load)
+    const longLimit = LONG_TASK_MS; // (cdp.mjs: room for the suites run side by side)
     check(r.long.every((ms) => ms < longLimit), `showcase: no long task of ${longLimit} ms or more (the card, bound, try, bytes, deps)`, JSON.stringify(r.long));
     console.log(`showcase: SHA-256: long tasks ${JSON.stringify(r.long)} ms; loading the trace on its tab ${JSON.stringify(r.traceLong)} ms`);
     check(page.take().length === 0, 'showcase: no console errors');

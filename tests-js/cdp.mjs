@@ -16,6 +16,10 @@ export const here = path.dirname(fileURLToPath(import.meta.url));
 export const ROOT = path.resolve(here, '..');
 export const DIST = path.join(ROOT, 'web', 'dist');
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// The bound of the suites' "no long task" checks. Alone, the page's tasks stay well under 100 ms; scripts/check.sh runs
+// the browser suites beside the Rust tests and the fixtures, and a task then also waits for the CPU (101–115 ms seen):
+// the bound leaves room for that and still catches a task that doubles.
+export const LONG_TASK_MS = 200;
 
 export function findChrome(args = process.argv.slice(2)) {
   const i = args.indexOf('--chrome');

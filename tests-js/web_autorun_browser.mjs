@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { findChrome, launch, serve, copyDist, Page, HELPERS, checker, ROOT } from './cdp.mjs';
+import { findChrome, launch, serve, copyDist, Page, HELPERS, checker, ROOT, LONG_TASK_MS } from './cdp.mjs';
 
 const chrome = findChrome();
 if (!fs.existsSync(path.join(ROOT, 'web/dist/manifest.json'))) { console.log('web/dist is missing: run web/build.sh first'); process.exit(1); }
@@ -38,7 +38,7 @@ try {
   check(a.tp === want, 'fresh visit: the default example is analyzed without a click', `${a.tp} vs ${want}`);
   check(a.code === EXAMPLES[0].text.intel, 'fresh visit: the input is the default example');
   check(a.run === '1' && a.busy === null, 'fresh visit: one run, not busy', JSON.stringify(a));
-  check(a.longs.every((d) => d < 100), 'fresh visit: no long task of 100 ms or more', JSON.stringify(a.longs));
+  check(a.longs.every((d) => d < LONG_TASK_MS), `fresh visit: no long task of ${LONG_TASK_MS} ms or more`, JSON.stringify(a.longs));
   // the editor answers at once: typing replaces the result by a live run of the new code
   const b = await page.eval(`${HELPERS} const n = runId(); set($('code'), 'l:\\nadd rax, 1\\nadd rax, 1\\ndec r15\\njnz l\\n'); await until(() => runId() !== n); return tp();`);
   check(Number(b) >= 2, 'fresh visit: an edit after it is analyzed live', b);
