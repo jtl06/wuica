@@ -119,12 +119,14 @@ export class ResultCache {
 //                 runs once more after it (never more than one waiting run, whatever the number of requests)
 //   cancel()      drops a waiting request and marks the running one stale
 //   idle()        resolves when nothing is waiting or running (tests)
-// The task gets {isStale}: true once a newer request (or cancel) has come in, so a long task can stop early.
+// The task gets {isStale, signal}: isStale() is true, and the signal aborts, once a newer request (or cancel) has come
+// in, so a long task can stop early (the next run starts only when the task's promise has settled).
 export function latestWins(task, { timers = globalThis, onError = null } = {}) {
   let timer = null;
   let running = null;
   let again = false;   // a request came in while running and its debounce has ended
   let gen = 0;         // counts requests; a run is stale when a newer one exists
+  let abort = null;    // aborts the running task's signal
   const idlers = [];
 
   function settle() {
@@ -133,11 +135,14 @@ export function latestWins(task, { timers = globalThis, onError = null } = {}) {
   function start() {
     again = false;
     const mine = gen;
+    const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    abort = () => ctrl?.abort();
     running = (async () => {
-      try { await task({ isStale: () => mine !== gen }); } catch (e) { onError?.(e); }
+      try { await task({ isStale: () => mine !== gen, signal: ctrl?.signal ?? null }); } catch (e) { onError?.(e); }
     })();
     running.then(() => {
       running = null;
+      abort = null;
       if (again) start(); else settle();
     });
   }
@@ -148,12 +153,14 @@ export function latestWins(task, { timers = globalThis, onError = null } = {}) {
   return {
     schedule(ms = 0) {
       gen++;
+      abort?.();
       again = false; // the new debounce decides when the next run starts
       if (timer !== null) timers.clearTimeout(timer);
       timer = timers.setTimeout(fire, Math.max(0, ms));
     },
     cancel() {
       gen++;
+      abort?.();
       again = false;
       if (timer !== null) { timers.clearTimeout(timer); timer = null; }
       settle();

@@ -1,6 +1,7 @@
 // The compare panels below the result: the block on every CPU, and the selected CPU at every alignment offset.
-// They run in the analyzer's worker, one analysis at a time (a main analysis waits behind one of them at most),
-// stop as soon as their input is out of date, and reuse results (compare.js). The page (app.js) passes in what
+// They run on the worker pool (pool.js) if the page has one, in parallel and apart from the main analysis; otherwise
+// in the analyzer's worker, one analysis at a time (a main analysis waits behind one of them at most). They stop as
+// soon as their input is out of date, and reuse results (compare.js). The page (app.js) passes in what
 // they need: no other module state is touched from here.
 
 import { h } from './render.js';
@@ -12,6 +13,7 @@ import {
 
 const AUTO_DELAY = 250;   // ms after a live result before a panel recomputes (15 or 64 analyses)
 const BUDGET_MS = 3000;   // a recomputation estimated to take longer waits for a click
+const REDRAW_MS = 30;     // the shortest time between two redraws while results come in
 const SVG = 'http://www.w3.org/2000/svg';
 
 function svg(tag, attrs, ...children) {
@@ -39,17 +41,21 @@ function keepFocus(root, draw) {
 //   engine()                the analyzer (analyze(request), capabilities)
 //   items()                 the CPU menu items in menu order ({key, title, table, experimental})
 //   tableLoaded(key), ensureTable(key)
+//   pool()                  the worker pool (pool.js) or null: then the analyses run in engine(), one at a time
 //   onArch(key), onAlign(offset)   a row or a point was chosen
 //   onToggle()              a panel was opened or closed (the URL keeps it)
 //   wantResult()            a panel was opened before any result: analyze the input
 // }
 export function createComparePanels(env) {
   const cache = new ResultCache();
+  const parallel = (jobs) => Math.max(1, Math.min(jobs, env.pool?.()?.size ?? 1)); // analyses that run at once
   let input = null;       // {hex, arch, options, elapsedMs} of the latest successful main analysis
   let mainStale = false;
 
   // Runs jobs [{arch, options}] for input.hex in order; onResult(job, summary). False if it stopped early.
-  async function runJobs(hex, jobs, { isStale, onResult, onTable }) {
+  async function runJobs(hex, jobs, { isStale, signal, onResult, onTable }) {
+    const pool = env.pool?.();
+    if (pool) return runPooled(pool, hex, jobs, { isStale, signal, onResult });
     const engine = env.engine();
     for (const job of jobs) {
       if (isStale()) return false;
@@ -75,6 +81,23 @@ export function createComparePanels(env) {
     return true;
   }
 
+  // The same on the pool: every job at once (the pool loads the tables into its workers); results in any order.
+  async function runPooled(pool, hex, jobs, { isStale, signal, onResult }) {
+    const todo = [];
+    for (const job of jobs) {
+      const r = cache.get(resultKey(hex, job.arch, job.options));
+      if (r) onResult(job, r); else todo.push({ job, request: makeRequest(hex, job.arch, job.options) });
+    }
+    return pool.run(todo, {
+      signal, isStale,
+      onResult: ({ job }, response, error) => {
+        const r = error ? { error: error.message ?? String(error), transient: true } : summarize(response);
+        if (!r.transient) cache.set(resultKey(hex, job.arch, job.options), r);
+        onResult(job, r);
+      },
+    });
+  }
+
   // What both panels share: open state, scheduling, progress markers (data-state, data-runs, data-ms: for tests).
   function panel({ details, info, body, keyOf, jobsFor, draw, label }) {
     const p = {
@@ -92,9 +115,21 @@ export function createComparePanels(env) {
       // dimmed while what it shows is not for the current input (the main result's, or its own, is out of date)
       body.classList.toggle('stale', mainStale || (p.shownKey !== null && input !== null && p.shownKey !== keyOf(input)));
     };
-    p.redraw = () => { keepFocus(body, () => draw(p)); p.paintInfo(); p.paintStale(); };
+    let redrawTimer = 0, redrawn = 0;
+    p.redraw = () => {
+      clearTimeout(redrawTimer);
+      redrawTimer = 0;
+      redrawn = performance.now();
+      keepFocus(body, () => draw(p)); p.paintInfo(); p.paintStale();
+    };
+    // while results come in (several at once from the pool): at most one redraw per REDRAW_MS, the last one included
+    p.redrawSoon = () => {
+      if (redrawTimer) return;
+      const wait = REDRAW_MS - (performance.now() - redrawn);
+      if (wait <= 0) p.redraw(); else redrawTimer = setTimeout(p.redraw, wait);
+    };
 
-    p.runner = latestWins(async ({ isStale }) => {
+    p.runner = latestWins(async ({ isStale, signal }) => {
       if (!input || !details.open) return;
       const inp = input;
       const key = keyOf(inp);
@@ -105,7 +140,7 @@ export function createComparePanels(env) {
         const r = cache.get(resultKey(inp.hex, j.arch, j.options));
         if (r) { p.results.set(j.id, r); jobs.splice(jobs.indexOf(j), 1); }
       }
-      const estimate = (inp.elapsedMs ?? 0) * jobs.length;
+      const estimate = ((inp.elapsedMs ?? 0) * jobs.length) / parallel(jobs.length);
       p.waitingForClick = jobs.length > 0 && estimate > BUDGET_MS && p.forcedKey !== key;
       if (p.waitingForClick) { p.progress = ''; p.redraw(); p.setState('waiting'); return; }
 
@@ -113,20 +148,21 @@ export function createComparePanels(env) {
       p.runningKey = key;
       p.setState('running');
       const total = jobsFor(inp).length;
-      const missing = jobs.filter((j) => !env.tableLoaded(j.arch)).length;
+      const missing = env.pool?.() ? 0 : jobs.filter((j) => !env.tableLoaded(j.arch)).length;
       let tablesDone = 0;
       p.progress = jobs.length ? `${p.results.size}/${total}` : '';
       p.redraw();
       let finished = false;
       try {
         finished = await runJobs(inp.hex, jobs, {
-          isStale: () => isStale() || !details.open,
+          isStale: () => isStale() || !details.open, signal,
           onTable: () => { tablesDone++; p.progress = `loading tables ${tablesDone}/${missing}`; p.paintInfo(); },
           onResult: (job, r) => {
             p.results.set(job.id, r);
             if (r.mock) p.mock = true;
             if (!p.progress.startsWith('loading') || env.tableLoaded(job.arch)) p.progress = `${p.results.size}/${total}`;
-            p.redraw();
+            p.paintInfo();
+            p.redrawSoon();
           },
         });
       } finally {
@@ -220,7 +256,7 @@ export function createComparePanels(env) {
   function runButton(p) {
     const n = input ? (p === cpus ? env.items().length : SWEEP_OFFSETS) : 0;
     const b = h('button', { type: 'button', class: 'cmp-run', 'data-focus': 'run', text: `run ${n} analyses`,
-      title: `about ${Math.round(((input?.elapsedMs ?? 0) * n) / 1000)} s` });
+      title: `about ${Math.round(((input?.elapsedMs ?? 0) * n) / parallel(n) / 1000)} s` });
     b.addEventListener('click', () => p.force());
     return h('p', { class: 'cmp-wait' }, b);
   }

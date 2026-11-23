@@ -21,6 +21,7 @@ export function createHandler() {
     loadArch: ({ name, bytes }) => engine.loadArch(name, bytes),
     analyze: ({ request }) => engine.analyze(request),
     decode: ({ code, chip }) => engine.decode(code, chip),
+    memory: () => engine.memory(),
   };
   let queue = Promise.resolve(); // one message at a time, in order
   return (msg) => {
@@ -150,5 +151,10 @@ export class WorkerEngine {
   async decode(code, chip) {
     await this.#live();
     return this.#send('decode', { code, chip });
+  }
+
+  async memory() {
+    await this.#live();
+    return this.#send('memory', {});
   }
 }
