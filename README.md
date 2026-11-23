@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/jtl06/wuica/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jtl06/wuica/actions/workflows/ci.yml)
 
-An independent Rust/WebAssembly port of [uiCA](https://github.com/andreas-abel/uiCA), the uops.info Code Analyzer by Andreas Abel
-and Jan Reineke, which predicts the throughput of x86-64 basic blocks with a detailed pipeline simulation. The goal is uiCA in the
-browser: paste assembly or machine code, get the prediction, with nothing sent to a server.
+An independent Rust/WebAssembly port of [uiCA](https://github.com/andreas-abel/uiCA), which predicts the throughput of x86-64
+basic blocks with a detailed pipeline simulation. The goal is uiCA in the browser: paste assembly or machine code, get the
+prediction, with nothing sent to a server.
 
 This is not the official uiCA and not its official web version (that is [uiCA.uops.info](https://uiCA.uops.info)).
 wuica follows the fork [jtl06/uiCA](https://github.com/jtl06/uiCA), which adds experimental models for AMD Zen 3,

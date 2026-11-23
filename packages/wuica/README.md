@@ -1,8 +1,8 @@
 # wuica
 
 Throughput prediction for x86-64 basic blocks, running locally in Node. **wuica** (WebAssembly uiCA) is an independent
-Rust/WebAssembly port of [uiCA](https://github.com/andreas-abel/uiCA), the uops.info Code Analyzer by Andreas Abel and
-Jan Reineke. Its reports are bit-identical to the Python uiCA on the port's test corpus. The package contains:
+Rust/WebAssembly port of [uiCA](https://github.com/andreas-abel/uiCA). Its reports are bit-identical to the Python uiCA on the
+port's test corpus. The package contains:
 
 - a **library**: `import { createWuica } from 'wuica'`
 - a **command-line tool**: `npx wuica loop.s -arch SKL`
