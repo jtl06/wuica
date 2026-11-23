@@ -45,7 +45,7 @@ const SNAP = `
   const tab = async (name) => { [...document.querySelectorAll('.view-tab')].find((b) => b.textContent === name).click(); await wait(50); };
   const snap = async () => {
     await until(() => tp() && !$('results').hasAttribute('aria-busy'), 60000);
-    const settle = async (f) => { try { await until(f, 20000); } catch { /* recorded as it is */ } };
+    const settle = async (f) => { try { await until(f, 60000); } catch { /* recorded as it is */ } };
     if (openOf('bound')) await settle(() => /slots/.test($('bound').innerText) || /no port/.test($('bound').innerText));
     if (openOf('whatif')) await settle(() => !/…/.test($('whatif').innerText) && /unroll ×8\\s+[\\d.]+/.test($('whatif').innerText));
     if (openOf('deps')) await settle(() => /edges/.test($('deps').textContent)); // (in its summary, hidden while it is open)
@@ -226,7 +226,9 @@ try {
       new PerformanceObserver((l) => { for (const e of l.getEntries()) long.push(Math.round(e.duration)); }).observe({ type: 'longtask' });
       cpus('SKL');
       $('mode-hex').click();
-      await done(() => set($('examples'), 'sha256'), 120000);
+      set($('examples'), 'sha256');
+      // (the state, not a run: the showcase loads its assembly first, and another run may end meanwhile)
+      await until(() => tp() === '744.25' && !$('results').hasAttribute('aria-busy') && !$('result-body').classList.contains('stale') && document.querySelectorAll('table.uops tbody tr').length >= 200, 120000);
       await tab('table');
       document.querySelectorAll('table.uops tbody tr')[3].cells[2].click();
       const s = await snap();

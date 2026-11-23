@@ -21,3 +21,7 @@ dialog.keys::backdrop { background: rgb(0 0 0 / 0.5); }
   font: inherit; font-size: 0.9em; padding: 0 0.3em;
   border: 1px solid var(--control-border, var(--border)); color: var(--code); background: var(--background);
 }
+/* the tabs there are now, with their digits (keys.js: show) */
+.keys-tabs { margin-top: 0.5rem; padding-top: 0.4rem; border-top: 1px solid var(--border); color: var(--description); max-width: 34rem; line-height: 1.7; }
+.keys-tabs kbd { margin-left: 0.6em; }
+.keys-tabs kbd:first-child { margin-left: 0; }
