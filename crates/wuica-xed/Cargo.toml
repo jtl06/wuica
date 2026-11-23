@@ -1,0 +1,17 @@
+[package]
+name = "wuica-xed"
+description = "x86-64 decoding for wuica with Intel XED (the pinned version that uiCA uses), as records identical to uiCA's Python 'xed' module"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+indexmap = { version = "2", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[build-dependencies]
+cc = "1"
+
+[dev-dependencies]
+flate2 = "1"

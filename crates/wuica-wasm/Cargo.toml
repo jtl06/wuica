@@ -1,0 +1,12 @@
+[package]
+name = "wuica-wasm"
+description = "WebAssembly interface of wuica (plain exports; the page's JavaScript reads and writes the module's memory)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wuica-xed = { path = "../wuica-xed" }
