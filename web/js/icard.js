@@ -14,6 +14,7 @@ import { h, fmt } from './render.js';
 import { portString, portThroughput, latencyPairs } from './details.js';
 import { boundModel, blame, defaultResource } from './bound.js';
 import { portSetBlame } from './portset.js';
+import { chainInfo } from './insight.js';
 
 const f2 = (x) => Number(x).toFixed(2);
 const colIndex = (r, name) => (Array.isArray(r?.columns) ? r.columns.indexOf(name) : -1);
@@ -173,6 +174,9 @@ export function createICard(env) {
       lines.push(line('uops', 'per iteration: issued · executed', `${fmt(m.issued) || 0}`, h('span', { class: 'ic-d', text: ` · ${fmt(m.executed) || 0} exec` })));
       if (env.details && !r.mock) lines.push(h('div', { class: 'ic-l hint', text: '…' }));
     }
+    const on = chainInfo(r)?.onChain.get(row);
+    if (on?.length) lines.push(line('chain', 'on the critical loop-carried chain: reads … from …, cycles (↻: from the previous iteration)',
+      ...on.map((x, k) => h('span', { class: 'ic-lat' }, k ? ' · ' : '', h('span', { class: 'code', text: `${x.operand} ← ${x.fromLabel}` }), ` ${x.latency}${x.carried ? ' ↻' : ''}`))));
     const sh = bottleneckShare(r, row, det);
     if (sh) lines.push(line('share', `its share of the bottleneck (${sh.resource}, by ${sh.unit})`, `${Math.round(sh.share * 100)}%`, h('span', { class: 'ic-d', text: ` of ${sh.resource}` })));
     lines.push(line('front', 'front end', ...frontTags(m).map((t, k) => h('span', { class: 'ic-t', title: t.title }, k ? ' ' : '', t.text))));
