@@ -1,5 +1,6 @@
 // Adapter for the assembler module (wuica_asm.wasm: LLVM's x86 assembler, built in assembler/). The rest of the
-// page only uses: WasmAssembler.create(bytes), assemble(text, syntax) and the result shape below.
+// page only uses: WasmAssembler.create(bytes), assemble(text, syntax) and the result shape below. The page runs small
+// sources on its own thread and large ones in a worker (assembler-rpc.js).
 //
 // The interface is the one of assembler/README.md ("Interface", "Rules"): exports memory, _initialize, malloc,
 // free, wuica_assemble, wuica_fatal_message; no imports (the import object is {});
@@ -20,8 +21,8 @@
 export const SYNTAX = Object.freeze({ intel: 0, att: 1 });
 const ERR_CAP = 16384;
 const OUT_CAP = 1 << 16;
-// At most this much machine code (as in the npm package): the assembler runs on the page's thread, and a block this
-// large is already more than the analyzer can simulate in its memory.
+// At most this much machine code (as in the npm package): a block this large is already more than the analyzer can
+// simulate in its memory.
 export const MAX_CODE_BYTES = 1 << 20;
 
 // llvm-mc's diagnostics: "<input>:LINE:COL: error: MESSAGE", followed by the source line and a caret line.
@@ -62,10 +63,11 @@ export class WasmAssembler {
   #module;
   #x = null;
 
-  // source: the bytes of wuica_asm.wasm, or (tests) a function that returns a fresh object with the exports.
+  // source: the bytes of wuica_asm.wasm, a WebAssembly.Module, or (tests) a function that returns a fresh object with
+  // the exports.
   static async create(source) {
     const a = new WasmAssembler();
-    if (typeof source === 'function') {
+    if (typeof source === 'function' || source instanceof WebAssembly.Module) {
       a.#module = source;
     } else {
       if (!isWasm(source)) throw new Error('wuica_asm.wasm is not a WebAssembly module');
@@ -74,6 +76,12 @@ export class WasmAssembler {
     await a.#instantiate();
     return a;
   }
+
+  // The size of the instance's memory (it only grows: the most it has used); 0 if there is no instance.
+  get memoryBytes() { return this.#x?.memory.buffer.byteLength ?? 0; }
+
+  // Drops the instance (and its memory); the next call makes a new one.
+  reset() { this.#x = null; }
 
   async #instantiate() {
     let x;
