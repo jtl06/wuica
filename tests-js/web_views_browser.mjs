@@ -342,6 +342,28 @@ try {
     console.log(`code map: SHA-256 drawn in ${s.ms} ms; long tasks ${JSON.stringify(s.long)}`);
   }
 
+  // --- copy: Markdown, CSV, JSON of the result -------------------------------------------------------------------------------
+  {
+    const chain = ex('chain');
+    const want = await analyze(chain.hex);
+    await page.goto(`${origin}/?nosw=1#v=1&c=${b64(chain.text.hex)}`);
+    await page.result();
+    const r = await page.eval(`${HELPERS}
+      const got = [];
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (t) => { got.push(t); } }, configurable: true });
+      const btn = (k) => document.querySelector('.ex-tools .ex-btn[data-format="' + k + '"]');
+      const out = { labels: [...document.querySelectorAll('.ex-tools > *')].map((e) => e.textContent), inTools: !!btn('md')?.closest('.table-tools') };
+      for (const k of ['md', 'csv', 'json']) { btn(k).click(); await wait(30); }
+      out.flash = btn('json').textContent;
+      out.got = got;
+      return out;`);
+    check(r.labels.join() === 'copy,md,csv,json' && r.inTools && r.flash === 'copied', 'copy: three buttons in the tools above the uop table', JSON.stringify(r.labels));
+    const [md, csv, json] = r.got;
+    check(md?.startsWith('**2.00 cycles/iteration** · SKL') && md.includes('| `add rax, 0x1` |') && /\[wuica\]\(http:\/\/127\.0\.0\.1:\d+\/\?nosw=1#v=1&c=/.test(md), 'copy: Markdown with a link to the page', md);
+    check(csv?.split('\r\n').length === want.rows.length + 2 && csv.startsWith('instruction,opcode,notes,MITE'), 'copy: CSV', csv);
+    check(JSON.parse(json ?? '{}').response?.tp === want.tp && JSON.parse(json).request?.hex === chain.hex, 'copy: JSON with the request', (json ?? '').slice(0, 200));
+  }
+
   // --- layout: no sideways scrolling with the views open, both themes -------------------------------------------------------
   {
     const out = [];
