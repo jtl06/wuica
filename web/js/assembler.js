@@ -20,6 +20,9 @@
 export const SYNTAX = Object.freeze({ intel: 0, att: 1 });
 const ERR_CAP = 16384;
 const OUT_CAP = 1 << 16;
+// At most this much machine code (as in the npm package): the assembler runs on the page's thread, and a block this
+// large is already more than the analyzer can simulate in its memory.
+export const MAX_CODE_BYTES = 1 << 20;
 
 // llvm-mc's diagnostics: "<input>:LINE:COL: error: MESSAGE", followed by the source line and a caret line.
 export function parseDiagnostics(text) {
@@ -119,7 +122,10 @@ export class WasmAssembler {
       r = this.#run(source, SYNTAX[syntax], OUT_CAP);
       if (r.status === -2) {
         const need = Number(/(\d+) bytes needed/.exec(r.message)?.[1]);
-        if (need > OUT_CAP && need <= (1 << 26)) r = this.#run(source, SYNTAX[syntax], need);
+        if (need > MAX_CODE_BYTES) {
+          return { ok: false, diagnostics: [{ line: null, column: null, severity: 'error', message: `Too much machine code: ${need.toLocaleString('en-US')} bytes (at most ${MAX_CODE_BYTES.toLocaleString('en-US')})` }] };
+        }
+        if (need > OUT_CAP) r = this.#run(source, SYNTAX[syntax], need);
       }
     } catch (e) {
       // A trap (LLVM's fatal error handler). The instance is unusable afterwards: drop it, the next call makes a new one.

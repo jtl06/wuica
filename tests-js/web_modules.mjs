@@ -245,7 +245,7 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
 
   // A fake module with the interface of assembler/wuica_asm.cpp; its memory grows in malloc and in the call.
   const enc = new TextEncoder();
-  let instances = 0, live = 0;
+  let instances = 0, live = 0, runs = 0;
   const make = () => {
     instances++;
     const memory = new WebAssembly.Memory({ initial: 1 });
@@ -257,13 +257,14 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
       wuica_fatal_message() { return fatal; },
       wuica_assemble(text, syntax, out, outCap, err, errCap) {
         if (!initialized) throw new Error('not initialized');
+        runs++;
         memory.grow(1);
         const m = new Uint8Array(memory.buffer);
         const src = new TextDecoder().decode(m.subarray(text, m.indexOf(0, text)));
         put(err, errCap, '');
         if (src.includes('trap')) { fatal = malloc(64); live--; put(fatal, 64, 'LLVM ERROR: boom'); throw new WebAssembly.RuntimeError('unreachable'); }
         if (src.includes('bogus')) { put(err, errCap, `<input>:${src.split('\n').findIndex((l) => l.includes('bogus')) + 1}:3: error: invalid instruction mnemonic 'bogus'\n  bogus\n  ^\n`); return -1; }
-        const n = src.includes('huge') ? 70000 : 3;
+        const n = src.includes('enormous') ? 2000000 : src.includes('huge') ? 70000 : 3;
         if (n > outCap) { put(err, errCap, `output buffer too small: ${n} bytes needed`); return -2; }
         new Uint8Array(memory.buffer).fill(syntax === 1 ? 0xa7 : 0x17, out, out + n);
         if (src.includes('warn')) put(err, errCap, '<input>:1:1: warning: careful\n');
@@ -281,6 +282,10 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
   check(!e.ok && e.diagnostics.length === 1 && e.diagnostics[0].line === 3 && e.diagnostics[0].column === 3, 'assembler: errors with line and column', JSON.stringify(e));
   const hg = await a.assemble('huge\n');
   check(hg.ok && hg.bytes.length === 70000, 'assembler: retries with a larger output buffer');
+  const runsBefore = runs;
+  const en = await a.assemble('enormous\n');
+  check(!en.ok && runs === runsBefore + 1 && en.diagnostics[0].message === 'Too much machine code: 2,000,000 bytes (at most 1,048,576)',
+    'assembler: more than 1 MiB of machine code is an error after one run (no second, larger run)', JSON.stringify([en, runs - runsBefore]));
   check(live === 0, 'assembler: buffers are freed', `${live} live`);
   const t = await a.assemble('trap\n');
   check(!t.ok && /boom/.test(t.diagnostics[0].message), 'assembler: a trap is reported with the fatal message', JSON.stringify(t));
