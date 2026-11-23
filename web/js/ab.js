@@ -14,7 +14,7 @@
 // carries both sides. The page (app.js) runs the analyses: inputs() gets the machine code of both sides,
 // analyze() runs them, draw() shows the result. All text goes in through textContent.
 
-import { h, uopTable, NOTES, LEGEND, rowLimit, moreRows } from './render.js';
+import { h, uopTable, NOTES, LEGEND, rowLimit, moreRows, watchFit } from './render.js';
 import { GROUP_LABEL } from './archs.js';
 import { compareResponses, signed, cycles, signedCycles } from './ab-diff.js';
 import { parseHexInput, toHex } from './hex-input.js';
@@ -81,7 +81,7 @@ export function createAB(api) {
   const aDesc = h('span', { class: 'ab-desc vh' });
   const aHead = h('span', { class: 'ab-head ab-a ab-only', title: 'A: the input format here and the marked CPU' }, h('span', { class: 'ab-tag', text: 'A' }), aDesc);
   const aWork = workField('a');
-  aWork.label.classList.add('ab-only');
+  // (single mode too: A's count is the page's)
   const toolbar = api.el.toolbar ?? field.previousElementSibling;
   if (toolbar) { toolbar.prepend(aHead); toolbar.append(aWork.label); } else aCol.prepend(aHead, aWork.label);
 
@@ -125,6 +125,7 @@ export function createAB(api) {
   // the counts: the code each was given for (an edit of the code marks a count that is not 1)
   const sides = { a: { work: aWork, code: () => api.el.code.value, key: 'aWork', given: '' }, b: { work: bWork, code: () => bCode.value, key: 'bWork', given: '' } };
   function flagged(s) { const x = sides[s]; return state[x.key] !== 1 && x.code() !== x.given; }
+  let singleWork = [1, false]; // (single mode: the count and its mark the result was last drawn with)
   function paintWork() {
     for (const s of ['a', 'b']) {
       const x = sides[s];
@@ -134,8 +135,10 @@ export function createAB(api) {
       x.work.input.setAttribute('aria-invalid', flag ? 'true' : 'false');
       x.work.label.title = flag ? `${WORK_TITLE}. ${s.toUpperCase()}'s code changed since it was set: check it` : WORK_TITLE;
     }
-    // a count changed by any route (typed, swap, A → B, a link, an example): the shown comparison is weighed again
-    if (shown && (shown.workA !== state.aWork || shown.workB !== state.bWork)) reweigh();
+    // a count changed by any route (typed, swap, A → B, a link, an example): the shown comparison is weighed again;
+    // in single mode the result (A's count, or its mark)
+    if (state.ab && shown && (shown.workA !== state.aWork || shown.workB !== state.bWork)) reweigh();
+    else if (!state.ab && (singleWork[0] !== state.aWork || singleWork[1] !== flagged('a'))) { singleWork = [state.aWork, flagged('a')]; api.redraw?.(); }
   }
   // a count is right for the code shown now (set, confirmed, or the code was replaced)
   const settle = (s) => { sides[s].given = sides[s].code(); };
@@ -512,13 +515,38 @@ export function createAB(api) {
       const col = h('div', { class: 'ab-col', 'data-side': t.toLowerCase() });
       if (!s || !ok(s.response)) { col.append(h('div', { class: 'ab-cap' }, tag(t), ' no result')); return col; }
       const r = uopTable(s.response, true, rowLimit(s.response.rows.length, ui.allRows), { shown: s.shown });
+      markChanges(r.table, s, t === 'A' ? 'a' : 'b', view);
       col.append(...[h('div', { class: 'ab-cap' }, tag(t), ` ${s.archKey} · ${two(Number(s.response.tp))} cycles/iteration`),
-        h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': `Uops per instruction of ${t}, average per iteration` }, r.table),
+        watchFit(h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': `Uops per instruction of ${t}, average per iteration` }, r.table)),
         r.more ? moreRows(r.more, s.response.rows.length, () => { ui.allRows = true; draw(shown); }) : null,
         r.notes.size ? h('p', { class: 'legend' }, [...r.notes].map((k) => h('span', { title: NOTES[k] }, h('b', { text: k }), ` ${LEGEND[k]}`))) : null].filter(Boolean));
       return col;
     };
     return h('div', { class: 'ab-stack' }, side('A', view.a), side('B', view.b));
+  }
+
+  // What differs, in the tables themselves (the alignment of the Δ fold, ab-diff.js): a row of a changed instruction
+  // gets a bar in its side's colour and its differing cells a frame; a row only this side has is tinted.
+  function markChanges(table, s, side, view) {
+    const d = view.cmp?.diff;
+    const other = side === 'a' ? view.b : view.a;
+    if (!d || !ok(other?.response)) return;
+    const trs = table.tBodies[0]?.rows ?? [];
+    const names = [...table.tHead.rows[0].cells].slice(2).map((th) => th.dataset.col); // (after the instruction and the notes)
+    const otherCols = other.response.columns;
+    for (const x of d.rows) {
+      const mine = side === 'a' ? x.a : x.b, theirs = side === 'a' ? x.b : x.a;
+      if (!mine || x.status === 'same') continue;
+      const tr = trs[s.response.rows.indexOf(mine.row)];
+      if (!tr) continue;
+      if (!theirs) { tr.classList.add('abd-only'); tr.title = side === 'a' ? 'only in A' : 'only in B'; continue; }
+      tr.classList.add('abd-chg');
+      names.forEach((name, k) => {
+        const ia = s.response.columns.indexOf(name), ib = otherCols.indexOf(name);
+        if (ia < 0 || ib < 0) return;
+        if (Math.abs((mine.values[ia] ?? 0) - (theirs.values[ib] ?? 0)) >= 0.005) tr.cells[k + 2]?.classList.add('abd-cell');
+      });
+    }
   }
 
   function reports(view) {
@@ -551,10 +579,11 @@ export function createAB(api) {
     paint, inputs, analyze, draw, summary, key, reweigh,
     setB(code) { setB(code); paint(); api.changed({ now: true }); },
     // side A's code was replaced (an example, an import): its count starts again at 1
-    replacedA() { if (state.aWork !== 1) { state.aWork = 1; } settle('a'); paintWork(); },
+    replacedA() { if (state.aWork !== 1) { state.aWork = 1; api.changed(); } settle('a'); paintWork(); },
     // a side's code is the same machine code in another form (asm <-> hex), or came with its count (a link): its count
     // stays right
     settleCode(s) { settle(s); paintWork(); },
+    flagged: (s) => flagged(s),
     // the root of a side's table (the page's views of that side shade and point at its rows)
     sideRoot: (s) => api.el.body.querySelector(`#ab-main .ab-col[data-side="${s}"]`),
     getB: () => ({ mode: state.bMode, syntax: state.bSyntax, text: bCode.value }),

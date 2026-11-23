@@ -5,7 +5,7 @@
 // soon as their input is out of date, and reuse results (compare.js). The page (app.js) passes in what
 // they need: no other module state is touched from here.
 
-import { h } from './render.js';
+import { h, cyc } from './render.js';
 import { makeRequest } from './engine.js';
 import { ARCH_INFO, PROTOTYPE } from './archs.js';
 import {
@@ -227,6 +227,7 @@ export function createComparePanels(env) {
   }
 
   function drawCpus(p) {
+    const work = env.work?.() ?? 1; // elements per iteration: per element
     const rows = compareRows(env.checked(), p.results, { sort, current: input?.arch ?? null });
     const ariaSort = (col) => (col === 'menu' ? (sort === 'menu' ? 'ascending' : null) : sort === 'tp' ? 'ascending' : sort === 'tp-desc' ? 'descending' : null);
     const head = h('tr', null,
@@ -246,7 +247,8 @@ export function createComparePanels(env) {
         h('th', { scope: 'row', class: 'first' },
           h('button', { type: 'button', class: 'plain pick', 'data-focus': `cpu-${r.key}`, title: `details for ${r.title}`, 'aria-pressed': r.current ? 'true' : 'false', text: r.key })),
         h('td', { class: 'cmp-name' }, name, r.experimental ? h('span', { class: 'caveat', text: ` · ${PROTOTYPE}` }) : null),
-        h('td', { class: 'cmp-tp', title: r.state === 'error' ? r.error : null, text: r.state === 'ok' ? fmtTp(r.tp) : r.state === 'error' ? 'failed' : '…' }),
+        h('td', { class: 'cmp-tp', title: r.state === 'error' ? r.error : r.state === 'ok' && work > 1 ? `${fmtTp(r.tp)} cycles/iteration ÷ ${work}` : null,
+          text: r.state === 'ok' ? (work > 1 ? cyc(r.tp / work) : fmtTp(r.tp)) : r.state === 'error' ? 'failed' : '…' }),
         h('td', { class: 'cmp-bar', 'aria-hidden': 'true' }, gauge),
         h('td', { class: 'cmp-bn' }, r.state !== 'ok' ? '' : r.bottlenecks.length ? r.bottlenecks.join(', ')
           : h('span', { class: 'hint', title: 'no single limit explains the throughput', text: 'unknown' }),
@@ -397,6 +399,8 @@ export function createComparePanels(env) {
       for (const p of panels) p.update(auto);
     },
     // the checked CPUs changed (or single / A–B): show or hide the table; it computes what is missing
+    // the elements per iteration changed: the table again (no new analysis)
+    redrawCpus() { if (showCpus() && input) cpus.redraw(); },
     refreshCpus() {
       if (!showCpus()) return;
       if (input) cpus.update(false); else env.wantResult();

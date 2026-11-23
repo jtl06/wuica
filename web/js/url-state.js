@@ -97,13 +97,13 @@ export function encodeState(state) {
   for (const [k, name] of Object.entries(VIEWS)) if (s[name]) p.push(`${k}=1`);
   if (Number.isInteger(s.sel) && s.sel >= 0) p.push(`sel=${s.sel}`);
   if (s.loop === 'whole' || Number.isInteger(s.loop)) p.push(`lp=${s.loop}`);
+  if (s.aWork !== DEFAULT_STATE.aWork) p.push(`aw=${s.aWork}`); // (single mode too: per element)
   if (s.text !== '') p.push(`c=${toBase64Url(s.text)}`);
   if (s.ab) { // side B, only in A–B mode: a single-mode link stays as it was
     p.push('ab=1');
     if (s.bMode === 'asm') p.push('bm=asm');
     if (s.bMode === 'asm' && s.bSyntax === 'att') p.push('bs=att');
     if (s.bArch) p.push(`ba=${encodeURIComponent(s.bArch)}`);
-    if (s.aWork !== DEFAULT_STATE.aWork) p.push(`aw=${s.aWork}`);
     if (s.bWork !== DEFAULT_STATE.bWork) p.push(`bw=${s.bWork}`);
     if (s.abSide === 'b') p.push('sd=b');
     if (s.bText !== '') p.push(`bc=${toBase64Url(s.bText)}`);
@@ -155,6 +155,7 @@ export function decodeState(fragment) {
       return t.length <= MAX_TEXT ? t : '';
     } catch { return ''; } // not base64 or not UTF-8: no text
   };
+  if (q.has('aw')) s.aWork = clampInt(q.get('aw'), LIMITS.aWork, DEFAULT_STATE.aWork);
   if (q.has('c')) s.text = text('c');
   if (q.get('ab') === '1') {
     s.ab = true;
@@ -167,7 +168,6 @@ export function decodeState(fragment) {
       } catch { /* the same as A */ }
     }
     if (q.has('bk')) s.bWork = clampInt(q.get('bk'), [1, 64], DEFAULT_STATE.bWork); // older links: B unrolled ×N
-    if (q.has('aw')) s.aWork = clampInt(q.get('aw'), LIMITS.aWork, DEFAULT_STATE.aWork);
     if (q.has('bw')) s.bWork = clampInt(q.get('bw'), LIMITS.bWork, DEFAULT_STATE.bWork);
     if (q.get('sd') === 'b') s.abSide = 'b';
     if (q.has('bc')) s.bText = text('bc');

@@ -17,8 +17,9 @@ body.ab-on #cmp-cpus { display: none !important; }
 .ab-b-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.75rem; margin: 0.45rem 0 0.35rem; }
 body.ab-on .toolbar .code-hint { display: none; } /* A's row has the elements per iteration at its end instead */
 .ab-work { margin-left: auto; gap: 0.4rem; }
-.ab-work-in { width: 7ch; }
-.dense .ab-work-in { width: 7ch; }
+.ab-work-in { width: 5.5ch; }
+.dense .ab-work-in { width: 5.5ch; }
+.dense #examples { width: 11ch; } /* (the toolbar holds the elements per iteration too) */
 .ab-work.flag .ab-work-k { color: var(--caveat); }
 .ab-work.flag .ab-work-in { border-color: var(--caveat); }
 #b-arch { max-width: 16ch; }
@@ -130,3 +131,13 @@ table.grid.ab-limits { width: auto; min-width: min(100%, 36rem); }
 .ab-side-empty { display: none; margin: 0.5rem 0; }
 #results.side-empty[data-side-view="1"] #ab-side-empty { display: block; }
 #results.side-empty[data-side-view="1"] #more > .row { display: none !important; }
+
+/* the diff tab: what differs, in the tables (ab.js markChanges): a bar in the side's colour, the differing cells framed,
+   a row only one side has tinted (as in the Δ fold) */
+.ab-col { --side: var(--accent); }
+.ab-col[data-side="b"] { --side: var(--code); }
+.ab-col .grid.uops tbody tr.abd-chg > th.first { box-shadow: inset 3px 0 var(--side), inset -1px 0 var(--border); }
+.ab-col .grid.uops tbody td.abd-cell { box-shadow: inset 0 0 0 1px var(--side); }
+.ab-col[data-side="a"] .grid.uops tbody tr.abd-only > * { background-color: color-mix(in srgb, var(--caveat) 12%, var(--surface)); }
+.ab-col[data-side="b"] .grid.uops tbody tr.abd-only > * { background-color: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.ab-col .grid.uops tbody tr.abd-only > th.first { box-shadow: inset 3px 0 var(--side), inset -1px 0 var(--border); }

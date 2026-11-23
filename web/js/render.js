@@ -96,22 +96,52 @@ function textBlock(cls, summary, text, open, onToggle) {
 
 const spacedHex = (hex, max = 48) => (hex.slice(0, 2 * max).match(/../g) ?? []).join(' ') + (hex.length > 2 * max ? ' …' : '');
 
-// one compact item per limit: name, value and a small bar (relative to the largest)
-function limitsView(r) {
+// A cycle count: two decimals, three significant digits below 0.1 (per element; as ab-diff.js cycles)
+export const cyc = (v) => { const a = Math.abs(v); return a !== 0 && a < 0.1 ? v.toPrecision(3) : v.toFixed(2); };
+
+// one compact item per limit: name, value and a small bar (relative to the largest); w: elements per iteration
+function limitsView(r, w = 1) {
   const max = Math.max(r.tp || 0, ...r.limits.map((l) => l.tp || 0), 1e-9);
   const box = h('ul', { class: 'limits' });
   for (const l of r.limits) {
     const hot = r.bottlenecks.includes(l.name) ? ' is-bottleneck' : '';
     const gauge = h('span', { class: 'gauge', 'aria-hidden': 'true' }, h('span'));
     gauge.firstChild.style.width = `${Math.min(100, (100 * l.tp) / max).toFixed(1)}%`;
-    box.append(h('li', { class: 'lim' + hot, title: `${Number(l.tp).toFixed(2)} cycles/iteration if ${l.name} were the only bottleneck` },
-      h('span', { class: 'name', text: l.name }), ' ', h('span', { class: 'val', text: Number(l.tp).toFixed(2) }), gauge));
+    box.append(h('li', { class: 'lim' + hot, title: `${Number(l.tp).toFixed(2)} cycles/iteration${w > 1 ? ` (${cyc(l.tp / w)} per element)` : ''} if ${l.name} were the only bottleneck` },
+      h('span', { class: 'name', text: l.name }), ' ', h('span', { class: 'val', text: cyc(Number(l.tp) / w) }), gauge));
   }
   return box;
 }
 
 // A column's header as shown: "Port 0" as "P0" (the table fits more ports; the full name in the title and data-col)
 export const shortColumn = (name) => { const m = /^Port (\w+)$/.exec(name); return m ? `P${m[1]}` : name; };
+// A port column's group and number ("Port 5" -> P, 5; "ALU2" -> ALU, 2; "FP3" -> FP, 3), or null (Div, the counts):
+// the header shows the group's name once, over its numbers, so a column is one number wide
+export function columnGroup(name) {
+  const m = /^Port (\w)$/.exec(name) ?? /^([A-Z]+)(\d)$/.exec(name);
+  return m ? { group: name.startsWith('Port ') ? 'P' : m[1], n: m[name.startsWith('Port ') ? 1 : 2] } : null;
+}
+
+// The instruction column gives way when the ports would not fit: it is cut (with … ; the whole text in its tooltip) to
+// the width the table's wrap has, and grows back when there is room (a resize, the input folded). Observed per wrap.
+const MIN_INSTR_PX = 120;
+const fitting = typeof ResizeObserver === 'function' ? new ResizeObserver((entries) => {
+  for (const e of entries) requestAnimationFrame(() => fitInstr(e.target)); // (outside the observer's delivery)
+}) : null;
+export function fitInstr(wrap) {
+  const t = wrap?.querySelector?.(':scope > table.uops');
+  if (!t || !wrap.isConnected || wrap.clientWidth === 0) return;
+  const th = t.querySelector('thead th.first');
+  if (!th) return;
+  const cur = parseFloat(t.style.getPropertyValue('--ins-max'));
+  const over = t.scrollWidth - wrap.clientWidth;
+  let want = null;
+  if (over > 0) want = Math.max(MIN_INSTR_PX, th.offsetWidth - over);
+  else if (Number.isFinite(cur) && over < -2) want = cur - over; // room again: wider (up to its own width)
+  if (want === null || (Number.isFinite(cur) && Math.abs(want - cur) < 1)) return;
+  t.style.setProperty('--ins-max', `${Math.floor(want)}px`);
+}
+export function watchFit(wrap) { if (fitting && wrap) { fitting.observe(wrap); const t = wrap.querySelector(':scope > table'); if (t) fitting.observe(t); } return wrap; }
 
 // limit: the number of rows drawn (a long block draws its first rows; a button draws the rest); the totals are of all rows.
 // shown: the label shown for each row instead of its own, or null (branch targets as labels: branch-label.js)
@@ -130,7 +160,12 @@ export function uopTable(r, hideEmpty, limit = Infinity, { shown = null } = {}) 
   const head = h('tr', null,
     h('th', { scope: 'col', class: 'first', text: 'Instruction' }),
     h('th', { scope: 'col', class: 'note', text: 'Notes' }),
-    cols.map((i) => h('th', { scope: 'col', class: cls(i), 'data-col': r.columns[i], title: shortColumn(r.columns[i]) !== r.columns[i] ? r.columns[i] : null, text: shortColumn(r.columns[i]) })));
+    cols.map((i, k) => {
+      const name = r.columns[i], g = columnGroup(name);
+      if (!g) return h('th', { scope: 'col', class: cls(i), 'data-col': name, text: name });
+      const first = k === 0 || columnGroup(r.columns[cols[k - 1]])?.group !== g.group;
+      return h('th', { scope: 'col', class: cls(i, 'pg'), 'data-col': name, title: name }, first ? h('span', { class: 'cg', text: g.group }) : null, g.n);
+    }));
 
   const body = h('tbody');
   (r.rows.length > limit ? r.rows.slice(0, limit) : r.rows).forEach((x, k) => {
@@ -197,11 +232,11 @@ function caveatLine(r, config) {
 
 // When uiCA names no bottleneck: the largest limit(s) and their value ("Ports 4.00"), the nearest bound (the npm
 // package's insights.largest), or '' if there are no limits.
-export function nearestLimit(r) {
+export function nearestLimit(r, w = 1) {
   const lims = (r?.limits ?? []).map((l) => ({ name: l.name, tp: Number(l.tp) })).filter((l) => Number.isFinite(l.tp));
   if (!lims.length) return '';
   const max = Math.max(...lims.map((l) => l.tp));
-  return `${lims.filter((l) => l.tp >= max - 0.005).map((l) => l.name).join(', ')} ${max.toFixed(2)}`;
+  return `${lims.filter((l) => l.tp >= max - 0.005).map((l) => l.name).join(', ')} ${w > 1 ? cyc(max / w) : max.toFixed(2)}`;
 }
 
 export function renderResult(root, view) {
@@ -221,6 +256,7 @@ export function renderResult(root, view) {
       view.hex ? [': ', h('span', { class: 'code', text: spacedHex(view.hex) })] : null)));
   } else {
     const mock = r.mock ? { ...r.mock, sameCode: r.mock.hex === view.hex } : null;
+    const w = view.work > 1 ? view.work : 1; // elements per iteration (url-state.js aWork): then per element
     const mode = r.mode === 'loop' ? h('span', { class: 'tag', title: 'ends in a branch: analyzed as a loop', text: 'loop' })
       : r.mode === 'unroll' ? h('span', { class: 'tag', title: 'no branch at the end: analyzed as if repeated back to back', text: 'unrolled' })
         : h('span', { class: 'tag', text: String(r.mode) });
@@ -233,12 +269,14 @@ export function renderResult(root, view) {
     const bnKey = r.bottlenecks.length > 1 ? 'bottlenecks' : 'bottleneck';
     out.push(leadRow('throughput',
       h('div', { class: 'tp' },
-        h('span', { class: 'tp-main' }, h('span', { class: 'value', text: Number(r.tp).toFixed(2) }), ' ', h('span', { class: 'unit', text: 'cycles/iteration' })),
+        h('span', { class: 'tp-main' },
+          h('span', { class: 'value', title: w > 1 ? `${Number(r.tp).toFixed(2)} cycles/iteration ÷ ${w}` : null, text: w > 1 ? cyc(Number(r.tp) / w) : Number(r.tp).toFixed(2) }), ' ',
+          h('span', { class: `unit${view.workFlag ? ' caveat' : ''}`, title: view.workFlag ? 'the code changed since its elements per iteration were set' : null, text: `${w > 1 ? 'cycles/element' : 'cycles/iteration'}${view.workFlag ? '?' : ''}` })),
         h('span', { class: 'meta', title: details }, mode, sep(), h('span', { class: view.experimental ? 'caveat' : null, text: view.archTitle })),
         h('span', { class: 'bn-line' }, h('span', { class: 'k', text: bnKey }), ' ',
           r.bottlenecks.length ? h('span', { class: 'bn', text: r.bottlenecks.join(', ') })
-            : h('span', { class: 'hint', title: `no single limit explains the throughput${nearestLimit(r) ? `; the nearest is ${nearestLimit(r)} (the API's insights.largest)` : ''}`,
-              text: nearestLimit(r) ? `unknown · nearest ${nearestLimit(r)}` : 'unknown' }))),
+            : h('span', { class: 'hint', title: `no single limit explains the throughput${nearestLimit(r, w) ? `; the nearest is ${nearestLimit(r, w)} (the API's insights.largest)` : ''}`,
+              text: nearestLimit(r, w) ? `unknown · nearest ${nearestLimit(r, w)}` : 'unknown' }))),
       mock ? h('div', { class: 'mock-tag', text: mockLine(mock, view.archKey) }) : null,
       caveatLine(r, view.config),
       r.decodeErrors > 0 ? h('div', { class: 'caveat', role: 'alert',
@@ -246,15 +284,15 @@ export function renderResult(root, view) {
 
     if (r.limits.length) {
       out.push(h('div', { class: 'row', title: 'cycles/iteration if each were the only bottleneck' },
-        h('div', { class: 'label', text: 'limits' }), h('div', { class: 'field' }, limitsView(r))));
+        h('div', { class: 'label', text: 'limits' }), h('div', { class: 'field' }, limitsView(r, w))));
     }
 
     // empty columns are left out, as in uiCA's table
     const { table, notes, more } = uopTable(r, view.ui.hideEmpty ?? true, rowLimit(r.rows.length, view.ui.allRows), { shown: view.shown });
     out.push(leadRow('uops', // the table says what it is: it gets the whole width
       h('div', { class: 'table-tools' }), // filled by other views (e.g. the cost toggle of insight-view.js); empty otherwise
-      h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Uops per instruction, average per iteration',
-        title: 'average uops per iteration' }, table),
+      watchFit(h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Uops per instruction, average per iteration',
+        title: 'average uops per iteration' }, table)),
       more ? moreRows(more, r.rows.length, () => view.onUi('allRows', true)) : null,
       notes.size ? h('p', { class: 'legend' },
         [...notes].map((k) => h('span', { title: NOTES[k] }, h('b', { text: k }), ` ${LEGEND[k]}`))) : null));

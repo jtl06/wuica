@@ -115,6 +115,7 @@ const panels = createComparePanels({
   ensureTable: (key) => ensureTable(key),
   onArch: (key) => focusArch(key),
   onAlign: (offset) => setAlign(offset),
+  work: () => (state.ab ? 1 : state.aWork),
   onToggle: () => {
     const o = panels.open();
     if (o.sweep === state.cmpSweep) return;
@@ -582,7 +583,7 @@ async function loadExample(ex) {
   }
   const key = state.mode === 'asm' ? state.syntax : 'hex';
   el.code.value = buffers[state.mode] = ex.text[key];
-  if (state.ab) ab.replacedA(); // other code: its elements per iteration start again
+  ab?.replacedA(); // other code: its elements per iteration start again
   newTextA();
   // the mock has the reference's result for this microarchitecture
   if (engine?.capabilities.mock && archItems.has(ex.arch) && state.arch !== ex.arch) focusArch(ex.arch, { rerun: false });
@@ -724,7 +725,7 @@ function draw() {
   tracePanel.setOpen(state.trace); // (opened or closed in A–B mode meanwhile)
   const trace = lastView.response && !lastView.response.error && Array.isArray(lastView.response.rows) ? tracePanel.update(lastView) : null;
   const onUi = (k, v) => { ui[k] = v; if (k === 'hideEmpty' || k === 'allRows') draw(); };
-  renderResult(el.body, { ...lastView, config: uarch?.configs?.[lastView.archKey], ui, onUi });
+  renderResult(el.body, { ...lastView, config: uarch?.configs?.[lastView.archKey], ui, onUi, work: state.aWork, workFlag: !!ab?.flagged?.('a') && state.aWork !== 1 });
   showTrace(trace);
   insight.decorate(el.body, lastView);
   traceLink.decorate(el.body, lastView, { onUi });
@@ -959,7 +960,7 @@ async function runCompare(id, key, { auto = false, ctrl = null } = {}) {
     draw();
     updateABCpus(view, { auto });
     sweepSide({ auto });
-    if (!auto) flash(ab.summary(view), { ms: 4000 });
+    // (no summary in the status: the two lines on top say it)
     syncUrl(true);
     prefetchTables();
     checkMemory();
@@ -1113,7 +1114,7 @@ function setupFeatures() {
     getCode: (side) => (side === 'B' ? ab.getB() : { mode: state.mode, syntax: state.syntax, text: el.code.value }),
     importInto(side, code, { alignment = null, undo = false, source = null } = {}) {
       let analysis = null;
-      if (side === 'B') { ab.setB(code); newTextB(); writeControls(); if (ready && !undo) analysis = run(); } else { analysis = importCode(code, { run: !undo }); if (state.ab) ab.replacedA(); }
+      if (side === 'B') { ab.setB(code); newTextB(); writeControls(); if (ready && !undo) analysis = run(); } else { analysis = importCode(code, { run: !undo }); ab?.replacedA(); }
       if (alignment !== null) { state.alignmentOffset = alignment; el.align.value = alignment; alignBy = 'manual'; }
       if (side === 'A') ceSourceOf(source, analysis);
       if (!undo && code.mode === 'hex') importAsAsm(side, code.text, analysis);
@@ -1123,7 +1124,9 @@ function setupFeatures() {
   ab = createAB({
     replaced,
     drawn: (body, view) => abSlots.decorate(body, view),
-    cpusBox: abCpus.box, redraw: () => { if (lastView?.ab) { draw(); updateABCpus(lastView.ab, { auto: true }); } },
+    cpusBox: abCpus.box,
+    // the counts changed: the shown result weighed again (A–B: the comparison; single: A's elements per iteration)
+    redraw: () => { if (lastView?.ab) { draw(); updateABCpus(lastView.ab, { auto: true }); } else if (lastView && !state.ab) { draw(); panels.redrawCpus(); } },
     srcA: () => srcA,
     state, el: { code: el.code, body: el.body, toolbar: el.toolbar }, archItems: () => archItems, archTitle, ensureAssembler: assemblerForRun, ensureTable,
     machineCodeA: machineCode, changed, writeControls,

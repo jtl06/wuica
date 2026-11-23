@@ -24,7 +24,8 @@ html.dense { font-size: 13px; line-height: 1.4; }
 /* ---- the input ---- */
 .dense .pane-head { margin-bottom: 0.35rem; gap: 0.2rem 1.25rem; }
 .dense .pane-input .pane-head > h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.dense .toolbar { margin-bottom: 0.35rem; gap: 0.3rem 0.75rem; }
+.dense .toolbar { margin-bottom: 0.35rem; gap: 0.3rem 0.6rem; }
+.dense .toolbar .choice { gap: 0.25rem 0.8rem; }
 .dense textarea, .dense select, .dense input[type="number"] { padding: 0.15rem 0.4rem; }
 .dense button { padding: 0.1rem 0.6rem; }
 .dense button.plain { padding: 0; }
@@ -34,6 +35,18 @@ html.dense { font-size: 13px; line-height: 1.4; }
 /* ---- the result: the status floats in the corner and is empty while idle ---- */
 .dense .pane-result { position: relative; }
 .dense .result-head { position: absolute; top: 0.5rem; right: 0; margin: 0; z-index: 2; pointer-events: none; max-width: 60%; }
+/* (it says something for a moment: in the top bar, between the name and the links, clear of the result's tables;
+   on phones at the bottom of the window) */
+@media (min-width: 641px) {
+  .dense .result-head { position: fixed; top: 0; left: 50%; transform: translateX(-50%); right: auto; height: var(--top-h, 2.4rem);
+    display: flex; align-items: center; max-width: 40vw; z-index: 30; }
+  .dense .result-head .status { text-align: center; }
+}
+@media (max-width: 640px) {
+  .dense .result-head { position: fixed; top: auto; bottom: 0; left: 0; right: 0; max-width: none; z-index: 30;
+    border-top: 1px solid var(--border); padding: 0.25rem var(--page-gutter); background: var(--background); }
+  .dense .result-head .status { text-align: left; }
+}
 .dense .result-head > h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .dense .status { min-height: 0; background: var(--background); padding-left: 1ch; }
 .dense .result-head:has(.status.idle) { display: none; }
@@ -52,8 +65,15 @@ html.dense { font-size: 13px; line-height: 1.4; }
 .dense .grid.uops th, .dense .grid.uops td { padding-left: 0.45ch; padding-right: 0.45ch; }
 .dense .grid.uops .first { padding-left: 0.6rem; }
 .dense .grid.uops th.first { position: sticky; left: 0; z-index: 1; background-color: var(--surface); box-shadow: inset -1px 0 var(--border);
-  max-width: 45vw; overflow: hidden; text-overflow: ellipsis; } /* (narrow screens: the ports still have room beside it) */
-.dense .grid.uops thead th.first { z-index: 2; }
+  max-width: var(--ins-max, none); overflow: hidden; text-overflow: ellipsis; } /* (cut to fit the ports: render.js fitInstr) */
+@media (max-width: 640px) { .dense .grid.uops th.first { max-width: min(var(--ins-max, 45vw), 45vw); } } /* (phones: the ports keep room) */
+.dense .grid.uops thead th.first { z-index: 3; }
+/* the port columns: a group's name once (P, ALU, AGU, FP, SD), over one number per column (render.js) */
+.dense .grid.uops:has(.cg) thead th { padding-top: 1.25em; vertical-align: bottom; }
+.dense .grid.uops thead th.pg { text-align: right; }
+.dense .grid.uops thead th:has(> .cg) { z-index: 2; }
+.dense .grid.uops .cg { position: absolute; top: 0.15rem; left: 0.45ch; color: var(--description); pointer-events: none; }
+.dense .ic-ins { overflow-wrap: anywhere; } /* (the instruction card: the whole instruction, also where the table cuts it) */
 /* (opaque tints: the cells scroll under it) */
 .dense .grid.uops tbody tr:hover > th.first, .dense .grid.uops tbody tr.tl-linked > th.first { background-color: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
 .dense .grid.uops tbody tr.tl-sel > th.first { background-color: color-mix(in srgb, var(--accent) 16%, var(--surface)); }
@@ -109,7 +129,7 @@ html.dense { font-size: 13px; line-height: 1.4; }
   .dense .view-tabs { position: sticky; top: -0.5rem; z-index: 3; background: var(--background); padding-top: 0.25rem; }
 }
 .dense .table-wrap thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); }
-.dense .grid.uops thead th.first { z-index: 2; }
+.dense .grid.uops thead th.first { z-index: 3; }
 .dense .table-wrap { overflow-y: auto; }
 
 /* ---- the chain: one line (the whole chain is in the row's tooltip; its length is in the limits) ---- */
