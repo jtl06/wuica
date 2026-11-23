@@ -88,7 +88,14 @@ function pickOptions(req, extraKeys) {
   const unknown = Object.keys(options ?? {}).filter((k) => !Object.hasOwn(OPTION_DEFAULTS, k));
   if (unknown.length) return { error: `unknown option(s): ${unknown.join(', ')} (known: ${Object.keys(OPTION_DEFAULTS).join(', ')})` };
   const out = {};
-  for (const [k, d] of Object.entries(OPTION_DEFAULTS)) out[k] = options?.[k] ?? req[k] ?? d;
+  for (const [k, d] of Object.entries(OPTION_DEFAULTS)) {
+    const v = options?.[k] ?? req[k] ?? d;
+    // a value of the wrong kind is a bad request (code 1), like an unknown option, not a failed analysis
+    const bad = typeof d === 'number' ? !Number.isSafeInteger(v) : typeof d === 'boolean' ? typeof v !== 'boolean'
+      : k === 'initPolicy' && !['diff', 'same', 'stack'].includes(v);
+    if (bad) return { error: `option ${k}: ${JSON.stringify(v)} is not ${typeof d === 'number' ? 'an integer' : typeof d === 'boolean' ? 'true or false' : 'one of "diff", "same", "stack"'}` };
+    out[k] = v;
+  }
   return { options: out };
 }
 

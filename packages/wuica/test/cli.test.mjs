@@ -97,7 +97,7 @@ test('errors: exit code = result code, message on stderr', () => {
     [['-hex'], 'zz', /hex/, 1],
     [['-arch'], '', /-arch needs a value/, 1],
     [['-arch', 'all'], 'frob', /invalid instruction mnemonic/, 2],
-    [[HEX, '-initPolicy', 'bad'], '', /./, 3],
+    [[HEX, '-initPolicy', 'bad'], '', /option initPolicy: "bad" is not one of/, 1],
   ]) {
     const r = run(args, input);
     assert.equal(r.code, code, String(args));

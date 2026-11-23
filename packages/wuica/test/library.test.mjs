@@ -77,8 +77,16 @@ test('options are passed through and checked', async () => {
   assert.equal(a.rows[3].notes, '');
   const t = await w.analyze('SKL', { hex: '4801d8', options: { includeTrace: true } });
   assert.ok(t.trace && Array.isArray(t.trace.cycles));
+  // a bad value is a bad request (code 1), like an unknown option
   const bad = await w.analyze('SKL', { hex: '4801d8', options: { initPolicy: 'nonsense' } });
-  assert.equal(bad.code, 3);
+  assert.equal(bad.code, 1);
+  assert.match(bad.error, /option initPolicy: "nonsense" is not one of "diff", "same", "stack"/);
+  for (const o of [{ alignmentOffset: '3' }, { alignmentOffset: 1.5 }, { minIterations: 2 ** 60 }, { minCycles: NaN }, { simpleFrontEnd: 'yes' }, { noMicroFusion: 1 }, { includeTrace: 'x' }]) {
+    const r = await w.analyze('SKL', { hex: '4801d8', options: o });
+    assert.equal(r.code, 1, JSON.stringify(o));
+    assert.match(r.error, /^option \w+: .* is not (an integer|true or false)$/);
+  }
+  assert.equal((await w.compare({ hex: '4801d8', options: { minCycles: 'x' } })).code, 1);
   const typo = await w.analyze('SKL', { hex: '4801d8', options: { minIteration: 5 } });
   assert.equal(typo.code, 1);
   assert.match(typo.error, /unknown option\(s\): minIteration/);
