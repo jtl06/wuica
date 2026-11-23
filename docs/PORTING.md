@@ -151,12 +151,13 @@ options, each with the `-json` output; made with `REPLAY=<the previous file> too
 simulation fixture test reads it with `WUICA_SET=more WUICA_MORE_SIM_FIXTURES=<path>`; `scripts/check.sh full` runs it if the file
 is present.
 
-Current sets: exported from the fork's `improve-r7` (`f4a7868`) on aethia into `~/projects/wuica-r7/t1` (`data/`, `fix/`; a copy on
-the development Mac in `~/Documents/blackedge/wuica-r7-exports/t1`), with the sources of the extra blocks from
-`~/uicaspeed/wuica-fix-crash/extra-src` and the cases of the set `more` replayed from `~/uicaspeed/wuica-fix-crash/final`. Compared
-with the export of `improve-r6`, only cases of ZEN3, ADL-P and ICX differ, and the tables of the stock models are identical. CI
-needs a new data asset (`ci-data-v4`) with these files; `ci/data-asset.txt` still names `ci-data-v3`. Earlier sets: `crash-fixes`
-(`f85fcbd`) in `~/uicaspeed/wuica-fix-crash/final`; `improve-r6` in `~/projects/wuica-r6/r6m`.
+Current sets: exported from the fork's `improve-r8` (`c899be7`) on aethia into `~/projects/wuica-r8/r8` (`data/`, `fix/`; a copy on
+the development Mac in `~/Documents/blackedge/wuica-r8-exports/r8`, `data/` and `fixtures-generated/`), with the sources of the extra
+blocks from `~/uicaspeed/wuica-fix-crash/extra-src` and the cases of the set `more` replayed from `~/uicaspeed/wuica-fix-crash/final`.
+Compared with the export of `improve-r7`, only cases of ZEN3 and ICX differ (instruction fixtures: 5 of ICX; simulation fixtures: 24 of
+ZEN3 and 3 of ICX; extra simulation fixtures: 28 of ZEN3; set `more`: 8 of ZEN3), the decode fixtures are the same, and of the tables only `ZEN3.json` and `uarch.json` changed. CI needs a new data
+asset (`ci-data-v5`) with these files; `ci/data-asset.txt` still names `ci-data-v4`. Earlier sets: `crash-fixes` (`f85fcbd`) in
+`~/uicaspeed/wuica-fix-crash/final`; `improve-r6` in `~/projects/wuica-r6/r6m`; `improve-r7` in `~/projects/wuica-r7/t1`.
 
 The decoded records of a case are found in the decode fixtures by `file` and the chip `configs[arch].XEDName`.
 Compare JSON with `wuica_core::jsoncmp::diff` (numbers by value, object key order ignored).

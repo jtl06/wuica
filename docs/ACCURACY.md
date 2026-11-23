@@ -9,7 +9,92 @@ uiCA with its own instruction data, used as a reference.
 Percentages are the share of loops whose predicted throughput is within 5, 10 or 20% of the measured one; MAPE is the mean absolute
 percentage error. All tools are compared on the same loops (those for which every tool gives a prediction).
 
-## Round 7 (current model)
+## Round 8 (current model)
+
+"Before" is the fork's `improve-r7` at `f4a7868` (the model of the previous wuica data, branch `model-r7`), "after" is `improve-r8`
+at `c899be7` (the model of the branch `model-r8`).
+
+### ZEN3 — measured on a Ryzen 7 7735U (Zen 3+)
+
+| Set | Loops | Tool | ≤5% | ≤10% | ≤20% | MAPE |
+|---|---:|---|---:|---:|---:|---:|
+| random loops (holdout6) | 1968 | uiCA ZEN3, before | 73.3% | 83.7% | 94.1% | 4.4% |
+|  |  | uiCA ZEN3, after | 73.8% | 84.0% | 94.7% | 4.2% |
+|  |  | llvm-mca `znver3` | 42.0% | 54.0% | 73.6% | 18.5% |
+| real-code blocks (bhive4) | 1939 | uiCA ZEN3, before | 86.0% | 89.0% | 93.7% | 3.7% |
+|  |  | uiCA ZEN3, after | 86.0% | 89.1% | 93.7% | 3.7% |
+|  |  | llvm-mca `znver3` | 69.8% | 72.8% | 82.4% | 10.8% |
+
+### ADL-P — measured on a Core i7-12650H (P-core)
+
+| Set | Loops | Tool | ≤5% | ≤10% | ≤20% | MAPE |
+|---|---:|---|---:|---:|---:|---:|
+| random loops (holdout6) | 1922 | uiCA ADL-P, before | 83.2% | 90.5% | 96.5% | 2.7% |
+|  |  | uiCA ADL-P, after | 83.2% | 90.5% | 96.5% | 2.7% |
+|  |  | uiCA RKL (original uiCA) | 44.2% | 48.5% | 66.9% | 17.0% |
+|  |  | llvm-mca `alderlake` | 28.2% | 32.8% | 44.6% | 35.2% |
+| real-code blocks (bhive4) | 1884 | uiCA ADL-P, before | 90.5% | 93.7% | 95.9% | 2.9% |
+|  |  | uiCA ADL-P, after | 90.5% | 93.7% | 95.9% | 2.9% |
+|  |  | uiCA RKL (original uiCA) | 69.2% | 71.8% | 76.9% | 13.2% |
+|  |  | llvm-mca `alderlake` | 68.2% | 71.5% | 77.7% | 17.5% |
+
+### ICX — measured on a Xeon Gold 6314U (Ice Lake-SP)
+
+| Set | Loops | Tool | ≤5% | ≤10% | ≤20% | MAPE |
+|---|---:|---|---:|---:|---:|---:|
+| random loops (holdout6) | 1855 | uiCA ICX, before | 69.8% | 84.4% | 97.4% | 4.0% |
+|  |  | uiCA ICX, after | 70.1% | 84.6% | 97.5% | 4.0% |
+|  |  | uiCA ICL (original uiCA) | 63.9% | 77.8% | 92.3% | 6.4% |
+|  |  | llvm-mca `icelake-server` | 42.3% | 54.2% | 71.0% | 22.7% |
+| real-code blocks (bhive4) | 1895 | uiCA ICX, before | 83.1% | 89.8% | 96.9% | 3.0% |
+|  |  | uiCA ICX, after | 83.1% | 89.8% | 96.9% | 3.0% |
+|  |  | uiCA ICL (original uiCA) | 80.4% | 86.4% | 93.7% | 4.7% |
+|  |  | llvm-mca `icelake-server` | 69.9% | 74.5% | 81.4% | 10.1% |
+
+Within 10% on the random loops: ZEN3 +0.3, ICX +0.2 points, ADL-P unchanged (no ADL-P change in this round); on the real-code
+blocks ZEN3 +0.1, the others unchanged (the changes concern microcoded instructions and read-modify-write forms that are rare in
+BHive). These are new sets, so the "before" numbers differ from round 7's "after" numbers on holdout5 and bhive3. On the development
+set (dev13, not held out) the changes gave ZEN3 83.2 -> 84.2%, ICX 86.5 -> 86.9%, and on the earlier random sets ZEN3 dev11 81.7 ->
+82.9, holdout5 83.1 -> 83.4, holdout4 84.6 -> 85.0, ICX dev11 87.2 -> 87.5, holdout4 85.8 -> 86.1. The fork's ICL model (the original
+Intel model with the fork's instruction data) gives identical results before and after.
+
+### Changes in round 8
+
+- ZEN3: after a microcoded instruction (more than two macro-ops), the next op-cache entry delivers at most 4 macro-ops
+  (`microcodeNextEntryOps`). Measured: 'vphaddw ymm4, ymm11, ymm13' (3 macro-ops) with K independent 'add r, 1' and dec/jnz takes
+  2.00 cycles per iteration for K = 2-3, 2.67 for 4, 3.00 for 5-8 and 4.00 for 9-12; the same with NOPs or vector instructions instead
+  of the adds, so the limit is the number of macro-ops, not the integer ALUs (`microbench/mb/mc8.txt`). Before, the model predicted
+  2.00 up to K = 5.
+- ZEN3: ADC and SBB on 8- or 16-bit memory form chains through memory of at least 7 cycles (uops.info: 5; measured 7.6 alone, 6.3-7.0
+  in random loops).
+- ICX: the loads of read-modify-write RCL and RCR get a store-forwarding delay of 4 instead of 5 ('rcl qword ptr [rsi+6656], cl' in a
+  random loop: 11.1 cycles per iteration, predicted 13 before, 12 now).
+
+Tried and not kept: the 7-cycle chain also for shifts and rotates on 8/16-bit memory on ZEN3, and the shorter forwarding delay for
+all shifts and rotates on memory on ICX. Both helped the random loops of dev13 (ZEN3 +0.4, ICX +0.5 points) but made the hand-written
+read-modify-write loops worse (ZEN3 82.9 -> 65.9%, ICX 79.1 -> 58.9% within 10%): alone or in short loops these chains are longer than
+in random loops (on ICX the forwarding latency depends on timing, see round 4). Also tried: a limit of 3 or 5 macro-ops after
+microcode (dev13 83.3 / 83.6% instead of 84.0%), 8 cycles for the narrow chains, forwarding delay 3 for RCL/RCR on ICX, and a lower
+latency through memory for ZEN3 CMPXCHG, CMPXCHG8B and CMPXCHG16B (measured 9.1-9.3, 9.7 and 14.5 cycles per iteration, predicted
+12, 11 and 18): lowering uops.info's memory latency by 3 or 4 changed no prediction, so the chain that the model builds for these
+instructions comes from elsewhere (not found in this round). No ADL-P change was found in the time of this round (its mispredicted
+loops of dev13 are spread thinly over many instructions); `microbench/fuzz/ablate.py` was not run.
+
+### Method of round 8
+
+- **Random loops**: `microbench/fuzz/fuzz_gen.py` of the fork (profile `mem`), held-out set `holdout6` (seed 12, 2000 loops).
+- **Real-code blocks**: BHive basic blocks (`microbench/real/bhive_gen.py`, seed 4, 250 blocks from each of 10 programs, none of
+  them in the earlier sets `bhive1`-`bhive3`), held-out set `bhive4`.
+- **Measurement**: as in round 7 (`perf stat`, user-mode cycles, pinned to one core, best of three runs, nothing else running on the
+  machine, each run under an exclusive lease of the machine; unstable loops excluded).
+- **Held out**: both sets were generated before any model change of this round, measured during the round without being looked at,
+  and scored once, at the end (before and after), after the model was frozen. The changes were made on the development set
+  `dev13` (seed 13): grouping its mispredicted loops by probe instruction, and hand-written loops (`microbench/mb/mc8.txt`); each was
+  checked on the earlier random sets (`dev11`, `dev9`, `fresh`, `holdout4`, `holdout5`), the development half of `bhive1`, `bhive2`,
+  `bhive3` and the hand-written sets (`clean3.py` read-modify-write sets, `mb/*.txt`). The full tables and reports are in the fork:
+  `microbench/measurements/fuzz/{holdout6,bhive4}_table_r8.txt`.
+
+## Round 7
 
 "Before" is the fork's `improve-r6` at `21b0b17` (the model of the previous wuica data, branch `model-r6`), "after" is `improve-r7`
 at `f4a7868` (the model of the branch `model-r7`).
