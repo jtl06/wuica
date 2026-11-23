@@ -278,6 +278,75 @@ try {
     await page.cmd('Page.close');
   }
 
+  // --- review round 1: the alignment offset follows the pick; a new text starts at the first loop (A and B) -------------
+  {
+    const TWO = '   0:\tmov    ecx,0x5\n  10:\tadd    eax,0x1\n  13:\tdec    ecx\n  15:\tjne    10 <f+0x10>\n  17:\tmov    ecx,0x5\n'
+      + '  1c:\tnop    DWORD PTR [rax+0x0]\n  24:\tadd    edx,0x1\n  27:\tdec    ecx\n  29:\tjne    24 <f+0x24>\n  2b:\tret\n';
+    const FN2 = 'f:\n  mov ecx, 9\n.L1:\n  add rax, 1\n  dec rcx\n  jnz .L1\n  mov ecx, 9\n.L2:\n  imul rax, rax\n  dec rcx\n  jnz .L2\n  ret\n';
+    const PLAIN = '.L1:\n  add rax, 1\n  dec rcx\n  jnz .L1\n';
+    const page = await openPage();
+    await page.goto(`${origin}/?nosw=1#v=1&m=asm`);
+    const r = await page.eval(`${HELPERS}
+      await until(() => !$('run').disabled);
+      const out = {};
+      setCode(${JSON.stringify(TWO)}); await done(() => $('run').click());
+      out.first = [loopChip(), $('opt-align').value];
+      await done(() => pickLoop('1'));
+      out.second = [loopChip(), $('opt-align').value, /[#&]lp=1(&|$)/.test(location.hash)];
+      // an edit within the same text keeps the pick
+      const c = $('code'); c.value = c.value.replace('add    edx,0x1', 'add    edx,0x2'); c.dispatchEvent(new Event('input', { bubbles: true }));
+      await done(() => $('run').click());
+      out.edited = [loopChip(), $('opt-align').value];
+      // a new text (plain assembly): no inherited offset, the pick back to auto
+      setCode(${JSON.stringify(PLAIN)}); await done(() => $('run').click());
+      out.plain = [$('opt-align').value, /lp=/.test(location.hash)];
+      // by hand, then the objdump again: its addresses (a new text); then by hand for that text: kept on a pick
+      const a = $('opt-align'); a.value = '8'; a.dispatchEvent(new Event('change', { bubbles: true })); await wait(50);
+      setCode(${JSON.stringify(TWO)}); await done(() => $('run').click());
+      out.again = [loopChip(), $('opt-align').value];
+      a.value = '4'; a.dispatchEvent(new Event('change', { bubbles: true })); await wait(50);
+      await done(() => pickLoop('1'));
+      out.manual = [loopChip(), $('opt-align').value];
+      // a function whose second loop is picked; an example replaces it: auto again
+      setCode(${JSON.stringify(FN2)}); await done(() => $('run').click());
+      await done(() => pickLoop('1'));
+      out.fn = [loopChip(), instrRows().length];
+      await done(() => { const s = $('examples'); s.value = 'chain'; s.dispatchEvent(new Event('change', { bubbles: true })); });
+      out.example = [/lp=/.test(location.hash), loopChip()];
+      // a pick that does not assemble: the chip stays, so "whole" is reachable
+      setCode('f:\\n  mov ecx, 9\\n.L1:\\n  addd rax, 1\\n  dec rcx\\n  jnz .L1\\n  ret\\n'); $('run').click();
+      await until(() => $('input-messages').textContent.includes('addd'));
+      out.failChip = loopChip();
+      return out;`);
+    check(r.first[0] === 'loop 0x10' && r.first[1] === '16', 'two loops in objdump: the first, offset 16', JSON.stringify(r.first));
+    check(r.second[0] === 'loop 0x24' && r.second[1] === '36' && r.second[2], 'the second loop picked: its own offset 36 (0x24)', JSON.stringify(r.second));
+    check(r.edited[0] === 'loop 0x24' && r.edited[1] === '36', 'an edit within the text keeps the pick', JSON.stringify(r.edited));
+    check(r.plain[0] === '0' && !r.plain[1], 'a plain-asm text: no offset left from the objdump, the pick back to auto', JSON.stringify(r.plain));
+    check(r.again[0] === 'loop 0x10' && r.again[1] === '16', 'a new objdump text after an offset by hand: its address again', JSON.stringify(r.again));
+    check(r.manual[0] === 'loop 0x24' && r.manual[1] === '4', 'an offset set by hand for this text stays on another pick', JSON.stringify(r.manual));
+    check(r.fn[0] === 'loop .L2' && r.fn[1] === 3 && !r.example[0] && r.example[1] === null, 'an example replaces the text: the pick back to auto', JSON.stringify([r.fn, r.example]));
+    check(r.failChip === 'loop .L1', 'a pick that does not assemble: the loop chip stays', JSON.stringify(r.failChip));
+    // side B: its own pick and chip; a new B text starts at the first loop
+    const B = Buffer.from(FN2).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+    await page.goto(`${origin}/?nosw=1#v=1&m=asm&c=${b64(PLAIN)}&ab=1&bm=asm&bc=${B}`);
+    const rb = await page.eval(`${HELPERS}
+      const chipB = () => { const c = $('loop-chip-b'); return c && !c.hidden ? c.options[c.selectedIndex]?.text ?? null : null; };
+      await until(() => chipB());
+      const out = { start: [chipB(), loopChip()] };
+      const c = $('loop-chip-b'); c.value = '1'; c.dispatchEvent(new Event('change', { bubbles: true }));
+      await until(() => chipB() === 'loop .L2');
+      await wait(300);
+      out.picked = chipB();
+      const b = $('code-b'); b.value = 'h:\\n  xor eax, eax\\n.L7:\\n  sub rbx, 3\\n  dec rdx\\n  jnz .L7\\n  xor ecx, ecx\\n.L8:\\n  add rsi, rdi\\n  dec r8\\n  jnz .L8\\n  ret\\n'; b.dispatchEvent(new Event('input', { bubbles: true }));
+      await until(() => chipB() === 'loop .L7', 10000).catch(() => {});
+      out.replaced = chipB();
+      return out;`);
+    check(rb.start[0] === 'loop .L1' && rb.start[1] === null, 'A–B: side B has its own loop chip', JSON.stringify(rb));
+    check(rb.picked === 'loop .L2' && rb.replaced === 'loop .L7', 'A–B: B picks its second loop; a new B text starts at the first', JSON.stringify(rb));
+    check(page.problems.length === 0, 'no console errors (review)', page.problems.join('\n'));
+    await page.cmd('Page.close');
+  }
+
   // --- phone width, dark: no sideways scrolling ----------------------------------------------------------------------------
   {
     const page = await openPage({ width: 320, height: 700, mobile: true });

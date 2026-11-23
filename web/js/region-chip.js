@@ -33,12 +33,12 @@ export function createRegionChip(after, select) {
 // The loop chip (loop-find.js, through asm-regions.js): when pasted assembly has code around its loop (a whole function,
 // objdump output), a small select of what is analyzed: each loop ("loop .L3"), the function's body, or the whole text.
 // pick(value): 'whole', 'body' or a loop's index.
-export function createLoopChip(after, pick) {
+export function createLoopChip(after, pick, id = 'loop-chip') {
   let sel = null, last = null;
   function paint(info) {
     if (!info) { if (sel) sel.hidden = true; return; }
     if (!sel?.isConnected) {
-      sel = h('select', { class: 'plain region-chip loop-chip', id: 'loop-chip', 'aria-label': 'analyzed code' });
+      sel = h('select', { class: 'plain region-chip loop-chip', id, 'aria-label': 'analyzed code' });
       sel.addEventListener('change', () => pick(sel.value === 'whole' || sel.value === 'body' ? sel.value : Number(sel.value)));
       after.after(sel);
     }

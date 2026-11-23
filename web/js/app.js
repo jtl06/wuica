@@ -535,6 +535,7 @@ async function assemblerForRun() {
     // a loop picked for another text: the first one again
     if (!r.ok && bLoop !== 'auto' && r.diagnostics.some((d) => /^loop: /.test(d.message))) { bLoop = 'auto'; r = await a.assemble(text, syntax, { signal, loop: bLoop }); }
     bLoopChip?.show(r.choosable ? r : null, text);
+    if (!textB) textB = text; // (B's text from a link or a swap, before any input in its box)
     return r;
   };
   return { mock: a.mock, assemble };
@@ -1055,7 +1056,7 @@ function setupFeatures() {
   // side B's loop chip, and its pick back to the first loop when B's text is replaced
   const bCode = document.getElementById('code-b');
   if (bCode) {
-    bLoopChip = createLoopChip(document.getElementById('b-messages'), (v) => { if (bLoop === v) return; bLoop = v; changed({ rerun: true }); });
+    bLoopChip = createLoopChip(document.getElementById('b-messages'), (v) => { if (bLoop === v) return; bLoop = v; changed({ rerun: true }); }, 'loop-chip-b');
     textB = bCode.value;
     bCode.addEventListener('input', () => {
       if (replacesText(textB, bCode.value)) newTextB(); else textB = bCode.value;

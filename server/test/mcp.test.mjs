@@ -55,6 +55,7 @@ const calls = [
   ['compare_archs', { source: ASM, archs: ['SKL', 'ICL', 'ZEN3'] }],
   ['analyze', { arch: 'ZEN3', source: FN, format: 'json' }],
   ['analyze', { arch: 'ZEN3', source: FN, loop: 'whole', format: 'json' }],
+  ['analyze', { arch: 'ZEN3', source: FN.replace(/\n/g, '\r\n'), format: 'json' }],
   ['what_if', { arch: 'ZEN3', source: FN, variants: ['unroll2'] }],
   ['compare_archs', { source: FN, loop: 0, archs: ['SKL', 'ZEN3'] }],
   ['assemble', { source: 'vaddps zmm0, zmm1, zmm2' }],
@@ -66,8 +67,8 @@ for (const [name, args] of calls) {
     const r = await remote.callTool({ name, arguments: args });
     assert.deepEqual(r, await local.callTool({ name, arguments: args }));
     if (name === 'analyze' && args.arch === 'K8') assert.equal(r.isError, true);
-    if (args.source === FN) assert.equal(JSON.parse(r.content[0].text).code, 0);
-    if (name === 'analyze' && args.source === FN) assert.equal(JSON.parse(r.content[0].text).loop?.name, args.loop === 'whole' ? undefined : 'loop .L3');
+    if (args.source?.replace(/\r/g, '') === FN) assert.equal(JSON.parse(r.content[0].text).code, 0);
+    if (name === 'analyze' && args.source?.replace(/\r/g, '') === FN) assert.equal(JSON.parse(r.content[0].text).loop?.name, args.loop === 'whole' ? undefined : 'loop .L3');
     if (name === 'analyze' && args.arch === 'SKL') {
       const summary = JSON.parse(r.content[0].text);
       assert.equal(summary.code, 0);

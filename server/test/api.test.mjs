@@ -186,6 +186,10 @@ test('a whole function: its loop (`loop`), as the library reads it; a bad `loop`
   const whole = await post(s.base, '/api/analyze/ZEN3', { source: fn, loop: 'whole' });
   assert.equal(whole.json.loop, undefined);
   assert.ok(whole.json.hex.length > a.json.hex.length);
+  // CRLF line ends (a file saved on Windows): the same
+  const crlf = await post(s.base, '/api/analyze/ZEN3', { source: fn.replace(/\n/g, '\r\n') });
+  assert.equal(crlf.json.hex, a.json.hex);
+  assert.equal(crlf.json.loop.name, 'loop .L3');
   const bad = await post(s.base, '/api/analyze/ZEN3', { source: fn, loop: 'inner' });
   assert.equal(bad.status, 400);
   assert.equal(bad.json.code, 1);

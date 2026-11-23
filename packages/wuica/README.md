@@ -82,6 +82,7 @@ npx wuica loop.s -arch all           # throughput table for every microarchitect
 npx wuica loop.s -arch SKL,ICL,ZEN3  # throughput table for these
 npx wuica -list                      # the microarchitectures
 npx wuica loop.s -json               # the JSON result (the contract's analyze response)
+npx wuica psum.s -loop whole         # the whole text, not the loop found in it (-loop auto, the default, or -loop N)
 ```
 
 The simulation options are uiCA's: `-alignmentOffset N`, `-initPolicy diff|same|stack`, `-simpleFrontEnd`,
@@ -173,9 +174,19 @@ Request:
 - `source` is read as the web page reads pasted assembly. `loop` (optional) says what of it is analyzed:
   - `"auto"` (the default): a whole function (`gcc -S`, `clang -S`, `objdump -d` lines with addresses, with or
     without the bytes, Intel or AT&T) is analyzed at its innermost loop (the first in the code: a compiler puts the
-    main loop before its remainder loop); a function without a loop at its body, without prologue and epilogue (it
-    ends in `ret`). A text that is one loop already, or has region markers, is analyzed as it is.
-  - `"whole"`: the whole text; a number: that loop (innermost first, in code order).
+    main loop before its remainder loop). A span that holds a `ret` or another function's label is not a loop (a tail
+    call jumping back). A compiler's function without a loop (it has a function label, directives or a
+    prologue/epilogue, and ends in `ret`) is analyzed at its body, without prologue, epilogue and `ret`; a bare snippet
+    such as `add rax, 1` / `ret` is analyzed as typed. A text that is one loop already, or has region markers, is
+    analyzed as it is.
+  - `"whole"`: the whole text, never a pick; a number: that loop (innermost first, in code order).
+
+  objdump text is recognised by a header line (`0000… <f>:`), a byte column or `<sym+off>` branch targets; without
+  those, only when every line is address-prefixed, there are at least three, and the steps between the addresses fit
+  the instructions (so `a: add rax, 1` / `b: dec rcx` / `jnz a` stays assembly). In objdump text a branch target is
+  always an address (`jne 1b <psum+0x1b>`); GNU numeric labels (`1:` … `jnz 1b`) keep working in assembly. Code in
+  `.text.*` sections (gcc's `main` in `.text.startup`, `-ffunction-sections`) is analyzed as `.text`. CRLF and lone CR
+  line ends are line feeds (REST, MCP, the library, the CLI).
 
   Conditional branches to a symbol the text does not define (a loop's exits, `jae .Lout`, `.L` or not) are taken as
   not taken: the symbol is defined right after the analyzed code, so they assemble as short jumps; a note says so in
@@ -185,8 +196,13 @@ Request:
   analyzed, the response has `loop`: `{index, count, name, line, endLine, address?, alignmentOffset?}` (`name`:
   `"loop .L3"`, `"loop 0x10"`, `"body"`).
   Region markers (`# LLVM-MCA-BEGIN` … `# LLVM-MCA-END`, `# wuica-begin` … `# wuica-end`, IACA's byte markers) select
-  the first marked region. A `;` that starts a line is a comment; after a statement, it separates statements unless
-  the assembler rejects what follows it as an instruction (then it is a comment).
+  the first marked region. A `;` that starts a line is a comment. After a statement, LLVM reads `;` as a separator. If
+  what follows assembles, it is assembled, with a note in `stderr` naming it (`';' separates statements: 'call helper'
+  was assembled (use # for a comment)`), unless the `;` follows the statement without a space, as GNU as code chains
+  statements (`dec rcx; jnz 1b`). If it does not assemble, for any reason, it is a comment: nothing after a `;` makes a
+  valid line an error; a note says so when it starts with a mnemonic (`add the next element`), and nothing when it does
+  not (`sum += a[i]`). A line the assembler rejects inside the analyzed code is an error with its line number (objdump
+  lines outside the picked loop that the assembler rejects, such as padding, are left out).
 - `syntax` is `intel` (noprefix, the default) or `att`. The source may also switch syntax itself with
   `.intel_syntax noprefix` / `.att_syntax`.
 - Every field of `options` is optional; the defaults are shown. Unknown options and unknown request fields are an
@@ -194,6 +210,9 @@ Request:
   (`{hex, arch, minIterations}`); `options` takes precedence. The MCP tools accept only the nested form.
 - The source must be 64-bit code: `.code16`, `.code16gcc` and `.code32` are an error (code 1), since the analyzer
   only models 64-bit mode. `assemble` alone accepts them.
+- `loop` exists in the library, REST (`/api/analyze`, `/api/compare`), the MCP tools `analyze`, `what_if` and
+  `compare_archs`, and the package's CLI (`wuica -loop auto|whole|N`). The native CLI (`crates/wuica-cli`) reads
+  machine code only (hex or `-raw`), so it has no `-loop`.
 
 ### Option ranges per interface
 

@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createWuica } from '../lib/index.js';
@@ -77,12 +78,35 @@ test("';' comments: at the start of a line and after a statement; a separator st
   assert.equal(r.code, 0);
   assert.equal(r.hex, '4801d849ffcf75f8');
   assert.equal((await w.assemble('add rax, rbx ; sum')).hex, '4801d8');
+  // what does not assemble after ';' is a comment (a note if it starts with a mnemonic); what does is assembled, with a note
   const typo = await w.assemble('add rax, rbx ; addd rax, 1');
-  assert.equal(typo.code, 2);
-  assert.match(typo.error, /invalid instruction mnemonic 'addd'/);
+  assert.equal(typo.code, 0);
+  assert.equal(typo.hex, '4801d8');
+  const mn = await w.assemble('add rax, rbx ; add the next element');
+  assert.equal(mn.hex, '4801d8');
+  assert.match(mn.stderr[0].text, /note: text after ';' taken as a comment/);
+  const sep = await w.analyze('SKL', { source: '.L1:\n add rax, [rdi]\n add rdi, 8 ; call helper\n dec rcx\n jnz .L1\n' });
+  assert.equal(sep.code, 0);
+  assert.ok(sep.stderr.some((l) => l.tag?.text === "';' separates statements: 'call helper' was assembled (use # for a comment)"), JSON.stringify(sep.stderr));
   // an assembly error keeps llvm-mc's lines (the source line and the caret)
   const e = await w.analyze('SKL', { source: 'nop\nfrobnicate rax\n' });
   assert.deepEqual(e.stderr.map((l) => l.text), ["<input>:2:1: error: invalid instruction mnemonic 'frobnicate'", 'frobnicate rax', '^~~~~~~~~~']);
+});
+
+test('CRLF line ends: objdump and assembly, in analyze and assemble', async () => {
+  const r = await w.analyze('SKL', { source: fx('psum.objdump').replace(/\n/g, '\r\n') });
+  assert.equal(r.code, 0);
+  assert.equal(r.loop.name, 'loop 0x10');
+  assert.equal(r.loop.alignmentOffset, 16);
+  assert.equal((await w.assemble('add rax, rbx ; sum\r\ndec rcx\r\n')).hex, '4801d848ffc9');
+});
+
+test('loop "whole" never picks; a bare snippet ending in ret is analyzed as typed', async () => {
+  const ab = await w.analyze('SKL', { source: 'a: add rax, 1\nb: dec rcx\n   jnz a\n' });
+  assert.equal(ab.hex, '4883c00148ffc975f7');
+  const bare = await w.analyze('SKL', { source: 'add rax, 1\nret\n' });
+  assert.equal(bare.hex, '4883c001c3');
+  assert.equal(bare.loop, undefined);
 });
 
 test('a function without a loop: its body', async () => {
@@ -101,6 +125,10 @@ test('CLI: -loop', () => {
   assert.equal(json('-loop', 'whole', file).loop, undefined);
   assert.equal(json('-loop', '0', file).loop.index, 0);
   assert.throws(() => run('-loop', 'inner', file), /auto, whole or a number/);
+  // a file with CRLF line ends
+  const crlf = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-cli-')), 'crc_a.s');
+  fs.writeFileSync(crlf, fs.readFileSync(file, 'utf8').replace(/\n/g, '\r\n'));
+  assert.equal(json(crlf).loop.name, 'loop .L3');
 });
 
 test('insights.binding is the response\'s bottlenecks; with none, `largest` is the nearest limit', async () => {
