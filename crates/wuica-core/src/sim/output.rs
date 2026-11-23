@@ -164,7 +164,7 @@ impl UopsTableData {
     }
 }
 
-pub(crate) fn build_result(sim: Sim, tp: f64, first_relevant_round: i64, last_relevant_round: i64, max_cycle: i64) -> SimResult {
+pub(crate) fn build_result(mut sim: Sim, tp: f64, first_relevant_round: i64, last_relevant_round: i64, max_cycle: i64) -> SimResult {
     let cfg = sim.cfg;
     let ports: Vec<String> = sim.prep.ports.iter().map(|&c| (c as char).to_string()).collect();
     // getPortColumnName
@@ -212,6 +212,8 @@ pub(crate) fn build_result(sim: Sim, tp: f64, first_relevant_round: i64, last_re
             }
         })
         .collect();
+    // (each internal array is freed as soon as it is converted: a lower peak of memory)
+    sim.uops = Vec::new();
     let fused_uops: Vec<FusedUop> = sim
         .fused
         .iter()
@@ -224,6 +226,7 @@ pub(crate) fn build_result(sim: Sim, tp: f64, first_relevant_round: i64, last_re
             retire_idx: opt(f.retire_idx),
         })
         .collect();
+    sim.fused = Vec::new();
     let laminated_uops: Vec<LaminatedUop> = sim
         .lams
         .iter()
@@ -236,6 +239,7 @@ pub(crate) fn build_result(sim: Sim, tp: f64, first_relevant_round: i64, last_re
             uop_source: l.uop_source,
         })
         .collect();
+    sim.lams = Vec::new();
     let mut instr_instances: Vec<InstrInstance> = sim
         .insts
         .iter()
@@ -252,6 +256,7 @@ pub(crate) fn build_result(sim: Sim, tp: f64, first_relevant_round: i64, last_re
             removed_from_iq: opt(i.removed_from_iq),
         })
         .collect();
+    sim.insts = Vec::new();
     for &(inst, lam) in &sim.reg_merge_uops {
         instr_instances[inst as usize].reg_merge_uops.push(lam);
     }
