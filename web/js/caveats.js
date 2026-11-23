@@ -2,8 +2,12 @@
 // that the block is likely to meet. Shown as one small line under the throughput (render.js) and as insights.caveats in
 // the API (the npm package has a copy: packages/wuica/lib/web). No DOM.
 //   rmw-index  a read-modify-write to an indexed address (inc dword ptr [rsp+rdx*4]), or a load and a store to the same
-//              indexed address: whether an iteration's load waits for an earlier store (store forwarding) depends on the
-//              data (a histogram of repeated bytes); uiCA assumes it does not.
+//              indexed address, where a register of the address is written in the loop other than by advancing it by a
+//              constant (rdx loaded from the data): whether an iteration's load waits for an earlier store (store
+//              forwarding) depends on the data (a histogram of repeated bytes); uiCA assumes it does not. Not for an
+//              address of induction registers only (saxpy's [rsi+rax*4], rax advanced by add rax, 8: never the same
+//              location twice) nor for a loop-invariant one (the same location every iteration: the model has that
+//              chain through memory, criticalPath operand "mem").
 //   exit       a loop with an exit before its branch (a search; a forward branch within the loop, an if, is not an
 //              exit): the exit's mispredict, once per call, is not modelled;
 //              with short trip counts it can cost more than the loop.
@@ -46,8 +50,9 @@ const IMPLICIT_WRITES = [
   [/^(?:leave)$/, ['rbp']],
 ];
 const IMM = /^-?(?:0x[0-9a-f]+|\d+)$/i;
-// {register family: [rows]} of the writes that do not advance a register by a constant
-function untrackedWrites(rows) {
+// {register family: [rows]} of the writes that do not advance a register by a constant. lea: lea r, [r+imm] advances it
+// too (for rmw-index; the split-load model, affine_delta, does not count it)
+function untrackedWrites(rows, { lea = false } = {}) {
   const out = new Map();
   const add = (reg, row) => { const f = family(reg); if (f?.kind === 'gpr') (out.get(f.base) ?? out.set(f.base, []).get(f.base)).push(row); };
   rows.forEach((x, row) => {
@@ -64,7 +69,8 @@ function untrackedWrites(rows) {
     if (!ops.length || READS_FIRST.test(mn)) return;
     const f = family(ops[0]);
     if (f?.kind === 'gpr') {
-      const affine = f.size <= 1 && (((mn === 'add' || mn === 'sub') && ops.length === 2 && IMM.test(ops[1])) || ((mn === 'inc' || mn === 'dec') && ops.length === 1));
+      const self = lea && mn === 'lea' && ops.length === 2 && new RegExp(`^(?:(?:\\w+ )?ptr )?\\[${ops[0]}(?:[+-](?:0x[0-9a-f]+|\\d+))?\\]$`).test(ops[1]);
+      const affine = f.size <= 1 && (((mn === 'add' || mn === 'sub') && ops.length === 2 && IMM.test(ops[1])) || ((mn === 'inc' || mn === 'dec') && ops.length === 1) || self);
       if (!affine) add(ops[0], row);
     }
     if (BOTH_WRITTEN.test(mn) && ops[1]) add(ops[1], row);
@@ -135,8 +141,11 @@ export function caveats(response, config = null) {
     if (!storeOnly && m.size && m.size >= 2 && m.size <= 64 && ((m.disp % m.size) + m.size) % m.size !== 0) split.push(row);
   });
   for (const [addr, st] of stores) if (loads.has(addr)) rmw.push(...loads.get(addr), ...st);
-  if (rmw.length) {
-    const r = [...new Set(rmw)].sort((a, b) => a - b);
+  // only where the address can repeat with the data: a register of it written other than by advancing it by a constant
+  const dynamic = rmw.length ? untrackedWrites(rows, { lea: true }) : null;
+  const hit = rmw.filter((row) => { const m = memOperand(rows[row].label); return [m.base, m.index].some((r) => dynamic.has(family(r)?.base)); });
+  if (hit.length) {
+    const r = [...new Set(hit)].sort((a, b) => a - b);
     out.push({ id: 'rmw-index', text: 'store forwarding', rows: r,
       title: `a read-modify-write to an indexed address (${some(rows, r)}): when iterations hit the same address (repeated data), each waits for the previous store; not modelled` });
   }

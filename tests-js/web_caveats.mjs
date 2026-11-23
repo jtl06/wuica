@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import { caveats, memOperand } from '../web/js/caveats.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { WasmAssembler } from '../web/js/assembler.js';
+import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES } from '../web/js/examples.js';
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -29,7 +30,12 @@ const loop = (...labels) => ({ mode: 'loop', rows: labels.map(instr) });
   const hist = loop('movzx edx, byte ptr [rdi]', 'inc dword ptr [rsp+rdx*4]', 'inc rdi', 'cmp rdi, rsi', 'jnz 0x0');
   const hc = caveats(hist);
   check(hc.length === 1 && hc[0].id === 'rmw-index' && j(hc[0].rows) === '[1]' && /inc dword ptr \[rsp\+rdx\*4\]/.test(hc[0].title), 'rmw-index: the histogram\'s inc', j(hc));
-  check(ids(loop('mov eax, dword ptr [rsp+rdx*4]', 'add eax, 0x1', 'mov dword ptr [rsp+rdx*4], eax', 'jnz 0x0')) === 'rmw-index', 'rmw-index: a load and a store to the same indexed address');
+  check(ids(loop('movzx edx, byte ptr [rdi]', 'mov eax, dword ptr [rsp+rdx*4]', 'add eax, 0x1', 'mov dword ptr [rsp+rdx*4], eax', 'jnz 0x0')) === 'rmw-index', 'rmw-index: a load and a store to the same indexed address, its index loaded');
+  // only where a register of the address is written other than by advancing it by a constant
+  check(ids(loop('mov eax, dword ptr [rsp+rdx*4]', 'add eax, 0x1', 'mov dword ptr [rsp+rdx*4], eax', 'add rdx, 0x1', 'jnz 0x0')) === '', 'no rmw-index: the index advances by a constant');
+  check(ids(loop('add dword ptr [rdi+rcx*4], eax', 'dec r8', 'jnz 0x0')) === '', 'no rmw-index: a loop-invariant address (the model has its chain through memory)');
+  check(ids(loop('lea rsi, ptr [rsi+0x4]', 'add dword ptr [rsi+rax*4], 0x1', 'jnz 0x0')) === '' && ids(loop('lea rsi, ptr [rsi+rcx*1]', 'add dword ptr [rsi+rax*4], 0x1', 'jnz 0x0')) === 'rmw-index', 'lea r, [r+imm] advances by a constant; lea r, [r+rcx] does not');
+  check(ids(loop('mov rax, qword ptr [rdi]', 'add dword ptr [rsi+rax*4], 0x1', 'jnz 0x0')) === 'rmw-index' && ids(loop('imul rax, rax', 'inc dword ptr [rsi+rax*4]', 'jnz 0x0')) === 'rmw-index', 'rmw-index: the index loaded or computed');
   check(ids(loop('add edx, dword ptr [rdi+rax*4]', 'mov dword ptr [rsi+rax*4], edx', 'inc rax', 'jnz 0x0')) === '', 'not for a load and a store to different arrays (the prefix sum)');
   check(ids(loop('inc dword ptr [rdi]', 'jnz 0x0')) === '', 'not for a read-modify-write without an index');
   check(ids(loop('mov dword ptr [rsp+rdx*4], eax', 'jnz 0x0')) === '', 'not for a plain store');
@@ -65,8 +71,9 @@ const loop = (...labels) => ({ mode: 'loop', rows: labels.map(instr) });
   check(ids(out) === 'exit', 'a branch past the end of the loop: an exit');
   check(ids(loop('lea rdx, ptr [rdi+rax*4]', 'mov dword ptr [rdi+rax*4], ecx', 'inc rax', 'jnz 0x0')) === '', 'lea with an indexed address and a store to it: not a read-modify-write');
   check(memOperand('lea rdx, ptr [rdi+rax*4+0x3]') === null, 'lea: no memory access (not a split load either)');
-  check(ids(loop('xchg dword ptr [rsi+rax*4], edx', 'inc rax', 'jnz 0x0')) === 'rmw-index' && ids(loop('xchg edx, dword ptr [rsi+rax*4]', 'jnz 0x0')) === 'rmw-index', 'xchg with an indexed address: a read-modify-write');
-  check(ids(loop('lock cmpxchg dword ptr [rsi+rax*4], edx', 'jnz 0x0')) === 'rmw-index' && ids(loop('lock xadd dword ptr [rsi+rax*4], edx', 'jnz 0x0')) === 'rmw-index', 'cmpxchg and xadd (lock): read-modify-writes');
+  const ld = 'movzx eax, byte ptr [rdi]'; // the index from the data
+  check(ids(loop(ld, 'xchg dword ptr [rsi+rax*4], edx', 'jnz 0x0')) === 'rmw-index' && ids(loop(ld, 'xchg edx, dword ptr [rsi+rax*4]', 'jnz 0x0')) === 'rmw-index', 'xchg with an indexed address: a read-modify-write');
+  check(ids(loop(ld, 'lock cmpxchg dword ptr [rsi+rax*4], edx', 'jnz 0x0')) === 'rmw-index' && ids(loop(ld, 'lock xadd dword ptr [rsi+rax*4], edx', 'jnz 0x0')) === 'rmw-index', 'cmpxchg and xadd (lock): read-modify-writes');
 }
 
 // --- the dogfood loops ---------------------------------------------------------------------------------------------
@@ -87,10 +94,18 @@ if (!fs.existsSync(wasm) || !fs.existsSync(asmPath) || !fs.existsSync(new URL('d
     const resp = await e.analyze(makeRequest([...r.bytes].map((b) => b.toString(16).padStart(2, '0')).join(''), arch));
     return caveats(resp, uarch.configs[resp.arch]);
   };
+  // saxpy (the built-in example), a copy, a loop-invariant address, an index advanced by lea: no store-forwarding caveat
+  const NO_RMW = { 'saxpy.s': '', 'memcpy.s': '', 'invariant.s': '', 'lea_induction.s': '' };
+  // the loop-invariant address: the model has the chain through memory (it charges the store forwarding)
+  for (const arch of ['SKL', 'ZEN3']) {
+    const r = await a.assemble(fs.readFileSync(new URL('tests-js/fixtures/caveats/invariant.s', root), 'utf8'), 'intel');
+    const resp = await e.analyze(makeRequest([...r.bytes].map((b) => b.toString(16).padStart(2, '0')).join(''), arch));
+    check(resp.criticalPath?.edges?.some((x) => x.operand === 'mem' && x.carried), `${arch}: a loop-invariant read-modify-write is a chain through memory in the model`, j(resp.criticalPath));
+  }
   const want = {
-    SKL: { 'fir8.s': 'split', 'fir8_s.s': 'split', 'fir8_s2.s': '', 'hist_b.s': 'rmw-index', 'scan_a.s': 'exit', 'psum.s': '' },
+    SKL: { 'fir8.s': 'split', 'fir8_s.s': 'split', 'fir8_s2.s': '', 'hist_b.s': 'rmw-index', 'hist_c.s': 'rmw-index', 'scan_a.s': 'exit', 'psum.s': '', ...NO_RMW },
     // the FIR loads advance by add rax, imm: the model charges their crossings
-    ZEN3: { 'fir8.s': '', 'fir8_s.s': '', 'fir8_s2.s': '', 'hist_b.s': 'rmw-index', 'scan_a.s': 'exit', 'psum.s': '' },
+    ZEN3: { 'fir8.s': '', 'fir8_s.s': '', 'fir8_s2.s': '', 'hist_b.s': 'rmw-index', 'hist_c.s': 'rmw-index', 'scan_a.s': 'exit', 'psum.s': '', ...NO_RMW },
   };
   for (const [arch, cases] of Object.entries(want)) {
     for (const [name, id] of Object.entries(cases)) {
@@ -98,6 +113,17 @@ if (!fs.existsSync(wasm) || !fs.existsSync(asmPath) || !fs.existsSync(new URL('d
       check(c.map((x) => x.id).join() === id, `${arch} ${name}: ${id || 'no caveats'}`, j(c.map((x) => [x.id, x.text])));
     }
   }
+  // the built-in examples: none shows a caveat (none has a data-dependent indexed read-modify-write, an exit before
+  // its branch, or a load off its width); saxpy's load and store to [rsi+rax*4] (rax += 8) is not one
+  const shown = [];
+  for (const ex of [...EXAMPLES, ...CLASSIC_EXAMPLES, ...SHOWCASE_EXAMPLES]) {
+    for (const arch of ['SKL', 'ZEN3']) {
+      const resp = await e.analyze(makeRequest(ex.hex, arch));
+      const c = caveats(resp, uarch.configs[resp.arch]);
+      if (c.length) shown.push(`${ex.id} ${arch}: ${c.map((x) => x.id).join()}`);
+    }
+  }
+  check(shown.length === 0 && [...EXAMPLES, ...CLASSIC_EXAMPLES].some((x) => x.id === 'saxpy'), 'the built-in examples: no caveats (saxpy included)', shown.join('; '));
   const firN = (await of('fir8.s', 'SKL'))[0].rows.length, winN = (await of('fir8_s.s', 'SKL'))[0].rows.length;
   check(firN === 7 && winN === 3, 'SKL FIR: 7 loads off their width in gcc\'s, 3 in the winner (measured 3.7 and 1.5 split loads per iteration)', `${firN} ${winN}`);
 }

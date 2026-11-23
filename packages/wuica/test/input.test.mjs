@@ -166,6 +166,11 @@ test('insights.caveats: the known blind spots the block meets', async () => {
   const chase = w.summarize(await w.analyze('ZEN3', { source: '.L:\n vaddps ymm0, ymm0, ymmword ptr [rdi+0x4]\n mov rdi, qword ptr [rdi+0x40]\n test rdi, rdi\n jne .L\n' }));
   assert.deepEqual(chase.insights.caveats.map((c) => [c.id, c.instructions]), [['split', [0]]]);
   assert.match(chase.insights.caveats[0].title, /rdi is written otherwise here/);
+  // saxpy: a load and a store to [rsi+rax*4] with rax advanced by 8 each iteration is not a store-forwarding case
+  for (const arch of ['SKL', 'ZEN3']) {
+    const sx = w.summarize(await w.analyze(arch, { source: fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/caveats/saxpy.s'), 'utf8') }));
+    assert.equal(sx.insights.caveats, undefined, arch);
+  }
   const plain = w.summarize(await w.analyze('SKL', { source: CRC_LOOP }));
   assert.equal(plain.insights.caveats, undefined);
 });
