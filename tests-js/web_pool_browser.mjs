@@ -107,6 +107,9 @@ const HELPERS = `
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const until = async (f, ms = 60000) => { const t0 = Date.now(); while (!f()) { if (Date.now() - t0 > ms) throw new Error('timeout: ' + f); await wait(5); } };
   const body = () => $('result-body');
+  // a view whose estimated time is over its budget (compare-view.js, insight-view.js: from the main analysis's time, so on a
+  // slow machine too) waits for a click on its run button: click it, the test needs the results either way
+  const runAnyway = () => { for (const b of document.querySelectorAll('.cmp-run, .ins-cost-status button')) b.click(); };
   const runs = (id) => Number($(id).dataset.runs ?? 0);
   const costRuns = () => Number(body().dataset.costRuns ?? 0);
   const done = async (start) => { const n = $('results').dataset.run; start(); await until(() => $('results').dataset.run !== n); };
@@ -131,7 +134,7 @@ try {
         await page.goto(link(ex, { cmpCpus: true, cmpSweep: true, cost: true }, query));
         got[mode] = await page.eval(`${HELPERS}
           await until(() => {
-            for (const b of document.querySelectorAll('.cmp-run, .ins-cost-status button')) b.click(); // over the budget: run anyway
+            runAnyway();
             return document.querySelector('.tp .value') && $('cmp-cpus').dataset.state === 'done' && $('cmp-sweep').dataset.state === 'done' && body().dataset.cost === 'done';
           });
           const out = collect();
@@ -159,14 +162,14 @@ try {
         const out = { before: window.__wuicaPool === undefined };
         const n = runs('cmp-cpus');
         document.querySelector('#cmp-cpus summary').click();
-        await until(() => runs('cmp-cpus') > n);
+        await until(() => (runAnyway(), runs('cmp-cpus') > n));
         const pool = window.__wuicaPool;
         out.size = pool.size;
         out.stats = await pool.stats();
         const m = runs('cmp-sweep'), c = costRuns();
         document.querySelector('#cmp-sweep summary').click();
         document.querySelector('.ins-cost-box').click();
-        await until(() => runs('cmp-sweep') > m && costRuns() > c);
+        await until(() => (runAnyway(), runs('cmp-sweep') > m && costRuns() > c));
         out.all = await pool.stats();
         return out;`);
       const tables = r.stats.flatMap((s) => s.tables);
@@ -191,14 +194,14 @@ try {
     const t = async (start, cond) => { const t0 = performance.now(); start(); await until(cond); return Math.round(performance.now() - t0); };
     const panel = async (id) => {
       const n = runs(id);
-      const ms = await t(() => document.querySelector('#' + id + ' summary').click(), () => runs(id) > n && $(id).dataset.state === 'done');
+      const ms = await t(() => document.querySelector('#' + id + ' summary').click(), () => (runAnyway(), runs(id) > n && $(id).dataset.state === 'done'));
       document.querySelector('#' + id + ' summary').click();
       await wait(50);
       return ms;
     };
     const cost = async () => {
       const n = costRuns();
-      const ms = await t(() => document.querySelector('.ins-cost-box').click(), () => costRuns() > n && body().dataset.cost === 'done');
+      const ms = await t(() => document.querySelector('.ins-cost-box').click(), () => (runAnyway(), costRuns() > n && body().dataset.cost === 'done'));
       document.querySelector('.ins-cost-box').click();
       await wait(50);
       return ms;
