@@ -16,3 +16,5 @@
 .wi-body[data-state="running"] .wi-table, .wi-body[data-state="queued"] .wi-table { opacity: 0.85; }
 @media (max-width: 640px) { .wi-table td.wi-tp, .wi-table td.wi-d, .wi-table td.wi-x { min-width: 0; } .wi-table th, .wi-table td { padding-left: 0.4ch; padding-right: 0.4ch; } }
 body.ab-on #whatif-row { display: none !important; }
+.wi-table tr.wi-best-row th { color: var(--heading); }
+.wi-best { margin: 0.3rem 0 0; color: var(--description); font-size: 0.9em; cursor: help; }

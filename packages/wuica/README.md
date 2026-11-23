@@ -97,7 +97,7 @@ Diagnostics go to stderr. The exit status is the result code: 0 ok, 1 bad reques
 | Tool | What it does |
 |---|---|
 | `analyze` | one block on one microarchitecture: `tp`, bottlenecks, limits, a compact per-instruction table (ports, uop sources, fusion notes) and uiCA's text report (`format`: `json`, `text`, `both`) |
-| `what_if` | one block re-analyzed with one change each (the web page's "try" row): `unroll2`/`unroll4`/`unroll8` (per original iteration), `simpleFrontEnd`, `noMacroFusion`, `noMicroFusion`, and `nochain` (an estimate without the loop-carried chain); per variant `tp`, `delta`, `speedup` |
+| `what_if` | one block re-analyzed with one change each (the web page's "try" row): `unroll2`/`unroll4`/`unroll8` (per original iteration), `acc2`/`acc3`/`acc4`/`acc8` (N accumulators: unrolled ×N with the loop-carried register renamed in each copy; `renamed` lists the registers, `accumulators.best` is the best N, 1 = as it is), `simpleFrontEnd`, `noMacroFusion`, `noMicroFusion`, and `nochain` (an estimate without the loop-carried chain); per variant `tp`, `delta`, `speedup` |
 | `compare_archs` | one block on several or all microarchitectures: `tp` and bottlenecks per microarchitecture |
 | `list_archs` | ids, names, years, prototype flags |
 | `assemble` | assembly → hex bytes, or diagnostics with line/column |
@@ -138,7 +138,7 @@ text, and errors with structured stderr.
 | `GET /api/archs[?fields=id,name]` | `w.archs(fields?)` | `list_archs {fields?}` |
 | `POST /api/analyze/<arch>` | `w.analyze(arch, request)` | `analyze {arch, ...request, format?}` |
 | `POST /api/compare` | `w.compare(request)` | `compare_archs {...request}` |
-| — | `whatIf((a, r) => w.analyze(a, r), arch, request, variants?)` | `what_if {arch, ...request, variants?}` |
+| — | `whatIf((a, r) => w.analyze(a, r), arch, request, variants?, {assemble: (t) => w.assemble(t)})` | `what_if {arch, ...request, variants?}` |
 | `POST /api/assemble` | `w.assemble(source, syntax)` | `assemble {source, syntax?}` |
 
 ### Microarchitectures: `GET /api/archs`

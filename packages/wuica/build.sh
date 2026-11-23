@@ -18,7 +18,7 @@ WASM="${WUICA_WASM:-$ROOT/target/wasm32-unknown-unknown/release/wuica_wasm.wasm}
 ASM_WASM="${WUICA_ASM_WASM:-$ROOT/assembler/dist/wuica_asm.wasm}"
 DATA="${WUICA_DATA:-$ROOT/data}"
 # the web page's DOM-free modules the library uses (scripts/check.mjs hashes them for the package's stamp)
-WEB_MODULES="loop-find.js asm-regions.js assembler.js"
+WEB_MODULES="loop-find.js asm-regions.js assembler.js accum.js"
 
 if [ ! -f "$WASM" ]; then
   echo "building the analyzer module (./build-wasm.sh)"

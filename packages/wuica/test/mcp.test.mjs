@@ -66,7 +66,12 @@ test('what_if: every variant against analyses of the library', async () => {
   assert.equal(r.isError, undefined);
   assert.equal(r.json.code, 0);
   assert.equal(r.json.tp, 2);
-  assert.deepEqual(r.json.variants.map((v) => v.id), ['unroll2', 'unroll4', 'unroll8', 'simpleFrontEnd', 'noMacroFusion', 'noMicroFusion', 'nochain']);
+  assert.deepEqual(r.json.variants.map((v) => v.id), ['unroll2', 'unroll4', 'unroll8', 'acc2', 'acc3', 'acc4', 'acc8', 'simpleFrontEnd', 'noMacroFusion', 'noMicroFusion', 'nochain']);
+  // N accumulators: the chain's rax and rbx renamed in each copy (r8, r9, ...): per original iteration below the base
+  const acc2 = r.json.variants.find((x) => x.id === 'acc2');
+  assert.deepEqual(acc2.renamed.map((x) => x.from), ['rax', 'rbx']);
+  assert.ok(acc2.tp < 2 && acc2.speedup > 1, JSON.stringify(acc2));
+  assert.ok(Number.isInteger(r.json.accumulators.best) && r.json.accumulators.best > 1, JSON.stringify(r.json.accumulators));
   // the body (the two adds) n times, then dec r15; jnz once
   const body = '4801d84801c3', tail = '49ffcf75f5';
   for (const n of [2, 4, 8]) {

@@ -1,9 +1,12 @@
 // The what-if experiments of the web page (web/js/whatif.js), for the MCP tool `what_if`: the block re-analyzed with one
-// change each: unrolled ×2/×4/×8 (n copies of the body and the loop's branch once, per original iteration), the front end
-// limited only by the issue width, macro- or micro-fusion switched; and the estimate without the loop-carried chain (the
-// largest other limit, no analysis). tests-js/web_whatif.mjs checks that the variants agree with the page's.
+// change each: unrolled ×2/×4/×8 (n copies of the body and the loop's branch once, per original iteration), N
+// accumulators (unrolled ×N with the chain's register renamed in each copy: the page's accum.js, assembled), the front
+// end limited only by the issue width, macro- or micro-fusion switched; and the estimate without the loop-carried chain
+// (the largest other limit, no analysis). tests-js/web_whatif.mjs checks that the variants agree with the page's.
 
-export const VARIANTS = Object.freeze(['unroll2', 'unroll4', 'unroll8', 'simpleFrontEnd', 'noMacroFusion', 'noMicroFusion', 'nochain']);
+import { ACCUMULATORS, accumulatorText, bestAccumulators } from '../dist/web/accum.js';
+
+export const VARIANTS = Object.freeze(['unroll2', 'unroll4', 'unroll8', 'acc2', 'acc3', 'acc4', 'acc8', 'simpleFrontEnd', 'noMacroFusion', 'noMicroFusion', 'nochain']);
 const UNROLL = [2, 4, 8];
 const FLAGS = [
   ['simpleFrontEnd', 'simple front end', 'detailed front end'],
@@ -44,6 +47,13 @@ export function experiments(response, hex, options = {}) {
     const u = unrollHex(response, hex, n);
     if (u.ok) out.push({ id: `unroll${n}`, label: `unroll ×${n}`, per: n, hex: u.hex, options });
   }
+  if (response?.mode === 'loop' && response.criticalPath?.edges?.length) {
+    for (const n of ACCUMULATORS) {
+      const a = accumulatorText(response, hex, n);
+      if (!a.ok) { if (n === ACCUMULATORS[0]) out.push({ id: 'acc', label: 'accumulators', per: 1, error: a.reason, options }); break; }
+      out.push({ id: `acc${n}`, label: `${n} accumulators`, per: n, text: a.text, options, renamed: a.renamed });
+    }
+  }
   for (const [k, on, off] of FLAGS) {
     const v = !options?.[k];
     out.push({ id: k, label: v ? on : off, per: 1, hex: String(hex).toLowerCase(), options: { ...options, [k]: v } });
@@ -57,6 +67,7 @@ export function experiments(response, hex, options = {}) {
 // The label of a variant as experiments() gives it (for the variants it does not make).
 function labelOf(id, options) {
   if (id.startsWith('unroll')) return `unroll ×${id.slice(6)}`;
+  if (id.startsWith('acc')) return `${id.slice(3)} accumulators`;
   const f = FLAGS.find(([k]) => k === id);
   return f ? (options?.[id] ? f[2] : f[1]) : 'no chain';
 }
@@ -66,7 +77,9 @@ const round = (x) => Math.round(x * 100) / 100;
 // What the tool returns for one experiment, from the base result and the variant's (or its estimate).
 export function outcome(base, exp, r) {
   const row = { id: exp.id, label: exp.label };
+  if (exp.renamed) row.renamed = exp.renamed;
   let tp;
+  if (exp.error) return { ...row, error: exp.error };
   if (exp.estimate !== undefined) { tp = exp.estimate; row.estimate = true; }
   else if (!r || r.code !== 0) {
     const error = r?.error ?? 'not analyzed';
@@ -79,9 +92,11 @@ export function outcome(base, exp, r) {
 }
 
 // Runs the experiments with analyze(arch, {hex, options}) (one after another). request: as analyze's ({source | hex,
-// syntax, options}); variants: ids of VARIANTS (default: all). Resolves to {code: 0, arch, tp, mode, bottlenecks,
-// variants: [{id, label, tp, delta, speedup, estimate?, bottlenecks?, error?}]} or the base's failure.
-export async function whatIf(analyze, arch, request, variants = VARIANTS) {
+// syntax, loop, options}); variants: ids of VARIANTS (default: all); assemble(text) -> {code, hex} (the accumulator
+// variants; Intel syntax). Resolves to {code: 0, arch, tp, mode, bottlenecks, loop?, variants: [{id, label, tp, delta,
+// speedup, estimate?, bottlenecks?, renamed?, error?}], accumulators?: {best, tp}} or the base's failure.
+//   accumulators: the best number of accumulators (the smallest within 1% of the fastest, 1 = as it is) among those run.
+export async function whatIf(analyze, arch, request, variants = VARIANTS, { assemble = null } = {}) {
   const unknown = (variants ?? []).filter((v) => !VARIANTS.includes(v));
   if (unknown.length) return { code: 1, error: `unknown variant(s): ${unknown.join(', ')} (known: ${VARIANTS.join(', ')})`, stderr: [] };
   const base = await analyze(arch, request);
@@ -93,14 +108,28 @@ export async function whatIf(analyze, arch, request, variants = VARIANTS) {
   const options = { ...(request.options ?? {}) };
   const want = new Set(variants ?? VARIANTS);
   const out = [];
-  for (const exp of experiments(base, rowsHex, options)) {
+  // the alignment offset the base got from the code's addresses (objdump input) holds for the variants too
+  if (options.alignmentOffset === undefined && request.alignmentOffset === undefined && base.loop?.alignmentOffset !== undefined) options.alignmentOffset = base.loop.alignmentOffset;
+  const exps = experiments(base, rowsHex, options);
+  const accError = exps.find((x) => x.id === 'acc')?.error;
+  for (const exp of exps) {
     if (!want.has(exp.id)) continue;
+    if (exp.text && !exp.hex) {
+      const a = assemble ? await assemble(exp.text) : null;
+      if (a?.code === 0 && a.hex) exp.hex = a.hex;
+      else { out.push(outcome(base, { ...exp, error: a ? `the variant does not assemble: ${a.error}` : 'no assembler' }, null)); continue; }
+    }
     const r = exp.estimate !== undefined ? null : await analyze(base.arch, exp.per > 1 ? { hex: exp.hex, options: exp.options } : { ...code, options: exp.options });
     out.push(outcome(base, exp, r));
   }
   for (const id of want) {
-    if (!out.some((x) => x.id === id)) out.push({ id, label: labelOf(id, options), error: base.mode !== 'loop' && id.startsWith('unroll') ? 'not a loop' : id === 'nochain' ? 'no loop-carried chain' : 'not applicable' });
+    if (!out.some((x) => x.id === id)) {
+      out.push({ id, label: labelOf(id, options), error: base.mode !== 'loop' && (id.startsWith('unroll') || id.startsWith('acc')) ? 'not a loop' : id === 'nochain' || id.startsWith('acc') ? (id.startsWith('acc') && accError) || 'no loop-carried chain' : 'not applicable' });
+    }
   }
   out.sort((a, b) => VARIANTS.indexOf(a.id) - VARIANTS.indexOf(b.id));
-  return { code: 0, arch: base.arch, tp: base.tp, mode: base.mode, bottlenecks: base.bottlenecks, unit: 'cycles per original iteration', variants: out };
+  const accs = out.filter((x) => x.id.startsWith('acc') && x.tp !== undefined);
+  const best = accs.length ? bestAccumulators(new Map([[1, base.tp], ...accs.map((x) => [Number(x.id.slice(3)), x.tp])])) : null;
+  return { code: 0, arch: base.arch, tp: base.tp, mode: base.mode, bottlenecks: base.bottlenecks, ...(base.loop ? { loop: base.loop } : {}), unit: 'cycles per original iteration', variants: out,
+    ...(best ? { accumulators: { best: best.n, tp: round(best.tp) } } : {}) };
 }

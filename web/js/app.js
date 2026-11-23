@@ -130,7 +130,8 @@ const regionChip = createRegionChip(el.messages, (line) => selectLine(line));
 // what of pasted assembly is analyzed (loop-find.js): the loop chip sets state.loop
 const loopChip = createLoopChip(el.messages, (v) => { if (state.loop === v) return; state.loop = v; changed({ rerun: true }); });
 let autoAlignText = null; // the text whose addresses last set the alignment offset (an edit of the offset then stays)
-const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o), onToggle: (open) => { Object.assign(state, open); syncUrl(true); if ('bound' in open) cmpSlots.decorate(); }, getSel: () => state.sel, getSource: () => (ceSource && (!pastedSource || ceSource.hex === lastView?.hex) ? ceSource : pastedSource),
+const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o),
+  assemble: async (text) => { const a = await ensureAssembler(); return a ? a.assemble(text, 'intel') : null; }, cpus: () => checked, onToggle: (open) => { Object.assign(state, open); syncUrl(true); if ('bound' in open) cmpSlots.decorate(); }, getSel: () => state.sel, getSource: () => (ceSource && (!pastedSource || ceSource.hex === lastView?.hex) ? ceSource : pastedSource),
   // llvm-mca (mca.js): its module only if the build has it, downloaded on first use; the bytes as Intel assembly
   mca: {
     available: () => !!manifest.mca && !MOCK,

@@ -278,7 +278,7 @@ export const ARCH_INFO: Record<string, { name: string; year: number }>;
 /** The derived diagnosis of an analysis (the web page's bound view; also `insights` in the MCP summary and the REST response). */
 export function insights(result: AnalyzeResult): Insights | null;
 
-export type WhatIfVariant = 'unroll2' | 'unroll4' | 'unroll8' | 'simpleFrontEnd' | 'noMacroFusion' | 'noMicroFusion' | 'nochain';
+export type WhatIfVariant = 'unroll2' | 'unroll4' | 'unroll8' | 'acc2' | 'acc3' | 'acc4' | 'acc8' | 'simpleFrontEnd' | 'noMacroFusion' | 'noMicroFusion' | 'nochain';
 export const WHAT_IF_VARIANTS: readonly WhatIfVariant[];
 export interface WhatIfResult {
   code: 0;
@@ -287,8 +287,14 @@ export interface WhatIfResult {
   mode: 'loop' | 'unroll';
   bottlenecks: string[];
   unit: 'cycles per original iteration';
-  /** tp per original iteration, delta = tp − base tp, speedup = base tp / tp; estimate: no analysis (nochain). */
-  variants: { id: WhatIfVariant; label: string; tp?: number; delta?: number; speedup?: number | null; estimate?: boolean; bottlenecks?: string[]; error?: string }[];
+  loop?: LoopInfo;
+  /** tp per original iteration, delta = tp − base tp, speedup = base tp / tp; estimate: no analysis (nochain);
+   * renamed (accN): the chain's registers and the ones of the copies after the first. */
+  variants: { id: WhatIfVariant; label: string; tp?: number; delta?: number; speedup?: number | null; estimate?: boolean; bottlenecks?: string[]; renamed?: { from: string; to: string[] }[]; error?: string }[];
+  /** With accumulator variants: the best N (the smallest within 1% of the fastest; 1 = as it is) and its tp. */
+  accumulators?: { best: number; tp: number };
 }
-/** The what-if experiments of the web page (the MCP tool `what_if`), with `analyze` (e.g. a Wuica's analyze, bound). */
-export function whatIf(analyze: (arch: string, request: AnalyzeRequest) => Promise<AnalyzeResult | Failure>, arch: string, request: AnalyzeRequest, variants?: readonly WhatIfVariant[]): Promise<WhatIfResult | Failure>;
+/** The what-if experiments of the web page (the MCP tool `what_if`), with `analyze` (e.g. a Wuica's analyze, bound) and,
+ * for the accumulator variants, `assemble` (e.g. a Wuica's assemble, bound). */
+export function whatIf(analyze: (arch: string, request: AnalyzeRequest) => Promise<AnalyzeResult | Failure>, arch: string, request: AnalyzeRequest, variants?: readonly WhatIfVariant[],
+  tools?: { assemble?: (text: string) => Promise<AssembleResult | Failure> }): Promise<WhatIfResult | Failure>;

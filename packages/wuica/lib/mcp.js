@@ -143,7 +143,11 @@ export function createServer(w) {
         'Re-analyzes an x86-64 basic block with one change each and reports the predicted throughput per ORIGINAL ' +
         'iteration, the change `delta` (cycles; negative = faster) and `speedup` (base tp / variant tp) against the base: ' +
         'unroll2/unroll4/unroll8 (n copies of the loop body and its branch once; registers are not renamed, so the ' +
-        'dependencies stay and only the loop overhead goes; loops only), simpleFrontEnd (a front end limited only by the ' +
+        'dependencies stay and only the loop overhead goes; loops only), acc2/acc3/acc4/acc8 (N accumulators: unrolled ×N ' +
+        'with the register of the loop-carried chain renamed into a free register in each copy, so the copies form N ' +
+        'independent chains, as N accumulators or N CRC streams written by hand; `renamed` says which registers; the ' +
+        'result\'s `accumulators.best` is the smallest N within 1% of the fastest, 1 = as it is: call it per arch for the ' +
+        'best N per CPU; not possible when the chain goes through memory or flags or an implicit operand), simpleFrontEnd (a front end limited only by the ' +
         'issue width), noMacroFusion / noMicroFusion (switched; if the base already has the option set, the variant ' +
         'switches it back), nochain (no analysis: the largest limit other than Dependencies, an estimate of the ' +
         'throughput without the loop-carried chain; `estimate: true`). A variant that cannot be made or analyzed has ' +
@@ -157,7 +161,7 @@ export function createServer(w) {
       }).strict(),
       annotations: readOnly,
     },
-    async ({ arch, variants, ...request }) => result(await whatIf((a, req) => w.analyze(a, req), arch ?? 'SKL', request, variants ?? VARIANTS)),
+    async ({ arch, variants, ...request }) => result(await whatIf((a, req) => w.analyze(a, req), arch ?? 'SKL', request, variants ?? VARIANTS, { assemble: (text) => w.assemble(text, 'intel') })),
   );
 
   server.registerTool(
