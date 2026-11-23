@@ -184,6 +184,7 @@ class Wuica {
     if (hasHex) {
       if (req.syntax !== undefined && syntaxCode(req.syntax) < 0) return failure(CODES.REQUEST, `unknown syntax "${req.syntax}"`);
       const hex = normalizeHex(req.hex);
+      if (hex === null && typeof req.hex === 'string' && normalizeHex(req.hex + '00') === '00') return failure(CODES.REQUEST, '`hex` is empty: no machine code');
       if (hex === null) return failure(CODES.REQUEST, '`hex`: expected an even number of hex digits (spaces, commas and 0x prefixes are allowed)');
       return { hex, assembled: false, stderr: [] };
     }

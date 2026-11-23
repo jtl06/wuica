@@ -95,6 +95,7 @@ test('errors: exit code = result code, message on stderr', () => {
     [['/no/such/file.s'], '', /no such file/, 1],
     [[], 'nop\nfrobnicate rax\n', /^<input>:2:1: error: invalid instruction mnemonic 'frobnicate'\nfrobnicate rax\n\^~+\n$/, 2],
     [['-hex'], 'zz', /hex/, 1],
+    [['-hex'], ' \n', /`hex` is empty: no machine code/, 1],
     [['-arch'], '', /-arch needs a value/, 1],
     [['-arch', 'all'], 'frob', /invalid instruction mnemonic/, 2],
     [[HEX, '-initPolicy', 'bad'], '', /option initPolicy: "bad" is not one of/, 1],
