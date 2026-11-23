@@ -21,7 +21,7 @@ const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
 const MOCK = query.get('mock') === '1';       // ?mock=1: do not load the analyzer, use the mock (for work on the page)
 const NO_SW = query.get('nosw') === '1';      // ?nosw=1: do not register the service worker
-const VERSION = '0.1.0-dev';                   // the page's version (footer); bump it here
+const VERSION = '0.1.1';                   // the page's version (footer); bump it here
 
 const el = {
   notice: $('notice'), code: $('code'), codeHint: $('code-hint'), messages: $('input-messages'),
