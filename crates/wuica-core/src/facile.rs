@@ -1095,6 +1095,50 @@ mod tests {
     }
 
     #[test]
+    fn bottleneck_text() {
+        const LIST: &str = "\nThe following throughputs could be achieved if the given property were the only bottleneck:\n\n";
+        // nothing to report
+        let none = BottleneckValues { tp: 1.0, n_rounds: 10, ..Default::default() };
+        assert_eq!(format_bottlenecks(&none), "Bottleneck: unknown\n");
+        // 196 uops on one port in 100 rounds: 1.96 >= .98 * 2.0, and the Ports limit is below that
+        let v = BottleneckValues {
+            tp: 2.0,
+            lsd_limit: Some(1.25),
+            issue_limit: 1.25,
+            port_usage_limit: 1.0,
+            max_port_usage: Some(196),
+            n_rounds: 100,
+            dep_limit: 1.0,
+            ..Default::default()
+        };
+        let entries = "  - LSD: 1.25\n  - Issue: 1.25\n  - Ports: 1.00\n  - Dependencies: 1.00\n";
+        assert_eq!(format_bottlenecks(&v), format!("Bottleneck: Scheduling\n{LIST}{entries}"));
+        let v195 = BottleneckValues { max_port_usage: Some(195), ..v.clone() };
+        assert_eq!(format_bottlenecks(&v195), format!("Bottleneck: unknown\n{LIST}{entries}"));
+        // the divider is busy for 198 cycles in 100 rounds: 1.98 >= .99 * 2.0; the names are sorted
+        let div = BottleneckValues { div_usage: 198, ..v.clone() };
+        assert_eq!(format_bottlenecks(&div), format!("Bottlenecks: Divider, Scheduling\n{LIST}{entries}"));
+        let div197 = BottleneckValues { div_usage: 197, ..v.clone() };
+        assert_eq!(format_bottlenecks(&div197), format!("Bottleneck: Scheduling\n{LIST}{entries}"));
+        // limits are rounded before they are compared (1.9551 -> 1.96 >= 1.96; 7.625 -> 7.62), but not the dependency limit
+        let rounded = BottleneckValues {
+            tp: 2.0,
+            predec_limit: Some(7.625),
+            dec_limit: Some(0.004),
+            dsb_limit: Some(1.9551),
+            issue_limit: 1.9549,
+            port_usage_limit: 1.9551,
+            n_rounds: 1,
+            dep_limit: 1.9599,
+            ..Default::default()
+        };
+        assert_eq!(
+            format_bottlenecks(&rounded),
+            format!("Bottlenecks: DSB, Ports, Predecoder\n{LIST}  - Predecoder: 7.62\n  - DSB: 1.96\n  - Issue: 1.95\n  - Ports: 1.96\n  - Dependencies: 1.96\n")
+        );
+    }
+
+    #[test]
     fn sum_is_pythons() {
         // sum([0.1]*10) == 1.0 in Python 3.12 (0.9999999999999999 without compensation)
         assert_eq!(py_sum(std::iter::repeat(Num::Float(0.1)).take(10)), Num::Float(1.0));
