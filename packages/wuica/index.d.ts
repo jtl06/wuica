@@ -209,9 +209,9 @@ export interface CreateOptions {
   analyzerWasm?: string;
   /** Path of wuica_asm.wasm (plain or .br). */
   assemblerWasm?: string;
-  /** The most worker threads compare() uses, one microarchitecture per thread at a time. 1: none (one after another
-   * on the calling thread). Default: the environment variable WUICA_THREADS, else os.availableParallelism() (1 inside
-   * a worker thread). */
+  /** The most worker threads compare() uses, one per microarchitecture. 1: none (one after another on the calling
+   * thread). Default: the environment variable WUICA_THREADS, else "auto": one thread per two microarchitectures, at
+   * most os.availableParallelism() (none inside a worker thread). */
   threads?: number | 'auto';
 }
 

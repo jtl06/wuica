@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createWuica } from '../lib/index.js';
-import { ThreadPool, threadLimit, maxMemoryBytes } from '../lib/threads.js';
+import { ThreadPool, threadLimit, threadOption, threadsFor, maxMemoryBytes } from '../lib/threads.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const HEX = '4801d84801c349ffcf75f5';
@@ -93,7 +93,15 @@ test('a pool whose threads cannot start gives every job back', async () => {
   await pool.close();
 });
 
-test('threadLimit and maxMemoryBytes', () => {
+test('threadLimit, threadsFor and maxMemoryBytes', () => {
+  assert.equal(threadOption(undefined, {}), 'auto');
+  assert.equal(threadOption(0, {}), 'auto');
+  assert.equal(threadOption(undefined, { WUICA_THREADS: '3' }), '3');
+  assert.equal(threadsFor(15, 16, true), 8); // auto: one thread per two microarchitectures
+  assert.equal(threadsFor(2, 16, true), 1);
+  assert.equal(threadsFor(15, 4, true), 4);
+  assert.equal(threadsFor(15, 16, false), 15); // a number given: one per microarchitecture, up to it
+  assert.equal(threadsFor(15, 6, false), 6);
   assert.equal(threadLimit(3, {}), 3);
   assert.equal(threadLimit(1, { WUICA_THREADS: '6' }), 1);
   assert.equal(threadLimit(undefined, { WUICA_THREADS: '6' }), 6);

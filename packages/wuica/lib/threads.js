@@ -7,8 +7,8 @@
 //   on every thread at once. An analysis that traps in a thread (it may only have hit that limit) is given back to the
 //   caller, which runs it on its own thread, so the result is the same as without threads. A thread whose memory has
 //   grown beyond half its limit (it never shrinks) is stopped after its job.
-// - The pool is started by the first compare() with at least two microarchitectures and kept for the next ones; its
-//   threads are started as jobs need them, up to `limit`. While no job runs they do not keep the process alive, and
+// - The pool is started by the first compare() that uses threads and kept for the next ones; its threads are started
+//   as jobs need them, up to the number run() is given (and `limit`). While no job runs they do not keep the process alive, and
 //   after IDLE_MS without a job they are stopped (close() stops them at once).
 // - A table is pinned to the thread that loaded it: a job goes to a thread that has its table, else a table no thread
 //   has goes to the first free thread (or a new one). So every table is loaded once, whatever the number of compares.
@@ -39,15 +39,31 @@ export function maxMemoryBytes(threads, total = os.totalmem()) {
 }
 
 // The most threads compare() uses: `option` (createWuica's `threads`), else the environment variable WUICA_THREADS,
-// else os.availableParallelism() (on the main thread; 1 inside a worker thread). 1 means no threads.
+// else "auto": os.availableParallelism() (on the main thread; 1 inside a worker thread). 1 means no threads.
 export function threadLimit(option, env = process.env) {
-  const raw = option ?? (env.WUICA_THREADS === undefined || env.WUICA_THREADS === '' ? 'auto' : env.WUICA_THREADS);
-  if (raw === 'auto' || raw === 0 || raw === '0') return isMainThread ? Math.max(1, os.availableParallelism()) : 1;
+  const raw = threadOption(option, env);
+  if (raw === 'auto') return isMainThread ? Math.max(1, os.availableParallelism()) : 1;
   const n = Number(raw);
   if (!Number.isSafeInteger(n) || n < 0) {
     throw new TypeError(`${option !== undefined && option !== null ? 'threads' : 'WUICA_THREADS'}: expected a non-negative integer or "auto", got ${JSON.stringify(raw)}`);
   }
   return n;
+}
+
+// The option as given (option, else WUICA_THREADS), "auto" if there is none (also for 0).
+export function threadOption(option, env = process.env) {
+  const raw = option ?? (env.WUICA_THREADS === undefined || env.WUICA_THREADS === '' ? 'auto' : env.WUICA_THREADS);
+  return raw === 0 || raw === '0' ? 'auto' : raw;
+}
+
+// The threads for a compare of jobs with `tables` different tables: one per table, at most `limit`; with "auto", at
+// most one per two tables. A thread's start costs about as much as an analysis (it starts, loads its table, and its first
+// analysis runs on code that is not optimized yet, which on aethia makes the SHA-256 showcase take ~100-230 instead of
+// ~45 ms), so a thread pays off from its second analysis on: on aethia (8 cores, 16 threads) -arch all takes 0.60 s
+// with 4 or 8 threads, 0.67 s with 12 and 0.71 s with 15 (1.05 s without threads), and for a small block 8 threads are
+// as fast as none and 15 are 12% slower.
+export function threadsFor(tables, limit, auto) {
+  return Math.min(limit, auto ? Math.ceil(tables / 2) : tables);
 }
 
 export class ThreadPool {
@@ -57,6 +73,7 @@ export class ThreadPool {
   #limit;
   #slots = [];        // {worker, ready, job, tables: Set}
   #warmed = false;
+  #want;              // the threads the latest run() may start
   #queue = [];        // {id, table, request, resolve}
   #nextId = 1;
   #idleTimer = null;
@@ -66,13 +83,15 @@ export class ThreadPool {
   constructor({ wasm, uarch, dataDir, limit }) {
     this.#wasm = wasm; this.#uarch = uarch; this.#dataDir = dataDir;
     this.#limit = limit;
+    this.#want = limit;
   }
 
   get threads() { return this.#slots.length; }
 
   // jobs: [{table, request}] -> a promise of [fields | null] in the same order (null: not done, run it elsewhere).
-  // A thread is started for each table no thread has, up to the limit.
-  async run(jobs) {
+  // A thread is started for each table no thread has, while there are fewer than `threads` (and `limit`).
+  async run(jobs, threads = this.#limit) {
+    this.#want = Math.min(this.#limit, threads);
     clearTimeout(this.#idleTimer);
     this.#idleTimer = null;
     if (!this.#workerData) {
@@ -124,7 +143,7 @@ export class ThreadPool {
       if (j) this.#start(s, j);
     }
     let started = 0;
-    while (this.#slots.length < this.#limit) {
+    while (this.#slots.length < this.#want) {
       const i = this.#queue.findIndex((j) => !this.#owner(j.table));
       if (i < 0) break;
       this.#spawn(this.#queue.splice(i, 1)[0]);

@@ -57,9 +57,10 @@ Methods never throw for bad input: they resolve to a failure `{code, error, stde
 `createWuica({ dataDir })` reads the tables from another directory (`uarch.json` and `arch/<NAME>.json`, plain or
 `.br`). TypeScript declarations are included (`index.d.ts`).
 
-`compare` analyzes the microarchitectures in parallel on worker threads: one thread per microarchitecture, at most
-`os.availableParallelism()` (`createWuica({ threads: N })` or the environment variable `WUICA_THREADS` sets the most;
-1 runs them one after another on the calling thread). The response is the same either way. Each thread loads only the
+`compare` analyzes the microarchitectures in parallel on worker threads: by default one thread per two
+microarchitectures (a thread's start costs about one analysis), at most `os.availableParallelism()`.
+`createWuica({ threads: N })` or the environment variable `WUICA_THREADS=N` uses up to N threads, one per
+microarchitecture; 1 runs them one after another on the calling thread. The response is the same either way. Each thread loads only the
 tables of the microarchitectures it analyzes and keeps them for the next `compare`; idle threads do not keep the process
 alive and stop after 30 s (`w.close()` stops them at once). A thread's WebAssembly memory has a lower limit (a quarter
 of the RAM shared by the threads, 256 MB to 1 GB each); an analysis that exceeds it is done again on the calling thread.

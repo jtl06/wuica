@@ -15,7 +15,7 @@ import { archList, DEFAULT_ARCH, ARCH_INFO, ARCH_ORDER } from './archs.js';
 import { insights } from './insights.js';
 import { readMaybeCompressed } from './files.js';
 import { CODES, WARM_HEX, failure, tableFailure, analysisResult, compareFields } from './core.js';
-import { ThreadPool, threadLimit } from './threads.js';
+import { ThreadPool, threadLimit, threadOption, threadsFor } from './threads.js';
 
 export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, CODES, WARM_HEX, parseDiagnostics };
 
@@ -91,9 +91,10 @@ class Wuica {
   #wasm;                // bytes of the analyzer module (the threads compile it with a memory limit of their own)
   #uarch;               // bytes of uarch.json
   #threads;             // the most threads compare() uses (1: none)
+  #threadsAuto;         // no number given: at most one thread per two microarchitectures (threads.js, threadsFor)
   #pool = null;         // ThreadPool, started by the first compare() that uses threads
 
-  constructor(analyzer, configs, dataDir, asmWasm, { wasm, uarch, threads }) {
+  constructor(analyzer, configs, dataDir, asmWasm, { wasm, uarch, threads, threadsAuto }) {
     this.#analyzer = analyzer;
     this.#configs = configs;
     this.#archs = archList(configs);
@@ -102,6 +103,7 @@ class Wuica {
     this.#wasm = wasm;
     this.#uarch = uarch;
     this.#threads = threads;
+    this.#threadsAuto = threadsAuto;
   }
 
   // The microarchitectures in order of release (like CE's /api/compilers); `fields` selects fields (default: all).
@@ -223,14 +225,15 @@ class Wuica {
     const ids = request.archs?.length ? request.archs : this.#archs.map((a) => a.id);
     const options = { ...opts.options, includeTrace: false };
     const resolved = ids.map((arch) => this.resolveArch(arch));
-    // the microarchitectures in threads (when there are tables of at least two), each as #run() would on this thread;
+    // the microarchitectures in threads (if that means at least two threads), each as #run() would on this thread;
     // whatever the threads do not do (unknown ids, a thread that failed) is done here, one after another
     const fields = new Array(ids.length).fill(null);
     const known = resolved.flatMap((id, i) => (id ? [{ i, table: this.#configs[id].name, request: { hex: code.hex, arch: id, ...options } }] : []));
-    if (this.#threads > 1 && new Set(known.map((j) => j.table)).size > 1) {
+    const threads = threadsFor(new Set(known.map((j) => j.table)).size, this.#threads, this.#threadsAuto);
+    if (threads > 1) {
       this.#pool ??= new ThreadPool({ wasm: this.#wasm, uarch: this.#uarch, dataDir: this.#dataDir, limit: this.#threads });
       if (!this.#pool.broken) {
-        const done = await this.#pool.run(known);
+        const done = await this.#pool.run(known, threads);
         known.forEach((j, k) => { fields[j.i] = done[k]; });
       }
     }
@@ -292,10 +295,12 @@ class Wuica {
 
 // options.dataDir: directory with uarch.json and arch/<NAME>.json (plain or .br); default: the package's tables.
 // options.analyzerWasm / options.assemblerWasm: paths of the modules (plain or .br).
-// options.threads: the most worker threads compare() uses (default: the environment variable WUICA_THREADS, else
-// os.availableParallelism(); 1 = none, every microarchitecture one after another on this thread).
+// options.threads: the most worker threads compare() uses, one per microarchitecture (default: the environment variable
+// WUICA_THREADS, else "auto": os.availableParallelism(), and one thread per two microarchitectures; 1 = none, every
+// microarchitecture one after another on this thread).
 export async function createWuica(options = {}) {
   const threads = threadLimit(options.threads);
+  const threadsAuto = threadOption(options.threads) === 'auto';
   const dataDir = options.dataDir ?? path.join(DIST, 'data');
   const analyzerWasm = options.analyzerWasm ?? path.join(DIST, 'wuica_wasm.wasm.br');
   const asmWasm = options.assemblerWasm ?? path.join(DIST, 'wuica_asm.wasm.br');
@@ -303,5 +308,5 @@ export async function createWuica(options = {}) {
   const analyzer = new Analyzer(await WebAssembly.compile(wasm));
   analyzer.loadUarch(uarchBytes);
   const configs = JSON.parse(new TextDecoder().decode(uarchBytes)).configs;
-  return new Wuica(analyzer, configs, dataDir, asmWasm, { wasm, uarch: uarchBytes, threads });
+  return new Wuica(analyzer, configs, dataDir, asmWasm, { wasm, uarch: uarchBytes, threads, threadsAuto });
 }

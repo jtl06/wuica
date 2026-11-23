@@ -10,20 +10,11 @@ import { installWasmLimits, getAnalyzerModule, RawInstance, wasmMemoryBytes } fr
 
 const cfg = workerData;
 installWasmLimits(cfg.analyzerMemoryMb * 2 ** 20);
-const { createWuica, normalizeHex } = await import('wuica');
+const { createWuica, normalizeHex, WARM_HEX } = await import('wuica');
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 const MAX_INSTR_LEN = 15; // bytes
-
-// The warm-up block: ~500 instructions of several kinds in a loop (a 24-instruction mix, 20 times). V8 compiles the
-// module's functions when they are first called, with its baseline compiler first, and optimizes the hot ones in the
-// background later; one analysis of this block (~10 ms) gets the simulator's functions optimized, so that the first
-// large block a worker gets runs at full speed (the SHA-256 showcase: ~40 instead of ~100 ms, docs/PORTING.md).
-const WARM_MIX = '4883c001' + '488906' + '8b06' + 'c4e2d5aaf4' + '4c03d1' + '4d0fafc0' + 'c5fc100c87' + 'c4e27da80c86' + 'c5fc110c86'
-  + 'f3480fb80cc7' + '4801ca' + 'f2480f38f104cf' + '660f6f0f' + '660f74c8' + '660fd7c1' + '488b00' + 'c4626db8c0' + '4839d0'
-  + '4883c708' + '4c8d0c49' + '48c1e005' + '4421c0' + 'c5f857c0' + '488d0c0a';
-const WARM_HEX = WARM_MIX.repeat(20) + '49ffcf' + '0f853bf8ffff'; // dec r15; jnz to the start
 
 let w;
 try {
@@ -34,6 +25,8 @@ try {
       const r = await w.analyze(a.id, { hex: '90' });
       if (r.code !== 0) throw new Error(`warm-up on ${a.id} failed: ${r.error}`);
     }
+    // V8 compiles the module's functions when first called and optimizes the hot ones later: one analysis of a
+    // 482-instruction block (~10 ms) gets the simulator optimized before the first large block (docs/PORTING.md, "Speed")
     const r = await w.analyze('SKL', { hex: WARM_HEX });
     if (r.code !== 0) throw new Error(`warm-up analysis failed: ${r.error}`);
     const a = await w.assemble('nop');
