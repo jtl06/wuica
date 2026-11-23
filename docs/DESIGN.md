@@ -13,6 +13,11 @@ The reference ("oracle") is the Python uiCA of the fork [jtl06/uiCA](https://git
 over a set of objects and results could differ between runs), with the fixes of the inputs on which it raised an exception: branch
 `crash-fixes` (`docs/DEVIATIONS.md`, `docs/PORTING.md`). All fixtures are exported from that branch.
 
+On the branch `model-r6`, the reference is the fork's branch `improve-r6` (`21b0b17`: the model changes of round 6, `9bed908`,
+merged with `crash-fixes`; see docs/ACCURACY.md); its data and fixtures are exported with `tools/export_all.sh`. The sources in
+`reference/uiCA/` are still those of `8f24bd3`; the model changes since then are in `uiCA.py` (`FrontEnd`: `microcodeBusyCycles`),
+`microArchConfigs.py` (`microcodeOps`, `microcodeWidth`; ADL-P `storeForwardDelay`) and the instruction data (`convertXML.py`).
+
 Not ported:
 
 - the `CLX_SimplePorts*` configurations (they use Python's `random.choice`; they are ablation variants of the uiCA paper);
