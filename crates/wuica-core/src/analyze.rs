@@ -4,10 +4,10 @@
 use crate::config::UArch;
 use crate::data::ArchData;
 use crate::decoded::DecodedInstr;
-use crate::facile::{self, InstrInstanceSummary, InstrSource, SimSummary, UopSummary};
+use crate::facile::{self, InstrInstanceSummary, InstrSource, SimSummary, SimView, UopSummary};
 use crate::instr_builder::build_instructions;
 use crate::model::{InstrList, OpId, Operand};
-use crate::sim::{simulate, InitPolicy, SimOptions, SimResult, TableValue, UopSource};
+use crate::sim::{simulate, InitPolicy, SimOptions, SimResult, UopSource};
 use serde::{Deserialize, Serialize};
 
 fn default_init_policy() -> String {
@@ -182,12 +182,7 @@ pub fn sim_summary(r: &SimResult) -> SimSummary {
                     .map(|&i| {
                         let inst = &r.instr_instances[i as usize];
                         InstrInstanceSummary {
-                            source: match inst.source {
-                                Some(UopSource::Mite) => Some(InstrSource::Mite),
-                                Some(UopSource::Dsb) => Some(InstrSource::Dsb),
-                                Some(UopSource::Lsd) => Some(InstrSource::Lsd),
-                                _ => None,
-                            },
+                            source: instr_source(inst.source),
                             uops: unfused(&mut inst.uops()),
                             other_uops: unfused(&mut inst.reg_merge_uops.iter().chain(&inst.stack_sync_uops).copied()),
                         }
@@ -195,6 +190,78 @@ pub fn sim_summary(r: &SimResult) -> SimSummary {
                     .collect()
             })
             .collect(),
+    }
+}
+
+/// The source of an instruction instance as `sim_summary` describes it
+fn instr_source(source: Option<UopSource>) -> Option<InstrSource> {
+    match source {
+        Some(UopSource::Mite) => Some(InstrSource::Mite),
+        Some(UopSource::Dsb) => Some(InstrSource::Dsb),
+        Some(UopSource::Lsd) => Some(InstrSource::Lsd),
+        _ => None,
+    }
+}
+
+/// The result of the simulation read directly, with the same answers as the [`SimSummary`] of [`sim_summary`].
+impl SimView for SimResult {
+    fn tp(&self) -> f64 {
+        self.tp
+    }
+    fn is_loop(&self) -> bool {
+        !self.unroll
+    }
+    fn n_rounds(&self) -> i64 {
+        self.n_relevant_rounds()
+    }
+    fn n_instances(&self, instr: usize) -> usize {
+        self.relevant_instr_instances_for_instr.get(instr).map_or(0, |l| l.len())
+    }
+    fn not_eliminated_uops(&self, instr: usize) -> i64 {
+        let list: &[u32] = self.relevant_instr_instances_for_instr.get(instr).map(|l| l.as_slice()).unwrap_or(&[]);
+        let mut n = 0;
+        for &i in list {
+            for l in self.instr_instances[i as usize].uops() {
+                n += self.laminated_uops[l as usize].unfused_uops().filter(|&u| !self.uops[u as usize].eliminated).count() as i64;
+            }
+        }
+        n
+    }
+    fn any_instr_from(&self, source: InstrSource) -> bool {
+        self.relevant_instr_instances_for_instr
+            .iter()
+            .any(|list| list.first().is_some_and(|&i| instr_source(self.instr_instances[i as usize].source) == Some(source)))
+    }
+    fn port_and_div_usage(&self) -> (Option<i64>, i64) {
+        // counted by port index; ports with the same name (there are none) are then added up as the Counter of names would
+        let mut by_index = vec![0i64; self.ports.len()];
+        let mut div_usage = 0;
+        for list in &self.relevant_instr_instances_for_instr {
+            for &i in list {
+                let inst = &self.instr_instances[i as usize];
+                for l in inst.uops().chain(inst.reg_merge_uops.iter().copied()).chain(inst.stack_sync_uops.iter().copied()) {
+                    for u in self.laminated_uops[l as usize].unfused_uops() {
+                        let uop = &self.uops[u as usize];
+                        if let Some(p) = uop.actual_port {
+                            by_index[p as usize] += 1;
+                        }
+                        div_usage += uop.div_cycles;
+                    }
+                }
+            }
+        }
+        let mut by_name: Vec<(&str, i64)> = Vec::new();
+        for (p, &n) in by_index.iter().enumerate().filter(|(_, &n)| n != 0) {
+            let name = self.port_name(p as u8);
+            if name.is_empty() {
+                continue;
+            }
+            match by_name.iter_mut().find(|(q, _)| *q == name) {
+                Some((_, m)) => *m += n,
+                None => by_name.push((name, n)),
+            }
+        }
+        (by_name.iter().map(|(_, n)| *n).max(), div_usage)
     }
 }
 
@@ -225,27 +292,6 @@ pub fn strip_hyperlinks(s: &str) -> String {
     out
 }
 
-/// The bottlenecks and limits from the text of `facile::format_bottlenecks` (the text is the reference's output format, so
-/// that there is one implementation of the rules).
-fn parse_bottleneck_report(report: &str) -> (Vec<String>, Vec<Limit>) {
-    let mut bottlenecks = Vec::new();
-    let mut limits = Vec::new();
-    for line in report.lines() {
-        if let Some(rest) = line.strip_prefix("Bottlenecks: ").or_else(|| line.strip_prefix("Bottleneck: ")) {
-            if rest != "unknown" {
-                bottlenecks = rest.split(", ").map(str::to_string).collect();
-            }
-        } else if let Some(rest) = line.strip_prefix("  - ") {
-            if let Some((name, value)) = rest.split_once(": ") {
-                if let Ok(tp) = value.parse() {
-                    limits.push(Limit { name: name.to_string(), tp });
-                }
-            }
-        }
-    }
-    (bottlenecks, limits)
-}
-
 /// Runs an analysis of decoded instructions. `decode_errors` is passed through to the response. `data` must be the instruction
 /// table of the configuration (`uarch.configs[request.arch].name`).
 pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, uarch: &UArch, data: &ArchData) -> Result<Response, String> {
@@ -272,50 +318,41 @@ pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Response, String> {
         let instrs = build_instructions(decoded, config, uarch, data, request.alignment_offset, request.no_micro_fusion, request.no_macro_fusion);
         let r = simulate(&instrs, config, uarch, &options).map_err(|e| e.to_string())?;
-        let summary = sim_summary(&r);
+        // the dependency cycle with the maximum latency ratio: its ratio is the Dependencies limit, and the cycle itself is the
+        // critical path of the response (compute_dependency_limit computes the same ratio without the cycle)
         let (dep_maximum, dep_graph) = facile::compute_dependency_cycle(&instrs, config, &request.init_policy);
         let dep_limit = dep_maximum.max_cycle_ratio;
-        let report = facile::bottleneck_report(&instrs, decoded, config, request.alignment_offset, dep_limit, &summary);
-        let table = r.uops_table();
+        let facile::BottleneckText { text: report, bottlenecks, limits } = facile::format_bottlenecks_with_limits(
+            &facile::bottleneck_values_for(&instrs, decoded, config, request.alignment_offset, dep_limit, &r),
+        );
+        let bottlenecks: Vec<String> = bottlenecks.iter().map(|b| b.to_string()).collect();
+        let limits: Vec<Limit> = limits.iter().map(|&(name, tp)| Limit { name: name.to_string(), tp }).collect();
+        // the uop table: its text and its lines, from one computation of its values
+        let table_data = r.uops_table_data();
+        let table = r.format_uops_table(&table_data);
         let text_with_hyperlinks = format!("Throughput (in cycles per iteration): {:.2}\n{report}\n{table}\n", r.tp);
-        let (bottlenecks, limits) = parse_bottleneck_report(&report);
 
-        // the lines of the table: for each instruction, a line for its register merge uops and one for its stack sync uops
-        // (if any instance in the relevant rounds has such uops), then the instruction
-        let mut meta: Vec<(&'static str, String, Option<usize>)> = Vec::new();
-        for (i, instr) in instrs.instrs.iter().enumerate() {
-            let instances = &r.relevant_instr_instances_for_instr[i];
-            if instances.iter().any(|&ii| !r.instr_instances[ii as usize].reg_merge_uops.is_empty()) {
-                meta.push(("regMerge", "<Register Merge Uop>".to_string(), None));
-            }
-            if instances.iter().any(|&ii| !r.instr_instances[ii as usize].stack_sync_uops.is_empty()) {
-                meta.push(("stackSync", "<Stack Sync Uop>".to_string(), None));
-            }
-            meta.push(("instr", instr.asm.clone(), Some(i)));
-        }
-        let table_columns = r.uops_table_columns();
-        if table_columns.iter().any(|(_, values)| values.len() != meta.len()) {
-            return Err("internal error: the uop table has an unexpected number of lines".to_string());
-        }
-        let notes: Vec<String> = match table_columns.iter().find(|(name, _)| name == "Notes") {
-            Some((_, values)) => values.iter().map(|v| if let TableValue::Text(t) = v { t.clone() } else { String::new() }).collect(),
-            None => vec![String::new(); meta.len()],
-        };
-        let number_columns: Vec<&(String, Vec<TableValue>)> = table_columns.iter().filter(|(name, _)| name != "Notes").collect();
-        let row_of_instr: Vec<usize> = meta.iter().enumerate().filter_map(|(line, m)| m.2.map(|_| line)).collect();
-        let rows = meta
+        let kinds: Vec<(&'static str, Option<usize>)> = (0..table_data.rows.len()).map(|line| table_data.line(line)).collect();
+        let columns = table_data.columns;
+        let row_of_instr: Vec<usize> = kinds.iter().enumerate().filter_map(|(line, k)| k.1.map(|_| line)).collect();
+        let rows = kinds
             .into_iter()
-            .enumerate()
-            .map(|(line, (kind, label, instr))| {
+            .zip(table_data.rows)
+            .zip(table_data.notes)
+            .map(|(((kind, instr), values), note)| {
                 let instr = instr.map(|i| &instrs.instrs[i]);
                 Row {
                     kind,
-                    label,
+                    label: match kind {
+                        "regMerge" => "<Register Merge Uop>".to_string(),
+                        "stackSync" => "<Stack Sync Uop>".to_string(),
+                        _ => instr.map(|i| i.asm.clone()).unwrap_or_default(),
+                    },
                     opcode: instr.map(|i| i.opcode.clone()),
                     instr_str: instr.map(|i| i.instr_str.clone()),
                     url: instr.filter(|i| !i.is_unknown).map(|i| crate::sim::get_url(&i.instr_str)),
-                    notes: if notes[line] == "0" { String::new() } else { notes[line].clone() },
-                    values: number_columns.iter().map(|(_, values)| if let TableValue::Number(v) = values[line] { v } else { 0.0 }).collect(),
+                    notes: note.to_string(),
+                    values,
                 }
             })
             .collect();
@@ -327,7 +364,7 @@ pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, 
             decode_errors,
             bottlenecks,
             limits,
-            columns: number_columns.iter().map(|(name, _)| name.clone()).collect(),
+            columns,
             rows,
             text: strip_hyperlinks(&text_with_hyperlinks),
             text_with_hyperlinks,
