@@ -18,7 +18,7 @@ with the same message. Before these fixes, wuica returned "the reference impleme
 | Input | Upstream | Fork and wuica | Commit |
 |---|---|---|---|
 | An instruction without a memory input operand whose port data has a load port: `pcmpestri`/`vpcmpestrm` with register operands on SNB and IVB, `out`, `ins` (also what is left of AVX-512 code that the decoder cannot decode for a CPU without AVX-512, e.g. `x_zmm_mask` on SKL) | `AttributeError: 'NoneType' object has no attribute 'get'` in `Renamer.cycle` | the load uop has no address: it reads from no store and gets no fast pointer chasing | `ebc6e47` |
-| A loop run from the DSB in which a microcoded instruction (`lock add`, `lfence`, ...), an instruction without uops, or a macro-fused pair is the last instruction in the DSB, and the next instruction is not in the DSB (e.g. `x_lock` with alignment offset 31 on SNB to BDW) | `IndexError: deque index out of range` in `DSB.cycle`; before that, the DSB delivered the next round's block ahead of the rest of the current round | the front end switches to the legacy decoders (MITE) after that instruction, as it does after any other instruction whose successor is not in the DSB | `19ba4f3`, `e9b7a70` |
+| A loop run from the DSB in which a microcoded instruction (`lock add`, `lfence`, ...) or a macro-fused pair is the last instruction in the DSB, and the next instruction is not in the DSB (e.g. `x_lock` with alignment offset 31 on SNB to BDW) | `IndexError: deque index out of range` in `DSB.cycle`; before that, the DSB delivered the next round's block ahead of the rest of the current round | the front end switches to the legacy decoders (MITE) after that instruction, as it does after any other instruction whose successor is not in the DSB | `19ba4f3`, `e9b7a70` |
 | Two stores without a displacement (the stack slot of `push m`, `call [m]`) at the heads of the store-data queues of ports 4 and 9 (ICL, TGL, RKL; also ICX, ADL-P) | `TypeError: unsupported operand type(s) for -: 'NoneType' and 'NoneType'` in `Scheduler.dispatchUops` | a missing displacement is 0 (the two stores are in the same cache line) | `1a3e7bf` |
 | `minIterations` < 1 with a `minCycles` so small that the first iteration has not retired when the simulation stops (e.g. `-minIterations 0 -minCycles 0`) | `IndexError: list index out of range` | `InputError: no iteration was completed (minIterations must be at least 1, or minCycles larger)`; the throughput is not defined | `8360f1b` |
 | `-json` output for code with an instruction with a fractional throughput limit (measured microcoded instructions of the fork's models: `cpuid`, `lock` instructions, `rep` string instructions, ... on ADL-P, ICX, ZEN3) | (no such models) the fork's own models failed with `TypeError: list indices must be integers or slices, not float` while writing the file, after the analysis | the `executed` event of a uop goes to the cycle in which its fractional cycle lies; the text output was already correct | `4351920` |
@@ -31,7 +31,8 @@ code; blocks for them are in `fixtures/extra-src` (`x_dsb_fused_mid*.s`, `x_push
 
 Inputs that exhaust time or memory are unchanged: for example `wbinvd`, whose port data has about 10^6 uops (172,044 of them
 loads on IVB), makes the reference run for hours; wuica rejects a uop with more than 65,535 operands ("invalid input: too many
-operands") and stops after 10^8 cycles ("invalid input: the simulation does not terminate").
+operands"), stops after 10^8 cycles ("invalid input: the simulation does not terminate"), and otherwise needs minutes or runs out
+of memory on such blocks (see `docs/WASM-API.md`, "Failures and traps").
 
 ## Results that differ from upstream
 
