@@ -227,5 +227,8 @@ export function parseDiagnostics(text: string): Array<{ line: number | null; col
 export const OPTION_DEFAULTS: Readonly<Required<AnalysisOptions>>;
 export const ARCH_FIELDS: readonly ArchField[];
 export const DEFAULT_ARCH: string;
+/** A 482-instruction loop (hex) for warming up the analyzer: after one analysis of it (and a pause, while V8 optimizes
+ * in the background), the first analysis of a large block runs at nearly full speed. */
+export const WARM_HEX: string;
 export const ARCH_ORDER: string[];
 export const ARCH_INFO: Record<string, { name: string; year: number }>;

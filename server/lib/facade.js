@@ -10,9 +10,12 @@
 // the idle workers, at most half the pool but at least two): a lane sends its next part when the previous one is done,
 // so a request that comes in meanwhile is queued ahead of it and waits for one part at most. The parts' rows are put
 // together in order. Each part is checked and limited like a whole compare (the instruction count of the limit is that
-// of the whole request's first microarchitecture), so the response is the one the single job would give.
+// of the whole request's first microarchitecture), and the parts share the time budget of one job (a part gets what is
+// left of it, and none is sent once it is spent), so the response is the one the single job would give. On a pool of two
+// workers this takes both: a request that comes in while a compare runs waits for one part (on aethia, for the SHA-256
+// showcase, up to ~90 ms). splitCompare: false (WUICA_SPLIT_COMPARE=0) turns it off.
 
-import { BusyError } from './pool.js';
+import { BusyError, timeoutFailure } from './pool.js';
 
 export const STATUS = Symbol('httpStatus');
 export const RETRY_AFTER = Symbol('retryAfter');
@@ -58,10 +61,10 @@ export class Facade {
     return null;
   }
 
-  async #run(op, args, ctx) {
+  async #run(op, args, ctx, options) {
     let out;
     try {
-      out = await this.#pool.run(op, args);
+      out = await this.#pool.run(op, args, options);
     } catch (e) {
       if (!(e instanceof BusyError)) throw e;
       ctx.busy = true;
@@ -98,11 +101,14 @@ export class Facade {
     const sizeArch = Array.isArray(request.archs) && request.archs.length ? request.archs[0] : undefined;
     const ctxs = parts.map(() => ({}));
     const out = new Array(parts.length).fill(null);
+    const deadline = performance.now() + this.#cfg.timeoutMs; // one job's budget for all parts
     let next = 0;
     await Promise.all(Array.from({ length: lanes }, async () => {
       while (next < parts.length && !out.some((r) => r && r.code !== 0)) {
         const i = next++;
-        out[i] = await this.#run('compare', { req: { ...request, archs: parts[i] }, sizeArch }, ctxs[i]);
+        const left = deadline - performance.now();
+        if (left <= 0) { out[i] = timeoutFailure(this.#cfg.timeoutMs); ctxs[i].timedOut = true; break; }
+        out[i] = await this.#run('compare', { req: { ...request, archs: parts[i] }, sizeArch }, ctxs[i], { timeoutMs: left });
       }
     }));
     const run = ctxs.filter((c, i) => out[i]);
@@ -121,7 +127,7 @@ export class Facade {
     if (request.archs !== undefined && !Array.isArray(request.archs)) return null; // the library reports it
     const ids = request.archs?.length ? request.archs : this.#local.archs().map((a) => a.id);
     const pool = this.#pool;
-    if (pool.queued > 0 || ids.length <= PART_ARCHS) return null;
+    if (!this.#cfg.splitCompare || pool.queued > 0 || ids.length <= PART_ARCHS) return null;
     const lanes = Math.min(pool.idle, Math.max(2, Math.ceil(pool.size / 2)));
     if (lanes < 2) return null;
     const parts = [];

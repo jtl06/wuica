@@ -50,3 +50,24 @@ test('a busy worker: the compare is one job', async () => {
   assert.equal(busyAfter, 1, 'the analysis took longer than the compare');
   assert.equal(jobs() - n, 2); // the analysis and the compare in one job
 });
+
+test('the parts share one time budget; splitCompare: false makes a compare one job', async () => {
+  // a block whose compare takes far longer than the budget in total, and several times one part's share of it
+  const heavy = { hex: '4801d84801c3c5fc100c87c4e27da80c86f3480fb80cc7'.repeat(200) + '49ffcf75f5', options: { minIterations: 400 } }; // a part: ~200 ms, all: ~1.6 s
+  const t = await start({ workers: 2, timeoutMs: 400 });
+  try {
+    const t0 = performance.now();
+    const r = await post(t.base, '/api/compare', heavy);
+    const ms = performance.now() - t0;
+    assert.equal(r.json.code, 3);
+    assert.match(r.json.error, /took longer than 0\.4 s, the limit of this server/);
+    assert.ok(ms < 400 * 2.5, `${ms} ms`); // one budget (and the start of the replaced worker), not one per part
+  } finally { await t.close(); }
+  const u = await start({ workers: 2, splitCompare: false });
+  try {
+    const n = u.app.pool.stats.jobs;
+    const r = await post(u.base, '/api/compare', { hex: HEX });
+    assert.deepEqual(r.json, plain(await w.compare({ hex: HEX })));
+    assert.equal(u.app.pool.stats.jobs - n, 1);
+  } finally { await u.close(); }
+});

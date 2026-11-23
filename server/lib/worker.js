@@ -27,8 +27,9 @@ try {
     }
     // V8 compiles the module's functions when first called and optimizes the hot ones later: one analysis of a
     // 482-instruction block (~10 ms) gets the simulator optimized before the first large block (docs/PORTING.md, "Speed")
-    const r = await w.analyze('SKL', { hex: WARM_HEX });
-    if (r.code !== 0) throw new Error(`warm-up analysis failed: ${r.error}`);
+    // (not required: a data directory without SKL, or a failure, only leaves the worker cold)
+    const first = w.archs()[0]?.id;
+    if (first) await w.analyze(w.resolveArch('SKL') ? 'SKL' : first, { hex: WARM_HEX }).catch(() => {});
     const a = await w.assemble('nop');
     if (a.code !== 0) throw new Error(`warm-up of the assembler failed: ${a.error}`);
   }
