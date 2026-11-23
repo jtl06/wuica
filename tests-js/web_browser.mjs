@@ -520,8 +520,8 @@ try {
       && /^4 instructions · 13 bytes · \d+(\.\d)? ms$/.test(r.first.metaTitle), 'real: the first example: 2.00 cycles, a loop, bottleneck Dependencies; counts and time only in the tooltip', JSON.stringify([r.first.text.slice(0, 300), r.first.metaTitle]));
     check(r.first.rows.length === 4 && r.first.rows[0] === 'add rax, 0x1|1|1|1|0.22|0.22|0.29|0.27' && r.first.rows[3] === 'jnz 0x0|M' && r.first.total === 'Total|3|3|3|0.5|0.52|0.52|1.47', 'real: the uop table equals the reference (rounded like uiCA, totals as in its "Total" line)', JSON.stringify([r.first.rows, r.first.total]));
     check(r.first.report.startsWith('Throughput (in cycles per iteration): 2.00\nBottleneck: Dependencies\n') && r.first.report.includes('│ Total'), 'real: the text report');
-    check(r.loadstore[0] === '1.00' && r.loadstore[1] && /ALU0\|ALU1\|ALU2\|ALU3\|AGU0\|AGU1\|AGU2\|SD0$/.test(r.loadstore[2]) && r.loadstore[4] === '----M', 'real: load/store example on ZEN3 (1.00, Zen port names)', JSON.stringify(r.loadstore.slice(0, 6)));
-    check(r.avx[0] === '4.00' && r.avx[1] && /P0\|P1\|P5\|P6\|PB$/.test(r.avx[2]), 'real: AVX example on ADL-P (4.00, ports up to B)', JSON.stringify(r.avx.slice(0, 6)));
+    check(r.loadstore[0] === '1.00' && r.loadstore[1] && /\s*ALU\s*0\|1\|2\|3\|\s*AGU\s*0\|1\|2\|\s*SD\s*0$/.test(r.loadstore[2]) && r.loadstore[4] === '----M', 'real: load/store example on ZEN3 (1.00, Zen port names)', JSON.stringify(r.loadstore.slice(0, 6)));
+    check(r.avx[0] === '4.00' && r.avx[1] && /\s*P\s*0\|1\|5\|6\|B$/.test(r.avx[2]), 'real: AVX example on ADL-P (4.00, ports up to B)', JSON.stringify(r.avx.slice(0, 6)));
     check(r.prototype[0] === true && /^ADL-P .*prototype$/.test(r.prototype[1]) && r.notPrototype[0] === false && r.notPrototype[1] === '', 'real: a prototype model (ADL-P) is marked at its checkbox and in the result; SKL is not', JSON.stringify([r.prototype, r.notPrototype]));
     check(r.stack[0] === '2.10' && r.stack[3] === 1 && /unknown/.test(r.stack[6].split('\n')[1]), 'real: stack example on SKL (2.10, a stack-sync row, bottleneck unknown)', JSON.stringify(r.stack.slice(0, 6)));
     check([r.loadstore, r.avx, r.stack].every((x) => x[5] <= 0) && r.overflow0 <= 0 && r.overflow1 <= 0 && r.tableScrolls[0] && r.tableScrolls[1] === 'auto', 'real: at 375px the page never scrolls sideways; the table scrolls in its container', JSON.stringify([r.overflow0, r.overflow1, r.tableScrolls]));
@@ -607,13 +607,14 @@ try {
     check(first === manifest.version, 'deploy: the open page is still the cached build', first);
     check(JSON.stringify(upd.keys) === JSON.stringify([`wuica-${versionB}`]) && (/new version/.test(upd.note ?? '') || upd.mark === versionB),
       'deploy: the new worker replaces the cache and the page says so (or, idle, reloads itself)', JSON.stringify(upd));
-    // the page reloads itself once it is idle (after the note); wait for that rather than reload over it, else reload by hand
-    let self = false;
-    for (const t0 = Date.now(); !self && Date.now() - t0 < 30000;) {
-      try { self = await page.eval(`return document.readyState === 'complete' && document.getElementById('build-id')?.textContent === ${JSON.stringify(versionB)};`); } catch { /* navigating */ }
-      if (!self) await sleep(200);
+    // The page marked its own reload (session storage): then it must come back as the new build by itself (no reload by
+    // hand that would hide a page that did nothing). Otherwise the note is shown: a reload by hand gives the new build.
+    if (upd.mark === versionB) {
+      check(await page.waitFor(`document.readyState === 'complete' && document.getElementById('build-id')?.textContent === ${JSON.stringify(versionB)}`, 'the page\'s own reload into the new build', 60000),
+        'deploy: the page reloaded itself into the new build');
+    } else {
+      await page.reload();
     }
-    if (!self) await page.reload();
     await page.ready();
     check(await page.eval(`return document.getElementById('build-id').textContent;`) === versionB, 'deploy: after a reload the page is the new build');
     const p3 = page.take();
