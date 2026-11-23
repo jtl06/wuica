@@ -509,6 +509,9 @@ impl<'a> Sim<'a> {
         if !self.rob_is_full() && !self.scheduler_is_full() {
             self.renamer_cycle(&mut issue_uops)?;
         }
+        if self.issue_log.is_some() {
+            self.log_issue(issue_uops.len());
+        }
         for &fused in &issue_uops {
             self.fused[fused as usize].issued = clock;
         }
@@ -1122,7 +1125,7 @@ impl<'a> Sim<'a> {
     // ---- ReorderBuffer ----
 
     /// `ReorderBuffer.isFull`
-    fn rob_is_full(&self) -> bool {
+    pub(crate) fn rob_is_full(&self) -> bool {
         self.rob.len() as i64 + self.cfg.issue_width > self.cfg.rb_width
     }
 

@@ -7,6 +7,7 @@ pub mod analyze;
 pub mod config;
 pub mod data;
 pub mod decoded;
+pub mod details;
 pub mod facile;
 mod fasthash;
 pub mod instr_builder;

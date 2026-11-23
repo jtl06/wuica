@@ -3,10 +3,12 @@
 // come from the fixed reference (docs/DEVIATIONS.md): a case with an `error` fails, unless it is an input error
 // (`InputError: ...`), which the module must report with the same text.
 // Usage: node tests-js/analyze_fixtures.mjs [EVERY_NTH=7] [WASM]
+// WUICA_DETAILS=1: the requests ask for `details` (docs/WASM-API.md); the rest of the response must be the same.
 import fs from 'node:fs'; import zlib from 'node:zlib'; import readline from 'node:readline';
 const every = Number(process.argv[2] || 7);
 // WUICA_SHARD=k/n (scripts/check.sh runs shards in parallel): only the k-th of every n sampled cases
 const [shard, shards] = (process.env.WUICA_SHARD || '0/1').split('/').map(Number);
+const details = process.env.WUICA_DETAILS === '1' ? { details: true } : {};
 const wasmPath = process.argv[3] || 'target/wasm32-unknown-unknown/release/wuica_wasm.wasm';
 const { instance } = await WebAssembly.instantiate(fs.readFileSync(wasmPath), {});
 const e = instance.exports, enc = new TextEncoder(), dec = new TextDecoder();
@@ -33,7 +35,7 @@ for (const set of ['sim_fixtures', 'extra_sim_fixtures']) {
     const c = JSON.parse(cut < 0 ? line : line.slice(0, cut) + '}');
     const t = performance.now();
     let r;
-    try { r = call('wuica_analyze', JSON.stringify({ hex: c.hex, arch: c.arch, ...c.options })); }
+    try { r = call('wuica_analyze', JSON.stringify({ hex: c.hex, arch: c.arch, ...c.options, ...details })); }
     catch (err) { r = { error: 'trap: ' + err.message }; }
     tAnalyze += performance.now() - t;
     if (c.error) {

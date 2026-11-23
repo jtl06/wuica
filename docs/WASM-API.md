@@ -135,6 +135,65 @@ On success:
   `ratio` = sum of the latencies / number of carried edges (the iterations the cycle spans) = the `"Dependencies"` limit before
   rounding.
 
+## Details (`"details": true`)
+
+Not in uiCA. With `"details": true` in the request, the response has one more field, `details`; every other field is the same
+as without it, byte for byte (`crates/wuica/tests/details.rs` checks this on every case of the simulation fixtures, and
+`WUICA_DETAILS=1 node tests-js/analyze_fixtures.mjs` on the module). Without the flag, nothing is computed or recorded.
+
+```json
+"details": {
+  "rows": [
+    {
+      "index": 0,
+      "portData": [{"ports": ["Port 0", "Port 1", "Port 5", "Port 6"], "uops": 1}, {"ports": ["Port 2", "Port 3"], "uops": 1}],
+      "uopList": [
+        {"ports": ["Port 2", "Port 3"], "inputs": ["[RSI]"], "outputs": [["pseudo", 5]], "divCycles": 0, "load": true, "storeAddress": false, "storeData": false},
+        {"ports": ["Port 0", "Port 1", "Port 5", "Port 6"], "inputs": ["RAX", "pseudo"], "outputs": [["RAX", 1], ["flags (C)", 1], ["flags (SPAZO)", 1]], "divCycles": 0, "load": false, "storeAddress": false, "storeData": false}
+      ],
+      "latencies": [{"from": "RAX", "to": "RAX", "cycles": 1}, {"from": "mem", "to": "RAX", "cycles": 3}, {"from": "[RSI]", "to": "RAX", "cycles": 6}],
+      "uops": 2, "retireSlots": 1, "uopsMITE": 1, "uopsMS": 0, "tpTable": null, "divCycles": 0,
+      "length": 3, "offset": 0, "crosses": [], "lcp": false, "microcoded": false, "complexDecoder": false,
+      "macroFusedWithPrev": false, "macroFusedWithNext": false, "mayBeEliminated": false, "branch": false, "serializing": false
+    }
+  ],
+  "ports": {"ports": ["Port 6"], "uops": 1.0, "tp": 1.0, "rows": [0.0, 1.0, 0.0]},
+  "issue": {
+    "width": 4, "cycles": 242, "iterations": 242, "first": 246,
+    "slots": {"issued": 2.0, "frontEnd": 2.0, "rob": 0, "rs": 0, "other": 0},
+    "issued": [2, 2, 2], "cause": "FFF"
+  }
+}
+```
+
+(for `add rax, [rsi]; dec r15; jnz` on SKL; shortened).
+
+- `rows`: one entry per row of the uop table (`null` for the register merge and stack sync rows): the instruction's data as the
+  model uses it (uops.info's tables, after uiCA's adjustments). `portData`: the allowed ports and the number of uops for each set
+  (uops.info writes `1*p0156+1*p23`); ports are named as the columns of the uop table. `uopList`: the unfused-domain uops, each
+  with its allowed ports (`null`: no port), its inputs and its outputs with the latency to each. `latencies`: the instruction's
+  latency for each (input, output) pair. `uops`: unfused-domain uops; `retireSlots`: fused-domain uops (issue slots). Operands are registers (`"RAX"`), address registers (`"[RSI]"`), `"flags (C)"` /
+  `"flags (SPAZO)"`, `"mem"`, and `"pseudo"` (a value passed between the uops of one instruction). `tpTable`: the reciprocal
+  throughput from the tables, if it limits the instruction. Front end: `length` in bytes, `offset` of the first byte from the
+  64-byte boundary before the first iteration (the alignment offset plus the position in the block), `crosses` the 16-, 32- and
+  64-byte boundaries it crosses there, `lcp` a length-changing prefix (a predecoder stall), `microcoded` uops from the microcode
+  sequencer, `complexDecoder` needs the complex decoder, `macroFusedWithPrev` / `macroFusedWithNext`.
+- `ports`: the set of ports behind the `"Ports"` limit (Facile's port model as uiCA computes it: of the unions of two allowed port
+  sets, the one with the most uops per port; the first such union on a tie), the uops per iteration that can only use these
+  ports, `tp` = uops / number of ports (the `"Ports"` limit before rounding), and per row its uops on the set. `null` if no uop
+  needs a port.
+- `issue`: the issue slots of the steady state (the cycles from the one that issued the end of the first relevant round to the
+  one that issued the end of the last one; `iterations` rounds): per iteration, the issued fused-domain uops and the lost slots
+  (issue width − issued, per cycle) by the cause the simulation had: `frontEnd` (the IDQ ran empty), `rob` (the reorder buffer
+  was full), `rs` (the scheduler was full), `other` (the next uop did not fit into the cycle, a serializing instruction waited,
+  or register merge uops were inserted). `issued` and `cause` list the cycles of the window one by one (at most 4096, from
+  cycle `first`): `"."` for a cycle that issued the full width, else `F`, `R`, `S` or `O`. `null` if the simulation has no
+  steady-state window (one round).
+
+Speed (`crates/wuica/examples/phases.rs`, `DETAILS=1`; `tests-js/analyze_fixtures.mjs`, `WUICA_DETAILS=1`): about 10 % more time
+per analysis for small blocks, about 25 % for the 1,500-instruction SHA-256 example (most of it the larger JSON); the default
+request is as fast as before.
+
 ## Assembler
 
 Assembly text is turned into machine code by a separate, lazily loaded module (`assembler/`, LLVM's x86 assembler); its interface

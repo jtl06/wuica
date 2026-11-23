@@ -294,6 +294,7 @@ pub(crate) fn build_result(mut sim: Sim, tp: f64, first_relevant_round: i64, las
         relevant_instr_instances_for_instr: relevant,
         ports,
         port_columns,
+        issue_log: None,
         instrs: sim
             .instrs
             .iter()

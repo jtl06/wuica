@@ -7,7 +7,7 @@ use crate::decoded::DecodedInstr;
 use crate::facile::{self, InstrInstanceSummary, InstrSource, SimSummary, SimView, UopSummary};
 use crate::instr_builder::build_instructions;
 use crate::model::{InstrList, OpId, Operand};
-use crate::sim::{simulate, InitPolicy, SimOptions, SimResult, UopSource};
+use crate::sim::{simulate, simulate_with_issue_log, InitPolicy, SimOptions, SimResult, UopSource};
 use serde::{Deserialize, Serialize};
 
 fn default_init_policy() -> String {
@@ -42,6 +42,9 @@ pub struct Request {
     pub min_cycles: i64,
     #[serde(rename = "includeTrace", default)]
     pub include_trace: bool,
+    /// add [`crate::details::Details`] to the response (not in the reference)
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub details: bool,
 }
 
 impl Request {
@@ -57,6 +60,7 @@ impl Request {
             min_iterations: default_min_iterations(),
             min_cycles: default_min_cycles(),
             include_trace: false,
+            details: false,
         }
     }
 }
@@ -105,6 +109,9 @@ pub struct Response {
     /// the loop-carried dependency cycle that gives the "Dependencies" limit; only if that limit is not 0
     #[serde(rename = "criticalPath", skip_serializing_if = "Option::is_none")]
     pub critical_path: Option<CriticalPath>,
+    /// only with `"details": true` in the request
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<crate::details::Details>,
 }
 
 /// The cycle of the latency graph with the maximum latency per iteration (`edgesOnMaxCycle` of `computeMaximumLatencyForGraph`),
@@ -347,7 +354,8 @@ pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, 
     // error or panics. A panic is turned into an error here (not in WebAssembly, where a panic aborts the call).
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Response, String> {
         let instrs = build_instructions(decoded, config, uarch, data, request.alignment_offset, request.no_micro_fusion, request.no_macro_fusion);
-        let r = simulate(&instrs, config, uarch, &options).map_err(|e| e.to_string())?;
+        let r = if request.details { simulate_with_issue_log(&instrs, config, uarch, &options) } else { simulate(&instrs, config, uarch, &options) }
+            .map_err(|e| e.to_string())?;
         // the dependency cycle with the maximum latency ratio: its ratio is the Dependencies limit, and the cycle itself is the
         // critical path of the response
         let dep_cycle = facile::compute_dependency_limit_with_cycle(&instrs, config, &request.init_policy);
@@ -365,6 +373,7 @@ pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, 
         let kinds: Vec<(&'static str, Option<usize>)> = (0..table_data.rows.len()).map(|line| table_data.line(line)).collect();
         let columns = table_data.columns;
         let row_of_instr: Vec<usize> = kinds.iter().enumerate().filter_map(|(line, k)| k.1.map(|_| line)).collect();
+        let details = request.details.then(|| crate::details::details(&instrs, config, &r, request.alignment_offset, &row_of_instr, kinds.len()));
         let rows = kinds
             .into_iter()
             .zip(table_data.rows)
@@ -400,6 +409,7 @@ pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, 
             text_with_hyperlinks,
             trace: request.include_trace.then(|| r.to_json()),
             critical_path: critical_path_for(&instrs, &dep_cycle, &row_of_instr),
+            details,
         })
     }));
     match result {
