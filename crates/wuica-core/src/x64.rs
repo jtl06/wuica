@@ -1,6 +1,8 @@
 //! Register helpers (uiCA's `x64_lib.py`) and `memWidth` (from `instructions.py`). These are literal ports: the tests on substrings
 //! of register names are those of the Python code, including their quirks.
 
+use crate::substr::has;
+
 /// The general-purpose registers (`GPRegs`).
 pub const GP_REGS: &[&str] = &[
     "AH", "AL", "AX", "BH", "BL", "BP", "BPL", "BX", "CH", "CL", "CX", "DH", "DI", "DIL", "DL", "DX", "EAX", "EBP", "EBX", "ECX", "EDI",
@@ -17,28 +19,93 @@ pub fn is_gp_reg(reg: &str) -> bool {
     gp_reg_to_64(reg).is_some()
 }
 
-/// `regTo64(reg) if reg in GPRegs else None`, as one lookup (the test `gp_reg_table` checks it against [`GP_REGS`] and
-/// [`reg_to_64`])
-fn gp_reg_to_64(reg: &str) -> Option<&'static str> {
-    match reg {
-        "AH" | "AL" | "AX" | "EAX" | "RAX" => Some("RAX"),
-        "BH" | "BL" | "BX" | "EBX" | "RBX" => Some("RBX"),
-        "BP" | "BPL" | "EBP" | "RBP" => Some("RBP"),
-        "CH" | "CL" | "CX" | "ECX" | "RCX" => Some("RCX"),
-        "DH" | "DL" | "DX" | "EDX" | "RDX" => Some("RDX"),
-        "DI" | "DIL" | "EDI" | "RDI" => Some("RDI"),
-        "ESI" | "RSI" | "SI" | "SIL" => Some("RSI"),
-        "ESP" | "RSP" | "SP" | "SPL" => Some("RSP"),
-        "R10" | "R10B" | "R10D" | "R10W" => Some("R10"),
-        "R11" | "R11B" | "R11D" | "R11W" => Some("R11"),
-        "R12" | "R12B" | "R12D" | "R12W" => Some("R12"),
-        "R13" | "R13B" | "R13D" | "R13W" => Some("R13"),
-        "R14" | "R14B" | "R14D" | "R14W" => Some("R14"),
-        "R15" | "R15B" | "R15D" | "R15W" => Some("R15"),
-        "R8" | "R8B" | "R8D" | "R8W" => Some("R8"),
-        "R9" | "R9B" | "R9D" | "R9W" => Some("R9"),
-        _ => None,
+/// The 64-bit registers of [`GP_REG_TABLE`].
+const R64: [&str; 16] = ["RAX", "RBX", "RCX", "RDX", "RSP", "RBP", "RSI", "RDI", "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15"];
+
+/// The general-purpose registers (2 to 4 characters) with the index in [`R64`] of the 64-bit register that contains them.
+const GP_REG_NAMES: [(&str, u8); 68] = [
+    ("AH", 0), ("AL", 0), ("AX", 0), ("EAX", 0), ("RAX", 0),
+    ("BH", 1), ("BL", 1), ("BX", 1), ("EBX", 1), ("RBX", 1),
+    ("CH", 2), ("CL", 2), ("CX", 2), ("ECX", 2), ("RCX", 2),
+    ("DH", 3), ("DL", 3), ("DX", 3), ("EDX", 3), ("RDX", 3),
+    ("ESP", 4), ("RSP", 4), ("SP", 4), ("SPL", 4),
+    ("BP", 5), ("BPL", 5), ("EBP", 5), ("RBP", 5),
+    ("ESI", 6), ("RSI", 6), ("SI", 6), ("SIL", 6),
+    ("DI", 7), ("DIL", 7), ("EDI", 7), ("RDI", 7),
+    ("R8", 8), ("R8B", 8), ("R8D", 8), ("R8W", 8),
+    ("R9", 9), ("R9B", 9), ("R9D", 9), ("R9W", 9),
+    ("R10", 10), ("R10B", 10), ("R10D", 10), ("R10W", 10),
+    ("R11", 11), ("R11B", 11), ("R11D", 11), ("R11W", 11),
+    ("R12", 12), ("R12B", 12), ("R12D", 12), ("R12W", 12),
+    ("R13", 13), ("R13B", 13), ("R13D", 13), ("R13W", 13),
+    ("R14", 14), ("R14B", 14), ("R14D", 14), ("R14W", 14),
+    ("R15", 15), ("R15B", 15), ("R15D", 15), ("R15W", 15),
+];
+
+/// The bytes of a name of at most 4 bytes as one number (little endian, zero-padded); names are not empty and have no zero
+/// byte, so different names give different numbers.
+const fn pack(b: &[u8]) -> u32 {
+    let mut k = 0u32;
+    let mut i = 0;
+    while i < b.len() {
+        k |= (b[i] as u32) << (8 * i);
+        i += 1;
     }
+    k
+}
+
+/// [`GP_REG_NAMES`] as (packed name, index in [`R64`]), sorted by the packed name (for a binary search)
+const GP_REG_TABLE: [(u32, u8); 68] = {
+    let mut t = [(0u32, 0u8); 68];
+    let mut i = 0;
+    while i < t.len() {
+        t[i] = (pack(GP_REG_NAMES[i].0.as_bytes()), GP_REG_NAMES[i].1);
+        i += 1;
+    }
+    // insertion sort
+    let mut i = 1;
+    while i < t.len() {
+        let mut j = i;
+        while j > 0 && t[j - 1].0 > t[j].0 {
+            let x = t[j];
+            t[j] = t[j - 1];
+            t[j - 1] = x;
+            j -= 1;
+        }
+        i += 1;
+    }
+    t
+};
+
+/// `regTo64(reg) if reg in GPRegs else None`, as one lookup (the test `gp_reg_table` checks it against [`GP_REGS`] and
+/// [`reg_to_64`]): a binary search for the bytes of the name as one number (a string `match` compares the name with the
+/// candidates one after the other)
+fn gp_reg_to_64(reg: &str) -> Option<&'static str> {
+    gp_reg_index(reg).map(|r| R64[r])
+}
+
+/// For a general-purpose register, the index of the 64-bit register that contains it in RAX, RBX, RCX, RDX, RSP, RBP, RSI, RDI,
+/// R8, ..., R15 (so `getCanonicalReg(reg)` is one of RAX..RDX if and only if this is 0..=3); `None` for other registers
+pub(crate) fn gp_reg_index(reg: &str) -> Option<usize> {
+    let b = reg.as_bytes();
+    if b.len() < 2 || b.len() > 4 || b.iter().any(|&c| c == 0) {
+        return None;
+    }
+    let k = pack(b);
+    let (mut lo, mut hi) = (0, GP_REG_TABLE.len());
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        let (m, r) = GP_REG_TABLE[mid];
+        if m == k {
+            return Some(r as usize);
+        }
+        if m < k {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    None
 }
 
 /// `reg in High8Regs`
@@ -98,7 +165,7 @@ pub fn canonical_reg_cow(reg: &str) -> std::borrow::Cow<'_, str> {
     use std::borrow::Cow;
     if let Some(r64) = gp_reg_to_64(reg) {
         Cow::Borrowed(r64)
-    } else if reg.contains("MM") {
+    } else if has(reg, "MM") {
         // re.sub('^[YZ]', 'X', reg)
         match reg.as_bytes().first() {
             Some(b'Y') | Some(b'Z') => Cow::Owned(format!("X{}", &reg[1..])),
@@ -175,6 +242,17 @@ mod tests {
         for reg in ["RIP", "RFLAGS", "XMM0", "YMM15", "MM0", "K1", "ST0", "STACKPUSH", "FS", "", "rax", "R16", "EIP"] {
             assert_eq!(gp_reg_to_64(reg), None, "{reg}");
             assert!(!GP_REGS.contains(&reg));
+        }
+        // every name of up to 4 characters from the characters of the register names (and a zero byte)
+        let alphabet: Vec<char> = "ABCDEHILMPRSWX0123456789\0".chars().collect();
+        let mut names = vec![String::new()];
+        for _ in 0..4 {
+            let longer: Vec<String> = names.iter().flat_map(|n| alphabet.iter().map(move |c| format!("{n}{c}"))).collect();
+            for name in &longer {
+                let expected = GP_REGS.contains(&name.as_str()).then(|| reg_to_64(name).unwrap());
+                assert_eq!(gp_reg_to_64(name), expected, "{name:?}");
+            }
+            names = longer;
         }
     }
 

@@ -13,4 +13,5 @@ pub mod instr_builder;
 pub mod jsoncmp;
 pub mod model;
 pub mod sim;
+mod substr;
 pub mod x64;

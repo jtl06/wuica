@@ -45,7 +45,24 @@ fn format_number(v: f64, buf: &mut String) -> &str {
         if v == 0.0 {
             return "";
         }
-        write!(buf, "{}", v as i64).unwrap();
+        // the digits of the integer (what `{}` writes, without the formatting machinery)
+        let i = v as i64;
+        let mut digits = [0u8; 20];
+        let mut n = i.unsigned_abs();
+        let mut k = digits.len();
+        loop {
+            k -= 1;
+            digits[k] = b'0' + (n % 10) as u8;
+            n /= 10;
+            if n == 0 {
+                break;
+            }
+        }
+        if i < 0 {
+            buf.push('-');
+        }
+        // (ASCII digits)
+        buf.push_str(std::str::from_utf8(&digits[k..]).unwrap());
         return buf;
     }
     write!(buf, "{v:.2}").unwrap();
@@ -489,15 +506,26 @@ impl SimResult {
             &cells[start..ends[i]]
         };
 
-        let border_line = |out: &mut String, first_c: char, middle_c: char, last_c: char| {
-            for (k, &w) in widths.iter().enumerate() {
+        // the kind of the separator before each column (from its name, once): 0 for "MITE", 1 for the other columns that start a
+        // group, 2 for the others
+        let sep: Vec<u8> = (0..n_cols)
+            .map(|k| {
                 let h = name(k);
                 if h == "MITE" {
-                    out.push(first_c);
+                    0
                 } else if h == "Issued" || h == "Exec." || h == first_port_column || h == "Notes" {
-                    out.push(middle_c);
+                    1
                 } else {
-                    out.push('\u{2500}');
+                    2
+                }
+            })
+            .collect();
+        let border_line = |out: &mut String, first_c: char, middle_c: char, last_c: char| {
+            for (k, &w) in widths.iter().enumerate() {
+                match sep[k] {
+                    0 => out.push(first_c),
+                    1 => out.push(middle_c),
+                    _ => out.push('\u{2500}'),
                 }
                 for _ in 0..w {
                     out.push('\u{2500}');
@@ -508,8 +536,7 @@ impl SimResult {
         };
         // a cell of a line of the table: the separator and the value, centered ('{:^w}'.format(val)); a line ends with '\u{2502}'
         let table_cell = |out: &mut String, k: usize, val: &str| {
-            let h = name(k);
-            if h == "MITE" || h == "Issued" || h == "Exec." || h == first_port_column || h == "Notes" {
+            if sep[k] != 2 {
                 out.push('\u{2502}');
             } else {
                 out.push(' ');

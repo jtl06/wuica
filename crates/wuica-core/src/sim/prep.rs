@@ -9,8 +9,8 @@ use super::{FxHashMap, SFused, SLam, SUop, SimError, NO_PORT, UNSET};
 use crate::config::{UArch, UArchConfig};
 use crate::decoded::MemAddr;
 use crate::model::{Instr, InstrList, OpId, Operand, TpKey, UopProperties};
+use crate::substr::has;
 use crate::x64::{canonical_reg, is_gp_reg, mem_width, reg_size};
-use std::collections::HashMap;
 
 pub(crate) const NONE: u32 = u32::MAX;
 
@@ -42,7 +42,7 @@ impl Keys {
             return k;
         }
         let k = self.info.len() as Key;
-        self.info.push(KeyInfo { is_gpr: is_gp_reg(s), has_mm: s.contains("MM") });
+        self.info.push(KeyInfo { is_gpr: is_gp_reg(s), has_mm: has(s, "MM") });
         self.map.insert(s.to_string(), k);
         k
     }
@@ -389,7 +389,7 @@ fn instr_prop_flags(instr: &Instr, flags: u32) -> u32 {
     if flags & (pf::LAST | pf::REG_MERGE | pf::STACK_SYNC) != 0 {
         f |= pf::ENDS_INSTR;
     }
-    if instr.instr_str.contains("M256") {
+    if has(&instr.instr_str, "M256") {
         f |= pf::M256;
     }
     f
@@ -513,7 +513,7 @@ impl Prep {
         let mut props: Vec<PropInfo> = Vec::new();
         let mut info = Vec::new();
         // blockedResources: 'div', 'port' + p, and the TP keys
-        let mut tp_res: HashMap<&TpKey, usize> = HashMap::new();
+        let mut tp_res: FxHashMap<&TpKey, usize> = FxHashMap::default();
         let mut n_resources = 1 + ports.len();
 
         let mut port_lists: Vec<u8> = Vec::new();
@@ -688,15 +688,15 @@ impl Prep {
             let out_regs = regs(&instr.output_reg_operands)?;
             let addr_regs = regs(&instr.mem_addr_operands)?;
             let s = instr.instr_str.as_str();
-            let av_kind = if s.contains("MOV") && !s.contains("CMOV") {
+            let av_kind = if has(s, "MOV") && !has(s, "CMOV") {
                 AvKind::Copy
-            } else if s.contains("ADD") && instr.immediate.is_some() {
+            } else if has(s, "ADD") && instr.immediate.is_some() {
                 AvKind::Add(instr.immediate.unwrap())
-            } else if s.contains("SUB") && instr.immediate.is_some() {
+            } else if has(s, "SUB") && instr.immediate.is_some() {
                 AvKind::Sub(instr.immediate.unwrap())
-            } else if s.contains("INC") {
+            } else if has(s, "INC") {
                 AvKind::Inc
-            } else if s.contains("DEC") {
+            } else if has(s, "DEC") {
                 AvKind::Dec
             } else {
                 AvKind::Fresh
@@ -747,7 +747,7 @@ impl Prep {
                     ["MOV (R64, M64)", "MOV (RAX, M64)", "MOV (R32, M32)", "MOV (EAX, M32)", "MOVSXD (R64, M32)", "POP (R64)"].contains(&s),
                     inf::FAST_PTR_CHASING_SOURCE,
                 ),
-                (s.contains("I64"), inf::I64),
+                (has(s, "I64"), inf::I64),
                 (instr.uops == 0, inf::NO_UOPS),
                 (out_regs.first().is_some_and(|r| r.1 == 32), inf::OUT_REG0_IS_32),
                 (in_regs.iter().chain(addr_regs.iter()).any(|r| r.0 == rsp && !r.2), inf::READS_RSP_EXPLICITLY),
