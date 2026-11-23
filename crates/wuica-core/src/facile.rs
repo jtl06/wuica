@@ -920,6 +920,13 @@ pub fn compute_dependency_limit(instrs: &InstrList, config: &UArchConfig, init_p
     compute_maximum_latency_for_graph(instrs, &generate_latency_graph(instrs, config, init_policy)).max_cycle_ratio
 }
 
+/// As [`compute_dependency_limit`] (`maximum.max_cycle_ratio` is that limit), with the cycle that gives it and the graph, whose
+/// `nodes_for_instr` map the operands on the cycle back to their instructions.
+pub fn compute_dependency_cycle(instrs: &InstrList, config: &UArchConfig, init_policy: &str) -> (MaximumLatency, LatencyGraph) {
+    let graph = generate_latency_graph(instrs, config, init_policy);
+    (compute_maximum_latency_for_graph(instrs, &graph), graph)
+}
+
 // ---------------------------------------------------------------------------------------------------------------------------
 // printBottlenecks
 // ---------------------------------------------------------------------------------------------------------------------------

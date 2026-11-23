@@ -84,6 +84,11 @@ export interface AnalyzeResult {
   /** uiCA's complete text report. */
   text: string;
   trace: unknown | null;
+  /** The loop-carried dependency cycle behind the "Dependencies" limit; only if that limit is not 0 (docs/WASM-API.md). */
+  criticalPath?: {
+    ratio: number;
+    edges: { from: number; to: number; operand: string; latency: number; carried: boolean }[];
+  };
   /** The assembled machine code (lower-case hex), when `source` was given. */
   hex?: string;
   /** Assembler warnings and the decode warning. */

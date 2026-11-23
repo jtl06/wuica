@@ -15,6 +15,7 @@ import { createComparePanels } from './compare-view.js';
 import { createTracePanel } from './trace.js';
 import { createAB } from './ab.js';                 // A–B comparison
 import { createCeImport } from './godbolt-ui.js';   // import from Compiler Explorer
+import { createInsight } from './insight-view.js';
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -95,6 +96,11 @@ const panels = createComparePanels({
   },
   wantResult: () => { if (ready && !lastView && !ab?.active() && el.code.value.trim() !== '') run(); },
 });
+// The critical chain and the cost column on the result (insight-view.js).
+const insight = createInsight({
+  engine: () => engine,
+  onToggle: () => { const o = insight.open(); state.cost = o.cost; state.costNop = o.cost && o.nop; syncUrl(true); },
+});
 const tracePanel = createTracePanel({ analyze: (request) => engine.analyze(request), config: (v) => uarch?.configs?.[v.archKey] });
 let ab = null; // the A–B comparison (ab.js); in A–B mode lastView is {ab: view} (no trace, no compare panels)
 let ce = null; // the Compiler Explorer import (godbolt-ui.js)
@@ -168,6 +174,7 @@ function writeControls() {
   el.iter.value = state.minIterations;
   el.cycles.value = state.minCycles;
   panels.setOpen({ cpus: state.cmpCpus, sweep: state.cmpSweep });
+  insight.setOpen({ cost: state.cost, nop: state.costNop });
   paintDerived();
   ab?.paint();
 }
@@ -411,6 +418,7 @@ function draw() {
   if (lastView.ab) { ab.draw(lastView.ab); paintStale(); return; }
   const trace = lastView.response && !lastView.response.error ? tracePanel.update(lastView) : null;
   renderResult(el.body, { ...lastView, trace, ui, onUi: (k, v) => { ui[k] = v; if (k === 'hideEmpty') draw(); } });
+  insight.decorate(el.body, lastView);
   paintStale();
 }
 

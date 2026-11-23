@@ -22,6 +22,8 @@ export const DEFAULT_STATE = Object.freeze({
   bArch: '',              // '' = the same microarchitecture as A
   bText: '',
   bScale: 1,              // 1..64: one iteration of B does the work of this many iterations of A (e.g. B is unrolled)
+  cost: false,            // the cost column and its variant (insight-view.js)
+  costNop: false,
 });
 
 export const LIMITS = Object.freeze({
@@ -34,7 +36,7 @@ const MAX_TEXT = 200000; // characters accepted from a link
 
 const INTS = { al: 'alignmentOffset', mi: 'minIterations', mc: 'minCycles' };
 const FLAGS = { sfe: 'simpleFrontEnd', nmi: 'noMicroFusion', nma: 'noMacroFusion' };
-const VIEWS = { cmpcpu: 'cmpCpus', cmpsweep: 'cmpSweep' }; // open panels; not analysis options
+const VIEWS = { cmpcpu: 'cmpCpus', cmpsweep: 'cmpSweep', cost: 'cost', costnop: 'costNop' }; // open panels; not analysis options
 
 function toBase64Url(text) {
   const bytes = new TextEncoder().encode(text);
