@@ -186,7 +186,10 @@ export function createDeps(env) {
     // the latency of an arc, next to its vertical part: the chain's always, the selected instruction's while selected
     const latLabel = (e, cls) => {
       const t = latText(e);
-      return t ? s('text', { class: `dp-lat ${cls}`, x: X0 + (e.lane + 1) * lane + 2, y: (y(e.a) + y(e.b)) / 2 + 4, 'aria-hidden': 'true' }, document.createTextNode(t)) : null;
+      if (!t) return null;
+      // neighbouring lanes are close: labels of even lanes go left of the arc, of odd lanes right, so they do not run together
+      const x = X0 + (e.lane + 1) * lane, left = e.lane % 2 === 0;
+      return s('text', { class: `dp-lat ${cls}`, x: left ? x - 2 : x + 2, 'text-anchor': left ? 'end' : 'start', y: (y(e.a) + y(e.b)) / 2 + 4, 'aria-hidden': 'true' }, document.createTextNode(t));
     };
     const latsCrit = s('g', { class: 'dp-lats' }, ...g.edges.filter((e) => e.critical).map((e) => latLabel(e, 'crit')).filter(Boolean));
     const latsSel = s('g', { class: 'dp-lats sel' });
