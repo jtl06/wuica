@@ -710,7 +710,9 @@ impl<'a> Sim<'a> {
 
         if prop_flags & pf::ENDS_INSTR != 0 {
             let eliminated = self.uops[u as usize].eliminated;
-            for i in 0..self.rn.cur_instr_rnd_rename_dict.len() {
+            // (nothing to discard if both dicts are empty)
+            let n_multi_use = self.rn.multi_use_gpr_dict.len() + self.rn.multi_use_simd_dict.len();
+            for i in 0..if n_multi_use == 0 { 0 } else { self.rn.cur_instr_rnd_rename_dict.len() } {
                 let (key, cur_entry) = self.rn.cur_instr_rnd_rename_dict[i];
                 if let Some(prev) = self.rn.rename_dict[key as usize] {
                     let prev_ren_op = prev.renamed_op;
@@ -737,15 +739,13 @@ impl<'a> Sim<'a> {
                 }
             }
 
-            for i in 0..self.rn.cur_instr_rnd_rename_dict.len() {
-                let key = self.rn.cur_instr_rnd_rename_dict[i].0;
-                self.rn.folded_width[key as usize] = self.rn.cur_instr_folded_width.iter().find(|e| e.0 == key).map(|e| e.1);
+            // foldedWidth and renameDict.update(curInstrRndRenameDict) (independent for each key: one loop)
+            let rn = &mut self.rn;
+            for &(key, entry) in &rn.cur_instr_rnd_rename_dict {
+                rn.folded_width[key as usize] = rn.cur_instr_folded_width.iter().find(|e| e.0 == key).map(|e| e.1);
+                rn.rename_dict[key as usize] = Some(entry);
             }
-            self.rn.cur_instr_folded_width.clear();
-            for i in 0..self.rn.cur_instr_rnd_rename_dict.len() {
-                let (key, entry) = self.rn.cur_instr_rnd_rename_dict[i];
-                self.rn.rename_dict[key as usize] = Some(entry);
-            }
+            rn.cur_instr_folded_width.clear();
             self.rn.abs_val_gen.finish_cur_instr();
             self.rn.cur_instr_rnd_rename_dict.clear();
             self.rn.cur_instr_pseudo_op_dict.clear();

@@ -378,7 +378,8 @@ impl<'a> Sim<'a> {
                     }
                 }
             }
-            if s.blocked_resources[1 + port] != 0.0 {
+            // (a port is only blocked with slow256BitMemAcc)
+            if cfg.slow_256bit_mem_acc && s.blocked_resources[1 + port] != 0.0 {
                 continue;
             }
             let queue = if use_div_queue { &mut s.ready_div_uops } else { &mut s.ready_queue[port] };
