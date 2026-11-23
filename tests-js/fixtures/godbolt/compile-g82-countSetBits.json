@@ -1,0 +1,216 @@
+{
+ "inputFilename": "example.cpp",
+ "code": 0,
+ "okToCache": true,
+ "timedOut": false,
+ "stdout": [],
+ "stderr": [],
+ "truncated": false,
+ "execTime": 107,
+ "processExecutionResultTime": 0.004370000213384628,
+ "instructionSet": "amd64",
+ "compilationOptions": [
+  "-g",
+  "-o",
+  "/app/output.s",
+  "-fno-verbose-asm",
+  "-c",
+  "-fdiagnostics-color=always",
+  "-O2",
+  "-march=haswell",
+  "-Wall",
+  "-Wextra",
+  "-pedantic",
+  "/app/example.cpp"
+ ],
+ "downloads": [],
+ "tools": [],
+ "asmSize": 2976,
+ "asm": [
+  {
+   "labels": [],
+   "source": null,
+   "text": "countSetBits(unsigned int):"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "31",
+    "c0"
+   ],
+   "address": 0,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 3
+   },
+   "text": " xor    eax,eax"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "85",
+    "ff"
+   ],
+   "address": 2,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 4
+   },
+   "text": " test   edi,edi"
+  },
+  {
+   "labels": [
+    {
+     "name": "countSetBits(unsigned int)",
+     "range": {
+      "startCol": 13,
+      "endCol": 39
+     }
+    }
+   ],
+   "opcodes": [
+    "74",
+    "1a"
+   ],
+   "address": 4,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 4
+   },
+   "text": " je     20 <countSetBits(unsigned int)+0x20>"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "66",
+    "2e",
+    "0f",
+    "1f",
+    "84",
+    "00",
+    "00",
+    "00",
+    "00",
+    "00"
+   ],
+   "address": 6,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 4
+   },
+   "text": " cs nop WORD PTR [rax+rax*1+0x0]"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "ff",
+    "c0"
+   ],
+   "address": 16,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 6
+   },
+   "text": " inc    eax"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "c4",
+    "e2",
+    "40",
+    "f3",
+    "cf"
+   ],
+   "address": 18,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 4
+   },
+   "text": " blsr   edi,edi"
+  },
+  {
+   "labels": [
+    {
+     "name": "countSetBits(unsigned int)",
+     "range": {
+      "startCol": 13,
+      "endCol": 39
+     }
+    }
+   ],
+   "opcodes": [
+    "75",
+    "f7"
+   ],
+   "address": 23,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 4
+   },
+   "text": " jne    10 <countSetBits(unsigned int)+0x10>"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "c3"
+   ],
+   "address": 25,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 4
+   },
+   "text": " ret"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "66",
+    "0f",
+    "1f",
+    "44",
+    "00",
+    "00"
+   ],
+   "address": 26,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 4
+   },
+   "text": " nop    WORD PTR [rax+rax*1+0x0]"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "c3"
+   ],
+   "address": 32,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 11
+   },
+   "text": " ret"
+  }
+ ],
+ "labelDefinitions": {
+  "countSetBits(unsigned int)": 1
+ },
+ "parsingTime": 1,
+ "filteredCount": 12,
+ "externalParserUsed": true,
+ "objdumpTime": 27,
+ "optOutput": [],
+ "popularArguments": {},
+ "retreivedFromCache": true,
+ "retreivedFromCacheTime": 32.36908300220966
+}

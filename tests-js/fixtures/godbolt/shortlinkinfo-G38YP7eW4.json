@@ -1,0 +1,15 @@
+{
+ "sessions": [
+  {
+   "id": 1,
+   "language": "c++",
+   "source": "// flags: -fvisibility=hidden\nint square(int num) __attribute__((visibility(\"default\")));\nint square(int num) {\n    return num * num;\n}\n\nint main() {\n    return square(2);\n}",
+   "compilers": [
+    {
+     "id": "g132",
+     "options": "-fvisibility=hidden"
+    }
+   ]
+  }
+ ]
+}

@@ -1018,7 +1018,7 @@ function r0Rnd(v, rA) { return rA > 0 ? v.model.uops[v.rows[rA - 1]].rnd : -1; }
 // it returns the element to put into the result (always the same element).
 export function createTracePanel({ analyze, config = () => null }) {
   const body = el('div', { class: 'trace-body' });
-  const summary = el('summary', null, 'Cycle-by-cycle trace ', el('span', { class: 'hint', text: 'every uop of a few iterations, by cycle' }));
+  const summary = el('summary', { title: 'every uop of a few iterations, by cycle' }, 'cycle by cycle');
   const details = el('details', { class: 'trace-panel' }, summary, body);
   const state = { range: 'steady', mode: 'chart', scale: null, fit: true, scrollLeft: 0, scrollTop: 0 };
   let view = null, viewer = null, loading = null, force = false;

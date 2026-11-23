@@ -172,6 +172,9 @@ try {
       out.notice = $('notice').hidden ? '' : $('notice').innerText;
       out.groups = [...$('arch').querySelectorAll('optgroup')].map((g) => g.label + ': ' + [...g.children].map((o) => o.value).join(','));
       out.arch = $('arch').value; out.examples = [...$('examples').options].map((o) => o.value).join(',');
+      out.exGroups = [...$('examples').querySelectorAll('optgroup')].map((g) => g.label).join(',');
+      out.footer = [document.querySelector('footer').innerText.replace(/\\s+/g, ' ').trim(), [...document.querySelectorAll('footer a')].map((a) => a.href).join(' '), document.querySelector('footer a.gh')?.getAttribute('aria-label'),
+        document.body.innerText.match(/(?<!un)official|AGPL|Plex|OFL|Typeface|license/gi)?.join(',') ?? ''];
       out.focusable = ['code', 'arch', 'run', 'copy-link', 'examples', 'mode-asm', 'mode-hex'].every((id) => $(id).tabIndex >= 0);
       out.labelled = [...document.querySelectorAll('input, select, textarea')].filter((e) => !(e.labels?.length || e.getAttribute('aria-label') || e.getAttribute('aria-labelledby'))).map((e) => e.id || e.name);
       out.empty = $('result-body').innerText;
@@ -201,17 +204,18 @@ try {
       out.reportStaysOpen = document.querySelector('details.report-wrap').open;
       out.synthetic2 = { notes: [...document.querySelectorAll('table.uops td.note')].map((td) => td.textContent).join(''), nolink: !document.querySelector('table.uops tr.unsupported a'), caveat: caveats(), mode: mode() === 'unrolled',
         listing: listing().trimEnd().split('\\n'), instrs: document.querySelectorAll('table.uops tbody tr:not(.extra)').length, legend: document.querySelector('.legend').innerText };
-      const hidden = document.querySelectorAll('table.uops thead th').length; $('hide-empty').click(); await wait(50);
-      out.columns = [hidden, document.querySelectorAll('table.uops thead th').length];
+      out.columns = [document.querySelectorAll('table.uops thead th').length, !!$('hide-empty')];
       await example('error'); out.error = document.querySelector('.error-box')?.textContent;
       return out;`);
     check(r.robots === 'noindex' && /wuica/.test(r.title), 'mock: title and robots');
     check(/Mock mode/.test(r.notice), 'mock: the notice says so', r.notice);
     check(r.groups.length === 1 && r.groups[0] === 'by release date: SNB,IVB,HSW,BDW,SKL,KBL,SKX,CFL,CLX,ICL,TGL,ZEN3,RKL,ICX,ADL-P' && r.arch === 'SKL', 'mock: the microarchitecture menu', JSON.stringify(r.groups));
-    check(r.examples === ',chain,loadstore,avx,stack,synthetic,error', 'mock: the examples menu', r.examples);
+    check(r.examples === ',chain,loadstore,avx,stack,saxpy,dot1,dot4,popcnt,ptrchase,strlen,crc32,memcpy,gemm,synthetic,error' && r.exGroups === 'basics,classic loops,mock', 'mock: the examples menu', JSON.stringify([r.examples, r.exGroups]));
+    check(/^unofficial port of uiCA by Andreas Abel and Jan Reineke\. data from uops\.info\. v0\.1\.0-dev · LLVM 22\.1\.2 · Intel XED · build \S+$/.test(r.footer[0])
+      && r.footer[1] === 'https://github.com/andreas-abel/uiCA https://www.uops.info/ https://github.com/jtl06/wuica' && r.footer[2] === 'Source on GitHub' && r.footer[3] === '', 'mock: the footer (credit, GitHub, versions; no license or font text)', JSON.stringify(r.footer));
     check(r.focusable && r.labelled.length === 0, 'mock: controls are focusable and labelled', JSON.stringify(r.labelled));
     check(r.empty === '', 'mock: empty state', r.empty);
-    check(/script-src 'self' 'wasm-unsafe-eval' https:\/\/static\.cloudflareinsights\.com;/.test(r.csp) && /connect-src 'self' https:\/\/cloudflareinsights\.com;/.test(r.csp) && !/unsafe-inline/.test(r.csp), 'mock: the CSP allows the Cloudflare beacon and nothing else', r.csp);
+    check(/script-src 'self' 'wasm-unsafe-eval' https:\/\/static\.cloudflareinsights\.com;/.test(r.csp) && /connect-src 'self' https:\/\/cloudflareinsights\.com https:\/\/godbolt\.org;/.test(r.csp) && !/unsafe-inline/.test(r.csp), 'mock: the CSP allows the Cloudflare beacon and Compiler Explorer (link import), nothing else', r.csp);
     check(r.tp === '2.00' && /cycles\/iteration/.test(r.meta) && r.mode === 'loop' && /mock data/.test(r.meta) && /Dependencies/.test(r.meta), 'mock: Ctrl+Enter gives the result of the first example', r.meta.slice(0, 300));
     check(r.listing[0] === CHAIN && !r.listing[1], 'mock: the objdump listing (closed for hex input)', JSON.stringify(r.listing));
     check(r.copyVisible && r.copied[0] === CHAIN && r.copied[1] === 'copied' && r.copied[2] === 'Copy objdump', 'mock: the listing copies as text', JSON.stringify(r.copied));
@@ -224,7 +228,7 @@ try {
     check(r.synthetic[0] === '23.57' && r.synthetic[3] === 2 && r.synthetic2.notes === 'XJM' && r.synthetic2.nolink && r.synthetic2.mode && /1 undecodable position skipped/.test(r.synthetic2.caveat), 'mock: synthetic case (extra rows, notes, unrolled, decode errors)', JSON.stringify([r.synthetic, r.synthetic2]));
     check(r.synthetic2.listing.length === r.synthetic2.instrs && r.synthetic2.listing.every((l) => /^ *[0-9a-f]+:  [0-9a-f]{2}( [0-9a-f]{2})* +\S/.test(l)) && !r.synthetic2.listing.some((l) => /Uop/.test(l)), 'mock: the listing has the instructions only (no inserted uops)', JSON.stringify(r.synthetic2.listing));
     check(/X no data/.test(r.synthetic2.legend) && /J JCC erratum/.test(r.synthetic2.legend) && /M macro-fused/.test(r.synthetic2.legend), 'mock: the legend lists the notes that occur', r.synthetic2.legend);
-    check(r.columns[1] > r.columns[0], 'mock: "hide empty columns" toggles', JSON.stringify(r.columns));
+    check(!r.columns[1], 'mock: no "hide empty columns" control (empty columns stay hidden, as in uiCA)', JSON.stringify(r.columns));
     check(/Analysis failed: mock/.test(r.error ?? ''), 'mock: an analysis error is shown', r.error);
 
     // input errors, assembly mode with the mock assembler, options
@@ -235,7 +239,7 @@ try {
       set($('code'), '4801d'); await run(); out.odd = $('input-messages').innerText;
       set($('code'), ''); await run(); out.none = $('input-messages').innerText;
       set($('code'), '   0:\\t48 01 d8             \\tadd    %rbx,%rax\\n   3:\\tc3                   \\tret\\n'); await done(() => $('run').click());
-      out.objdump = [$('input-messages').innerText, $('result-body').innerText.includes('4 bytes'), $('code').getAttribute('aria-invalid')];
+      out.objdump = [$('input-messages').innerText, document.querySelector('#result-body .meta').title.includes('4 bytes'), $('code').getAttribute('aria-invalid')];
       $('mode-asm').click(); await wait(300);
       out.asm = [$('code').value.split('\\n')[1], !$('syntax-wrap').hidden, $('run').disabled];
       set($('syntax'), 'att'); await wait(50); out.att = $('code').value.split('\\n')[1];
@@ -252,7 +256,7 @@ try {
     check(s.objdump[0] === '' && s.objdump[1] && s.objdump[2] === null, 'mock: pasted objdump output is analyzed', JSON.stringify(s.objdump));
     check(s.asm[0] === '  add rax, 1' && s.asm[1] && !s.asm[2] && s.att === '  addq $1, %rax', 'mock: assembly mode and syntax switch', JSON.stringify([s.asm, s.att]));
     // with wuica_asm.wasm in the build, mock mode uses the real assembler (only the analyzer is mocked)
-    check(s.assembled[0] === (manifest.assembler ? '' : 'mock assembler') && s.assembled[1] === CHAIN && s.assembled[2], 'mock: assembly is assembled; the listing shows it, open', JSON.stringify(s.assembled));
+    check(s.assembled[0] === (manifest.assembler ? '' : 'mock assembler') && s.assembled[1] === CHAIN && !s.assembled[2], 'mock: assembly is assembled; the listing shows it (collapsed by default)', JSON.stringify(s.assembled));
     check(s.stale && /line 2:3: .*\n.*line 4:5: /.test(s.diag) && s.selected === '    bogus', 'mock: assembler diagnostics with lines; a click selects the line', JSON.stringify([s.stale, s.diag, s.selected]));
     check(s.hexKept, 'mock: each input mode keeps its text');
     check(s.options[0] === '63' && s.options[1] === '· 4 changed' && s.options[2] === '#v=1&al=63&mc=1234&ip=stack&nma=1', 'mock: options are clamped and go into the fragment', JSON.stringify(s.options));
@@ -357,7 +361,7 @@ try {
       await until(() => Number($('results').dataset.run) > n0);
       await until(() => runs('cmp-cpus') > cr && runs('cmp-sweep') > sr && $('cmp-cpus').dataset.state === 'done' && $('cmp-sweep').dataset.state === 'done', 30000);
       await wait(400);
-      out.live = [Number($('results').dataset.run) - n0, $('result-body').innerText.includes('9 bytes'), tp(), $('result-body').classList.contains('stale'), $('live').checked,
+      out.live = [Number($('results').dataset.run) - n0, document.querySelector('#result-body .meta').title.includes('9 bytes'), tp(), $('result-body').classList.contains('stale'), $('live').checked,
         rows().find((r) => r[0] === 'HSW')[1] === tp(), runs('cmp-cpus') - cr, runs('cmp-sweep') - sr];
       // an assembler-free error while typing: the messages show, the result stays (stale), nothing flashes
       set($('code'), 'c5 fc 5'); await wait(400);
@@ -382,7 +386,7 @@ try {
       const n1 = Number($('results').dataset.run);
       set($('code'), '48 01 d8'); await wait(600);
       out.off = [Number($('results').dataset.run) === n1, $('result-body').classList.contains('stale'), localStorage.getItem('wuica-live')];
-      await done(() => $('run').click()); out.manual = $('result-body').innerText.includes('3 bytes');
+      await done(() => $('run').click()); out.manual = document.querySelector('#result-body .meta').title.includes('3 bytes');
       return out;`);
     const menuOrder = 'SNB,IVB,HSW,BDW,SKL,KBL,SKX,CFL,CLX,ICL,TGL,ZEN3,RKL,ICX,ADL-P';
     check(c.menu.map((r) => r[0]).join() === menuOrder && c.menu.every((r) => /^\d+\.\d\d$/.test(r[1])) && c.open[0] && !c.open[1] && c.current === 'SKL', 'compare: a link opens the table of all CPUs, in menu order, every one with a result', JSON.stringify(c.menu));
@@ -449,7 +453,7 @@ try {
       out.examples = [...$('examples').options].map((o) => o.value).join(',');
       out.overflow0 = overflow();
       await run();
-      out.first = { tp: tp(), mock: !!document.querySelector('.mock-tag'), text: $('result-body').innerText,
+      out.first = { tp: tp(), mock: !!document.querySelector('.mock-tag'), text: $('result-body').innerText, metaTitle: document.querySelector('#result-body .meta').title,
         rows: [...document.querySelectorAll('table.uops tbody tr')].map((tr) => tr.innerText.trim().replace(/\\t+/g, '|')),
         total: document.querySelector('table.uops tfoot tr').innerText.trim().replace(/\\t+/g, '|'),
         report: document.querySelector('pre.report').textContent };
@@ -509,13 +513,14 @@ try {
       return out;`);
     check(r.failed === '' && r.notice === '' && r.build === manifest.version, 'real: the page starts with the real analyzer and shows the build', JSON.stringify([r.failed, r.notice, r.build]));
     check(requests.some((x) => x.includes('wuica_wasm.wasm')) && requests.some((x) => x.includes('data/arch/SKL.json')) && requests.some((x) => x.includes('js/engine-worker.js')), 'real: the analyzer, its worker and the selected table are fetched');
-    check(r.examples === ',chain,loadstore,avx,stack', 'real: no mock-only examples', r.examples);
-    check(r.first.tp === '2.00' && !r.first.mock && /^loop · /m.test(r.first.text) && /bottleneck\s+Dependencies/.test(r.first.text) && / ms\n/.test(r.first.text), 'real: the first example: 2.00 cycles, a loop, bottleneck Dependencies', r.first.text.slice(0, 300));
+    check(r.examples === ',chain,loadstore,avx,stack,saxpy,dot1,dot4,popcnt,ptrchase,strlen,crc32,memcpy,gemm', 'real: no mock-only examples', r.examples);
+    check(r.first.tp === '2.00' && !r.first.mock && /^loop · SKL/m.test(r.first.text) && /bottleneck\s+Dependencies/.test(r.first.text) && !/ ms\n|bytes|instructions/.test(r.first.text)
+      && /^4 instructions · 13 bytes · \d+(\.\d)? ms$/.test(r.first.metaTitle), 'real: the first example: 2.00 cycles, a loop, bottleneck Dependencies; counts and time only in the tooltip', JSON.stringify([r.first.text.slice(0, 300), r.first.metaTitle]));
     check(r.first.rows.length === 4 && r.first.rows[0] === 'add rax, 0x1|1|1|1|0.22|0.22|0.29|0.27' && r.first.rows[3] === 'jnz 0xfffffffffffffff5|M' && r.first.total === 'Total|3|3|3|0.5|0.52|0.52|1.47', 'real: the uop table equals the reference (rounded like uiCA, totals as in its "Total" line)', JSON.stringify([r.first.rows, r.first.total]));
     check(r.first.report.startsWith('Throughput (in cycles per iteration): 2.00\nBottleneck: Dependencies\n') && r.first.report.includes('│ Total'), 'real: the text report');
     check(r.loadstore[0] === '1.00' && r.loadstore[1] && /ALU0\|ALU1\|ALU2\|ALU3\|AGU0\|AGU1\|AGU2\|SD0$/.test(r.loadstore[2]) && r.loadstore[4] === '----M', 'real: load/store example on ZEN3 (1.00, Zen port names)', JSON.stringify(r.loadstore.slice(0, 6)));
     check(r.avx[0] === '4.00' && r.avx[1] && /Port 0\|Port 1\|Port 5\|Port 6\|Port B$/.test(r.avx[2]), 'real: AVX example on ADL-P (4.00, ports up to B)', JSON.stringify(r.avx.slice(0, 6)));
-    check(r.prototype[0] === 'prototype model' && r.prototype[1] === 'prototype model: less validated' && r.notPrototype[0] === '' && r.notPrototype[1] === '', 'real: a prototype model (ADL-P) is marked next to the menu and in the result; SKL is not', JSON.stringify([r.prototype, r.notPrototype]));
+    check(r.prototype[0] === 'prototype model' && /^ADL-P .*prototype$/.test(r.prototype[1]) && r.notPrototype[0] === '' && r.notPrototype[1] === '', 'real: a prototype model (ADL-P) is marked next to the menu and in the result; SKL is not', JSON.stringify([r.prototype, r.notPrototype]));
     check(r.stack[0] === '2.10' && r.stack[3] === 1 && /unknown/.test(r.stack[6].split('\n')[1]), 'real: stack example on SKL (2.10, a stack-sync row, bottleneck unknown)', JSON.stringify(r.stack.slice(0, 6)));
     check([r.loadstore, r.avx, r.stack].every((x) => x[5] <= 0) && r.overflow0 <= 0 && r.overflow1 <= 0 && r.tableScrolls[0] && r.tableScrolls[1] === 'auto', 'real: at 375px the page never scrolls sideways; the table scrolls in its container', JSON.stringify([r.overflow0, r.overflow1, r.tableScrolls]));
     check(r.fontSize[0] === '16px' && r.fontSize[1] === '15px' && /IBM Plex Mono/.test(r.fontSize[2]), 'real: font sizes', JSON.stringify(r.fontSize));
@@ -532,7 +537,7 @@ try {
       check(!requests.some((x) => x.includes('wuica_asm')), 'real: the missing assembler is not requested');
     } else {
       check(!/not available/.test(r.asm[0]) && !r.asm[1] && requests.some((x) => x.includes('wuica_asm.wasm')), 'real: the assembler is loaded when assembly mode is chosen', JSON.stringify([r.asm, requests.filter((x) => x.includes('asm'))]));
-      check(r.asmChain[0] === '2.00' && r.asmChain[1] === '' && r.asmChain[2] === CHAIN && r.asmChain[3], 'real: the chain example assembled (Intel) gives the hex result; the listing is open and shows the bytes', JSON.stringify(r.asmChain));
+      check(r.asmChain[0] === '2.00' && r.asmChain[1] === '' && r.asmChain[2] === CHAIN && !r.asmChain[3], 'real: the chain example assembled (Intel) gives the hex result; the (collapsed) listing shows the bytes', JSON.stringify(r.asmChain));
       check(r.asmAtt[0] === '2.00' && r.asmAtt[1] === '  addq $1, %rax' && r.asmAtt[2] === CHAIN, 'real: AT&T syntax', JSON.stringify(r.asmAtt));
       check(/^line 3:3: .*frobnicate|^line 3:3: invalid instruction/m.test(r.asmErr[0]) && r.asmErr[1] === 'true', 'real: assembler diagnostics with line and column', JSON.stringify(r.asmErr));
       check(/^\d\.\d\d$/.test(r.asmAvx[0] ?? '') && r.asmAvx[1] === '' && /^ {3}0:  c5 fc 58 c1    vaddps ymm0, ymm0, ymm1\n {3}4:  49 ff cf       dec r15\n {3}7:  75 f7          jnz /.test(r.asmAvx[2]), 'real: an AVX block typed in assembly is analyzed', JSON.stringify(r.asmAvx));

@@ -1,7 +1,7 @@
 // Stand-in for the assembler (assembler.js) in mock mode (?mock=1) when wuica_asm.wasm is not there: it knows
 // the built-in examples and reports every other line as an error, which is enough to work on the page.
 
-import { EXAMPLES, MOCK_EXAMPLES } from './examples.js';
+import { EXAMPLES, CLASSIC_EXAMPLES, MOCK_EXAMPLES } from './examples.js';
 import { hexToBytes } from './hex-input.js';
 
 const norm = (line) => line.replace(/(#|\/\/).*$/, '').trim().replace(/\s+/g, ' ');
@@ -11,7 +11,7 @@ export class MockAssembler {
   mock = true;
 
   async assemble(text, syntax = 'intel') {
-    const all = [...EXAMPLES, ...MOCK_EXAMPLES];
+    const all = [...EXAMPLES, ...CLASSIC_EXAMPLES, ...MOCK_EXAMPLES];
     const want = normText(text);
     const hit = all.find((e) => normText(e.text[syntax]) === want);
     if (hit) return { ok: true, bytes: hexToBytes(hit.hex), diagnostics: [] };

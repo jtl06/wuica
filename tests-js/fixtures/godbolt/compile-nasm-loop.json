@@ -1,0 +1,86 @@
+{
+ "source": "section .text\nglobal f\nf:\n.loop:\n  add rax, 1\n  vaddps ymm0, ymm1, ymm2\n  dec rcx\n  jnz .loop\n  ret\n",
+ "response": {
+  "inputFilename": "example.asm",
+  "code": 0,
+  "okToCache": true,
+  "timedOut": false,
+  "stdout": [],
+  "stderr": [],
+  "truncated": false,
+  "execTime": 57,
+  "processExecutionResultTime": 0.0039910003542900085,
+  "instructionSet": "amd64",
+  "forceBinaryView": true,
+  "compilationOptions": [
+   "-g",
+   "-f",
+   "elf64",
+   "-F",
+   "stabs",
+   "/app/example.asm"
+  ],
+  "downloads": [],
+  "tools": [],
+  "objdumpTime": "31",
+  "asm": [
+   {
+    "text": "f:",
+    "source": null
+   },
+   {
+    "opcodes": [
+     "48",
+     "83",
+     "c0",
+     "01"
+    ],
+    "address": 0,
+    "text": " add    rax,0x1",
+    "source": null
+   },
+   {
+    "opcodes": [
+     "c5",
+     "f4",
+     "58",
+     "c2"
+    ],
+    "address": 4,
+    "text": " vaddps ymm0,ymm1,ymm2",
+    "source": null
+   },
+   {
+    "opcodes": [
+     "48",
+     "ff",
+     "c9"
+    ],
+    "address": 8,
+    "text": " dec    rcx",
+    "source": null
+   },
+   {
+    "opcodes": [
+     "75",
+     "f3"
+    ],
+    "address": 11,
+    "text": " jne    0 <f>",
+    "source": null
+   },
+   {
+    "opcodes": [
+     "c3"
+    ],
+    "address": 13,
+    "text": " ret    ",
+    "source": null
+   }
+  ],
+  "optOutput": [],
+  "popularArguments": {},
+  "retreivedFromCache": true,
+  "retreivedFromCacheTime": 45.141003996133804
+ }
+}

@@ -259,9 +259,10 @@ try {
       const px = v.canvas.getContext('2d').getImageData(2, 2, 1, 1).data;
       out.themed = [px[0], px[1], px[2]];
       document.documentElement.style.removeProperty('--surface');
-      // the result is drawn again (e.g. "hide empty columns"): the panel stays open with its view
+      // other parts of the result are opened and closed (objdump, uiCA report): the panel stays open with its view
+      // (the "hide empty columns" redraw this used is gone: empty columns are always hidden)
       const before = v.rows.length;
-      $('hide-empty').click(); await wait(150);
+      for (const sel of ['details.listing-wrap summary', 'details.report-wrap summary']) { document.querySelector(sel).click(); await wait(50); document.querySelector(sel).click(); await wait(50); }
       out.redraw = [panel().open, viewer() === v, v.rows.length === before, !!document.querySelector('.trace-viewer canvas').isConnected];
       out.overflow = document.documentElement.scrollWidth - innerWidth;
       return out;`);
@@ -271,7 +272,7 @@ try {
     check(z.table[0] === z.table[1] && z.table[2] === 11 && z.table[3].length > 0 && z.chartHidden, 'the table view lists the same uops', JSON.stringify(z.table));
     check(z.copied?.[0].startsWith('iteration\tinstruction\tport\tpredecoded\tIDQ\tissued') && z.copied[1].split('\t').length === 11, 'the table copies as tab-separated text', JSON.stringify(z.copied));
     check(z.themed.join() === '250,248,240', 'the canvas follows the theme\'s custom properties', JSON.stringify(z.themed));
-    check(z.redraw.every(Boolean), 'the panel survives a redraw of the result', JSON.stringify(z.redraw));
+    check(z.redraw.every(Boolean), 'the panel survives other parts of the result opening and closing', JSON.stringify(z.redraw));
     check(z.overflow <= 0, 'no sideways scrolling of the page at 1280px', z.overflow);
     console.log(`draw with all uops: avg ${z.drawAvg.toFixed(2)} ms, max ${z.drawMax.toFixed(2)} ms`);
 

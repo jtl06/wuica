@@ -11,7 +11,7 @@ export const NOTES = Object.freeze({
   J: 'block not in the DSB (uop cache) because of the JCC erratum',
   X: 'instruction not supported (no data)',
 });
-const LEGEND = Object.freeze({ M: 'macro-fused', J: 'JCC erratum', X: 'no data' });
+export const LEGEND = Object.freeze({ M: 'macro-fused', J: 'JCC erratum', X: 'no data' });
 
 export function h(tag, attrs, ...children) {
   const el = document.createElement(tag);
@@ -106,7 +106,7 @@ function limitsView(r) {
   return box;
 }
 
-function uopTable(r, hideEmpty) {
+export function uopTable(r, hideEmpty) { // (also used by the A–B view, ab.js)
   const n = r.columns.length;
   const totals = new Array(n).fill(0);
   for (const x of r.rows) for (let i = 0; i < n; i++) totals[i] += Number(x.values?.[i]) || 0;
@@ -162,9 +162,9 @@ function mockLine(m, archKey) {
 //   response,                 a response of docs/WASM-API.md (success or {error})
 //   archKey, archTitle, experimental,
 //   byteCount, hex,           the machine code that was analyzed
-//   inputMode,                'asm' | 'hex': the listing starts open for assembly (it shows what it assembled to)
+//   inputMode,                'asm' | 'hex': the listing remembers its open state per input mode
 //   elapsedMs,
-//   ui: { hideEmpty, reportOpen, listingOpen: {asm, hex} (null: by inputMode) }, onUi(name, value)
+//   ui: { hideEmpty, reportOpen, listingOpen: {asm, hex} (null: closed) }, onUi(name, value)
 // }
 export function renderResult(root, view) {
   const r = view.response;
@@ -186,15 +186,17 @@ export function renderResult(root, view) {
     const mode = r.mode === 'loop' ? h('span', { class: 'tag', title: 'ends in a branch: analyzed as a loop', text: 'loop' })
       : r.mode === 'unroll' ? h('span', { class: 'tag', title: 'no branch at the end: analyzed as if repeated back to back', text: 'unrolled' })
         : h('span', { class: 'tag', text: String(r.mode) });
+    // as lean as uiCA's own output: the cpu and loop/unrolled; the counts and the time in the tooltip
     const instrs = r.rows.filter((x) => x.kind === 'instr').length;
+    const details = [`${instrs} instruction${instrs === 1 ? '' : 's'}`, `${view.byteCount} byte${view.byteCount === 1 ? '' : 's'}`,
+      view.elapsedMs !== null && view.elapsedMs !== undefined && !mock ? `${view.elapsedMs < 10 ? view.elapsedMs.toFixed(1) : Math.round(view.elapsedMs)} ms` : null,
+      view.experimental ? 'prototype model: less validated' : null].filter(Boolean).join(' · ');
     out.push(row('throughput',
       h('div', { class: 'tp' },
         h('span', { class: 'value', text: Number(r.tp).toFixed(2) }),
         h('span', { class: 'unit', text: 'cycles/iteration' })),
-      h('div', { class: 'meta' }, mode, sep(), view.archTitle, sep(), `${instrs} instruction${instrs === 1 ? '' : 's'}`, sep(), code,
-        view.elapsedMs !== null && !mock ? [sep(), `${view.elapsedMs < 10 ? view.elapsedMs.toFixed(1) : Math.round(view.elapsedMs)} ms`] : null),
+      h('div', { class: 'meta', title: details }, mode, sep(), h('span', { class: view.experimental ? 'caveat' : null, text: view.archTitle })),
       mock ? h('div', { class: 'mock-tag', text: mockLine(mock, view.archKey) }) : null,
-      view.experimental ? h('div', { class: 'caveat', text: 'prototype model: less validated' }) : null,
       r.decodeErrors > 0 ? h('div', { class: 'caveat', role: 'alert',
         text: `${r.decodeErrors} undecodable position${r.decodeErrors === 1 ? '' : 's'} skipped` }) : null));
 
@@ -207,19 +209,14 @@ export function renderResult(root, view) {
         h('div', { class: 'label', text: 'limits' }), h('div', { class: 'field' }, limitsView(r))));
     }
 
-    const { table, hidden, notes } = uopTable(r, view.ui.hideEmpty);
-    const toggle = h('input', { type: 'checkbox', id: 'hide-empty', checked: view.ui.hideEmpty });
-    toggle.checked = view.ui.hideEmpty;
-    toggle.addEventListener('change', () => view.onUi('hideEmpty', toggle.checked));
+    const { table, notes } = uopTable(r, view.ui.hideEmpty ?? true); // empty columns are left out, as in uiCA's table
     out.push(row('uops',
-      h('div', { class: 'table-tools' },
-        h('label', null, toggle, ` hide empty columns${hidden ? ` (${hidden})` : ''}`)),
       h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Uops per instruction, average per iteration',
         title: 'average uops per iteration' }, table),
       notes.size ? h('p', { class: 'legend' },
         [...notes].map((k) => h('span', { title: NOTES[k] }, h('b', { text: k }), ` ${LEGEND[k]}`))) : null));
 
-    const listingOpen = view.ui.listingOpen?.[view.inputMode] ?? view.inputMode === 'asm';
+    const listingOpen = view.ui.listingOpen?.[view.inputMode] ?? false; // collapsed until opened
     out.push(row('text',
       textBlock('listing', 'objdump', formatListing(r.rows).text, listingOpen, (open) => view.onUi('listingOpen', { ...view.ui.listingOpen, [view.inputMode]: open })),
       textBlock('report', 'uiCA report', typeof r.text === 'string' ? r.text : '', view.ui.reportOpen, (open) => view.onUi('reportOpen', open))));
