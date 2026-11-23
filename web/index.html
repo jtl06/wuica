@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#090a09">
+<!-- Everything the page loads comes from its own origin; nothing is sent anywhere. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="description" content="wuica: WebAssembly uiCA, an independent port of uiCA that runs in your browser. Predicts the throughput of x86-64 basic blocks.">
+<title>wuica: WebAssembly uiCA</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/IBMPlexMono-Regular-Latin1.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="css/style.css">
+<script type="module" src="js/app.js"></script>
+</head>
+<body>
+<a class="skip" href="#code">Skip to the input</a>
+
+<header class="top">
+  <div class="brand">
+    <h1>wuica</h1>
+    <span class="badge">preview</span>
+    <p class="tagline">WebAssembly uiCA — an independent port of uiCA that runs in your browser</p>
+  </div>
+  <nav aria-label="Page">
+    <a href="#about">About / limitations</a>
+    <a href="#" id="source-link">Source</a>
+  </nav>
+</header>
+
+<main>
+  <div id="notice" class="notice" hidden></div>
+
+  <section class="block" aria-labelledby="h-input">
+    <h2 id="h-input">Input</h2>
+
+    <div class="row">
+      <div class="label" id="l-mode">format</div>
+      <div class="field wrap">
+        <div class="choice" role="radiogroup" aria-labelledby="l-mode">
+          <label><input type="radio" name="mode" value="asm" id="mode-asm"> Assembly</label>
+          <label><input type="radio" name="mode" value="hex" id="mode-hex" checked> Machine code (hex)</label>
+        </div>
+        <label class="inline" id="syntax-wrap" hidden>syntax
+          <select id="syntax">
+            <option value="intel">Intel</option>
+            <option value="att">AT&amp;T</option>
+          </select>
+        </label>
+        <label class="inline">examples
+          <select id="examples">
+            <option value="">choose…</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
+    <div class="row">
+      <label class="label" for="code">code</label>
+      <div class="field">
+        <textarea id="code" rows="9" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off"
+          wrap="off" aria-describedby="code-hint input-messages"></textarea>
+        <p class="hint" id="code-hint"></p>
+        <div id="input-messages" class="messages" aria-live="polite"></div>
+      </div>
+    </div>
+
+    <div class="row">
+      <label class="label" for="arch">cpu</label>
+      <div class="field wrap">
+        <select id="arch" disabled>
+          <option>loading…</option>
+        </select>
+        <span class="hint" id="arch-hint"></span>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="label">options</div>
+      <div class="field">
+        <details id="advanced">
+          <summary>Advanced <span class="hint" id="advanced-summary"></span></summary>
+          <div class="options">
+            <div class="opt">
+              <label for="opt-align">alignment offset</label>
+              <input type="number" id="opt-align" min="0" max="63" step="1" value="0" inputmode="numeric" aria-describedby="opt-align-hint">
+              <span class="hint" id="opt-align-hint">0–63: position of the first byte within a 64-byte cache line</span>
+            </div>
+            <fieldset class="opt">
+              <legend>initial register state</legend>
+              <label><input type="radio" name="init" value="diff" checked> diff <span class="hint">all registers start with different values</span></label>
+              <label><input type="radio" name="init" value="same"> same <span class="hint">all registers start with the same value</span></label>
+              <label><input type="radio" name="init" value="stack"> stack <span class="hint">the same value, except the stack and base pointers</span></label>
+            </fieldset>
+            <fieldset class="opt">
+              <legend>model variants</legend>
+              <label><input type="checkbox" id="opt-sfe"> simple front end <span class="hint">a front end that is limited only by the issue width</span></label>
+              <label><input type="checkbox" id="opt-nmi"> no micro-fusion</label>
+              <label><input type="checkbox" id="opt-nma"> no macro-fusion</label>
+            </fieldset>
+            <div class="opt">
+              <label for="opt-iter">min iterations</label>
+              <input type="number" id="opt-iter" min="1" max="10000" step="1" value="10" inputmode="numeric" aria-describedby="opt-iter-hint">
+              <span class="hint" id="opt-iter-hint">simulate at least this many iterations of the block</span>
+            </div>
+            <div class="opt">
+              <label for="opt-cycles">min cycles</label>
+              <input type="number" id="opt-cycles" min="1" max="100000" step="1" value="500" inputmode="numeric" aria-describedby="opt-cycles-hint">
+              <span class="hint" id="opt-cycles-hint">simulate at least this many cycles</span>
+            </div>
+            <div class="opt">
+              <button type="button" id="opt-reset" class="plain">reset to defaults</button>
+            </div>
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <div class="row actions">
+      <div class="label" aria-hidden="true"></div>
+      <div class="field wrap">
+        <button type="button" id="run" class="primary" disabled>Analyze</button>
+        <span class="hint keys" aria-hidden="true">Ctrl/⌘ + Enter</span>
+        <button type="button" id="copy-link">Copy link</button>
+        <div class="status" id="status-wrap">
+          <span id="status" role="status" aria-live="polite">starting…</span>
+          <span class="bar" aria-hidden="true"><span id="status-bar"></span></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="results" aria-labelledby="h-results">
+    <h2 id="h-results">Result</h2>
+    <div id="result-body">
+      <p class="empty">No result yet. Enter code and press Analyze.</p>
+    </div>
+  </section>
+
+  <section class="block" id="about" aria-labelledby="h-about">
+    <h2 id="h-about">What is this / limitations</h2>
+    <div class="row">
+      <div class="label">what</div>
+      <p class="field text">wuica predicts how many CPU cycles one iteration of a block of x86-64 machine code takes on a given
+        microarchitecture, by simulating the pipeline (front end, renamer, scheduler, execution ports) the way uiCA does.
+        It runs entirely in your browser: the code you enter is not sent to a server, and the page works offline after
+        the first visit.</p>
+    </div>
+    <div class="row">
+      <div class="label">loops</div>
+      <p class="field text">If the block ends in a branch, it is analyzed as a loop (the branch is taken every time).
+        Otherwise it is analyzed as if it were repeated back to back (unrolled).</p>
+    </div>
+    <div class="row">
+      <div class="label">assumptions</div>
+      <p class="field text">Predictions assume that all data is in the L1 cache and that no branch is mispredicted.</p>
+    </div>
+    <div class="row">
+      <div class="label">experimental</div>
+      <p class="field text caveat">The models marked experimental (AMD Zen 3, Alder Lake P-core, Ice Lake server) come from a fork of uiCA and are
+        less validated than the stock Intel models.</p>
+    </div>
+    <div class="row">
+      <div class="label">not official</div>
+      <p class="field text">This is an independent port and not the official uiCA; that is
+        <a class="ext" href="https://uica.uops.info" rel="noopener noreferrer">uiCA.uops.info</a>.
+        Results can differ from uiCA's where the port has bugs.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="bottom">
+  <p>Based on <a class="ext" href="https://github.com/andreas-abel/uiCA" rel="noopener noreferrer">uiCA</a> by Andreas Abel and Jan Reineke
+    (<a class="ext" href="https://dl.acm.org/doi/pdf/10.1145/3524059.3532396" rel="noopener noreferrer">paper</a>).
+    Instruction data from <a class="ext" href="https://www.uops.info" rel="noopener noreferrer">uops.info</a>.
+    This is not the official uiCA (that is <a class="ext" href="https://uica.uops.info" rel="noopener noreferrer">uiCA.uops.info</a>).</p>
+  <p>Experimental models from the fork <a class="ext" href="https://github.com/jtl06/uiCA" rel="noopener noreferrer">jtl06/uiCA</a>.
+    License: <a href="licenses/AGPL-3.0.txt">AGPL-3.0</a>. <a href="#" id="source-link-footer">Source</a>.
+    Typeface: IBM Plex Mono (<a href="fonts/OFL.txt">SIL Open Font License 1.1</a>).</p>
+  <p>The analyzer contains <a class="ext" href="https://github.com/intelxed/xed" rel="noopener noreferrer">Intel XED</a> (<a href="licenses/XED-Apache-2.0.txt">Apache-2.0</a>).
+    Assembly input uses a modified build of <a class="ext" href="https://llvm.org" rel="noopener noreferrer">LLVM</a> 22.1.2
+    (<a href="licenses/LLVM.txt">Apache-2.0 WITH LLVM-exception</a>).</p>
+  <p class="build">build <span id="build-id">dev</span><span id="update-note" hidden> · a new version is available: <button type="button" class="plain" id="reload">reload</button></span></p>
+</footer>
+</body>
+</html>

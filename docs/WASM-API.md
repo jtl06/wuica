@@ -37,9 +37,19 @@ create typed-array views after the call, not before).
 }
 ```
 
-Only `hex` and `arch` are required; the other values shown are the defaults. `arch` is a key of `configs` in `uarch.json`. The
+Only `hex` and `arch` are required; the other values shown are the defaults. `arch` is a key of `configs` in `uarch.json`; a
+configuration has the fields of uiCA's `MicroArchConfig`, among them `name` (the instruction table it needs), `XEDName` and
+`experimental` (true for the models added by the fork: ZEN3, ADL-P, ICX; keys that contain `_` are uiCA's ablation variants). The
 instruction table that the configuration needs (`configs[arch].name`) and `uarch.json` must have been loaded. `initPolicy` is
 `"diff"`, `"same"` or `"stack"`.
+
+## Failures and traps
+
+wuica reproduces the reference, including the inputs for which the Python uiCA fails. Such an input either gives
+`{"error": ...}` or makes the call **trap** (the module throws a `WebAssembly.RuntimeError`, e.g. `unreachable`): a Rust panic
+cannot be caught inside a `wasm32-unknown-unknown` module. After a trap, the instance must not be used again: create a new
+instance, call `wuica_load_uarch` and `wuica_load_arch` again, and continue. (The web page keeps the bytes of the loaded
+tables for this.) Making these cases return errors instead is planned.
 
 ## Analysis response
 
@@ -80,7 +90,7 @@ On success:
 
 - `tp`: predicted throughput in cycles per iteration of the block.
 - `mode`: `"loop"` if the block ends with a branch (it is analyzed as a loop), `"unroll"` otherwise (as if repeated back to back).
-- `decodeErrors`: number of positions that could not be decoded (see `text` for none; the instructions that were decoded are analyzed).
+- `decodeErrors`: number of positions in the input that could not be decoded; the instructions that were decoded are analyzed.
 - `bottlenecks`: names from uiCA's "Bottleneck(s)" line; can be empty.
 - `limits`: uiCA's "throughputs that could be achieved if the given property were the only bottleneck", in its order; entries
   that do not apply are absent (e.g. `"LSD"` or `"DSB"` only for loops served from there).

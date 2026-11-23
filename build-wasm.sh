@@ -12,5 +12,12 @@ if [ -z "$AR_wasm32_unknown_unknown" ]; then
    ar="$(dirname "$CC_wasm32_unknown_unknown")/llvm-ar"
    [ -x "$ar" ] && export AR_wasm32_unknown_unknown="$ar"
 fi
+# do not embed local paths (they contain the user name) in panic messages: map them to neutral prefixes
+export CARGO_ENCODED_RUSTFLAGS="--remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}/registry/src=/cargo-registry\x1f--remap-path-prefix=$PWD=/wuica\x1f--remap-path-prefix=$HOME=/home"
+export CARGO_ENCODED_RUSTFLAGS="$(printf '%b' "$CARGO_ENCODED_RUSTFLAGS")"
+export CFLAGS_wasm32_unknown_unknown="-ffile-prefix-map=$PWD=/wuica"
 cargo build -p wuica-wasm --target wasm32-unknown-unknown --release
+if strings target/wasm32-unknown-unknown/release/wuica_wasm.wasm | grep -q "$HOME"; then
+   echo "error: the module contains local paths" >&2; exit 1
+fi
 ls -l target/wasm32-unknown-unknown/release/wuica_wasm.wasm
