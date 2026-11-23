@@ -14,7 +14,7 @@
 // carries both sides. The page (app.js) runs the analyses: inputs() gets the machine code of both sides,
 // analyze() runs them, draw() shows the result. All text goes in through textContent.
 
-import { h, uopTable, NOTES, LEGEND, rowLimit, moreRows, watchFit, nearestLimit } from './render.js';
+import { h, uopTable, NOTES, LEGEND, rowLimit, moreRows, watchFit, nearestLimit, columnGroup } from './render.js';
 import { caveats } from './caveats.js';
 import { GROUP_LABEL } from './archs.js';
 import { compareResponses, signed, cycles, signedCycles } from './ab-diff.js';
@@ -502,7 +502,13 @@ export function createAB(api) {
     for (const s of [view.a, view.b]) if (s?.shown) s.response.rows.forEach((r, i) => { if (s.shown[i]) labels.set(r, s.shown[i]); });
     const head = h('tr', null, h('th', { scope: 'col', class: 'ab-m first', 'aria-label': 'change' }),
       h('th', { scope: 'col', class: 'ab-i', text: 'A' }), h('th', { scope: 'col', class: 'ab-i', text: 'B' }),
-      d.columns.map((c, k) => h('th', { scope: 'col', class: k === 0 || (k === 1 && d.columns[0].name === 'Issued') ? 'grp' : null, title: c.name, text: c.name === 'Issued' ? 'Δ uops' : c.name })));
+      // (ports under their group's name, one number each, as in the uop tables: render.js columnGroup)
+      d.columns.map((c, k) => {
+        const cls = k === 0 || (k === 1 && d.columns[0].name === 'Issued') ? 'grp' : null, g = columnGroup(c.name);
+        if (!g) return h('th', { scope: 'col', class: cls, title: c.name, text: c.name === 'Issued' ? 'Δ uops' : c.name });
+        const first = k === 0 || columnGroup(d.columns[k - 1].name)?.group !== g.group;
+        return h('th', { scope: 'col', class: [cls, 'pg'].filter(Boolean).join(' '), 'data-col': c.name, title: c.name }, first ? h('span', { class: 'cg', text: g.group }) : null, g.n);
+      }));
     const body = h('tbody');
     let hidden = 0;
     for (const r of d.rows) {
@@ -526,7 +532,7 @@ export function createAB(api) {
     const legend = Object.entries(STATUS_MARK).filter(([k]) => k !== 'same').map(([k, m]) => `${m} ${STATUS_TEXT[k]}`).join(' · ');
     return fold('diff', 'Δ', h('span', { title: `${detail}; B − A, uops per iteration`, text: counts || 'no change' }),
       h('div', { class: 'table-tools' }, h('label', null, only, ` only changes${hidden ? ` (${hidden} hidden)` : ''}`)),
-      h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Instruction-by-instruction difference of A and B (B − A)', title: legend }, table),
+      watchFit(h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Instruction-by-instruction difference of A and B (B − A)', title: legend }, table)),
       d.portsComparable ? null : h('p', { class: 'hint', text: `${archA} and ${archB} have different ports: uop counts only` }));
   }
 

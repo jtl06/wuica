@@ -227,21 +227,30 @@ try {
     await page.close();
   }
 
-  // ---- every port column fits: GEMM, single and A–B, ZEN3 and ADL-P, 1440 and 1920, the input open -------------------------
+  // ---- every port column fits: GEMM, and a block on all 13 ports of ZEN3; single and A–B (both uop tables and the Δ
+  // table, opened), ZEN3 and ADL-P, 1440 and 1920, the input open ------------------------------------------------------------
   {
     const g = ex('gemm').text.intel;
+    const ALL13 = 'loop:\n  vmovdqu ymm0, ymmword ptr [rdi+rax*4]\n  vpmuludq ymm1, ymm0, ymm2\n  vpsrlq ymm3, ymm0, 32\n  vpmuludq ymm3, ymm3, ymm2\n'
+      + '  vpshufd ymm1, ymm1, 0xf5\n  vpblendd ymm1, ymm1, ymm3, 0xaa\n  vpaddd ymm4, ymm4, ymm1\n  vmovdqu ymmword ptr [rsi+rax*4], ymm1\n'
+      + '  mov ecx, dword ptr [rdx+rax*4]\n  imul rcx, r8\n  add r9, rcx\n  add rax, 8\n  cmp rax, r10\n  jb loop\n';
     const bad = [];
+    let ports13 = 0;
     const page = await Page.open(browser, { width: 1440, height: 900 });
-    for (const [w, hh] of [[1440, 900], [1920, 1080]]) for (const arch of ['ZEN3', 'ADL-P']) for (const abOn of [false, true]) {
+    for (const [name, text] of [['GEMM', g], ['13 ports', ALL13]]) for (const [w, hh] of [[1440, 900], [1920, 1080]]) for (const arch of ['ZEN3', 'ADL-P']) for (const abOn of [false, true]) {
       await page.size(w, hh);
-      await page.goto(`${srv.origin}/?nosw=1#${encodeState({ mode: 'asm', text: g, arch, ...(abOn ? { ab: true, bMode: 'asm', bText: g } : {}) })}`);
-      await page.waitFor(`document.getElementById('results').dataset.run && !document.getElementById('results').hasAttribute('aria-busy') && document.querySelector('table.uops')`, 'GEMM', 60000);
-      const r = await page.eval(`${W} await new Promise((f) => requestAnimationFrame(() => requestAnimationFrame(f)));
-        return { folded: document.documentElement.classList.contains('input-folded'), wraps: [...document.querySelectorAll('.table-wrap')].filter((x) => x.querySelector(':scope > table.uops') && x.offsetParent)
-          .map((x) => [x.querySelector('table').scrollWidth, x.clientWidth]) };`);
-      if (r.folded || !r.wraps.length || r.wraps.some(([sw, cw]) => sw > cw)) bad.push({ w, arch, abOn, ...r });
+      await page.goto(`${srv.origin}/?nosw=1#${encodeState({ mode: 'asm', text, arch, ...(abOn ? { ab: true, bMode: 'asm', bText: text } : {}) })}`);
+      await page.waitFor(`document.getElementById('results').dataset.run && !document.getElementById('results').hasAttribute('aria-busy') && document.querySelector('table.uops')`, name, 60000);
+      const r = await page.eval(`${W} document.querySelectorAll('#result-body details.ab-fold').forEach((d) => { d.open = true; });
+        for (let k = 0; k < 4; k++) await new Promise((f) => requestAnimationFrame(f));
+        return { folded: document.documentElement.classList.contains('input-folded'), ports: document.querySelectorAll('#result-body table.uops thead th.pg').length,
+          wraps: [...document.querySelectorAll('.table-wrap')].filter((x) => x.querySelector(':scope > table.uops, :scope > table.ab-diff') && x.offsetParent)
+            .map((x) => [x.querySelector('table').classList.contains('ab-diff') ? 'diff' : 'uops', x.querySelector('table').scrollWidth, x.clientWidth]) };`);
+      if (name === '13 ports' && arch === 'ZEN3' && !abOn) ports13 = Math.max(ports13, r.ports);
+      if (r.folded || !r.wraps.length || (abOn && !r.wraps.some((x) => x[0] === 'diff')) || r.wraps.some(([, sw, cw]) => sw > cw)) bad.push({ name, w, arch, abOn, ...r });
     }
-    check(bad.length === 0, 'every port column fits (GEMM; 1440 and 1920; single and A–B; ZEN3 and ADL-P; the input open)', JSON.stringify(bad));
+    check(ports13 >= 12, 'the block uses every port column ZEN3 shows (ALU0–3, AGU0–2, FP0–3, SD0)', String(ports13));
+    check(bad.length === 0, 'every port column fits, exactly (GEMM and 13 ports; 1440 and 1920; single and A–B with the Δ table; ZEN3 and ADL-P; the input open)', JSON.stringify(bad));
     // the diff tab shows what differs: dot product, one accumulator against four, on ZEN3
     await page.size(1440, 900);
     await page.goto(`${srv.origin}/?nosw=1#${encodeState({ mode: 'asm', text: ex('dot1').text.intel, arch: 'ZEN3', ab: true, bMode: 'asm', bText: ex('dot4').text.intel })}`);

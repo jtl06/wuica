@@ -124,22 +124,29 @@ export function columnGroup(name) {
 
 // The instruction column gives way when the ports would not fit: it is cut (with … ; the whole text in its tooltip) to
 // the width the table's wrap has, and grows back when there is room (a resize, the input folded). Observed per wrap.
-const MIN_INSTR_PX = 120;
+// The uop table cuts its instruction column; A–B's Δ table (ab.js) its two instruction columns, each as much.
+const MIN_INSTR_PX = { uops: 120, 'ab-diff': 80 };
 const fitting = typeof ResizeObserver === 'function' ? new ResizeObserver((entries) => {
   for (const e of entries) requestAnimationFrame(() => fitInstr(e.target)); // (outside the observer's delivery)
 }) : null;
+// Measured, not computed: the instructions' texts (dense.css caps them, not the cells: a table cell's max-width does not
+// bind its column) start uncut and are cut until nothing sticks out of the wrap (scrollWidth also counts what overflows
+// the table: borders, a group's name over a narrow last column, rounding), a few times at most.
 export function fitInstr(wrap) {
-  const t = wrap?.querySelector?.(':scope > table.uops');
+  const t = wrap?.querySelector?.(':scope > table.uops, :scope > table.ab-diff');
   if (!t || !wrap.isConnected || wrap.clientWidth === 0) return;
-  const th = t.querySelector('thead th.first');
-  if (!th) return;
-  const cur = parseFloat(t.style.getPropertyValue('--ins-max'));
-  const over = t.scrollWidth - wrap.clientWidth;
-  let want = null;
-  if (over > 0) want = Math.max(MIN_INSTR_PX, th.offsetWidth - over);
-  else if (Number.isFinite(cur) && over < -2) want = cur - over; // room again: wider (up to its own width)
-  if (want === null || (Number.isFinite(cur) && Math.abs(want - cur) < 1)) return;
-  t.style.setProperty('--ins-max', `${Math.floor(want)}px`);
+  const kind = t.classList.contains('uops') ? 'uops' : 'ab-diff';
+  const texts = [...t.querySelectorAll(kind === 'uops' ? 'tbody th.first > :first-child' : 'tbody td.ab-i > span:first-child')];
+  if (!texts.length) return;
+  const n = kind === 'uops' ? 1 : 2; // (the columns that give way)
+  t.style.removeProperty('--ins-max');
+  for (let i = 0; i < 8; i++) {
+    const over = t.scrollWidth - wrap.clientWidth;
+    if (over <= 0) return;
+    const w = Math.max(...texts.map((x) => x.getBoundingClientRect().width));
+    if (w <= MIN_INSTR_PX[kind]) return;
+    t.style.setProperty('--ins-max', `${Math.max(MIN_INSTR_PX[kind], Math.floor(w - over / n - 1))}px`);
+  }
 }
 export function watchFit(wrap) { if (fitting && wrap) { fitting.observe(wrap); const t = wrap.querySelector(':scope > table'); if (t) fitting.observe(t); } return wrap; }
 
