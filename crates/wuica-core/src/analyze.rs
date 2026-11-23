@@ -147,12 +147,12 @@ pub fn strip_hyperlinks(s: &str) -> String {
     while let Some(start) = rest.find("\x1b]8;;") {
         out.push_str(&rest[..start]);
         let after = &rest[start + 5..];
-        let bel = after.find('\x07').map(|i| (i, 1));
-        let st = after.find("\x1b\\").map(|i| (i, 2));
-        let end = match (bel, st) {
-            (Some(a), Some(b)) => Some(if a.0 < b.0 { a } else { b }),
-            (a, b) => a.or(b),
-        };
+        // the first terminator (one pass: searching for each kind separately over the whole rest is quadratic)
+        let end = after.char_indices().find_map(|(i, c)| match c {
+            '\x07' => Some((i, 1)),
+            '\x1b' if after[i + 1..].starts_with('\\') => Some((i, 2)),
+            _ => None,
+        });
         match end {
             Some((i, len)) => rest = &after[i + len..],
             None => {
