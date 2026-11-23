@@ -3,14 +3,14 @@
 // detailed comparison below); the values are per element when the elements per iteration are given. A row is the CPU
 // the detailed comparison uses: a click moves it there. The analyses run on the worker pool if the page has one, else in
 // the analyzer's worker one at a time; they stop as soon as the input is out of date, and results are reused.
-// abCpuRows has no DOM (tests-js/web_ab_cpus.mjs runs it under Node).
+// abCpuRows has no DOM (tests-js/web_branch_label.mjs runs it under Node).
 
 import { h } from './render.js';
 import { makeRequest } from './engine.js';
 import { summarize, resultKey, ResultCache, latestWins } from './compare.js';
-import { EPS, verdict } from './ab-diff.js';
+import { verdict, cycles } from './ab-diff.js';
 
-const two = (v) => (typeof v === 'number' && Number.isFinite(v) ? v.toFixed(2) : '');
+const two = (v) => (typeof v === 'number' && Number.isFinite(v) ? cycles(v) : '');
 const isCancel = (e) => e?.name === 'CancelledError';
 
 // items: the checked CPUs ({key, title, experimental}), results: Map "a:KEY" / "b:KEY" -> summary. Values per element
@@ -25,11 +25,10 @@ export function abCpuRows(items, results, { workA = 1, workB = 1, current = null
     if (ra?.error || rb?.error) { row.state = 'error'; row.error = ra?.error ?? rb?.error; }
     else if (ra && rb) {
       row.state = 'ok';
-      const d = row.b - row.a;
-      row.delta = Math.abs(d) < EPS ? 0 : d;
+      row.verdict = verdict(row.a, row.b); // (relative, unrounded: as the headline)
+      row.delta = row.verdict === 'same' ? 0 : row.b - row.a;
       row.pct = row.a > 0 ? (100 * row.delta) / row.a : null;
       row.speedup = row.b > 0 ? row.a / row.b : null;
-      row.verdict = verdict(row.delta);
     }
     return row;
   });
@@ -55,7 +54,7 @@ export function createABCpus(env) {
     const rows = abCpuRows(env.checked(), results, { workA: input.workA, workB: input.workB, current: input.focus });
     const head = h('tr', null, h('th', { scope: 'col', class: 'first', text: 'cpu' }),
       h('th', { scope: 'col', title: unit(), text: 'A' }), h('th', { scope: 'col', title: unit(), text: 'B' }),
-      h('th', { scope: 'col', title: 'B − A', text: 'Δ' }), h('th', { scope: 'col', class: 'ab-cx', title: 'B against A', text: '' }));
+      h('th', { scope: 'col', title: 'B against A, in percent', text: 'Δ%' }), h('th', { scope: 'col', class: 'ab-cx', title: 'B against A', text: '' }));
     const body = h('tbody');
     for (const r of rows) {
       const cls = r.verdict === 'better' ? 'ab-better' : r.verdict === 'worse' ? 'ab-worse' : '';

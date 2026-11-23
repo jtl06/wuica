@@ -83,11 +83,11 @@ for (let i = 0; i < 500; i++) {
     alignmentOffset: int(...LIMITS.alignmentOffset), initPolicy: pick(['diff', 'same', 'stack']), simpleFrontEnd: r() < 0.5,
     noMicroFusion: r() < 0.5, noMacroFusion: r() < 0.5, minIterations: int(...LIMITS.minIterations), minCycles: int(...LIMITS.minCycles),
     cmpSweep: r() < 0.3, cost: r() < 0.3, costNop: false,
-    ab, bMode: pick(['asm', 'hex']), bSyntax: pick(['intel', 'att']), bArch: pick(['', ...ARCHS]), bText: text(int(0, 30)), aWork: int(...LIMITS.aWork), bWork: int(...LIMITS.bWork),
+    ab, bMode: pick(['asm', 'hex']), bSyntax: pick(['intel', 'att']), bArch: pick(['', ...ARCHS]), bText: text(int(0, 30)), aWork: int(...LIMITS.aWork), bWork: int(...LIMITS.bWork), abSide: pick(['a', 'b']),
   };
   if (s.mode === 'hex') s.syntax = 'intel';         // the syntax is only kept for assembly
   if (s.cpus === s.arch) s.cpus = '';               // one CPU: no list
-  if (!ab) Object.assign(s, { bMode: 'asm', bSyntax: 'intel', bArch: '', bText: '', aWork: 1, bWork: 1 }); // side B only in A–B mode
+  if (!ab) Object.assign(s, { bMode: 'asm', bSyntax: 'intel', bArch: '', bText: '', aWork: 1, bWork: 1, abSide: 'a' }); // side B only in A–B mode
   else if (s.bMode === 'hex') s.bSyntax = 'intel';
   if (s.cost) s.costNop = r() < 0.5;
   const f = encodeState(s);

@@ -123,6 +123,8 @@
     var activeName = null;
     list.forEach(function (v) { if (v.details === active) activeName = v.name; });
     var perSide = ab && !!active && !BOTH[activeName];
+    var results = document.getElementById('results');
+    if (results) results.dataset.sideView = perSide ? '1' : '';
     var key = (ab ? 'ab:' + side() + ':' : '') + list.map(function (v) { return v.name + (v.details === active ? '+' : '-'); }).join(' ');
     if (key === lastKey && !force) return;
     lastKey = key;
@@ -167,9 +169,11 @@
         b.textContent = s.toUpperCase();
         b.addEventListener('click', function () { pickSide(s); });
         g.appendChild(b);
-        if (b.getAttribute('data-tab') === focusName) b.focus({ preventScroll: true });
       });
       strip.appendChild(g);
+      // (focused once it is in the page: a button outside it takes no focus)
+      var f = g.querySelector('[data-tab="' + focusName + '"]');
+      if (f) f.focus({ preventScroll: true });
     }
   }
 

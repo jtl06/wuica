@@ -24,6 +24,7 @@ export const DEFAULT_STATE = Object.freeze({
   bText: '',
   aWork: 1,               // the elements (or bytes) one iteration of A processes: A–B compares cycles per element
   bWork: 1,               // the same for B (an old link's bk=N, "B unrolled ×N", is bWork N)
+  abSide: 'a',            // 'a' | 'b': the side the views (bound, try, ...) show in A–B mode
   cost: false,            // the cost column and its variant (insight-view.js)
   costNop: false,
   trace: false,           // the trace is open (trace.js; in A–B mode the traces of both)
@@ -104,6 +105,7 @@ export function encodeState(state) {
     if (s.bArch) p.push(`ba=${encodeURIComponent(s.bArch)}`);
     if (s.aWork !== DEFAULT_STATE.aWork) p.push(`aw=${s.aWork}`);
     if (s.bWork !== DEFAULT_STATE.bWork) p.push(`bw=${s.bWork}`);
+    if (s.abSide === 'b') p.push('sd=b');
     if (s.bText !== '') p.push(`bc=${toBase64Url(s.bText)}`);
   }
   if (s.mode === 'asm' && p.length) p.unshift('m=asm');
@@ -167,6 +169,7 @@ export function decodeState(fragment) {
     if (q.has('bk')) s.bWork = clampInt(q.get('bk'), [1, 64], DEFAULT_STATE.bWork); // older links: B unrolled ×N
     if (q.has('aw')) s.aWork = clampInt(q.get('aw'), LIMITS.aWork, DEFAULT_STATE.aWork);
     if (q.has('bw')) s.bWork = clampInt(q.get('bw'), LIMITS.bWork, DEFAULT_STATE.bWork);
+    if (q.get('sd') === 'b') s.abSide = 'b';
     if (q.has('bc')) s.bText = text('bc');
   }
   return s;

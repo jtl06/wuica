@@ -403,13 +403,14 @@ export function roundEnds(model, from, to) {
 // b: {...}, lo, hi}: the cycle where each side's first shown round starts is cycle 0 of the axis; lo..hi (relative
 // cycles) covers the rows of both.
 export function abWindow(ma, mb, { choice = 'steady', scale = 1, n = 3 } = {}) {
-  const s = Math.max(1, Math.floor(scale) || 1);
+  // scale: iterations of A per iteration of B (B's elements per iteration over A's): any ratio, either way
+  const s = scale > 0 && Number.isFinite(scale) ? scale : 1;
   let a, b;
   if (choice === 'all') {
     a = { from: 0, to: Math.max(0, ma.nRounds - 1), origin: 0 };
     b = { from: 0, to: Math.max(0, mb.nRounds - 1), origin: 0 };
   } else {
-    const kA = Math.max(0, Math.min(ma.relevant.first, mb.relevant.first * s, ma.nRounds - 1));
+    const kA = Math.max(0, Math.min(ma.relevant.first, Math.ceil(mb.relevant.first * s), ma.nRounds - 1));
     const kB = Math.max(0, Math.min(Math.floor(kA / s), mb.nRounds - 1));
     a = { from: kA, to: Math.min(ma.nRounds - 1, kA + n - 1) };
     b = { from: kB, to: Math.min(mb.nRounds - 1, kB + Math.max(1, Math.ceil(n / s)) - 1) };

@@ -16,7 +16,7 @@
 
 import { h, uopTable, NOTES, LEGEND, rowLimit, moreRows } from './render.js';
 import { GROUP_LABEL } from './archs.js';
-import { compareResponses, signed } from './ab-diff.js';
+import { compareResponses, signed, cycles, signedCycles } from './ab-diff.js';
 import { parseHexInput, toHex } from './hex-input.js';
 import { MAX_CODE_BYTES, tooMuchCode } from './assembler.js';
 import { LIMITS } from './url-state.js';
@@ -31,13 +31,13 @@ const STATUS_TEXT = {
   same: 'same', changed: 'same instruction, other uops', modified: 'changed operands', added: 'only in B', removed: 'only in A',
 };
 
-const two = (v) => (typeof v === 'number' && Number.isFinite(v) ? v.toFixed(2) : '–');
+const two = cycles; // (two decimals; three significant digits below 0.1)
 function percent(p) {
   if (p === null || !Number.isFinite(p)) return '';
   const a = Math.abs(p);
   return `${p < 0 ? '−' : '+'}${a < 10 ? a.toFixed(1) : String(Math.round(a))}%`;
 }
-const sign2 = (v) => (Math.abs(v) < 0.005 ? '0' : `${v < 0 ? '−' : '+'}${Math.abs(v).toFixed(2)}`); // cycle counts
+const sign2 = (v) => (v === 0 ? '0' : signedCycles(v)); // cycle counts (0: the same)
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const ok =(r) => !!r && typeof r === 'object' && !('error' in r) && Array.isArray(r.rows) && Array.isArray(r.columns);
 const WORK_TITLE = 'elements per iteration: the elements (or bytes) one iteration processes; A and B are then compared per element';
@@ -134,6 +134,8 @@ export function createAB(api) {
       x.work.input.setAttribute('aria-invalid', flag ? 'true' : 'false');
       x.work.label.title = flag ? `${WORK_TITLE}. ${s.toUpperCase()}'s code changed since it was set: check it` : WORK_TITLE;
     }
+    // a count changed by any route (typed, swap, A → B, a link, an example): the shown comparison is weighed again
+    if (shown && (shown.workA !== state.aWork || shown.workB !== state.bWork)) reweigh();
   }
   // a count is right for the code shown now (set, confirmed, or the code was replaced)
   const settle = (s) => { sides[s].given = sides[s].code(); };
@@ -188,7 +190,6 @@ export function createAB(api) {
     if (n !== state[x.key]) {
       state[x.key] = n;
       paintWork();
-      if (shown) reweigh();
       api.changed();
     } else paintWork();
   }
@@ -535,7 +536,11 @@ export function createAB(api) {
     parts.push(h('div', { class: 'ab-slots-slot', hidden: true }), reports(view));
     // the first tab of the result (workspace.js): its content says what it is
     const main = h('div', { class: 'row lead ws-main', id: 'ab-main', 'data-tab': 'diff' }, h('div', { class: 'label', text: 'uops' }), h('div', { class: 'field' }, ...parts));
-    api.el.body.replaceChildren(...[api.cpusBox, headline(view), main].filter(Boolean));
+    // the tab row (workspace.js) and the table per CPU stay in the page, and the focus with them (a tab, a row's button)
+    const keep = api.el.body.contains(document.activeElement) ? document.activeElement : null;
+    const strip = api.el.body.querySelector(':scope > .view-tabs');
+    api.el.body.replaceChildren(...[api.cpusBox, headline(view), strip, main].filter(Boolean));
+    if (keep?.isConnected && document.activeElement !== keep) keep.focus({ preventScroll: true });
     api.drawn?.(api.el.body, view); // more parts of other modules (ab-slots.js)
   }
 

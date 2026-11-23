@@ -114,10 +114,24 @@ export function sharedColumns(ra, rb) {
   return ra.columns.map((name, ia) => ({ name, kind: columnKind(name), ia, ib: rb.columns.indexOf(name) })).filter((c) => c.ib >= 0);
 }
 
-// verdict for a change of a cycle count (lower is better)
-export function verdict(delta) {
-  return Math.abs(delta) < EPS ? 'same' : delta < 0 ? 'better' : 'worse';
+// Two cycle counts (per iteration or per element) are the same when they differ by less than REL of the larger one:
+// uiCA's throughputs are exact to its two decimals at about 2 cycles, and per element they can be 100× smaller, so the
+// test is relative, on the unrounded values.
+export const REL = 0.0025;
+export const sameValue = (a, b) => Math.abs(b - a) <= REL * Math.max(Math.abs(a), Math.abs(b));
+// verdict for a change of a cycle count from a to b (lower is better); verdict(delta) alone: against EPS (older form)
+export function verdict(a, b) {
+  if (b === undefined) return Math.abs(a) < EPS ? 'same' : a < 0 ? 'better' : 'worse';
+  return sameValue(a, b) ? 'same' : b < a ? 'better' : 'worse';
 }
+// A cycle count as shown: two decimals, or three significant digits below 0.1 (per element: 0.0156)
+export function cycles(v) {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return '–';
+  const a = Math.abs(v);
+  return a !== 0 && a < 0.1 ? v.toPrecision(3) : v.toFixed(2);
+}
+// a change of a cycle count, with its sign (a real minus sign): "+1.50", "−0.00313"
+export const signedCycles = (v) => `${v < 0 ? '−' : '+'}${cycles(Math.abs(v))}`;
 
 // The comparison of two responses. workA, workB: the elements (or bytes) one iteration of A and of B processes; the
 // cycle counts are divided by them before they are compared (cycles per element). scale (older form): B does the work
@@ -129,8 +143,9 @@ export function compareResponses(ra, rb, { workA = 1, workB = null, scale = 1 } 
   const out = { okA, okB, workA: wa, workB: wb, scale: wb / wa, perElement: wa !== 1 || wb !== 1, tp: null, bottlenecks: null, limits: [], diff: null };
   if (!okA || !okB) return out;
   const a = Number(ra.tp) / wa, b = Number(rb.tp) / wb;
-  const delta = round(b - a);
-  out.tp = { a, b, aRaw: Number(ra.tp), bRaw: Number(rb.tp), delta, pct: a > 0 ? (100 * delta) / a : null, speedup: b > 0 ? a / b : null, verdict: verdict(delta) };
+  const v = verdict(a, b);
+  const delta = v === 'same' ? 0 : b - a; // (unrounded; 0 when the same)
+  out.tp = { a, b, aRaw: Number(ra.tp), bRaw: Number(rb.tp), delta, pct: a > 0 ? (100 * delta) / a : null, speedup: b > 0 ? a / b : null, verdict: v };
 
   const ba = ra.bottlenecks ?? [], bb = rb.bottlenecks ?? [];
   out.bottlenecks = { a: ba, b: bb, same: ba.length === bb.length && ba.every((x) => bb.includes(x)),
@@ -140,7 +155,7 @@ export function compareResponses(ra, rb, { workA = 1, workB = null, scale = 1 } 
   out.limits = names.map((name) => {
     const la = ra.limits.find((l) => l.name === name), lb = rb.limits.find((l) => l.name === name);
     const va = la ? Number(la.tp) / wa : null, vb = lb ? Number(lb.tp) / wb : null;
-    return { name, a: va, b: vb, delta: va !== null && vb !== null ? round(vb - va) : null,
+    return { name, a: va, b: vb, delta: va !== null && vb !== null ? (sameValue(va, vb) ? 0 : vb - va) : null,
       bottleneckA: ba.includes(name), bottleneckB: bb.includes(name) };
   });
   out.diff = diffTables(ra, rb);

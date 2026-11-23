@@ -214,6 +214,11 @@ if (fs.existsSync(wasmPath) && fs.existsSync(new URL('data/uarch.json', root))) 
     check(w2.a.from === m.relevant.first && w2.a.to === w2.a.from + 2 && w2.a.origin === w2.b.origin && w2.lo <= 0 && w2.hi > 0, `${arch}: an A–B window of a block with itself`, JSON.stringify(w2));
     const w3 = abWindow(m, m, { choice: 'steady', scale: 2 });
     check(w3.b.from === Math.floor(w3.a.from / 2) && w3.b.to === w3.b.from + 1, `${arch}: B unrolled ×2: half the iterations from half the index`, JSON.stringify(w3));
+    // A does more per iteration than B (B 1/2: twice the iterations), and a ratio that is not whole (B 3/2 of A)
+    const w4 = abWindow(m, m, { choice: 'steady', scale: 0.5 });
+    check(w4.a.to - w4.a.from === 2 && w4.b.from === Math.min(Math.floor(w4.a.from / 0.5), m.nRounds - 1) && w4.b.to - w4.b.from + 1 === Math.min(6, m.nRounds - w4.b.from), `${arch}: A does twice B's work: B shows twice the iterations`, JSON.stringify(w4));
+    const w5 = abWindow(m, m, { choice: 'steady', scale: 1.5 });
+    check(w5.b.from === Math.floor(w5.a.from / 1.5) && w5.b.to - w5.b.from + 1 === 2, `${arch}: B does 1.5 of A's work: 3 of A over 2 of B`, JSON.stringify(w5));
     console.log(`${arch} 50-instruction loop: trace ${(JSON.stringify(r.trace).length / 1024).toFixed(0)} KiB, ${r.trace.cycles.length} cycles, ${m.uops.length} uops; model ${ms.toFixed(1)} ms`);
   }
 } else {

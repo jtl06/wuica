@@ -61,6 +61,8 @@ check(r[2].state === 'error' && r[2].a === 3 && r[2].b === null && r[2].error ==
 check(r[3].state === 'pending' && r[3].a === 1 && r[3].b === null, 'abCpuRows: pending', j(r[3]));
 const w = abCpuRows(items.slice(0, 1), res, { workA: 1, workB: 4 });
 check(w[0].a === 4 && w[0].b === 0.5 && w[0].speedup === 8 && w[0].verdict === 'better', 'abCpuRows: per element (B does 4 elements per iteration)', j(w[0]));
+const tiny = abCpuRows(items.slice(0, 1), new Map([['a:SKL', { tp: 2 }], ['b:SKL', { tp: 2 }]]), { workA: 128, workB: 160 });
+check(tiny[0].verdict === 'better' && Math.abs(tiny[0].pct + 20) < 1e-9 && Math.abs(tiny[0].speedup - 1.25) < 1e-9, 'abCpuRows: small values per element, relative and unrounded', j(tiny[0]));
 const same = abCpuRows(items.slice(0, 1), new Map([['a:SKL', { tp: 2 }], ['b:SKL', { tp: 2.001 }]]));
 check(same[0].delta === 0 && same[0].verdict === 'same', 'abCpuRows: the same at two decimals', j(same[0]));
 

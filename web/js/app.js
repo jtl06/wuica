@@ -130,10 +130,15 @@ const abCpus = createABCpus({
   checked: () => checked.map((k) => archItems.get(k)).filter(Boolean),
   tableLoaded: (key) => !!engine?.hasArch(archItems.get(key)?.table),
   ensureTable: (key) => ensureTable(key),
-  onArch: (key) => focusArch(key),
+  // a row: both sides on that CPU (B's own cpu, if it had one, back to "as A")
+  onArch: (key) => {
+    const own = !!state.bArch;
+    if (own) { state.bArch = ''; ab?.paint(); }
+    if (own && key === state.arch) changed({ rerun: true }); else focusArch(key);
+  },
 });
 // A–B: the side the page's views (bound, try, bytes, deps, mca, sweep, source) show; picked in the tab row (workspace.js)
-let abSide = 'a';
+let abSide = state.abSide === 'b' ? 'b' : 'a'; // (state.abSide: in the URL)
 // The critical chain and the cost column on the result (insight-view.js).
 const insight = createInsight({
   engine: () => engine,
@@ -702,6 +707,7 @@ function showTrace(panel) {
 }
 
 function draw() {
+  paintSideEmpty(false);
   if (!lastView) { showTrace(null); return; }
   if (lastView.ab) {
     ab.draw(lastView.ab);
@@ -711,6 +717,7 @@ function draw() {
     const sv = abView();
     const root = sv && ab.sideRoot(sv.side);
     if (root) views.decorate(root, sv);
+    paintSideEmpty(!root);
     paintStale({ drawn: true });
     return;
   }
@@ -977,15 +984,25 @@ const okSide = (s) => !!s?.response && !s.response.error && Array.isArray(s.resp
 function abView() {
   const v = lastView?.ab;
   if (!v) return null;
-  const want = v[abSide], other = v[abSide === 'a' ? 'b' : 'a'];
-  return okSide(want) ? want : okSide(other) ? other : null;
+  return okSide(v[abSide]) ? v[abSide] : null; // (never the other side's: its views say there is none)
 }
+// A–B, the side the views show has no result: one line instead of the views (dense.css hides them while one is picked)
+let sideEmpty = null;
+function paintSideEmpty(empty) {
+  el.results.classList.toggle('side-empty', empty);
+  if (!empty) return;
+  sideEmpty ??= h('p', { id: 'ab-side-empty', class: 'hint ab-side-empty', role: 'status' });
+  if (!sideEmpty.isConnected) el.results.append(sideEmpty);
+  sideEmpty.textContent = `${abSide.toUpperCase()}: no result`;
+}
+// B has a cpu of its own: the headline compares two CPUs, so no row of the table per CPU is its (none is marked)
+const bOwnCpu = () => !!state.bArch && state.bArch !== state.arch && archItems.has(state.bArch);
 // the table of A and B per checked CPU (ab-cpus.js); the results of the comparison itself are reused
 const summaryOf = (r) => ({ tp: Number(r.tp), bottlenecks: r.bottlenecks ?? [], mode: r.mode, decodeErrors: Number(r.decodeErrors) || 0, mock: !!r.mock });
 function updateABCpus(view, { auto = false } = {}) {
   const seed = new Map();
   for (const s of [view.a, view.b]) if (okSide(s)) seed.set(`${s.side}:${s.archKey}`, summaryOf(s.response));
-  abCpus.update({ a: view.a?.hex ?? null, b: view.b?.hex ?? null, options: options(), workA: view.workA, workB: view.workB, focus: state.arch, seed }, { auto });
+  abCpus.update({ a: view.a?.hex ?? null, b: view.b?.hex ?? null, options: options(), workA: view.workA, workB: view.workB, focus: bOwnCpu() ? null : state.arch, seed }, { auto });
 }
 // the sweep (compare-view.js) of the side the views show
 function sweepSide({ auto = true } = {}) {
@@ -997,8 +1014,9 @@ let srcA = null;
 document.addEventListener('wuica:ab-side', (e) => {
   const s = e.detail === 'b' ? 'b' : 'a';
   if (s === abSide) return;
-  abSide = s;
+  abSide = state.abSide = s;
   document.body.dataset.abSide = s;
+  syncUrl(true);
   if (lastView?.ab) { draw(); sweepSide({ auto: false }); }
 });
 document.body.dataset.abSide = abSide;
@@ -1234,6 +1252,7 @@ function restore(fragment) {
   const s = decodeState(fragment);
   if (!s) return false;
   Object.assign(state, s);
+  abSide = state.abSide === 'b' ? 'b' : 'a'; document.body.dataset.abSide = abSide; // (the side the views show)
   // an alignment offset in the link is kept (not replaced by one from the text's addresses)
   if (s.alignmentOffset !== DEFAULT_STATE.alignmentOffset) alignBy = 'manual';
   textA = s.text;

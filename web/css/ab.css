@@ -125,3 +125,8 @@ table.grid.ab-limits { width: auto; min-width: min(100%, 36rem); }
 /* the reports next to each other */
 .ab-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.75rem 1rem; align-items: start; }
 @media (max-width: 900px) { .ab-pair { grid-template-columns: minmax(0, 1fr); } }
+
+/* the views of a side without a result: one line instead (app.js) */
+.ab-side-empty { display: none; margin: 0.5rem 0; }
+#results.side-empty[data-side-view="1"] #ab-side-empty { display: block; }
+#results.side-empty[data-side-view="1"] #more > .row { display: none !important; }

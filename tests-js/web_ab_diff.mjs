@@ -2,7 +2,7 @@
 // comparison of two responses; with the real analyzer if it is built.  Usage: node tests-js/web_ab_diff.mjs
 import fs from 'node:fs';
 import {
-  normalizeInstr, instructionUnits, lcsPairs, alignUnits, compareResponses, diffTables, sharedColumns, signed, verdict,
+  normalizeInstr, instructionUnits, lcsPairs, alignUnits, compareResponses, diffTables, sharedColumns, signed, verdict, cycles, signedCycles, sameValue,
 } from '../web/js/ab-diff.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { DEFAULT_STATE, encodeState, decodeState } from '../web/js/url-state.js';
@@ -74,6 +74,13 @@ const resp = (rows, extra = {}) => ({ arch: 'SKL', tp: 1, mode: 'loop', decodeEr
     && work.limits[0].a === 0.5 && work.limits[0].b === 0.25, 'compare: per element (8 and 32 elements per iteration)', j([work.tp, work.limits]));
   check(!compareResponses(A, B).perElement && compareResponses(A, B, { workA: 2, workB: 2 }).perElement, 'compare: per element only when given');
   check(compareResponses({ ...A, tp: 2 }, { ...B, tp: 2.004 }).tp.verdict === 'same' && verdict(0.01) === 'worse', 'compare: differences below 0.005 are none');
+  // small values per element: judged relative to the values, unrounded (memcpy, 128 and 160 bytes per iteration)
+  const small = compareResponses({ ...A, tp: 2 }, { ...B, tp: 2 }, { workA: 128, workB: 160 });
+  check(small.tp.verdict === 'better' && Math.abs(small.tp.pct + 20) < 1e-9 && Math.abs(small.tp.speedup - 1.25) < 1e-9 && small.tp.delta < 0,
+    'compare: per element, small values: B better by 20%, 1.25× (not "the same" at two decimals)', j(small.tp));
+  check(cycles(2 / 128) === '0.0156' && cycles(2 / 160) === '0.0125' && cycles(1.5) === '1.50' && cycles(0.1) === '0.10' && signedCycles(-0.003125) === '−0.00313',
+    'cycles: three significant digits below 0.1');
+  check(verdict(2, 2.004) === 'same' && verdict(0.02, 0.016) === 'better' && verdict(0.016, 0.02) === 'worse' && sameValue(100, 100.2), 'verdict: relative');
   const failedB = compareResponses(A, { error: 'no instructions found' });
   check(failedB.okA && !failedB.okB && failedB.tp === null && failedB.diff === null, 'compare: one side failed', j(failedB));
   check(compareResponses(null, B).okB && !compareResponses(null, B).okA, 'compare: one side missing');
@@ -91,9 +98,9 @@ const resp = (rows, extra = {}) => ({ arch: 'SKL', tp: 1, mode: 'loop', decodeEr
   const single = { ...DEFAULT_STATE, mode: 'hex', text: '48 01 d8', arch: 'ZEN3', bText: 'ignored', bMode: 'asm' };
   check(encodeState(single) === 'v=1&a=ZEN3&c=NDggMDEgZDg', 'url: a single-mode link is as before (B is left out)', encodeState(single));
   check(j(decodeState('v=1&a=ZEN3&c=NDggMDEgZDg')) === j({ ...DEFAULT_STATE, mode: 'hex', text: '48 01 d8', arch: 'ZEN3' }), 'url: old links decode as before (hex)');
-  const s = { ...DEFAULT_STATE, ab: true, text: 'add rax, 1\n', mode: 'asm', bMode: 'asm', bSyntax: 'att', bArch: 'ADL-P', bText: 'loop:\n  addq $2, %rax ✓\n', aWork: 8, bWork: 32 };
+  const s = { ...DEFAULT_STATE, ab: true, text: 'add rax, 1\n', mode: 'asm', bMode: 'asm', bSyntax: 'att', bArch: 'ADL-P', bText: 'loop:\n  addq $2, %rax ✓\n', aWork: 8, bWork: 32, abSide: 'b' };
   const f = encodeState(s);
-  check(/^[A-Za-z0-9=&_-]+$/.test(f) && f.includes('&ab=1&bm=asm&bs=att&ba=ADL-P&aw=8&bw=32&bc='), 'url: side B in the fragment', f);
+  check(/^[A-Za-z0-9=&_-]+$/.test(f) && f.includes('&ab=1&bm=asm&bs=att&ba=ADL-P&aw=8&bw=32&sd=b&bc='), 'url: side B in the fragment', f);
   check(j(decodeState(f)) === j(s), 'url: round trip of both sides', j(decodeState(f)));
   check(decodeState('v=1&ab=1&bm=x&bs=y&ba=%3Cx%3E&bk=999&bc=!!').bWork === 64 && decodeState('v=1&ab=1&aw=0&bw=99999999').bWork === 65536 && j(decodeState('v=1&ab=1&bm=x&bs=y&ba=%3Cx%3E&bk=0&aw=x&bc=!!')) === j({ ...DEFAULT_STATE, mode: 'hex', ab: true, bMode: 'hex' }), 'url: bad B values fall back to the defaults');
   check(decodeState('v=1&ab=1&bk=4').bWork === 4 && decodeState('v=1&ab=1&bk=4').aWork === 1, 'url: an older link\'s B unrolled ×4 is B doing 4 elements per iteration of A');

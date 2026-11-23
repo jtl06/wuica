@@ -138,8 +138,8 @@ export function uopTable(r, hideEmpty, limit = Infinity, { shown = null } = {}) 
     const text = shown?.[k] ?? x.label;
     let label = text;
     if (!extra && typeof x.url === 'string' && x.url.startsWith(UOPS_INFO)) {
-      label = h('a', { href: x.url, rel: 'noopener noreferrer', target: '_blank', title: `${x.instrStr ? `${x.instrStr} on uops.info` : 'uops.info'}${text !== x.label ? ` (${x.label})` : ''}`, text });
-    } else if (text !== x.label) label = h('span', { title: x.label, text });
+      label = h('a', { href: x.url, rel: 'noopener noreferrer', target: '_blank', title: `${x.label}\n${x.instrStr ? `${x.instrStr} on uops.info` : 'uops.info'}`, text });
+    } else label = h('span', { title: x.label, text }); // (the whole instruction: the column can be cut, on phones)
     const tr = h('tr', { class: [extra ? 'extra' : '', x.notes === 'X' ? 'unsupported' : ''].filter(Boolean).join(' ') || null },
       h('th', { scope: 'row', class: 'first' }, label),
       h('td', { class: 'note', title: NOTES[x.notes] ?? null, text: x.notes ?? '' }));
