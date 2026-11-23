@@ -4,6 +4,13 @@
 use std::cell::RefCell;
 use wuica::{error_json, Engine};
 
+#[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
+mod alloc;
+
+#[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
+#[global_allocator]
+static ALLOC: alloc::Alloc = alloc::Alloc::new();
+
 thread_local! {
     static RESULT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     static ENGINE: RefCell<Engine> = RefCell::new(Engine::new());
