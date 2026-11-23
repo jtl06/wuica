@@ -12,6 +12,8 @@
 // Every request goes to https://godbolt.org (the only third-party origin the page's CSP allows), and only when
 // the user imports something.
 
+import { functionBody } from './loop-find.js';
+
 export const CE_ORIGIN = 'https://godbolt.org';
 const HOST = /^(?:[a-z0-9-]+\.)*(?:godbolt\.org|compiler-explorer\.com)$/i;
 const MAX_LINK = 1 << 20;
@@ -509,8 +511,16 @@ export function findLoops(fn) {
   return loops.sort((a, b) => Number(b.inner) - Number(a.inner) || a.start - b.start || a.end - b.end);
 }
 
+// The body of a function without a loop: without its prologue and epilogue (loop-find.js), as item indices {start,
+// end}, or null.
+export function bodyRange(fn) {
+  const instrs = fn.items.flatMap((it, k) => (it.kind === 'instr' ? [{ line: k, body: it.text, mnemonic: it.mnemonic, kind: /^(?:rep[z]? )?ret[q]?\b/i.test(it.text) ? 'ret' : 'other' }] : []));
+  const b = functionBody({ instrs });
+  return b ? { start: b.begin, end: b.end } : null;
+}
+
 // What to preselect: the function with the first innermost loop (or the first function), and that loop (or the
-// whole function). {fn, start, end, loop}
+// function's body without its prologue and epilogue, or the whole function). {fn, start, end, loop}
 export function defaultSelection(listing) {
   for (let f = 0; f < listing.functions.length; f++) {
     const loops = findLoops(listing.functions[f]);
@@ -518,6 +528,8 @@ export function defaultSelection(listing) {
   }
   const fn = listing.functions[0];
   if (!fn) return null;
+  const body = bodyRange(fn);
+  if (body) return { fn: 0, start: body.start, end: body.end, loop: false };
   const first = fn.items.findIndex((it) => it.kind === 'instr');
   return { fn: 0, start: first, end: fn.items.length - 1, loop: false };
 }
@@ -542,11 +554,12 @@ export function extractRange(fn, start, end, { binary }) {
   // a label right before the range belongs to it (the loop's own label)
   let s = start;
   while (s > 0 && fn.items[s - 1].kind === 'label') s--;
-  // Local labels (.L...) that the range uses but does not contain (an exit of the loop, a constant) would be
-  // undefined temporary symbols, which the assembler rejects: they get an ordinary name (an external symbol).
+  // Local labels (.L...) that the range uses but does not contain would be undefined temporary symbols, which the
+  // assembler rejects: a constant's (.LC0) gets an ordinary name (an external symbol); a jump's (an exit of the loop)
+  // stays: the analysis takes it as not taken, a short jump to the end of the code (loop-find.js).
   const defined = new Set(fn.items.slice(s, end + 1).filter((it) => it.kind === 'label').map((it) => it.name));
   const outside = (t) => t.replace(/(^|[^\w.$@])(\.L[\w.$@]*)/g, (m, pre, name) => (defined.has(name) ? m : `${pre}outside${name.slice(1)}`));
-  const text = fn.items.slice(s, end + 1).map((it) => (it.kind === 'label' ? `${it.name}:` : `  ${outside(gasToLlvmIntel(it.text))}`)).join('\n') + '\n';
+  const text = fn.items.slice(s, end + 1).map((it) => (it.kind === 'label' ? `${it.name}:` : `  ${JUMP.test(it.mnemonic) ? gasToLlvmIntel(it.text) : outside(gasToLlvmIntel(it.text))}`)).join('\n') + '\n';
   return { ...info, mode: 'asm', syntax: 'intel', text, bytes: null, startAddress: null };
 }
 

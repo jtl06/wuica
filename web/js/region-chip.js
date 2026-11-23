@@ -29,3 +29,36 @@ export function createRegionChip(after, select) {
     sync(text) { paint(last && text !== null && text === last.text ? last.region : null); },
   };
 }
+
+// The loop chip (loop-find.js, through asm-regions.js): when pasted assembly has code around its loop (a whole function,
+// objdump output), a small select of what is analyzed: each loop ("loop .L3"), the function's body, or the whole text.
+// pick(value): 'whole', 'body' or a loop's index.
+export function createLoopChip(after, pick) {
+  let sel = null, last = null;
+  function paint(info) {
+    if (!info) { if (sel) sel.hidden = true; return; }
+    if (!sel?.isConnected) {
+      sel = h('select', { class: 'plain region-chip loop-chip', id: 'loop-chip', 'aria-label': 'analyzed code' });
+      sel.addEventListener('change', () => pick(sel.value === 'whole' || sel.value === 'body' ? sel.value : Number(sel.value)));
+      after.after(sel);
+    }
+    const { loop, loops, body } = info;
+    const opts = loops.map((l, k) => h('option', { value: String(k), text: `loop ${l.label}` }));
+    if (body) opts.push(h('option', { value: 'body', text: 'body' }));
+    opts.push(h('option', { value: 'whole', text: 'whole' }));
+    sel.replaceChildren(...opts);
+    sel.value = loop ? (loop.index === null ? 'body' : String(loop.index)) : 'whole';
+    const at = loop ? `lines ${loop.line}–${loop.endLine}${loop.address !== null && loop.address !== undefined ? ` at 0x${loop.address.toString(16)}` : ''}` : 'the whole text';
+    sel.title = `analyzed: ${at}; branches out of it are taken as not taken`;
+    sel.hidden = false;
+  }
+  return {
+    // info: the assembly's {loop, loops, body, choosable} (null or nothing to choose: hidden); text: the assembly it is for
+    show(info, text = null) {
+      const has = !!info?.choosable;
+      last = has ? { info, text } : null;
+      paint(last?.info ?? null);
+    },
+    sync(text) { paint(last && text !== null && text === last.text ? last.info : null); },
+  };
+}

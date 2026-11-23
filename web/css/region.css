@@ -5,3 +5,9 @@
   background: var(--surface); text-decoration: none; font-variant-numeric: tabular-nums; }
 .region-chip:hover { color: var(--text); }
 .region-chip[hidden] { display: none; }
+
+/* the loop chip (a select: what of pasted assembly is analyzed) */
+select.loop-chip { margin-left: 0.6ch; font: inherit; font-size: 0.9em; cursor: pointer; }
+
+/* the result is for an older input: the input has an error (app.js, inputError) */
+.input-stale { margin: 0 0 0.3rem; font-size: 0.85em; color: var(--caveat); }

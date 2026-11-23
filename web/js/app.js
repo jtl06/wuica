@@ -24,7 +24,7 @@ import { createViews } from './views.js';         // the opt-in views below the 
 import { createABSlots } from './ab-slots.js';     // A–B: the issue slots of both sides
 import { createCmpSlots } from './cmp-slots.js';   // the issue slots per CPU in the CPU table (bound view open)
 import { withRegions } from './asm-regions.js';     // marked regions and .loc lines of pasted assembly
-import { createRegionChip } from './region-chip.js';
+import { createRegionChip, createLoopChip } from './region-chip.js';
 import { createKeys } from './keys.js';           // keyboard shortcuts, the ? overlay
 
 const $ = (id) => document.getElementById(id);
@@ -33,7 +33,7 @@ const MOCK = query.get('mock') === '1';       // ?mock=1: do not load the analyz
 const NO_SW = query.get('nosw') === '1';      // ?nosw=1: do not register the service worker
 // ?pool=N: N workers for the compare panels and the cost column (0: none, they share the main analyzer's worker)
 const POOL_SIZE = query.has('pool') ? Math.max(0, Math.min(16, Number.parseInt(query.get('pool'), 10) || 0)) : poolSize();
-const VERSION = '0.1.5';                  // the page's version (footer); bump it here
+const VERSION = '0.1.6';                  // the page's version (footer); bump it with packages/wuica and server (tests-js/web_version.mjs)
 
 const el = {
   notice: $('notice'), code: $('code'), codeHint: $('code-hint'), messages: $('input-messages'),
@@ -127,6 +127,9 @@ const insight = createInsight({
 });
 let pastedSource = null; // the .loc lines of pasted assembly (asm-regions.js), bound to its bytes
 const regionChip = createRegionChip(el.messages, (line) => selectLine(line));
+// what of pasted assembly is analyzed (loop-find.js): the loop chip sets state.loop
+const loopChip = createLoopChip(el.messages, (v) => { if (state.loop === v) return; state.loop = v; changed({ rerun: true }); });
+let autoAlignText = null; // the text whose addresses last set the alignment offset (an edit of the offset then stays)
 const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o), onToggle: (open) => { Object.assign(state, open); syncUrl(true); if ('bound' in open) cmpSlots.decorate(); }, getSel: () => state.sel, getSource: () => (ceSource && (!pastedSource || ceSource.hex === lastView?.hex) ? ceSource : pastedSource),
   // llvm-mca (mca.js): its module only if the build has it, downloaded on first use; the bytes as Intel assembly
   mca: {
@@ -247,7 +250,18 @@ function paintDerived() {
 }
 
 function runKey() {
-  return JSON.stringify([state.mode, state.mode === 'asm' ? state.syntax : '', el.code.value, state.arch, options(), ab?.key() ?? '']);
+  return JSON.stringify([state.mode, state.mode === 'asm' ? state.syntax : '', el.code.value, state.mode === 'asm' ? state.loop : '', state.arch, options(), ab?.key() ?? '']);
+}
+// The input does not assemble (or parse): the result shown is for an older input. Dimmed (paintStale), and said.
+let inputErrorNote = null;
+function inputError(on) {
+  on = on && !!lastView && !lastView.ab;
+  if (!on) { inputErrorNote?.remove(); inputErrorNote = null; return; }
+  if (!inputErrorNote?.isConnected) {
+    inputErrorNote = h('p', { class: 'input-stale', id: 'input-stale', role: 'status', text: 'stale: the input has an error' });
+    el.body.before(inputErrorNote);
+  }
+  paintStale();
 }
 function paintStale() {
   const stale = !!lastView && runKey() !== lastRunKey;
@@ -395,6 +409,7 @@ function scheduleRun() {
 
 function clearMessages() {
   regionChip.sync(state.mode === 'asm' ? el.code.value : null); // kept only for the text it was shown for
+  loopChip.sync(state.mode === 'asm' ? el.code.value : null);
   el.messages.replaceChildren();
   delete el.messages.dataset.key;
   el.code.removeAttribute('aria-invalid');
@@ -456,6 +471,7 @@ function setMode(mode, converted = null) { // converted: the code in the new for
   clearMessages();
   writeControls();
   regionChip.sync(state.mode === 'asm' ? el.code.value : null); // back to the marked text (asm -> hex -> asm)
+  loopChip.sync(state.mode === 'asm' ? el.code.value : null);
   if (mode === 'asm') {
     ensureAssembler().then((a) => { if (!a && state.mode === 'asm') showAssemblerMissing(); paintDerived(); });
   }
@@ -495,7 +511,7 @@ function ensureAssembler() {
 async function assemblerForRun() {
   const signal = assembling?.signal;
   const a = await ensureAssembler();
-  return a && { mock: a.mock, assemble: (text, syntax) => a.assemble(text, syntax, { signal }) };
+  return a && { mock: a.mock, assemble: (text, syntax) => a.assemble(text, syntax, { signal, loop: 'auto' }) };
 }
 
 async function loadExample(ex) {
@@ -649,7 +665,7 @@ function draw() {
 
 async function machineCode(id) {
   const text = el.code.value;
-  pastedSource = null; regionChip.show(null);
+  pastedSource = null; regionChip.show(null); loopChip.show(null);
   if (state.mode === 'hex') {
     const p = parseHexInput(text);
     if (!p.ok) {
@@ -672,18 +688,28 @@ async function machineCode(id) {
   if (!assembler) { showAssemblerMissing(); paintDerived(); return null; }
   let r;
   try {
-    r = await assembler.assemble(text, state.syntax, { signal: assembling?.signal });
+    r = await assembler.assemble(text, state.syntax, { signal: assembling?.signal, loop: state.loop });
+    // a loop picked for another text that has fewer loops: the first one again
+    if (!r.ok && state.loop !== 'auto' && id === runSeq && r.diagnostics.some((d) => /^loop: /.test(d.message))) {
+      state.loop = 'auto';
+      r = await assembler.assemble(text, state.syntax, { signal: assembling?.signal, loop: state.loop });
+    }
   } catch (e) {
     if (e?.name === 'CancelledError') return null; // replaced by a newer run, an edit, or Cancel
     throw e;
   }
   if (id !== runSeq) return null;
+  // the alignment offset from the text's addresses (objdump), once per text: a change of the offset by hand stays
+  if (r.ok && Number.isInteger(r.alignment) && text !== autoAlignText) {
+    autoAlignText = text;
+    if (state.alignmentOffset !== r.alignment) { state.alignmentOffset = r.alignment; el.align.value = r.alignment; paintDerived(); }
+  }
   // what it assembled to is the result's objdump listing
   const items = [...r.diagnostics];
   if (r.ok && r.bytes.length === 0) items.push({ line: null, column: null, severity: 'error', message: 'No machine code' });
   if (r.ok && r.bytes.length && assembler.mock) items.push({ line: null, column: null, severity: 'note', message: 'mock assembler' });
   if (items.length) showMessages(items); else clearMessages();
-  if (r.ok && r.bytes.length) { regionChip.show(r.region ?? null, text); pastedSource = r.source ? { ...r.source, hex: toHex(r.bytes) } : null; }
+  if (r.ok && r.bytes.length) { regionChip.show(r.region ?? null, text); loopChip.show(r, text); pastedSource = r.source ? { ...r.source, hex: toHex(r.bytes) } : null; }
   return r.ok && r.bytes.length ? r.bytes : null;
 }
 
@@ -726,7 +752,7 @@ async function run({ auto = false } = {}) {
   if (!auto) { liveRunner.cancel(); cancelledKey = ''; settleMode(); }
   if (!ready || el.run.disabled) return;
   if (ce?.linkBox()) return; // a box that holds only a Compiler Explorer link is imported (analyze()), never analyzed
-  const key = runKey();
+  let key = runKey();
   const messages = !!el.messages.firstChild || !!ab?.hasMessages();
   if (auto && ((busy && key === inflight.key) || key === cancelledKey || (lastView && key === lastRunKey && !messages))) return;
   // a newer request replaces the one that is running (an assembly is always stopped: its input is out of date)
@@ -738,7 +764,7 @@ async function run({ auto = false } = {}) {
   assembling = ctrl;
   if (ab?.active()) { await runCompare(id, key, { auto, ctrl }); return; } // awaited: live mode runs one comparison at a time
   const archKey = state.arch;
-  const opts = options();
+  let opts = options();
   const item = archItems.get(archKey);
   let bytes;
   inflight = { id, key };
@@ -754,8 +780,12 @@ async function run({ auto = false } = {}) {
   if (!bytes || id !== runSeq) {
     if (inflight.id === id) inflight = { id: 0, key: '' };
     if (id === runSeq && busy) setBusy(false);
+    if (id === runSeq) inputError(true);
     return;
   }
+  inputError(false);
+  // the assembly can set the alignment offset (from the text's addresses) and the loop (back to auto)
+  if (runKey() !== key) { key = runKey(); opts = options(); syncUrl(); }
   const hex = toHex(bytes);
 
   setBusy(true, { defer: auto });
