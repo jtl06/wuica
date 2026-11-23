@@ -54,6 +54,10 @@ test('-TPonly and -json', () => {
   assert.equal(j.trace, null);
   const t = JSON.parse(run([HEX, '-json', '-trace']).out);
   assert.ok(Array.isArray(t.trace.cycles));
+  assert.equal(j.details, undefined);
+  const d = JSON.parse(run([HEX, '-arch', 'ADL-P', '-json', '-details']).out);
+  assert.equal(d.details.rows.length, d.rows.length);
+  assert.equal(d.tp, j.tp);
 });
 
 test('simulation options', () => {

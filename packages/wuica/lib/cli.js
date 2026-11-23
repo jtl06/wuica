@@ -22,6 +22,7 @@ Output:
   -TPonly                print only the throughput
   -json                  print the response as JSON
   -trace                 with -json: include the cycle-by-cycle events (large)
+  -details               with -json: include the details (allowed ports, latencies, port set, issue slots)
 
 Simulation (as in uiCA):
   -alignmentOffset N     alignment offset relative to a 64-byte cache line (default: 0)
@@ -70,6 +71,7 @@ function parseArgs(argv) {
       case '-TPonly': o.tpOnly = true; break;
       case '-json': o.json = true; break;
       case '-trace': o.options.includeTrace = true; break;
+      case '-details': o.options.details = true; break;
       case '-alignmentOffset': o.options.alignmentOffset = int(value(++i, a), a); break;
       case '-initPolicy': o.options.initPolicy = value(++i, a); break;
       case '-simpleFrontEnd': o.options.simpleFrontEnd = true; break;

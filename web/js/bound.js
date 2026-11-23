@@ -15,6 +15,7 @@ const GROUPS = Object.freeze([['front', 'front end'], ['issue', 'issue'], ['port
 const LIMIT_GROUP = { Issue: 'issue', Ports: 'ports', Dependencies: 'deps' }; // the rest: front end
 const FE_COLUMN = { DSB: 'DSB', LSD: 'LSD', MS: 'MS' };
 const SATURATED = 0.95; // "Ports": the ports at least this busy relative to the busiest one
+const DETAILS_DELAY = 300; // ms after a result before its details are fetched (the port set, the issue slots)
 
 const sum = (a) => a.reduce((s, x) => s + x, 0);
 const pct = (u) => `${Math.round(u * 100)}%`;
@@ -157,6 +158,7 @@ export function createBound(env = {}) {
   let row = null, details = null, body = null, hint = null;
   let root = null, view = null;
   let shaded = [];     // the cells that carry a shade
+  let detailsTimer = 0;
 
   function ensureRow() {
     if (row?.isConnected) return row;
@@ -234,7 +236,12 @@ export function createBound(env = {}) {
     // Ports: the port set behind the limit, from the details (fetched once, when Ports is selected)
     // and the issue slots per cause (slots.js); the details are fetched once, while the view is open
     const d = env.details?.peek(view);
-    if (env.details && d === undefined && !r.mock) { const v = view; env.details.get(v).then((x) => { if (x && view === v && open) paint(); }); }
+    // (after a pause: while results follow each other, e.g. typing in live mode, no analysis is added to each)
+    if (env.details && d === undefined && !r.mock) {
+      const v = view;
+      clearTimeout(detailsTimer);
+      detailsTimer = setTimeout(() => { if (view === v && open) env.details.get(v).then((x) => { if (x && view === v && open) paint(); }); }, DETAILS_DELAY);
+    }
     const ps = selected === 'Ports' ? portSetBlame(r, d?.ports) : null;
     const b = ps ?? (selected ? blame(r, selected) : null);
     const it = m.items.find((x) => x.id === selected);
