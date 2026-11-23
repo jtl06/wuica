@@ -249,7 +249,9 @@ export function createComparePanels(env) {
         h('td', { class: 'cmp-tp', title: r.state === 'error' ? r.error : null, text: r.state === 'ok' ? fmtTp(r.tp) : r.state === 'error' ? 'failed' : '…' }),
         h('td', { class: 'cmp-bar', 'aria-hidden': 'true' }, gauge),
         h('td', { class: 'cmp-bn' }, r.state !== 'ok' ? '' : r.bottlenecks.length ? r.bottlenecks.join(', ')
-          : h('span', { class: 'hint', title: 'no single limit explains the throughput', text: 'unknown' })));
+          : h('span', { class: 'hint', title: 'no single limit explains the throughput', text: 'unknown' }),
+        r.decodeErrors ? h('span', { class: 'caveat', title: `this CPU's decoder skipped ${r.decodeErrors} position${r.decodeErrors === 1 ? '' : 's'} (instructions it does not support): the throughput leaves them out`,
+          text: ` · ${r.decodeErrors} undecodable skipped` }) : null));
       tr.addEventListener('click', () => env.onArch(r.key));
       body.append(tr);
     }
