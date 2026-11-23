@@ -7,7 +7,15 @@
 // Messages: {id, op, ...arguments} -> {id, ok: true, value} | {id, ok: false, error, engineError}.
 // No DOM in here; the worker is created by a function the caller passes in, so the tests can use a fake one.
 
-import { WasmEngine, EngineError } from './engine.js';
+import { WasmEngine, EngineError, makeRequest } from './engine.js';
+
+// The warm-up block (the npm package's WARM_HEX): ~500 instructions of several kinds in a loop, ~10 ms. V8 compiles the
+// module's functions when they are first called, with its baseline compiler, and optimizes the hot ones in the
+// background later; after one analysis of this block the first large block runs at nearly full speed.
+const WARM_MIX = '4883c001' + '488906' + '8b06' + 'c4e2d5aaf4' + '4c03d1' + '4d0fafc0' + 'c5fc100c87' + 'c4e27da80c86' + 'c5fc110c86'
+  + 'f3480fb80cc7' + '4801ca' + 'f2480f38f104cf' + '660f6f0f' + '660f74c8' + '660fd7c1' + '488b00' + 'c4626db8c0' + '4839d0'
+  + '4883c708' + '4c8d0c49' + '48c1e005' + '4421c0' + 'c5f857c0' + '488d0c0a';
+export const WARM_HEX = WARM_MIX.repeat(20) + '49ffcf' + '0f853bf8ffff';
 
 export class CancelledError extends Error {
   constructor() { super('cancelled'); this.name = 'CancelledError'; }
@@ -22,6 +30,7 @@ export function createHandler() {
     analyze: ({ request }) => engine.analyze(request),
     decode: ({ code, chip }) => engine.decode(code, chip),
     memory: () => engine.memory(),
+    warmUp: async ({ arch }) => { await engine.analyze(makeRequest(WARM_HEX, arch)); }, // the result is not used
   };
   let queue = Promise.resolve(); // one message at a time, in order
   return (msg) => {
@@ -167,5 +176,12 @@ export class WorkerEngine {
   async memory() {
     await this.#live();
     return this.#send('memory', {});
+  }
+
+  // One analysis of WARM_HEX on `arch` (its table loaded), in the worker as it is: not started for it, and stopped
+  // like any call by cancel(). Resolves when done; never rejects.
+  async warmUp(arch) {
+    if (!this.#worker || this.#starting) return;
+    await this.#send('warmUp', { arch }).catch(() => {});
   }
 }
