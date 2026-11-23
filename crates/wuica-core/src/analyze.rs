@@ -6,7 +6,7 @@ use crate::data::ArchData;
 use crate::decoded::DecodedInstr;
 use crate::facile::{self, InstrInstanceSummary, InstrSource, SimSummary, SimView, UopSummary};
 use crate::instr_builder::build_instructions;
-use crate::sim::{simulate, InitPolicy, SimOptions, SimResult, TableValue, UopSource};
+use crate::sim::{simulate, InitPolicy, SimOptions, SimResult, UopSource};
 use serde::{Deserialize, Serialize};
 
 fn default_init_policy() -> String {
@@ -283,45 +283,32 @@ pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, 
         let dep_limit = facile::compute_dependency_limit(&instrs, config, &request.init_policy);
         let report =
             facile::format_bottlenecks(&facile::bottleneck_values_for(&instrs, decoded, config, request.alignment_offset, dep_limit, &r));
-        let table = r.uops_table();
+        // the uop table: its text and its lines, from one computation of its values
+        let table_data = r.uops_table_data();
+        let table = r.format_uops_table(&table_data);
         let text_with_hyperlinks = format!("Throughput (in cycles per iteration): {:.2}\n{report}\n{table}\n", r.tp);
         let (bottlenecks, limits) = parse_bottleneck_report(&report);
 
-        // the lines of the table: for each instruction, a line for its register merge uops and one for its stack sync uops
-        // (if any instance in the relevant rounds has such uops), then the instruction
-        let mut meta: Vec<(&'static str, String, Option<usize>)> = Vec::new();
-        for (i, instr) in instrs.instrs.iter().enumerate() {
-            let instances = &r.relevant_instr_instances_for_instr[i];
-            if instances.iter().any(|&ii| !r.instr_instances[ii as usize].reg_merge_uops.is_empty()) {
-                meta.push(("regMerge", "<Register Merge Uop>".to_string(), None));
-            }
-            if instances.iter().any(|&ii| !r.instr_instances[ii as usize].stack_sync_uops.is_empty()) {
-                meta.push(("stackSync", "<Stack Sync Uop>".to_string(), None));
-            }
-            meta.push(("instr", instr.asm.clone(), Some(i)));
-        }
-        let table_columns = r.uops_table_columns();
-        if table_columns.iter().any(|(_, values)| values.len() != meta.len()) {
-            return Err("internal error: the uop table has an unexpected number of lines".to_string());
-        }
-        let notes: Vec<String> = match table_columns.iter().find(|(name, _)| name == "Notes") {
-            Some((_, values)) => values.iter().map(|v| if let TableValue::Text(t) = v { t.clone() } else { String::new() }).collect(),
-            None => vec![String::new(); meta.len()],
-        };
-        let number_columns: Vec<&(String, Vec<TableValue>)> = table_columns.iter().filter(|(name, _)| name != "Notes").collect();
-        let rows = meta
+        let kinds: Vec<(&'static str, Option<usize>)> = (0..table_data.rows.len()).map(|line| table_data.line(line)).collect();
+        let columns = table_data.columns;
+        let rows = kinds
             .into_iter()
-            .enumerate()
-            .map(|(line, (kind, label, instr))| {
+            .zip(table_data.rows)
+            .zip(table_data.notes)
+            .map(|(((kind, instr), values), note)| {
                 let instr = instr.map(|i| &instrs.instrs[i]);
                 Row {
                     kind,
-                    label,
+                    label: match kind {
+                        "regMerge" => "<Register Merge Uop>".to_string(),
+                        "stackSync" => "<Stack Sync Uop>".to_string(),
+                        _ => instr.map(|i| i.asm.clone()).unwrap_or_default(),
+                    },
                     opcode: instr.map(|i| i.opcode.clone()),
                     instr_str: instr.map(|i| i.instr_str.clone()),
                     url: instr.filter(|i| !i.is_unknown).map(|i| crate::sim::get_url(&i.instr_str)),
-                    notes: if notes[line] == "0" { String::new() } else { notes[line].clone() },
-                    values: number_columns.iter().map(|(_, values)| if let TableValue::Number(v) = values[line] { v } else { 0.0 }).collect(),
+                    notes: note.to_string(),
+                    values,
                 }
             })
             .collect();
@@ -333,7 +320,7 @@ pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, 
             decode_errors,
             bottlenecks,
             limits,
-            columns: number_columns.iter().map(|(name, _)| name.clone()).collect(),
+            columns,
             rows,
             text: strip_hyperlinks(&text_with_hyperlinks),
             text_with_hyperlinks,
