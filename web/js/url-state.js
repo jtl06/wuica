@@ -29,6 +29,7 @@ export const DEFAULT_STATE = Object.freeze({
   sel: -1,                // the selected row of the uop table (linked to the trace); -1: none
   bound: false,           // the opt-in views below the result (views.js)
   whatif: false,
+  codemap: false,
 });
 
 export const LIMITS = Object.freeze({
@@ -42,7 +43,7 @@ const MAX_TEXT = 200000; // characters accepted from a link
 
 const INTS = { al: 'alignmentOffset', mi: 'minIterations', mc: 'minCycles' };
 const FLAGS = { sfe: 'simpleFrontEnd', nmi: 'noMicroFusion', nma: 'noMacroFusion' };
-const VIEWS = { cmpsweep: 'cmpSweep', cost: 'cost', costnop: 'costNop', trace: 'trace', waits: 'waits', bound: 'bound', whatif: 'whatif' }; // open panels; not analysis options
+const VIEWS = { cmpsweep: 'cmpSweep', cost: 'cost', costnop: 'costNop', trace: 'trace', waits: 'waits', bound: 'bound', whatif: 'whatif', codemap: 'codemap' }; // open panels; not analysis options
 const KEY = /^[A-Za-z0-9_-]{1,32}$/;
 const MAX_CPUS = 64;
 

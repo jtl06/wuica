@@ -259,7 +259,7 @@ try {
       check(JSON.stringify(r.rows) === JSON.stringify(want), `what if (${k}): every experiment equals an analysis made here`, JSON.stringify([r.rows, want]));
     }
     const r = out.pool;
-    check(r.label === 'try' && /[#&]whatif=1(&|$)/.test(r.hash) && r.order.join() === 'bound-row,whatif-row,sweep-row,trace-slot', 'what if: a row "try" after "bound", open from the link', JSON.stringify(r));
+    check(r.label === 'try' && /[#&]whatif=1(&|$)/.test(r.hash) && r.order.join() === 'bound-row,whatif-row,codemap-row,sweep-row,trace-slot', 'what if: a row "try" after "bound", open from the link', JSON.stringify(r));
     const { decodeState } = await import('../web/js/url-state.js');
     const s = decodeState(r.href.split('#')[1]);
     check(r.target === '_blank' && s.mode === 'hex' && s.text.replace(/ /g, '') === body.repeat(2) + tail && s.arch === 'SKL', 'what if: a variant opens in a new tab as machine code', r.href);
@@ -294,15 +294,63 @@ try {
     console.log(`what if: SHA-256: ${r.waited ? 'waited for a click, then ' : ''}all experiments in ${r.ms} ms; long tasks ${JSON.stringify(r.long)}`);
   }
 
+  // --- code map: the chain example at offset 58 (the second add split across two lines); keys; the alignment buttons ----------
+  {
+    const chain = ex('chain');
+    await page.goto(`${origin}/?nosw=1#v=1&al=58&codemap=1&c=${b64(chain.text.hex)}`);
+    await page.result();
+    const r = await page.eval(`${HELPERS}
+      await until(() => document.querySelector('.ly-map'));
+      const g = () => [...document.querySelectorAll('.ly-ins')];
+      const out = { label: $('codemap-row').querySelector('.label').textContent, summary: $('codemap').querySelector('summary').innerText,
+        ins: g().map((x) => x.querySelectorAll('rect').length), split: g().map((x) => x.classList.contains('split')), off: document.querySelector('.ly-offv').textContent,
+        legend: [...document.querySelectorAll('.ly-k')].map((x) => x.textContent), info: document.querySelector('.ly-info').textContent,
+        order: [...$('more').children].map((e) => e.id) };
+      const svg = document.querySelector('.ly-map');
+      svg.focus();
+      svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+      out.key = [svg.getAttribute('aria-activedescendant'), document.querySelector('.ly-info').textContent, document.activeElement === svg];
+      svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await wait(50);
+      out.flash = trs().findIndex((tr) => tr.classList.contains('rj-flash'));
+      svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+      out.end = svg.getAttribute('aria-activedescendant');
+      // the alignment: +1 is a new analysis at offset 59
+      await done(() => document.querySelectorAll('.ly-shift')[1].click());
+      await until(() => document.querySelector('.ly-offv')?.textContent === 'offset 59');
+      out.after = [document.querySelector('.ly-offv').textContent, $('opt-align').value, /[#&]al=59(&|$)/.test(location.hash), /[#&]codemap=1(&|$)/.test(location.hash)];
+      return out;`);
+    check(r.label === 'bytes' && r.summary === 'cache lines · 13 B, 2 lines' && r.order.join() === 'bound-row,whatif-row,codemap-row,sweep-row,trace-slot', 'code map: a row "bytes", open from the link', JSON.stringify(r));
+    check(r.ins.join() === '1,2,1,1' && r.split.join() === 'false,true,false,false' && r.off === 'offset 58' && r.legend.join() === '16B 1,32B 1,64B 1', 'code map: the split instruction has a box on each line', JSON.stringify(r));
+    check(r.info === 'add rax, 0x1 · 0x3a–0x3d (4 B)' && r.key[0] === 'ly-i1' && /^add rax, 0x1 · 0x3e–0x41 \(4 B\) · crosses a cache line$/.test(r.key[1]) && r.key[2], 'code map: arrow keys move through the instructions', JSON.stringify([r.info, r.key]));
+    check(r.flash === 1 && r.end === 'ly-i3', 'code map: Enter jumps to the row; End to the last instruction', JSON.stringify([r.flash, r.end]));
+    check(r.after.every((x, i) => (i === 0 ? x === 'offset 59' : i === 1 ? x === '59' : x)), 'code map: ▸ shifts the alignment offset (analyzed again, in the link)', JSON.stringify(r.after));
+    await page.shot('codemap-chain.png');
+
+    // SHA-256: drawing the map of 11,602 bytes stays under 100 ms per task
+    await page.goto(`${origin}/?nosw=1`);
+    await page.ready();
+    const s = await page.eval(`${HELPERS}
+      await done(() => set($('examples'), 'sha256'));
+      const long = []; new PerformanceObserver((l) => { for (const e of l.getEntries()) long.push(Math.round(e.duration)); }).observe({ type: 'longtask' });
+      const t0 = performance.now();
+      document.querySelector('#codemap summary').click();
+      await until(() => document.querySelector('.ly-map'));
+      const ms = performance.now() - t0;
+      await wait(200);
+      return { ms: Math.round(ms), long: [...long], n: document.querySelectorAll('.ly-ins').length, lines: document.querySelectorAll('.ly-line').length, o: overflow() };`);
+    check(s.n === 2949 && s.lines === Math.ceil(11602 / 64) && s.long.every((ms) => ms < 100) && s.o <= 0, 'code map: SHA-256: every instruction, no task of 100 ms or more', JSON.stringify(s));
+    console.log(`code map: SHA-256 drawn in ${s.ms} ms; long tasks ${JSON.stringify(s.long)}`);
+  }
+
   // --- layout: no sideways scrolling with the views open, both themes -------------------------------------------------------
   {
     const out = [];
     for (const [w, hgt, theme] of [[320, 640, 'light'], [375, 812, 'light'], [768, 1024, 'dark'], [1440, 900, 'dark'], [2560, 1440, 'light']]) {
       await page.size(w, hgt);
       await page.theme(theme);
-      await page.goto(`${origin}/?nosw=1#v=1&m=asm&bound=1&whatif=1&c=${b64(ex('dot1').text.intel)}`);
+      await page.goto(`${origin}/?nosw=1#v=1&m=asm&bound=1&whatif=1&codemap=1&c=${b64(ex('dot1').text.intel)}`);
       await page.result();
-      out.push(await page.eval(`${HELPERS} await until(() => document.querySelector('.bd-item') && document.querySelector('#whatif .wi-body')?.dataset.state === 'done'); return { w: ${w}, o: overflow(), bg: getComputedStyle(document.documentElement).backgroundColor };`));
+      out.push(await page.eval(`${HELPERS} await until(() => document.querySelector('.bd-item') && document.querySelector('.ly-map') && document.querySelector('#whatif .wi-body')?.dataset.state === 'done'); return { w: ${w}, o: overflow(), bg: getComputedStyle(document.documentElement).backgroundColor };`));
     }
     check(out.every((m) => m.o <= 0), 'layout: no sideways scrolling from 320 to 2560 px with the views open', JSON.stringify(out));
     check(out[0].bg !== out[2].bg, 'layout: both themes', JSON.stringify(out.map((m) => m.bg)));
