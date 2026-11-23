@@ -3,6 +3,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from '../lib/app.js';
+import { insights } from 'wuica';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 export const HEX = '4801d84801c349ffcf75f5';
@@ -43,6 +44,8 @@ export function fixtureSources() {
 
 // The library's result without the fields that do not cross the HTTP boundary (`bytes`, a Uint8Array).
 export const plain = (r) => JSON.parse(JSON.stringify(r, (k, v) => (k === 'bytes' && v instanceof Uint8Array ? undefined : v)));
+// a library result as POST /api/analyze returns it: with `insights` (the package's insights.js) on success
+export const rest = (r) => { const p = plain(r); const ins = p.code === 0 ? insights(p) : null; return ins ? { ...p, insights: ins } : p; };
 
 // POST over node:http with a given agent (fetch opens one connection per parallel request, and macOS accepts at most
 // 128 pending connections per listening socket: kern.ipc.somaxconn).

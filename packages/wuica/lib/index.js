@@ -17,7 +17,8 @@ import { readMaybeCompressed } from './files.js';
 import { CODES, WARM_HEX, failure, tableFailure, analysisResult, compareFields } from './core.js';
 import { ThreadPool, threadLimit, threadOption, threadsFor } from './threads.js';
 
-export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, CODES, WARM_HEX, parseDiagnostics };
+export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, CODES, WARM_HEX, parseDiagnostics, insights };
+export { whatIf, VARIANTS as WHAT_IF_VARIANTS } from './whatif.js';
 
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
 

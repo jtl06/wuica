@@ -4,7 +4,7 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { createWuica } from 'wuica';
 import http from 'node:http';
-import { start, post, postHttp, plain, fixtureSources } from './helpers.mjs';
+import { start, post, postHttp, plain, fixtureSources, rest } from './helpers.mjs';
 
 let s, w;
 before(async () => { [s, w] = await Promise.all([start({ workers: 4, maxQueue: 1000 }), createWuica()]); });
@@ -21,7 +21,7 @@ test(`${fx.length} fixtures, each on 2 of ${ARCHS.join("/")}: analyze JSON equal
   agent.destroy();
   for (let i = 0; i < jobs.length; i++) {
     const { f, arch } = jobs[i];
-    const lib = plain(await w.analyze(arch, { source: f.source }));
+    const lib = rest(await w.analyze(arch, { source: f.source }));
     assert.equal(got[i].status, lib.code === 1 ? 400 : 200, `${f.name} ${arch}`);
     assert.deepEqual(got[i].json, lib, `${f.name} ${arch}`);
   }

@@ -232,3 +232,21 @@ export const DEFAULT_ARCH: string;
 export const WARM_HEX: string;
 export const ARCH_ORDER: string[];
 export const ARCH_INFO: Record<string, { name: string; year: number }>;
+
+/** The derived diagnosis of an analysis (the web page's bound view; also `insights` in the MCP summary and the REST response). */
+export function insights(result: AnalyzeResult): Insights | null;
+
+export type WhatIfVariant = 'unroll2' | 'unroll4' | 'unroll8' | 'simpleFrontEnd' | 'noMacroFusion' | 'noMicroFusion' | 'nochain';
+export const WHAT_IF_VARIANTS: readonly WhatIfVariant[];
+export interface WhatIfResult {
+  code: 0;
+  arch: string;
+  tp: number;
+  mode: 'loop' | 'unroll';
+  bottlenecks: string[];
+  unit: 'cycles per original iteration';
+  /** tp per original iteration, delta = tp − base tp, speedup = base tp / tp; estimate: no analysis (nochain). */
+  variants: { id: WhatIfVariant; label?: string; tp?: number; delta?: number; speedup?: number | null; estimate?: boolean; bottlenecks?: string[]; error?: string }[];
+}
+/** The what-if experiments of the web page (the MCP tool `what_if`), with `analyze` (e.g. a Wuica's analyze, bound). */
+export function whatIf(analyze: (arch: string, request: AnalyzeRequest) => Promise<AnalyzeResult | Failure>, arch: string, request: AnalyzeRequest, variants?: readonly WhatIfVariant[]): Promise<WhatIfResult | Failure>;

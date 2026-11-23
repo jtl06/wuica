@@ -8,12 +8,12 @@
 //   POST /api/compare            one block on several microarchitectures
 //   POST /api/assemble           assembly -> hex
 //   GET  /api/version            versions
-//   POST /mcp                    MCP (tools list_archs, analyze, compare_archs, assemble)
+//   POST /mcp                    MCP (tools list_archs, analyze, what_if, compare_archs, assemble)
 //
 // JSON by default; `Accept: text/plain` gives uiCA's text report (or the stderr lines of a failure).
 
 import http from 'node:http';
-import { createWuica, ARCH_FIELDS } from 'wuica';
+import { createWuica, ARCH_FIELDS, insights } from 'wuica';
 import { createServer as createMcpServer } from 'wuica/mcp';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { resolveConfig } from './config.js';
@@ -74,7 +74,7 @@ function index() {
       'POST /api/compare': 'one block on several microarchitectures: {source | hex, syntax?, archs?, options?}',
       'POST /api/assemble': 'assembly to machine code: {source, syntax?}',
       'GET /api/version': 'versions',
-      'POST /mcp': 'remote MCP server (Streamable HTTP): tools list_archs, analyze, compare_archs, assemble',
+      'POST /mcp': 'remote MCP server (Streamable HTTP): tools list_archs, analyze, what_if, compare_archs, assemble',
       'GET /healthz': 'health',
     },
     formats: 'JSON; send "Accept: text/plain" for uiCA\'s text report',
@@ -189,7 +189,7 @@ export async function createApp(options = {}) {
     ctx.rpc = msgs.map((m) => (typeof m?.method === 'string' ? m.method.slice(0, 40) : 'response')).join(',').slice(0, 200);
     const call = msgs.find((m) => m?.method === 'tools/call');
     if (call && typeof call.params?.name === 'string') ctx.tool = call.params.name.slice(0, 40);
-    const cost = msgs.reduce((n, m) => n + (m?.method === 'tools/call' && m.params?.name === 'compare_archs' ? cfg.compareCost : 1), 0);
+    const cost = msgs.reduce((n, m) => n + (m?.method === 'tools/call' && ['compare_archs', 'what_if'].includes(m.params?.name) ? cfg.compareCost : 1), 0);
     rateLimit(req, ctx, Math.max(1, cost));
     const server = createMcpServer(facade.forRequest(ctx));
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
@@ -264,6 +264,9 @@ export async function createApp(options = {}) {
       const body = await readJson(req);
       const r = await facade.analyze(arch, body, ctx);
       ctx.code = r.code;
+      // the derived diagnosis of the page's bound view (the package's insights.js), as in the MCP tool's summary
+      const ins = r.code === 0 && !wantText ? insights(r) : null;
+      if (ins) r.insights = ins;
       const unknownArch = r.code === 1 && facade.resolveArch(arch) === null && /^unknown microarchitecture/.test(r.error ?? '');
       return sendResult(res, r, wantText, (x) => x.text, unknownArch ? 404 : undefined);
     }

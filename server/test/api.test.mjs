@@ -2,7 +2,7 @@
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { createWuica } from 'wuica';
-import { start, post, get, HEX, ASM, plain } from './helpers.mjs';
+import { start, post, get, HEX, ASM, plain, rest } from './helpers.mjs';
 
 let s, w;
 before(async () => { [s, w] = await Promise.all([start(), createWuica()]); });
@@ -58,7 +58,7 @@ test('POST /api/analyze/<arch>: hex and source, equal to the library', async () 
     ['ICL', { hex: HEX, options: { noMacroFusion: true, alignmentOffset: 5, initPolicy: 'same' } }]]) {
     const r = await post(s.base, `/api/analyze/${arch}`, req);
     assert.equal(r.status, 200, arch);
-    assert.deepEqual(r.json, plain(await w.analyze(arch, req)), arch);
+    assert.deepEqual(r.json, rest(await w.analyze(arch, req)), arch);
     assert.equal(r.json.code, 0);
   }
   // case-insensitive ids, '-' optional, URL-encoded
@@ -81,7 +81,7 @@ test('analyze failures: status codes and the contract\'s {code, error, stderr}',
   assert.equal(a.status, 200);
   assert.equal(a.json.code, 2);
   assert.deepEqual(a.json.stderr[0].tag, { line: 2, column: 1, severity: 'error', text: "invalid instruction mnemonic 'frobnicate'" });
-  assert.deepEqual(a.json, plain(await w.analyze('SKL', { source: 'add rax, rbx\nfrobnicate rax' })));
+  assert.deepEqual(a.json, rest(await w.analyze('SKL', { source: 'add rax, rbx\nfrobnicate rax' })));
   const at = await post(s.base, '/api/analyze/SKL', { source: 'frobnicate rax' }, { Accept: 'text/plain' });
   assert.equal(at.status, 200);
   assert.match(at.text, /^<input>:1:1: error: invalid instruction mnemonic 'frobnicate'\n/);
@@ -90,7 +90,7 @@ test('analyze failures: status codes and the contract\'s {code, error, stderr}',
     const r = await post(s.base, '/api/analyze/SKL', body);
     assert.equal(r.status, 400, JSON.stringify(body));
     assert.equal(r.json.code, 1);
-    assert.deepEqual(r.json, plain(await w.analyze('SKL', body)));
+    assert.deepEqual(r.json, rest(await w.analyze('SKL', body)));
   }
   // unknown microarchitecture: 404
   const u = await post(s.base, '/api/analyze/K8', { hex: HEX });

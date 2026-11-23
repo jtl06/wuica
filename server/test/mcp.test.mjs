@@ -29,9 +29,9 @@ test('initialize: server info and instructions', () => {
   assert.deepEqual(remote.getServerVersion(), local.getServerVersion());
 });
 
-test('tools/list: the four tools of the stdio server, same schemas', async () => {
+test('tools/list: the five tools of the stdio server, same schemas', async () => {
   const r = await remote.listTools();
-  assert.deepEqual(r.tools.map((t) => t.name).sort(), ['analyze', 'assemble', 'compare_archs', 'list_archs']);
+  assert.deepEqual(r.tools.map((t) => t.name).sort(), ['analyze', 'assemble', 'compare_archs', 'list_archs', 'what_if']);
   assert.deepEqual(r, JSON.parse(JSON.stringify(await local.listTools()))); // the in-memory transport keeps `_meta: undefined`
 });
 
@@ -43,6 +43,9 @@ const calls = [
   ['analyze', { arch: 'ADL-P', source: 'addq %rbx, %rax', syntax: 'att', format: 'text', options: { noMacroFusion: true } }],
   ['analyze', { arch: 'K8', hex: HEX }],
   ['analyze', { source: 'frobnicate rax' }],
+  ['what_if', { arch: 'SKL', hex: HEX }],
+  ['what_if', { source: ASM, variants: ['unroll2', 'nochain'] }],
+  ['what_if', { hex: HEX, variants: ['unroll3'] }],
   ['compare_archs', { hex: HEX }],
   ['compare_archs', { source: ASM, archs: ['SKL', 'ICL', 'ZEN3'] }],
   ['assemble', { source: 'vaddps zmm0, zmm1, zmm2' }],
@@ -90,7 +93,7 @@ test('stateless transport: GET and DELETE are 405; no session id; CORS', async (
   assert.equal(r.status, 200);
   assert.equal(r.headers.get('mcp-session-id'), null);
   assert.equal(r.headers.get('access-control-allow-origin'), '*');
-  assert.equal(r.json.result.tools.length, 4);
+  assert.equal(r.json.result.tools.length, 5);
   const pre = await fetch(s.base + '/mcp', { method: 'OPTIONS', headers: { Origin: 'https://example.org', 'Access-Control-Request-Method': 'POST' } });
   assert.equal(pre.status, 204);
   assert.match(pre.headers.get('access-control-allow-headers'), /Mcp-Protocol-Version/);
