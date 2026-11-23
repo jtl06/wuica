@@ -29,6 +29,13 @@ test('GET /api/archs: all fields, ?fields=, text', async () => {
   const f = await get(s.base, '/api/archs?fields=id,name');
   assert.deepEqual(f.json, w.archs('id,name'));
   assert.deepEqual(f.json[0], { id: 'SNB', name: 'Sandy Bridge' });
+  // an unknown field is an error that lists the valid ones (it gave a list of empty objects)
+  const bad = await get(s.base, '/api/archs?fields=bogus');
+  assert.equal(bad.status, 400);
+  assert.equal(bad.json.code, 1);
+  assert.match(bad.json.error, /unknown field\(s\): bogus \(valid: id, name, year, prototype, table, xedChip\)/);
+  assert.equal((await get(s.base, '/api/archs?fields=id,bogus')).status, 400);
+  assert.deepEqual((await get(s.base, '/api/archs?fields=')).json, w.archs());
   const t = await get(s.base, '/api/archs', { Accept: 'text/plain' });
   assert.match(t.text, /^SNB {4}Sandy Bridge \(2011\)\n/);
   assert.match(t.text, /^ZEN3 +AMD Zen 3 \(2020\) {2}\[prototype\]$/m);

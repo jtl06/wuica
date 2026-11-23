@@ -182,6 +182,13 @@ for (const b of bad) {
   check(l.code === b.code && r.code === b.code && r.status === b.status, `${b.what}: code ${b.code} from the library and the REST API (status ${b.status})`, JSON.stringify([l.code, r.code, r.status]));
 }
 
+// the native tool takes the same spellings as the others: arch names case-insensitive with '-' optional, 0x-prefixed hex
+for (const [arch, hex, id] of [['adlp', '0x48,0x01,0xd8,0x48,0x01,0xc3', 'ADL-P'], ['skl', '0x4801d8 0x4801c3', 'SKL'], ['zen-3', '\\x48\\x01\\xd8', 'ZEN3']]) {
+  const want = essence(await lib.analyze(id, { hex, options: {} }));
+  const got = await native({ arch, hex, options: {} });
+  check(!got.error && !firstDiff(want, essence(got)), `native: -arch ${arch} and hex ${hex} as ${id}`, JSON.stringify(got.error ?? firstDiff(want, essence(got))));
+}
+
 // 16- or 32-bit code: refused everywhere (code 1), not analyzed as 64-bit code
 {
   const source = 'nop\n.code32\ninc eax\n';

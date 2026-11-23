@@ -75,6 +75,14 @@ test('batches: more than 16 messages are refused', async () => {
   assert.match(r.json.error.message, /at most 16/);
 });
 
+test('invalid JSON is a JSON-RPC parse error (-32700)', async () => {
+  const r = await post(s.base, '/mcp', '{"jsonrpc": "2.0", "id": 1, "method": ', { Accept: 'application/json, text/event-stream' });
+  assert.equal(r.status, 400);
+  assert.equal(r.json.jsonrpc, '2.0');
+  assert.equal(r.json.id, null);
+  assert.equal(r.json.error.code, -32700);
+});
+
 test('stateless transport: GET and DELETE are 405; no session id; CORS', async () => {
   assert.equal((await get(s.base, '/mcp', { Accept: 'text/event-stream' })).status, 405);
   assert.equal((await fetch(s.base + '/mcp', { method: 'DELETE' })).status, 405);
