@@ -116,7 +116,7 @@ const near = (a, b, eps = 1e-9) => Math.abs(a - b) < eps;
     if (cells.length < 8) continue;
     if (/random/.test(cells[1])) set = 'random'; else if (/real/.test(cells[1])) set = 'real';
     const m = /^uiCA (\S+), after$/.exec(cells[3]);
-    if (m && set) { const e = after.get(m[1]) ?? {}; e[set] = parseFloat(cells[5]); after.set(m[1], e); }
+    if (m && set) { const e = after.get(m[1]) ?? {}; e[set] ??= parseFloat(cells[5]); after.set(m[1], e); } // the first: the current round
   }
   for (const [k, a] of Object.entries(ACCURACY)) {
     check(after.get(k)?.random === a.random && after.get(k)?.real === a.real, `accuracy ${k} as in docs/ACCURACY.md`, JSON.stringify([a, after.get(k)]));
