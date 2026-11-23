@@ -82,7 +82,11 @@ fn py_int(s: &str) -> i64 {
 
 /// `instrD['rw'][name]`
 fn rw<'a>(d: &'a DecodedInstr, name: &str) -> &'a str {
-    d.rw.get(name).unwrap_or_else(|| panic!("KeyError: no rw entry for operand {name} of {:?}", d.asm))
+    // a search of the few entries instead of a lookup by hash (the keys are unique)
+    d.rw.iter()
+        .find(|(k, _)| k.as_str() == name)
+        .map(|(_, v)| v.as_str())
+        .unwrap_or_else(|| panic!("KeyError: no rw entry for operand {name} of {:?}", d.asm))
 }
 
 /// `iform.split('_')[0]`
@@ -990,7 +994,7 @@ fn known_instr(
             let is_gpr_load = !instr_input_mem_operands.is_empty()
                 && instr_output_mem_operands.is_empty()
                 && !instr_output_reg_operands.is_empty()
-                && instr_output_reg_operands.iter().all(|(_, r)| is_gp_reg(&canonical_reg(r)));
+                && instr_output_reg_operands.iter().all(|(_, r)| is_gp_reg(&canonical_reg_cow(r)));
             instruction.mem_renaming = min_mem_lat.is_some_and(|l| l <= 1) || is_gpr_load;
         }
         _ => {}
@@ -1013,29 +1017,25 @@ fn adjust_latencies_and_add_merge_uops(instructions: &mut [Instr], operands: &mu
         return;
     }
     const REGS: [&str; 4] = ["RAX", "RBX", "RCX", "RDX"];
-    let abcd = |canonical_reg: &str| REGS.iter().position(|r| *r == canonical_reg);
-    let reg_of = |operands: &[Operand], op: OpId| -> Option<String> {
+    fn abcd(canonical_reg: &str) -> Option<usize> {
+        REGS.iter().position(|r| *r == canonical_reg)
+    }
+    fn reg_of(operands: &[Operand], op: OpId) -> Option<&str> {
         match &operands[op as usize] {
-            Operand::Reg { reg, .. } => Some(reg.clone()),
+            Operand::Reg { reg, .. } => Some(reg),
             _ => None,
         }
-    };
+    }
     let mut high8_reg_clean = [true; 4];
 
-    fn process_instr_reg_outputs(
-        instr: &Instr,
-        operands: &[Operand],
-        high8_reg_clean: &mut [bool; 4],
-        abcd: &dyn Fn(&str) -> Option<usize>,
-        reg_of: &dyn Fn(&[Operand], OpId) -> Option<String>,
-    ) {
+    fn process_instr_reg_outputs(instr: &Instr, operands: &[Operand], high8_reg_clean: &mut [bool; 4]) {
         for &op in instr.input_reg_operands.iter().chain(&instr.mem_addr_operands).chain(&instr.output_reg_operands) {
             let reg = reg_of(operands, op).expect("register operand");
-            let canonical = canonical_reg(&reg);
+            let canonical = canonical_reg_cow(reg);
             match abcd(&canonical) {
-                Some(i) if reg_size(&reg) > 8 => high8_reg_clean[i] = true,
+                Some(i) if reg_size(reg) > 8 => high8_reg_clean[i] = true,
                 _ => {
-                    if is_high8_reg(&reg) && instr.output_reg_operands.contains(&op) {
+                    if is_high8_reg(reg) && instr.output_reg_operands.contains(&op) {
                         let i = abcd(&canonical).expect("high-8 register");
                         high8_reg_clean[i] = false;
                     }
@@ -1045,25 +1045,31 @@ fn adjust_latencies_and_add_merge_uops(instructions: &mut [Instr], operands: &mu
     }
 
     for instr in instructions.iter() {
-        process_instr_reg_outputs(instr, operands, &mut high8_reg_clean, &abcd, &reg_of);
+        process_instr_reg_outputs(instr, operands, &mut high8_reg_clean);
     }
     for instr in instructions.iter_mut() {
         for (in_op, _, lat) in instr.latencies.iter_mut() {
             if let Some(reg) = reg_of(operands, *in_op) {
-                if is_high8_reg(&reg) && high8_reg_clean[abcd(&canonical_reg(&reg)).expect("high-8 register")] {
+                if is_high8_reg(reg) && high8_reg_clean[abcd(&canonical_reg_cow(reg)).expect("high-8 register")] {
                     *lat += 1;
                 }
             }
         }
 
-        let in_ops: Vec<OpId> = instr.input_reg_operands.iter().chain(&instr.mem_addr_operands).copied().collect();
-        for in_op in in_ops {
+        // instr.inputRegOperands + instr.memAddrOperands
+        let n_in = instr.input_reg_operands.len() + instr.mem_addr_operands.len();
+        for k in 0..n_in {
+            let in_op = if k < instr.input_reg_operands.len() {
+                instr.input_reg_operands[k]
+            } else {
+                instr.mem_addr_operands[k - instr.input_reg_operands.len()]
+            };
             let reg = reg_of(operands, in_op).expect("register operand");
-            let canonical_in_reg = canonical_reg(&reg);
-            if let Some(i) = abcd(&canonical_in_reg) {
-                if reg_size(&reg) > 8 && !high8_reg_clean[i] {
-                    let canonical_in_op = new_reg(operands, &canonical_in_reg);
-                    let canonical_out_op = new_reg(operands, &canonical_in_reg);
+            if let Some(i) = abcd(&canonical_reg_cow(reg)) {
+                if reg_size(reg) > 8 && !high8_reg_clean[i] {
+                    // the canonical register is REGS[i]
+                    let canonical_in_op = new_reg(operands, REGS[i]);
+                    let canonical_out_op = new_reg(operands, REGS[i]);
                     let mut props = uop_properties(Some(vec!["1".to_string(), "5".to_string()]), vec![canonical_in_op], vec![canonical_out_op]);
                     props.latencies = vec![(canonical_out_op, 1)];
                     props.is_reg_merge_uop = true;
@@ -1072,7 +1078,7 @@ fn adjust_latencies_and_add_merge_uops(instructions: &mut [Instr], operands: &mu
             }
         }
 
-        process_instr_reg_outputs(instr, operands, &mut high8_reg_clean, &abcd, &reg_of);
+        process_instr_reg_outputs(instr, operands, &mut high8_reg_clean);
     }
 }
 
