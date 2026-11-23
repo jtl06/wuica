@@ -3,6 +3,7 @@
 //! Pipeline: decoded instructions ([`decoded`]) + instruction tables ([`data`]) + microarchitecture configuration ([`config`])
 //! -> instruction objects ([`model`], built by [`instr_builder`]) -> simulation ([`sim`]).
 
+pub mod analyze;
 pub mod config;
 pub mod data;
 pub mod decoded;

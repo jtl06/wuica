@@ -1,0 +1,15 @@
+[package]
+name = "wuica"
+description = "wuica (WebAssembly uiCA): throughput prediction for x86-64 basic blocks; a port of uiCA. Decoder + core."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wuica-core = { path = "../wuica-core" }
+wuica-xed = { path = "../wuica-xed" }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[dev-dependencies]
+flate2 = "1"
+serde = { version = "1", features = ["derive"] }

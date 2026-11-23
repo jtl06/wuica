@@ -1,0 +1,42 @@
+// Runs the WebAssembly module end to end on simulation fixtures of the Python reference: for a sample of the cases, the
+// response's `tp` and `text` must equal the reference's throughput and text output (without terminal hyperlinks).
+// Usage: node tests-js/analyze_fixtures.mjs [EVERY_NTH=7] [WASM]
+import fs from 'node:fs'; import zlib from 'node:zlib'; import readline from 'node:readline';
+const every = Number(process.argv[2] || 7);
+const wasmPath = process.argv[3] || 'target/wasm32-unknown-unknown/release/wuica_wasm.wasm';
+const { instance } = await WebAssembly.instantiate(fs.readFileSync(wasmPath), {});
+const e = instance.exports, enc = new TextEncoder(), dec = new TextDecoder();
+function call(fn, ...strings) {
+  const bufs = strings.map(s => { const b = typeof s === 'string' ? enc.encode(s) : s; const p = e.wuica_alloc(b.length); new Uint8Array(e.memory.buffer, p, b.length).set(b); return [p, b.length]; });
+  const n = e[fn](...bufs.flat());
+  const out = dec.decode(new Uint8Array(e.memory.buffer, e.wuica_result_ptr(), n));
+  for (const [p, l] of bufs) e.wuica_free(p, l);
+  return JSON.parse(out);
+}
+const t0 = performance.now();
+const uarch = fs.readFileSync('data/uarch.json', 'utf8');
+if (!call('wuica_load_uarch', uarch).ok) throw new Error('load_uarch');
+for (const f of fs.readdirSync('data/arch')) { const r = call('wuica_load_arch', f.replace('.json', ''), fs.readFileSync('data/arch/' + f)); if (!r.ok) throw new Error(JSON.stringify(r)); }
+const tLoad = performance.now() - t0;
+const strip = s => s.replace(/\x1b\]8;;.*?\x07/g, '');
+let n = 0, bad = 0, refErr = 0, i = 0, tAnalyze = 0;
+for (const set of ['sim_fixtures', 'extra_sim_fixtures']) {
+  const rl = readline.createInterface({ input: fs.createReadStream(`fixtures/generated/${set}.jsonl.gz`).pipe(zlib.createGunzip()), crlfDelay: Infinity });
+  for await (const line of rl) {
+    if (i++ % every) continue;
+    // the large `json` field (the trace) is not needed: cut it off before parsing
+    const cut = line.indexOf(', "json": ');
+    const c = JSON.parse(cut < 0 ? line : line.slice(0, cut) + '}');
+    const t = performance.now();
+    let r;
+    try { r = call('wuica_analyze', JSON.stringify({ hex: c.hex, arch: c.arch, ...c.options })); }
+    catch (err) { r = { error: 'trap: ' + err.message }; }
+    tAnalyze += performance.now() - t;
+    if (c.error) { refErr++; continue; }
+    n++;
+    if (r.error || r.tp !== c.TP || r.text !== strip(c.stdout)) { bad++; if (bad <= 5) console.log('differs:', c.file, c.arch, JSON.stringify(c.options), r.error || r.tp); }
+  }
+}
+console.log(`${n} cases compared (every ${every}th), ${bad} differ; ${refErr} reference-error cases skipped`);
+console.log(`loading all tables: ${tLoad.toFixed(0)} ms; analysis: ${(tAnalyze / (n + refErr)).toFixed(2)} ms per case`);
+process.exit(bad ? 1 : 0);

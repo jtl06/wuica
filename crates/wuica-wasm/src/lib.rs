@@ -1,17 +1,32 @@
-//! WebAssembly interface of wuica. Only integers and pointers into the module's memory cross the boundary:
-//! the caller allocates a buffer with `wuica_alloc`, writes its input there, and reads results as (pointer, length) pairs.
+//! WebAssembly interface of wuica (docs/WASM-API.md). Only integers and pointers into the module's memory cross the boundary:
+//! the caller allocates buffers with `wuica_alloc`, writes its input there, and reads results as (pointer, length) pairs.
 
 use std::cell::RefCell;
+use wuica::{error_json, Engine};
 
 thread_local! {
     static RESULT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    static ENGINE: RefCell<Engine> = RefCell::new(Engine::new());
 }
 
-fn set_result(bytes: Vec<u8>) -> usize {
+fn set_result(text: String) -> usize {
     RESULT.with(|r| {
-        *r.borrow_mut() = bytes;
+        *r.borrow_mut() = text.into_bytes();
         r.borrow().len()
     })
+}
+
+fn status(result: Result<(), String>) -> usize {
+    set_result(match result {
+        Ok(()) => "{\"ok\":true}".to_string(),
+        Err(e) => error_json(&e),
+    })
+}
+
+/// # Safety
+/// The pointer must be valid for `len` bytes.
+unsafe fn text<'a>(ptr: *const u8, len: usize) -> Result<&'a str, String> {
+    std::str::from_utf8(std::slice::from_raw_parts(ptr, len)).map_err(|_| "the input is not UTF-8".to_string())
 }
 
 /// Allocates `len` bytes in the module's memory; free them with `wuica_free`.
@@ -36,17 +51,46 @@ pub extern "C" fn wuica_result_ptr() -> *const u8 {
     RESULT.with(|r| r.borrow().as_ptr())
 }
 
-/// Decodes `code_len` bytes of machine code for the XED chip name at `chip` (UTF-8, `chip_len` bytes). The result is a JSON array of
-/// instructions; on an error, it is a JSON object with an "error" field. Returns the length of the result.
+/// Decodes machine code for an XED chip name. Result: a JSON array of instructions, or `{"error": ...}`.
 ///
 /// # Safety
 /// The pointers must be valid for the given lengths.
 #[no_mangle]
 pub unsafe extern "C" fn wuica_decode(code: *const u8, code_len: usize, chip: *const u8, chip_len: usize) -> usize {
     let code = std::slice::from_raw_parts(code, code_len);
-    let chip = std::str::from_utf8(std::slice::from_raw_parts(chip, chip_len)).unwrap_or("");
-    match wuica_xed::decode_json(code, chip) {
-        Ok((json, _errors)) => set_result(json.into_bytes()),
-        Err(e) => set_result(format!("{{\"error\":{:?}}}", e.to_string()).into_bytes()),
-    }
+    let result = text(chip, chip_len).and_then(|chip| wuica_xed::decode_json(code, chip).map_err(|e| e.to_string()));
+    set_result(match result {
+        Ok((json, _errors)) => json,
+        Err(e) => error_json(&e),
+    })
+}
+
+/// Loads the configurations (the content of `data/uarch.json`). Result: `{"ok": true}` or `{"error": ...}`.
+///
+/// # Safety
+/// The pointer must be valid for `len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn wuica_load_uarch(json: *const u8, len: usize) -> usize {
+    status(text(json, len).and_then(|json| ENGINE.with(|e| e.borrow_mut().load_uarch(json))))
+}
+
+/// Loads an instruction table (the content of `data/arch/<name>.json`). Result: `{"ok": true}` or `{"error": ...}`.
+///
+/// # Safety
+/// The pointers must be valid for the given lengths.
+#[no_mangle]
+pub unsafe extern "C" fn wuica_load_arch(name: *const u8, name_len: usize, json: *const u8, len: usize) -> usize {
+    status(text(name, name_len).and_then(|name| text(json, len).and_then(|json| ENGINE.with(|e| e.borrow_mut().load_arch(name, json)))))
+}
+
+/// Runs an analysis. The request and the result are JSON (docs/WASM-API.md).
+///
+/// # Safety
+/// The pointer must be valid for `len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn wuica_analyze(request: *const u8, len: usize) -> usize {
+    set_result(match text(request, len) {
+        Ok(request) => ENGINE.with(|e| e.borrow().analyze_json(request)),
+        Err(e) => error_json(&e),
+    })
 }
