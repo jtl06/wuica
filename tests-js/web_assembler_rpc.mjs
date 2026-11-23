@@ -64,6 +64,19 @@ for (const [text, syntax] of SOURCES) {
   const [a, b] = [await local.assemble(text, syntax), await wa.assemble(text, syntax)];
   check(a.ok === b.ok && hex(a) === hex(b) && JSON.stringify(a.diagnostics) === JSON.stringify(b.diagnostics), `same result as on this thread: ${JSON.stringify(text.slice(0, 30))}`, JSON.stringify([a.diagnostics, b.diagnostics]));
 }
+// .code16 / .code32: an error with the line, not 16- or 32-bit code analyzed as 64-bit code (the same in the worker)
+for (const [text, want] of [
+  ['nop\n.code32\ninc eax', '2:1 .code32'], ['  .code16\nadd ax, 1', '1:3 .code16'], ['x: .code16gcc\nnop', '1:4 .code16gcc'],
+  ['nop; .code32; inc eax', '1:6 .code32'], ['/* .code32 */ inc eax', null], ['# .code32\ninc eax', null], ['/*\n.code32\n*/ inc eax', null],
+  ['.code64\ninc eax', null], ['inc eax // .code32', null], ['.code32x', null],
+]) {
+  for (const a of [local, wa]) {
+    const r = await a.assemble(text, 'intel');
+    const d = r.diagnostics[0];
+    const got = r.ok ? null : `${d.line}:${d.column} ${d.message.split(':')[0]}`;
+    check(want === null ? r.ok || !/64-bit/.test(d?.message) : got === want && d.message.endsWith('only 64-bit code can be analyzed'), `code mode ${JSON.stringify(text)}: ${want ?? 'not refused'}`, JSON.stringify(r.diagnostics));
+  }
+}
 let unknown = null;
 try { await wa.assemble('nop', 'nasm'); } catch (e) { unknown = e; }
 check(unknown instanceof Error && /unknown syntax/.test(unknown.message), 'an unknown syntax rejects', unknown);

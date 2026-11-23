@@ -182,6 +182,17 @@ for (const b of bad) {
   check(l.code === b.code && r.code === b.code && r.status === b.status, `${b.what}: code ${b.code} from the library and the REST API (status ${b.status})`, JSON.stringify([l.code, r.code, r.status]));
 }
 
+// 16- or 32-bit code: refused everywhere (code 1), not analyzed as 64-bit code
+{
+  const source = 'nop\n.code32\ninc eax\n';
+  const l = await lib.analyze('SKL', { source });
+  const res = await fetch(`${base}/api/analyze/SKL`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source }) });
+  const r = await res.json();
+  const m = await Promise.all([mcpHttp, mcpStdio].map(async (client) => JSON.parse((await client.callTool({ name: 'analyze', arguments: { arch: 'SKL', source } })).content[0].text)));
+  check(l.code === 1 && r.code === 1 && res.status === 400 && m.every((x) => x.code === 1) && [r, ...m].every((x) => x.error === l.error) && /\.code32: only 64-bit code/.test(l.error),
+    '.code32: code 1 from the library, REST (400) and both MCP servers', JSON.stringify([l, r.code, res.status, m.map((x) => x.code)]));
+}
+
 console.log(`results of the library: ${tally.ok} ok, ${tally.failed} failed, ${tally.trapped} trapped; differences: ${diffs.size ? JSON.stringify(Object.fromEntries(diffs)) : 'none'} (${Math.round((Date.now() - t0) / 1000)} s)`);
 await mcpHttp.close();
 await mcpStdio.close();

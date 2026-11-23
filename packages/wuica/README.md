@@ -163,6 +163,8 @@ Request:
 - Every field of `options` is optional; the defaults are shown. Unknown options and unknown request fields are an
   error (code 1), not ignored. The library also accepts the options at the top level of the request
   (`{hex, arch, minIterations}`); `options` takes precedence. The MCP tools accept only the nested form.
+- The source must be 64-bit code: `.code16`, `.code16gcc` and `.code32` are an error (code 1), since the analyzer
+  only models 64-bit mode. `assemble` alone accepts them.
 
 Response (JSON), on success:
 

@@ -13,7 +13,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { Analyzer, Assembler, parseDiagnostics } from './wasm.js';
+import { Analyzer, Assembler, parseDiagnostics, codeModeError } from './wasm.js';
 import { archList, DEFAULT_ARCH, ARCH_INFO, ARCH_ORDER } from './archs.js';
 import { insights } from './insights.js';
 
@@ -189,6 +189,9 @@ class Wuica {
       if (hex === null) return failure(CODES.REQUEST, '`hex`: expected an even number of hex digits (spaces, commas and 0x prefixes are allowed)');
       return { hex, assembled: false, stderr: [] };
     }
+    // 16- or 32-bit code would be analyzed as 64-bit code (the analyzer only models 64-bit mode)
+    const mode = typeof source === 'string' ? codeModeError(source) : null;
+    if (mode) return failure(CODES.REQUEST, `line ${mode.line}: ${mode.message}`);
     const a = await this.assemble(source, req.syntax);
     if (a.code !== CODES.OK) return a;
     if (a.length === 0) return failure(CODES.REQUEST, 'the source contains no instructions');

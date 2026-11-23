@@ -153,6 +153,22 @@ test('assemble', async () => {
   assert.equal(bad.stderr[0].tag.line, 1);
 });
 
+test('.code16 / .code32: an error (only 64-bit code is analyzed), not 16- or 32-bit code analyzed as 64-bit', async () => {
+  const r = await w.analyze('SKL', { source: 'nop\n.code32\ninc eax\n' });
+  assert.equal(r.code, 1);
+  assert.equal(r.error, 'line 2: .code32: only 64-bit code can be analyzed');
+  for (const source of ['.code16\nadd ax, 1', 'x: .code16gcc\nnop', 'nop; .code32; inc eax', '/* x */ .code32\nnop']) {
+    assert.equal((await w.analyze('SKL', { source })).code, 1, source);
+  }
+  assert.equal((await w.compare({ source: '.code32\ninc eax', archs: ['SKL'] })).code, 1);
+  // in comments, in other words, or 64-bit mode: analyzed
+  for (const source of ['# .code32\ninc eax', '/* .code32\n */ inc eax', 'inc eax // .code16', '.code64\ninc eax']) {
+    assert.equal((await w.analyze('SKL', { source })).code, 0, source);
+  }
+  // assembling alone is not affected (the bytes of 32-bit code are what was asked for)
+  assert.equal((await w.assemble('.code32\ninc eax')).hex, '40');
+});
+
 test('summarize', async () => {
   const s = w.summarize(await w.analyze('ZEN3', { source: ASM }));
   assert.equal(s.tp, 2);

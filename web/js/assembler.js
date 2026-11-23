@@ -54,6 +54,24 @@ export function semicolonHint(diagnostics, text) {
   return diagnostics;
 }
 
+// The analyzer only models 64-bit code: a source that switches the assembler to 16- or 32-bit mode (.code16,
+// .code16gcc, .code32; LLVM accepts them in lower case only) would be analyzed as 64-bit code without a word.
+// Returns {line, column, message} for the first such directive (outside comments), or null.
+export function codeModeError(text) {
+  const plain = String(text).replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' ')); // block comments, lines kept
+  const lines = plain.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const code = lines[i].replace(/(#|\/\/).*$/, '');
+    let at = 0;
+    for (const stmt of code.split(';')) {
+      const m = /^(\s*(?:[\w.$@]+:\s*)*)(\.code(?:16gcc|16|32))(?=\s|$)/.exec(stmt);
+      if (m) return { line: i + 1, column: at + m[1].length + 1, message: `${m[2]}: only 64-bit code can be analyzed` };
+      at += stmt.length + 1;
+    }
+  }
+  return null;
+}
+
 // True if the bytes are a WebAssembly module. A static host may answer a missing file with an HTML page and
 // status 200, so the status of the response is not enough.
 export function isWasm(bytes) {
@@ -138,6 +156,8 @@ export class WasmAssembler {
     if (!this.#x) await this.#instantiate();
     // (a byte order mark at the start is not code: LLVM would reject it)
     const plain = stripHints(String(text).replace(/^\uFEFF/, '').replace(/\0/g, ' '));
+    const mode = codeModeError(plain);
+    if (mode) return { ok: false, diagnostics: [{ severity: 'error', ...mode }] };
     const source = new TextEncoder().encode(plain + '\0');
     let r;
     try {

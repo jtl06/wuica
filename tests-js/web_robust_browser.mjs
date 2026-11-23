@@ -5,6 +5,7 @@
 // - analyzer memory: after a block that grows the WebAssembly memory beyond 512 MB, the analyzer's worker and the pool's
 //   workers are replaced (the memory never shrinks otherwise); the next runs work, on the same and on other CPUs
 // - hex input: more than 1 MiB of machine code is refused with one line, as assembly is (side A and side B of A–B)
+// - .code16 / .code32: refused with one line (the analyzer only models 64-bit code)
 // Skipped (exit 0) without Chrome.
 //
 //   node tests-js/web_robust_browser.mjs [--chrome PATH]
@@ -180,6 +181,17 @@ try {
     check(r4.a === 'Too much machine code: 1,048,577 bytes (at most 1,048,576)' && r4.aBusy === 'Analyze', 'hex: more than 1 MiB is refused with one line', JSON.stringify(r4));
     check(r4.aMs < 5000, `hex: ... at once (${Math.round(r4.aMs)} ms), the analyzer is not started`);
     check(/^Too much machine code: 1,048,577 bytes/.test(r4.b), 'A–B: side B has the same limit', JSON.stringify(r4));
+  }
+  // ---- 4. .code32 is refused, not analyzed as 64-bit code
+  if (manifest.assembler) {
+    await page.goto(link({ text: CHAIN.text.intel }));
+    await page.ready();
+    await page.waitFor(`document.querySelector('#result-body .tp .value')`, 'the first result', 60000);
+    const r5 = await page.eval(`${HELPERS}
+      set($('code'), '.code32\\ninc eax\\ndec ecx');
+      await until(() => msgs().length > 0, 20000);
+      return msgs().join(' | ');`);
+    check(r5 === 'line 1:1: .code32: only 64-bit code can be analyzed', '.code32: refused with one line', r5);
   }
   const problems = page.take();
   check(problems.length === 0, 'no console errors', problems.join('\n'));
