@@ -99,7 +99,6 @@ impl UopSource {
 /// An unfused-domain uop (`Uop`). Its index in [`SimResult::uops`] is the `idx` of the reference.
 #[derive(Debug, Clone)]
 pub struct Uop {
-    pub(crate) prop: u32,
     /// index into [`SimResult::instr_instances`]
     pub instr_instance: u32,
     /// index into [`SimResult::fused_uops`]
@@ -107,12 +106,8 @@ pub struct Uop {
     /// index into the ports of the microarchitecture
     pub actual_port: Option<u8>,
     pub eliminated: bool,
+    /// the renamed input operands (`ren_lists[ren_in.0 .. ren_in.0 + ren_in.1]`)
     pub(crate) ren_in: (u32, u32),
-    pub(crate) ren_out: (u32, u32),
-    pub(crate) store_buffer_entry: u32,
-    pub(crate) mem_renaming_blocked: bool,
-    pub(crate) forward_fails: bool,
-    pub(crate) lat_reduced_due_to_fast_ptr_chasing: bool,
     pub ready_for_dispatch: Option<i64>,
     pub dispatched: Option<i64>,
     /// can be a fraction (throughput limits)
@@ -193,6 +188,130 @@ impl InstrInstance {
 }
 
 const READY_UNSET: i64 = i64::MIN;
+
+/// "not set" (`None`) for the cycle numbers of the internal entities (cycles are never negative)
+pub(crate) const UNSET: i64 = i64::MIN;
+/// "no port" (`None`) for [`SUop::actual_port`]
+pub(crate) const NO_PORT: u8 = u8::MAX;
+
+/// `Option<i64>` of an internal cycle number
+#[inline]
+pub(crate) fn opt(c: i64) -> Option<i64> {
+    (c != UNSET).then_some(c)
+}
+
+/// The simulation state of a uop (`Uop`); the public [`Uop`] is made from it at the end.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SUop {
+    pub prop: u32,
+    /// index into `Sim::insts`
+    pub instr_instance: u32,
+    /// index into `Sim::fused`
+    pub fused_uop: u32,
+    /// the renamed input operands are `ren_lists[ren .. ren + n_in]`, the renamed output operands follow them
+    pub ren: u32,
+    pub store_buffer_entry: u32,
+    pub n_in: u8,
+    pub n_out: u8,
+    /// index into the ports of the microarchitecture, or NO_PORT
+    pub actual_port: u8,
+    pub eliminated: bool,
+    pub mem_renaming_blocked: bool,
+    pub forward_fails: bool,
+    pub lat_reduced_due_to_fast_ptr_chasing: bool,
+    /// UNSET or a cycle
+    pub ready_for_dispatch: i64,
+    /// UNSET or a cycle
+    pub dispatched: i64,
+    /// NaN (not executed) or a cycle (can be a fraction); the comparisons `executed <= c` of the reference are false for NaN,
+    /// as they are for `None`
+    pub executed: f64,
+}
+
+impl SUop {
+    #[inline(always)]
+    pub fn ren_in(&self) -> std::ops::Range<u32> {
+        self.ren..self.ren + self.n_in as u32
+    }
+
+    #[inline(always)]
+    pub fn ren_out(&self) -> std::ops::Range<u32> {
+        let s = self.ren + self.n_in as u32;
+        s..s + self.n_out as u32
+    }
+
+    /// `executed is not None and executed <= clock`
+    #[inline(always)]
+    pub fn executed_by(&self, clock: i64) -> bool {
+        self.executed <= clock as f64
+    }
+}
+
+/// The simulation state of a fused-domain uop (`FusedUop`).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SFused {
+    pub first_uop: u32,
+    pub n_uops: u32,
+    pub laminated_uop: u32,
+    /// UNSET or a cycle
+    pub issued: i64,
+    pub retired: i64,
+    pub retire_idx: i64,
+}
+
+impl SFused {
+    #[inline(always)]
+    pub fn unfused_uops(&self) -> std::ops::Range<u32> {
+        self.first_uop..self.first_uop + self.n_uops
+    }
+}
+
+/// The simulation state of a laminated-domain uop (`LaminatedUop`).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SLam {
+    pub first_fused_uop: u32,
+    pub n_fused_uops: u32,
+    pub first_uop: u32,
+    pub n_uops: u32,
+    /// UNSET or a cycle
+    pub added_to_idq: i64,
+    pub uop_source: Option<UopSource>,
+}
+
+impl SLam {
+    #[inline(always)]
+    pub fn fused_uops(&self) -> std::ops::Range<u32> {
+        self.first_fused_uop..self.first_fused_uop + self.n_fused_uops
+    }
+
+    #[inline(always)]
+    pub fn unfused_uops(&self) -> std::ops::Range<u32> {
+        self.first_uop..self.first_uop + self.n_uops
+    }
+}
+
+/// The simulation state of an instruction instance (`InstrInstance`). Its register merge and stack sync uops are in
+/// `Sim::reg_merge_uops` and `Sim::stack_sync_uops`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SInst {
+    pub instr: u32,
+    /// its laminated uops: `first_uop .. first_uop + n_uops`
+    pub first_uop: u32,
+    pub n_uops: u32,
+    pub source: Option<UopSource>,
+    pub address: i64,
+    pub rnd: i64,
+    /// UNSET or a cycle
+    pub predecoded: i64,
+    pub removed_from_iq: i64,
+}
+
+impl SInst {
+    #[inline(always)]
+    pub fn uops(&self) -> std::ops::Range<u32> {
+        self.first_uop..self.first_uop + self.n_uops
+    }
+}
 
 /// `RenamedOperand`
 #[derive(Debug, Clone, Copy)]
@@ -313,10 +432,14 @@ pub(crate) struct Sim<'a> {
     pub prep: Prep,
     pub n_ports: usize,
 
-    pub uops: Vec<Uop>,
-    pub fused: Vec<FusedUop>,
-    pub lams: Vec<LaminatedUop>,
-    pub insts: Vec<InstrInstance>,
+    pub uops: Vec<SUop>,
+    pub fused: Vec<SFused>,
+    pub lams: Vec<SLam>,
+    pub insts: Vec<SInst>,
+    /// (instruction instance, laminated uop): `InstrInstance.regMergeUops` and `InstrInstance.stackSyncUops`, in the order in
+    /// which they were created
+    pub reg_merge_uops: Vec<(u32, u32)>,
+    pub stack_sync_uops: Vec<(u32, u32)>,
     pub ren_ops: Vec<RenamedOperand>,
     pub ren_lists: Vec<u32>,
 
@@ -341,9 +464,9 @@ impl<'a> Sim<'a> {
     pub(crate) fn wrap_uop(&mut self, uop: u32) -> u32 {
         let lam = self.lams.len() as u32;
         let fused = self.fused.len() as u32;
-        self.fused.push(FusedUop { first_uop: uop, n_uops: 1, laminated_uop: lam, issued: None, retired: None, retire_idx: None });
+        self.fused.push(SFused { first_uop: uop, n_uops: 1, laminated_uop: lam, issued: UNSET, retired: UNSET, retire_idx: UNSET });
         self.uops[uop as usize].fused_uop = fused;
-        self.lams.push(LaminatedUop { first_fused_uop: fused, n_fused_uops: 1, first_uop: uop, n_uops: 1, added_to_idq: None, uop_source: None });
+        self.lams.push(SLam { first_fused_uop: fused, n_fused_uops: 1, first_uop: uop, n_uops: 1, added_to_idq: UNSET, uop_source: None });
         lam
     }
 
@@ -354,36 +477,34 @@ impl<'a> Sim<'a> {
         let (u_base, f_base, l_base) = (self.uops.len() as u32, self.fused.len() as u32, self.lams.len() as u32);
         let (s, n) = info.tmpl_uops;
         self.uops.extend(self.prep.tmpl_uops[s as usize..(s + n) as usize].iter().map(|t| {
-            let mut u = t.clone();
+            let mut u = *t;
             u.instr_instance = inst;
             u.fused_uop += f_base;
             u
         }));
         let (s, n) = info.tmpl_fused;
         self.fused.extend(self.prep.tmpl_fused[s as usize..(s + n) as usize].iter().map(|t| {
-            let mut f = t.clone();
+            let mut f = *t;
             f.first_uop += u_base;
             f.laminated_uop += l_base;
             f
         }));
         let (s, n_lams) = info.tmpl_lams;
         self.lams.extend(self.prep.tmpl_lams[s as usize..(s + n_lams) as usize].iter().map(|t| {
-            let mut l = t.clone();
+            let mut l = *t;
             l.first_fused_uop += f_base;
             l.first_uop += u_base;
             l
         }));
-        self.insts.push(InstrInstance {
+        self.insts.push(SInst {
             instr: instr as u32,
             address,
             rnd,
             first_uop: l_base,
             n_uops: n_lams,
-            reg_merge_uops: Vec::new(),
-            stack_sync_uops: Vec::new(),
             source: None,
-            predecoded: None,
-            removed_from_iq: None,
+            predecoded: UNSET,
+            removed_from_iq: UNSET,
         });
         inst
     }
@@ -411,14 +532,14 @@ impl<'a> Sim<'a> {
         if is_load && sbe != NONE && mem_renaming && !self.uops[u].mem_renaming_blocked {
             // memory renaming: the load gets its value directly from the register that was stored
             let mut any_none = false;
-            let mut ready = self.fused[self.uops[u].fused_uop as usize].issued.unwrap_or(0);
+            let issued = self.fused[self.uops[u].fused_uop as usize].issued;
+            let mut ready = if issued == UNSET { 0 } else { issued };
             let mut first = true;
             let mut max_ready = 0;
             for i in 0..self.rn.sbes[sbe as usize].uops.len() {
                 let su = self.rn.sbes[sbe as usize].uops.get(i) as usize;
                 if self.prep.props[self.uops[su].prop as usize].has(pf::STORE_DATA) {
-                    let (start, n) = self.uops[su].ren_in;
-                    for j in start..start + n {
+                    for j in self.uops[su].ren_in() {
                         let r = self.ren_lists[j as usize];
                         match self.get_ready_cycle(r) {
                             None => any_none = true,
@@ -442,7 +563,7 @@ impl<'a> Sim<'a> {
             return Some(ready);
         }
 
-        let dispatched = self.uops[u].dispatched?;
+        let dispatched = opt(self.uops[u].dispatched)?;
         let mut lat = ro.lat;
         if self.uops[u].lat_reduced_due_to_fast_ptr_chasing {
             lat -= 1;
@@ -498,6 +619,8 @@ pub fn simulate(list: &InstrList, config: &UArchConfig, uarch: &UArch, options: 
         fused: Vec::with_capacity(cap(n_uops_per_round)),
         lams: Vec::with_capacity(cap(n_uops_per_round)),
         insts: Vec::with_capacity(cap(instrs.len())),
+        reg_merge_uops: Vec::new(),
+        stack_sync_uops: Vec::new(),
         ren_ops: Vec::with_capacity(cap(n_ren_per_round)),
         ren_lists: Vec::with_capacity(cap(n_ren_per_round * 2)),
         idq: VecDeque::new(),
@@ -549,7 +672,7 @@ pub fn simulate(list: &InstrList, config: &UArchConfig, uarch: &UArch, options: 
     let n_rounds = last_uop_for_round.len() as i64;
     let mut last_relevant_round = (n_rounds - 2).max(0); // the last round may be incomplete
     let first_relevant_round = last_relevant_round.min(n_rounds / 2);
-    let fused_of = |r: i64| -> Result<&FusedUop, SimError> {
+    let fused_of = |r: i64| -> Result<&SFused, SimError> {
         match last_uop_for_round.get(r as usize) {
             Some(&f) if f != NONE => Ok(&sim.fused[f as usize]),
             _ => Err(crash("IndexError: list index out of range (uopsForRound)")),
@@ -565,7 +688,7 @@ pub fn simulate(list: &InstrList, config: &UArchConfig, uarch: &UArch, options: 
             r -= 1;
         }
     }
-    let retired = |r: i64| -> Result<i64, SimError> { fused_of(r)?.retired.ok_or_else(|| crash("uop not retired")) };
+    let retired = |r: i64| -> Result<i64, SimError> { opt(fused_of(r)?.retired).ok_or_else(|| crash("uop not retired")) };
     let tp = if first_relevant_round == last_relevant_round {
         retired(first_relevant_round)? as f64
     } else {

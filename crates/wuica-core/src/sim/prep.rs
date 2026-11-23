@@ -5,7 +5,7 @@
 //! The simulation loop reads only this compact form (one small struct of plain integers per uop property and per instruction,
 //! with the boolean attributes as bits), never the [`Instr`] objects, which are only used to build it and for the outputs.
 
-use super::{FusedUop, FxHashMap, LaminatedUop, SimError, Uop};
+use super::{FxHashMap, SFused, SLam, SUop, SimError, NO_PORT, UNSET};
 use crate::config::{UArch, UArchConfig};
 use crate::decoded::MemAddr;
 use crate::model::{Instr, InstrList, OpId, Operand, TpKey, UopProperties};
@@ -297,9 +297,9 @@ pub(crate) struct Prep {
     pub n_resources: usize,
     /// templates for the uops of a new instruction instance: indices are relative to the first uop / fused uop / laminated
     /// uop of the instance; `instr_instance` is not set
-    pub tmpl_uops: Vec<Uop>,
-    pub tmpl_fused: Vec<FusedUop>,
-    pub tmpl_lams: Vec<LaminatedUop>,
+    pub tmpl_uops: Vec<SUop>,
+    pub tmpl_fused: Vec<SFused>,
+    pub tmpl_lams: Vec<SLam>,
 }
 
 fn mem_addr_info(keys: &mut Keys, m: &MemAddr) -> MemAddrInfo {
@@ -397,26 +397,23 @@ fn instr_prop_flags(instr: &Instr, flags: u32) -> u32 {
 
 impl Prep {
     /// a new `Uop(prop, instrI)` (without `instr_instance`)
-    pub fn new_uop(&self, prop: u32) -> Uop {
-        let p = &self.props[prop as usize];
-        Uop {
+    pub fn new_uop(&self, prop: u32) -> SUop {
+        SUop {
             prop,
             instr_instance: NONE,
             fused_uop: NONE,
-            actual_port: None,
-            eliminated: false,
-            ren_in: (0, 0),
-            ren_out: (0, 0),
+            ren: 0,
             store_buffer_entry: NONE,
+            n_in: 0,
+            n_out: 0,
+            actual_port: NO_PORT,
+            eliminated: false,
             mem_renaming_blocked: false,
             forward_fails: false,
             lat_reduced_due_to_fast_ptr_chasing: false,
-            ready_for_dispatch: None,
-            dispatched: None,
-            executed: None,
-            div_cycles: p.div_cycles,
-            is_stack_sync_uop: p.has(pf::STACK_SYNC),
-            is_reg_merge_uop: p.has(pf::REG_MERGE),
+            ready_for_dispatch: UNSET,
+            dispatched: UNSET,
+            executed: f64::NAN,
         }
     }
 
@@ -443,19 +440,19 @@ impl Prep {
                 let lam_first_uop = uop;
                 for &n in lam_group {
                     let fused = n_fused_total;
-                    self.tmpl_fused.push(FusedUop { first_uop: uop, n_uops: n, laminated_uop: lam, issued: None, retired: None, retire_idx: None });
+                    self.tmpl_fused.push(SFused { first_uop: uop, n_uops: n, laminated_uop: lam, issued: UNSET, retired: UNSET, retire_idx: UNSET });
                     for u in uop..uop + n {
                         self.tmpl_uops[(u0 + u) as usize].fused_uop = fused;
                     }
                     uop += n;
                     n_fused_total += 1;
                 }
-                self.tmpl_lams.push(LaminatedUop {
+                self.tmpl_lams.push(SLam {
                     first_fused_uop: first_fused,
                     n_fused_uops: lam_group.len() as u32,
                     first_uop: lam_first_uop,
                     n_uops: uop - lam_first_uop,
-                    added_to_idq: None,
+                    added_to_idq: UNSET,
                     uop_source: None,
                 });
                 n_lams += 1;
@@ -560,6 +557,10 @@ impl Prep {
                     None => Err(invalid("operand index out of range")),
                 }
             };
+            // (the numbers of renamed operands of a uop are stored as u8)
+            if p.input_operands.len() > u8::MAX as usize || p.output_operands.len() > u8::MAX as usize {
+                return Err(invalid("too many operands"));
+            }
             let in_start = in_key_list.len() as u32;
             for &op in &p.input_operands {
                 let (is_pseudo, key, _) = key_of(op)?;

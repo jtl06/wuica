@@ -1,7 +1,7 @@
 //! `Scheduler`: port assignment, dispatch, and the tracking of when uops become ready and finish.
 
 use super::prep::{pf, PortList, Prep, NONE};
-use super::{crash, Sim, SimError};
+use super::{crash, opt, Sim, SimError, NO_PORT};
 use crate::config::UArchConfig;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
@@ -44,7 +44,6 @@ struct PortNames {
     rank_hex: [u8; 32],
 }
 
-const NO_PORT: u8 = u8::MAX;
 
 pub(crate) struct Scheduler {
     /// `len(self.uops)`
@@ -232,10 +231,13 @@ impl<'a> Sim<'a> {
             let mut ready = self.sched.uops_ready_in_cycle.take(clock, spare);
             for &u in &ready {
                 let uop = &self.uops[u as usize];
-                if uop.div_cycles != 0 {
+                if self.prep.props[uop.prop as usize].div_cycles != 0 {
                     self.sched.ready_div_uops.push(Reverse(u));
                 } else {
-                    let port = uop.actual_port.ok_or_else(|| crash("KeyError: None (readyQueue)"))?;
+                    let port = uop.actual_port;
+                    if port == NO_PORT {
+                        return Err(crash("KeyError: None (readyQueue)"));
+                    }
                     self.sched.ready_queue[port as usize].push(Reverse(u));
                 }
             }
@@ -328,12 +330,12 @@ impl<'a> Sim<'a> {
             let queue = if use_div_queue { &mut s.ready_div_uops } else { &mut s.ready_queue[port] };
             let Some(Reverse(u)) = queue.pop() else { continue };
 
-            self.uops[u as usize].dispatched = Some(clock);
+            self.uops[u as usize].dispatched = clock;
             s.n_uops -= 1;
             // also added to pendingUops (in processPendingUops)
             uops_dispatched.push(u);
 
-            s.blocked_resources[RES_DIV] += self.uops[u as usize].div_cycles as f64;
+            s.blocked_resources[RES_DIV] += self.prep.props[self.uops[u as usize].prop as usize].div_cycles as f64;
             if cfg.slow_256bit_mem_acc
                 && port == port4
                 && self.prep.props[self.uops[u as usize].prop as usize].has(pf::M256)
@@ -344,7 +346,10 @@ impl<'a> Sim<'a> {
 
         for i in 0..self.sched.uops_dispatched_in_prev_cycle.len() {
             let u = self.sched.uops_dispatched_in_prev_cycle[i];
-            let port = self.uops[u as usize].actual_port.ok_or_else(|| crash("KeyError: None (portUsage)"))?;
+            let port = self.uops[u as usize].actual_port;
+            if port == NO_PORT {
+                return Err(crash("KeyError: None (portUsage)"));
+            }
             self.sched.port_usage[port as usize] -= 1;
         }
         self.sched.uops_dispatched_spare = std::mem::replace(&mut self.sched.uops_dispatched_in_prev_cycle, uops_dispatched);
@@ -381,7 +386,7 @@ impl<'a> Sim<'a> {
             let prop = &self.prep.props[self.uops[u as usize].prop as usize];
             let (flags, tp) = (prop.flags, prop.tp);
             let (is_store_addr, is_store_data) = (flags & pf::STORE_ADDR != 0, flags & pf::STORE_DATA != 0);
-            let dispatched = self.uops[u as usize].dispatched.unwrap();
+            let dispatched = opt(self.uops[u as usize].dispatched).unwrap();
             let mut finish_time = (dispatched + 2) as f64;
             if flags & pf::FIRST_TP != 0 {
                 let t = dispatched as f64 + tp;
@@ -391,8 +396,7 @@ impl<'a> Sim<'a> {
             }
 
             let mut not_finished = false;
-            let (start, n) = self.uops[u as usize].ren_out;
-            for j in start..start + n {
+            for j in self.uops[u as usize].ren_out() {
                 let r = self.ren_lists[j as usize];
                 match self.get_ready_cycle(r) {
                     None => {
@@ -443,7 +447,7 @@ impl<'a> Sim<'a> {
                 }
             }
 
-            self.uops[u as usize].executed = Some(finish_time);
+            self.uops[u as usize].executed = finish_time;
         }
         self.sched.pending_uops = still_pending;
         self.sched.pending_uops_spare = pending;
@@ -453,13 +457,13 @@ impl<'a> Sim<'a> {
     /// `Scheduler.processPendingFences`
     fn process_pending_fences(&mut self, clock: i64) {
         if let Some(&u) = self.sched.pending_load_fence_uops.front() {
-            if self.uops[u as usize].executed.is_some_and(|e| e <= clock as f64) {
+            if self.uops[u as usize].executed_by(clock) {
                 self.sched.pending_load_fence_uops.pop_front();
                 self.sched.load_uops_since_last_load_fence.clear();
             }
         }
         if let Some(&u) = self.sched.pending_store_fence_uops.front() {
-            if self.uops[u as usize].executed.is_some_and(|e| e <= clock as f64) {
+            if self.uops[u as usize].executed_by(clock) {
                 self.sched.pending_store_fence_uops.pop_front();
                 self.sched.store_uops_since_last_store_fence.clear();
             }
@@ -485,13 +489,13 @@ impl<'a> Sim<'a> {
 
     /// `Scheduler.checkUopReady`: adds ready uops to uopsReadyInCycle
     fn check_uop_ready(&mut self, clock: i64, u: u32) -> Result<bool, SimError> {
-        if self.uops[u as usize].ready_for_dispatch.is_some() {
+        if self.uops[u as usize].ready_for_dispatch != super::UNSET {
             return Ok(true);
         }
         let prop = &self.prep.props[self.uops[u as usize].prop as usize];
         let (flags, tp_res, tp) = (prop.flags, prop.tp_res as usize, prop.tp);
         let (is_first, is_load, is_store) = (flags & pf::FIRST != 0, flags & pf::LOAD != 0, flags & pf::STORE != 0);
-        let not_executed = |sim: &Sim, uops: &[u32]| uops.iter().any(|&u2| !sim.uops[u2 as usize].executed.is_some_and(|e| e <= clock as f64));
+        let not_executed = |sim: &Sim, uops: &[u32]| uops.iter().any(|&u2| !sim.uops[u2 as usize].executed_by(clock));
 
         if flags & pf::LOAD_SERIALIZING != 0 {
             if is_first {
@@ -527,7 +531,7 @@ impl<'a> Sim<'a> {
 
         let Some(ready_for_dispatch_cycle) = self.get_ready_for_dispatch_cycle(clock, u)? else { return Ok(false) };
 
-        self.uops[u as usize].ready_for_dispatch = Some(ready_for_dispatch_cycle);
+        self.uops[u as usize].ready_for_dispatch = ready_for_dispatch_cycle;
         self.sched.uops_ready_in_cycle.push(clock, ready_for_dispatch_cycle, u);
 
         if flags & pf::FIRST_TP != 0 {
@@ -569,7 +573,7 @@ impl<'a> Sim<'a> {
                     self.assign_port(issue_slot, mask, port_list, ports_start, n, &mut port_combinations_in_cur_cycle)?
                 };
 
-                self.uops[u as usize].actual_port = Some(port as u8);
+                self.uops[u as usize].actual_port = port as u8;
                 self.sched.port_usage[port] += 1;
                 self.sched.n_uops += 1;
 
@@ -749,12 +753,11 @@ impl<'a> Sim<'a> {
     /// `Scheduler.checkDependingUopsExecuted`: checks if the uop depends on a uop for which the finish time has not been determined
     /// yet; in this case, it is added to dependentUops for this uop; otherwise, it is added to nonReadyUops
     fn check_depending_uops_executed(&mut self, u: u32) {
-        let (start, n) = self.uops[u as usize].ren_in;
-        for j in start..start + n {
+        for j in self.uops[u as usize].ren_in() {
             let r = self.ren_lists[j as usize];
             if self.get_ready_cycle(r).is_none() {
                 let producer = self.ren_ops[r as usize].uop;
-                if producer != NONE && self.uops[producer as usize].executed.is_none() {
+                if producer != NONE && self.uops[producer as usize].executed.is_nan() {
                     let s = &mut self.sched;
                     if s.dep_lists.len() <= producer as usize {
                         s.dep_lists.resize(self.uops.len().max(producer as usize + 1), (NONE, NONE));
@@ -779,8 +782,7 @@ impl<'a> Sim<'a> {
     /// `Scheduler.getReadyForDispatchCycle`
     fn get_ready_for_dispatch_cycle(&mut self, clock: i64, u: u32) -> Result<Option<i64>, SimError> {
         let mut op_ready_cycle = -1;
-        let (start, n) = self.uops[u as usize].ren_in;
-        for j in start..start + n {
+        for j in self.uops[u as usize].ren_in() {
             let r = self.ren_lists[j as usize];
             match self.get_ready_cycle(r) {
                 None => return Ok(None),
@@ -791,7 +793,7 @@ impl<'a> Sim<'a> {
                 }
             }
         }
-        let issued = self.fused[self.uops[u as usize].fused_uop as usize].issued.ok_or_else(|| crash("TypeError: issued is None"))?;
+        let issued = opt(self.fused[self.uops[u as usize].fused_uop as usize].issued).ok_or_else(|| crash("TypeError: issued is None"))?;
         let d = issued + self.cfg.issue_dispatch_delay;
         let mut ready_cycle = op_ready_cycle;
         if op_ready_cycle < d {

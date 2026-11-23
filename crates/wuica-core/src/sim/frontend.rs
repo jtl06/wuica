@@ -441,7 +441,7 @@ impl<'a> Sim<'a> {
             self.renamer_cycle(&mut issue_uops)?;
         }
         for &fused in &issue_uops {
-            self.fused[fused as usize].issued = Some(clock);
+            self.fused[fused as usize].issued = clock;
         }
         self.rob_cycle(clock, &issue_uops);
         self.scheduler_cycle(clock, &issue_uops)?;
@@ -483,7 +483,7 @@ impl<'a> Sim<'a> {
                         let first = self.lams[lam as usize].first_uop;
                         self.add_stack_sync_uop(clock, first);
                         self.idq.push_back(lam);
-                        self.lams[lam as usize].added_to_idq = Some(clock);
+                        self.lams[lam as usize].added_to_idq = clock;
                     }
                     n_ops += slots;
                     n_fields += fields;
@@ -503,7 +503,7 @@ impl<'a> Sim<'a> {
                         if cfg.is_amd {
                             // the dispatch width is in macro-ops
                             self.idq.push_back(lam);
-                            self.lams[lam as usize].added_to_idq = Some(clock);
+                            self.lams[lam as usize].added_to_idq = clock;
                             continue;
                         }
                         for uop in self.lams[lam as usize].unfused_uops() {
@@ -590,7 +590,7 @@ impl<'a> Sim<'a> {
                 let first = self.lams[lam as usize].first_uop;
                 self.add_stack_sync_uop(clock, first);
                 self.idq.push_back(lam);
-                self.lams[lam as usize].added_to_idq = Some(clock);
+                self.lams[lam as usize].added_to_idq = clock;
             }
             self.fe.new_uops = new_uops;
         }
@@ -737,9 +737,9 @@ impl<'a> Sim<'a> {
             let stack_sync_uop = self.new_uop(stack_sync_prop, inst);
             let lam = self.wrap_uop(stack_sync_uop);
             self.idq.push_back(lam);
-            self.lams[lam as usize].added_to_idq = Some(clock);
+            self.lams[lam as usize].added_to_idq = clock;
             self.lams[lam as usize].uop_source = Some(UopSource::Se);
-            self.insts[inst as usize].stack_sync_uops.push(lam);
+            self.stack_sync_uops.push((inst, lam));
         }
     }
 
@@ -893,13 +893,13 @@ impl<'a> Sim<'a> {
         debug_assert!(uops_list.is_empty());
         let mut n_decoded_instrs = 0;
         let mut remaining_decoder_slots = cfg.n_decoders;
-        let predecoded = |sim: &Sim, inst: u32| sim.insts[inst as usize].predecoded.ok_or_else(|| crash("TypeError: predecoded is None"));
+        let predecoded = |sim: &Sim, inst: u32| super::opt(sim.insts[inst as usize].predecoded).ok_or_else(|| crash("TypeError: predecoded is None"));
         while let Some(&inst) = self.fe.instruction_queue.front() {
             let info = &self.prep.info[self.inst_instr(inst)];
             let (flags, uops_mite, uops_ms, n_available_simple_decoders) = (info.flags, info.uops_mite, info.uops_ms, info.n_available_simple_decoders);
             if flags & inf::MACRO_FUSED_PREV != 0 {
                 self.fe.instruction_queue.pop_front();
-                self.insts[inst as usize].removed_from_iq = Some(clock);
+                self.insts[inst as usize].removed_from_iq = clock;
                 continue;
             }
             if predecoded(self, inst)? + cfg.predecode_decode_delay > clock {
@@ -917,7 +917,7 @@ impl<'a> Sim<'a> {
                 }
             }
             self.fe.instruction_queue.pop_front();
-            self.insts[inst as usize].removed_from_iq = Some(clock);
+            self.insts[inst as usize].removed_from_iq = clock;
 
             let (first_uop, n_uops) = (self.insts[inst as usize].first_uop, self.insts[inst as usize].n_uops);
             let n_mite = (uops_mite.max(0) as u32).min(n_uops);
@@ -1011,7 +1011,7 @@ impl<'a> Sim<'a> {
             if self.fe.predec_stalled == 0 {
                 for i in 0..self.fe.pre_dec_queue.len() {
                     let inst = self.fe.pre_dec_queue[i];
-                    self.insts[inst as usize].predecoded = Some(clock);
+                    self.insts[inst as usize].predecoded = clock;
                     self.fe.instruction_queue.push_back(inst);
                 }
                 self.fe.pre_dec_queue.clear();
@@ -1034,12 +1034,12 @@ impl<'a> Sim<'a> {
         for _ in 0..self.cfg.retire_width {
             let Some(&fused) = self.rob.front() else { break };
             let all_executed =
-                self.fused[fused as usize].unfused_uops().all(|u| self.uops[u as usize].executed.is_some_and(|e| e < clock as f64));
+                self.fused[fused as usize].unfused_uops().all(|u| self.uops[u as usize].executed < clock as f64);
             if all_executed {
                 self.rob.pop_front();
                 self.retire_queue.push_back(fused);
-                self.fused[fused as usize].retired = Some(clock);
-                self.fused[fused as usize].retire_idx = Some(n_retired_in_same_cycle);
+                self.fused[fused as usize].retired = clock;
+                self.fused[fused as usize].retire_idx = n_retired_in_same_cycle;
                 n_retired_in_same_cycle += 1;
             } else {
                 break;
@@ -1051,7 +1051,7 @@ impl<'a> Sim<'a> {
             for u in self.fused[fused as usize].unfused_uops() {
                 let uop = &mut self.uops[u as usize];
                 if !self.prep.props[uop.prop as usize].has(pf::HAS_PORTS) || uop.eliminated {
-                    uop.executed = Some(clock as f64);
+                    uop.executed = clock as f64;
                 }
             }
         }

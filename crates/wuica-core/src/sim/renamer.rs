@@ -1,7 +1,7 @@
 //! `Renamer`, `StoreBufferEntry`, and `AbstractValueGenerator` (from `utils.py`).
 
 use super::prep::{inf, pf, AvKind, Key, MemAddrInfo, KEY_NONE, NONE};
-use super::{crash, FusedUop, FxHashMap, InitPolicy, LaminatedUop, RenamedOperand, Sim, SimError, READY_UNSET};
+use super::{crash, FxHashMap, InitPolicy, RenamedOperand, SFused, SLam, Sim, SimError, READY_UNSET, UNSET};
 use crate::config::Slots;
 
 /// `AbstractValue`
@@ -331,18 +331,18 @@ impl<'a> Sim<'a> {
                         let u = self.new_uop(merge_prop, inst);
                         let merge_lam = self.lams.len() as u32;
                         let merge_uop = self.fused.len() as u32;
-                        self.fused.push(FusedUop { first_uop: u, n_uops: 1, laminated_uop: merge_lam, issued: None, retired: None, retire_idx: None });
+                        self.fused.push(SFused { first_uop: u, n_uops: 1, laminated_uop: merge_lam, issued: UNSET, retired: UNSET, retire_idx: UNSET });
                         self.uops[u as usize].fused_uop = merge_uop;
                         renamer_uops.push(merge_uop);
-                        self.lams.push(LaminatedUop {
+                        self.lams.push(SLam {
                             first_fused_uop: merge_uop,
                             n_fused_uops: 1,
                             first_uop: u,
                             n_uops: 1,
-                            added_to_idq: None,
+                            added_to_idq: UNSET,
                             uop_source: None,
                         });
-                        self.insts[inst as usize].reg_merge_uops.push(merge_lam);
+                        self.reg_merge_uops.push((inst, merge_lam));
                     }
                     self.rn.last_reg_merge_issued = first_unfused_uop;
                     break;
@@ -582,7 +582,9 @@ impl<'a> Sim<'a> {
                 self.ren_lists.push(ren_op);
             }
             let ren_out_start = self.ren_lists.len() as u32;
-            self.uops[u as usize].ren_in = (ren_in_start, ren_out_start - ren_in_start);
+            // (at most 255 operands: checked in Prep::new)
+            self.uops[u as usize].ren = ren_in_start;
+            self.uops[u as usize].n_in = (ren_out_start - ren_in_start) as u8;
             let (out_start, n_out) = self.prep.props[prop_id].out_keys;
             for i in out_start..out_start + n_out {
                 let k = &self.prep.out_key_list[i as usize];
@@ -598,7 +600,7 @@ impl<'a> Sim<'a> {
                     }
                 }
             }
-            self.uops[u as usize].ren_out = (ren_out_start, self.ren_lists.len() as u32 - ren_out_start);
+            self.uops[u as usize].n_out = (self.ren_lists.len() as u32 - ren_out_start) as u8;
         } else {
             // e.g., xor rax, rax
             let (out_start, n_out) = self.prep.info[ii].out_regs;
