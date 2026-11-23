@@ -1202,7 +1202,17 @@ async function start() {
   paintDerived();
   if (hadState && el.code.value.trim() !== '' && !el.run.disabled) run();
   else if (liveOn && touched && el.code.value.trim() !== '' && !el.run.disabled) run({ auto: true });
-  else renderEmpty(el.body);
+  else {
+    renderEmpty(el.body);
+    if (!hadState && !touched) autoFirst(); // a fresh visit: the default example
+  }
+}
+
+// A fresh visit (no state in the link, nothing typed): the default example is analyzed once, after the next frame
+// (the analysis runs in the worker; a key press meanwhile goes first, and live mode or Analyze replace this run).
+function autoFirst() {
+  const go = () => { if (!lastView && !busy && !touched && el.code.value.trim() !== '' && !el.run.disabled) run({ auto: true }); };
+  requestAnimationFrame(() => setTimeout(go, 0));
 }
 
 start();
