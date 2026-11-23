@@ -54,6 +54,13 @@ export function experiments(response, hex, options = {}) {
   return out;
 }
 
+// The label of a variant as experiments() gives it (for the variants it does not make).
+function labelOf(id, options) {
+  if (id.startsWith('unroll')) return `unroll ×${id.slice(6)}`;
+  const f = FLAGS.find(([k]) => k === id);
+  return f ? (options?.[id] ? f[2] : f[1]) : 'no chain';
+}
+
 const round = (x) => Math.round(x * 100) / 100;
 
 // What the tool returns for one experiment, from the base result and the variant's (or its estimate).
@@ -61,7 +68,11 @@ export function outcome(base, exp, r) {
   const row = { id: exp.id, label: exp.label };
   let tp;
   if (exp.estimate !== undefined) { tp = exp.estimate; row.estimate = true; }
-  else if (!r || r.code !== 0) return { ...row, error: r?.error ?? 'not analyzed' };
+  else if (!r || r.code !== 0) {
+    const error = r?.error ?? 'not analyzed';
+    // a limit or failure of the unrolled code, not of the caller's block: say so
+    return { ...row, error: exp.per > 1 && exp.hex ? `the block unrolled ×${exp.per} (${exp.hex.length} hex characters) could not be analyzed: ${error}` : error };
+  }
   else if (r.mode !== base.mode) return { ...row, error: `analyzed ${r.mode === 'loop' ? 'as a loop' : 'unrolled'}: not comparable` };
   else { tp = r.tp / exp.per; row.bottlenecks = r.bottlenecks; }
   return { ...row, tp: round(tp), delta: round(tp - base.tp), speedup: tp > 0 ? round(base.tp / tp) : null };
@@ -88,7 +99,7 @@ export async function whatIf(analyze, arch, request, variants = VARIANTS) {
     out.push(outcome(base, exp, r));
   }
   for (const id of want) {
-    if (!out.some((x) => x.id === id)) out.push({ id, error: base.mode !== 'loop' && id.startsWith('unroll') ? 'not a loop' : id === 'nochain' ? 'no loop-carried chain' : 'not applicable' });
+    if (!out.some((x) => x.id === id)) out.push({ id, label: labelOf(id, options), error: base.mode !== 'loop' && id.startsWith('unroll') ? 'not a loop' : id === 'nochain' ? 'no loop-carried chain' : 'not applicable' });
   }
   out.sort((a, b) => VARIANTS.indexOf(a.id) - VARIANTS.indexOf(b.id));
   return { code: 0, arch: base.arch, tp: base.tp, mode: base.mode, bottlenecks: base.bottlenecks, unit: 'cycles per original iteration', variants: out };

@@ -31,6 +31,11 @@ test('idle workers: a compare in parts, the same response as one after another',
     assert.deepEqual(r.json, plain(await w.compare(req)), JSON.stringify(req));
   }
   assert.equal((await post(s.base, '/api/compare', { hex: HEX, archs: 'SKL' })).json.code, 1); // not split: one job
+  // a repeated name counts once, also when the repeats would be in different parts
+  const dup = { hex: HEX, archs: ['SKL', 'ICL', ' skl', 'zen3', 'SKL '] };
+  const d = await post(s.base, '/api/compare', dup);
+  assert.deepEqual(d.json.results.map((r) => r.arch), ['SKL', 'ICL', 'ZEN3']);
+  assert.deepEqual(d.json, plain(await w.compare(dup)));
   // the instruction limit counts the whole block, whichever part
   assert.equal((await post(s.base, '/api/compare', { source: '.rept 10001\nnop\n.endr' })).status, 400);
   // the text form
@@ -69,5 +74,7 @@ test('the parts share one time budget; splitCompare: false makes a compare one j
     const r = await post(u.base, '/api/compare', { hex: HEX });
     assert.deepEqual(r.json, plain(await w.compare({ hex: HEX })));
     assert.equal(u.app.pool.stats.jobs - n, 1);
+    const dup = await post(u.base, '/api/compare', { hex: HEX, archs: ['SKL', 'ICL', ' skl', 'zen3', 'SKL '] });
+    assert.deepEqual(dup.json.results.map((r) => r.arch), ['SKL', 'ICL', 'ZEN3']);
   } finally { await u.close(); }
 });

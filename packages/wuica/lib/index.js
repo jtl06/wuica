@@ -84,6 +84,17 @@ function pickOptions(req, extraKeys) {
   return { options: out };
 }
 
+
+// A list of arch names without repeats (the same id, or the same unknown name), in the order of their first appearance.
+function uniqueArchs(list, resolve) {
+  const seen = new Set();
+  return list.filter((a) => {
+    const key = resolve(a) ?? `?${String(a).trim()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 class Wuica {
   #analyzer;
   #configs;
@@ -116,10 +127,12 @@ class Wuica {
     return this.#archs.map((a) => Object.fromEntries(list.filter((f) => Object.hasOwn(a, f)).map((f) => [f, a[f]])));
   }
 
-  // Exact id, else case-insensitive and ignoring "-" (adlp -> ADL-P). Empty -> DEFAULT_ARCH; unknown -> null.
+  // Exact id, else case-insensitive and ignoring "-" and surrounding whitespace (adlp -> ADL-P). Empty -> DEFAULT_ARCH;
+  // unknown -> null.
   resolveArch(arch) {
-    if (arch === undefined || arch === null || arch === '') return DEFAULT_ARCH;
-    const s = String(arch);
+    if (arch === undefined || arch === null) return DEFAULT_ARCH;
+    const s = String(arch).trim();
+    if (s === '') return DEFAULT_ARCH;
     if (Object.hasOwn(this.#configs, s)) return s;
     const norm = (k) => k.toUpperCase().replace(/-/g, '');
     return Object.keys(this.#configs).find((k) => norm(k) === norm(s)) ?? null;
@@ -226,7 +239,7 @@ class Wuica {
     const code = await this.#code(request);
     if (code.code !== undefined) return code;
     if (request.archs !== undefined && !Array.isArray(request.archs)) return failure(CODES.REQUEST, '`archs` must be an array of ids');
-    const ids = request.archs?.length ? request.archs : this.#archs.map((a) => a.id);
+    const ids = request.archs?.length ? uniqueArchs(request.archs, (a) => this.resolveArch(a)) : this.#archs.map((a) => a.id);
     const options = { ...opts.options, includeTrace: false, details: false };
     const resolved = ids.map((arch) => this.resolveArch(arch));
     // the microarchitectures in threads (if that means at least two threads), each as #run() would on this thread;

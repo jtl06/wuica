@@ -33,9 +33,9 @@ test('threads: the same response as one after another', async () => {
   assert.ok(par.threads > 1 && par.threads <= 4, `threads: ${par.threads}`);
   await same({ hex: HEX });
   await same({ hex: BIG, options: { noMacroFusion: true, alignmentOffset: 5, minIterations: 20, initPolicy: 'same' } });
-  // ids as given (an alias, a duplicate, an unknown one, an ablation variant), assembly with a warning
+  // ids as given (an alias, a duplicate: once, an unknown one, an ablation variant), assembly with a warning
   const c = await same({ source: '.warning "careful"\n' + ASM, archs: ['adlp', 'SKL', 'K8', 'zen3', 'SKL', 'CLX_noLSD', 'CLX'] });
-  assert.deepEqual(c.results.map((r) => [r.arch, r.code]), [['ADL-P', 0], ['SKL', 0], ['K8', 1], ['ZEN3', 0], ['SKL', 0], ['CLX_noLSD', 0], ['CLX', 0]]);
+  assert.deepEqual(c.results.map((r) => [r.arch, r.code]), [['ADL-P', 0], ['SKL', 0], ['K8', 1], ['ZEN3', 0], ['CLX_noLSD', 0], ['CLX', 0]]);
   assert.equal(c.stderr[0].tag.severity, 'warning');
   // failures before any analysis
   await same({ source: 'frob' });

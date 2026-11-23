@@ -258,7 +258,7 @@ export async function createApp(options = {}) {
     if (p === '/api/analyze' || p.startsWith('/api/analyze/')) {
       method(['POST']);
       let arch;
-      try { arch = decodeURIComponent(p.slice('/api/analyze/'.length)); } catch { arch = ''; }
+      try { arch = decodeURIComponent(p.slice('/api/analyze/'.length)).trim(); } catch { arch = ''; }
       if (!arch) throw new HttpError(404, 'give the microarchitecture in the path: POST /api/analyze/<arch> (see GET /api/archs)');
       rateLimit(req, ctx);
       const body = await readJson(req);

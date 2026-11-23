@@ -98,3 +98,25 @@ test('stateless transport: GET and DELETE are 405; no session id; CORS', async (
   assert.equal(pre.status, 204);
   assert.match(pre.headers.get('access-control-allow-headers'), /Mcp-Protocol-Version/);
 });
+
+test('what_if: an unrolled variant over the server\'s limits is that variant\'s error, with its label', async () => {
+  // hex of at most 40 characters: the block (22) and ×2 (34) pass, ×4 (58) and ×8 do not
+  const small = await start({ maxSourceBytes: 40 });
+  const c = new Client({ name: 'wuica-server-test', version: '0' });
+  try {
+    await c.connect(new StreamableHTTPClientTransport(new URL(small.base + '/mcp')));
+    const r = await c.callTool({ name: 'what_if', arguments: { hex: HEX } });
+    const j = JSON.parse(r.content[0].text);
+    assert.equal(r.isError, undefined);
+    assert.equal(typeof j.variants.find((v) => v.id === 'unroll2').tp, 'number');
+    for (const n of [4, 8]) {
+      const v = j.variants.find((x) => x.id === `unroll${n}`);
+      assert.equal(v.label, `unroll ×${n}`);
+      assert.match(v.error, new RegExp(`^the block unrolled ×${n} \\(\\d+ hex characters\\) could not be analyzed: `), v.error);
+    }
+    assert.ok(j.variants.every((v) => typeof v.label === 'string'));
+  } finally {
+    await c.close();
+    await small.close();
+  }
+});

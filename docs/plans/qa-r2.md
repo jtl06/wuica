@@ -41,12 +41,12 @@ before it. Legend as in [qa-r1.md](qa-r1.md): **ok**, **fixed** (commit), **open
 | instruction card, Notes badges | web_qa2_browser (keyboard, URL `sel`, reload, merge/sync and `X` rows by hand: no card for merge uops, a card from the response for `X`) | ok |
 | bound view: port set, slots bar | web_qa2_browser (slots vs Node; ptrchase on ADL-P: 100 % issued before D1's fix) | ok after D1 |
 | trace issue strip | details_fuzz (with a trace, the log is within the trace's cycles); web_qa2_browser (the page's strip is the module's log); web_details (the log against the fused uops the trace issues) | ok; by design it can disagree with the bound view's slots (D1) |
-| cost per source line (`src=1`) | web_qa2_browser with the recorded Compiler Explorer responses | ok; note N5 |
+| cost per source line (`src=1`) | web_qa2_browser with the recorded Compiler Explorer responses | ok; N5 (no change needed) |
 | asm ↔ hex of an import | web_qa2_browser | ok |
 | REST `insights` | interfaces (122 cases with details) | ok |
-| MCP `what_if` (package, remote) | interfaces; by hand: SHA-256, empty and repeated variants, bad arch, undecodable | ok; note N2 |
+| MCP `what_if` (package, remote) | interfaces; by hand: SHA-256, empty and repeated variants, bad arch, undecodable | ok; **fixed** N2 (0dfa684) |
 | accuracy link and tooltips | web_qa2_browser (href), by hand (ZEN3 83 % / 89 %, ICX 87 % / 88 %, ADL-P 92 % / 92 % = docs/ACCURACY.md round 7, rounded) | ok |
-| `-arch SKL,ICL`, `all`, `-threads`, `WUICA_THREADS`, parallel compare, `WUICA_SPLIT_COMPARE` | interfaces; by hand: lower case, spaces, duplicates, empty items, unknown, `all,SKL`, `-threads 0/-1/abc/1.5/99999/''`, `WUICA_THREADS=0/-1/abc/''` | ok; note N3 |
+| `-arch SKL,ICL`, `all`, `-threads`, `WUICA_THREADS`, parallel compare, `WUICA_SPLIT_COMPARE` | interfaces; by hand: lower case, spaces, duplicates, empty items, unknown, `all,SKL`, `-threads 0/-1/abc/1.5/99999/''`, `WUICA_THREADS=0/-1/abc/''` | ok; **fixed** N3 (fea4047) |
 | warm-up (library threads, server) | SHA-256 compare above (a block ≥ 2 KB of hex warms idle threads) | ok |
 | assembler worker, 512 MB worker recycle | existing suites (web_assembler_rpc, web_pool*, web_robust_browser) | ok |
 | 1 MiB hex limit, `.code16`/`.code32` | page by hand: 1,100,000 bytes → "Too much machine code: 1,100,000 bytes (at most 1,048,576)"; `.code16` → "line 1:1: .code16: only 64-bit code can be analyzed"; interfaces (`.code32` everywhere) | ok; note N1 |
@@ -99,17 +99,29 @@ then unused), and the 1 % assertion and `issue_slots_are_of_the_steady_state` in
   million `nop`) end in "Analyzer crashed on this input (unreachable: out of memory, 3.7 GB in use; try a smaller block ...)"
   after about 1 s. The message is clear and the page stays usable; a limit on the instruction count (about 400,000) would
   say it before the run.
-- **N2 (note).** The remote MCP `what_if` on a large block: the unrolled variants go through the server's request limits,
+- **N2 (fixed, 0dfa684; tests: server/test/mcp.test.mjs "an unrolled variant over the server's limits", the label
+  assertion in packages/wuica/test/mcp.test.mjs).** An unrolled variant that cannot be analyzed now says so itself:
+  "the block unrolled ×4 (N hex characters) could not be analyzed: <the reason>", and every variant row, error or not, has its
+  `label` (packages/wuica/lib/whatif.js, shared by the stdio and the remote server). Was: The remote MCP `what_if` on a large block: the unrolled variants go through the server's request limits,
   so for SHA-256 `unroll4`/`unroll8` give "`hex` is longer than 65536 characters, the limit of this server" (the user sent
   no such hex; the stdio server analyzes them). Error rows of variants have no `label` (`{"id":"unroll2","error":"not a
   loop"}`), the others have one.
-- **N3 (note).** Arch names: the library and the npm CLI take `""` as SKL (the default), but `" "` and `"skl "` are unknown;
+- **N3 (fixed, fea4047; tests: the arch-name assertions of packages/wuica/test/library.test.mjs and cli.test.mjs,
+  server/test/compare-split.test.mjs (split and not), `arch_names_like_the_other_interfaces` of wuica-cli).**
+  Whitespace around a name is ignored in the library (so REST and both MCP servers) and both CLIs (`"skl "` is SKL; a
+  blank name follows each interface's rule for `""`: SKL in the library, unknown in the native CLI, 404 in REST's path); a repeated name in a
+  compare list counts once, in the order of its first appearance (library; the server de-duplicates before it splits a
+  compare into parts, after its limit of 15 names, which counts the list as given); `-details` without `-json` (and in the
+  npm CLI with several CPUs) prints one line on stderr, "-details: shown only with -json ...; ignored" (`-trace`
+  unchanged); README: `archs` missing or empty means all. `"S-K-L"` is still SKL. Was: Arch names: the library and the npm CLI take `""` as SKL (the default), but `" "` and `"skl "` are unknown;
   the npm CLI trims list items (`-arch "SKL, ICL"` works); `"S-K-L"` is SKL (every `-` is dropped); duplicates in a list give
   duplicate rows (CLI, REST, MCP); REST `archs: []` means all; the native CLI has no lists (`unknown microarchitecture:
   SKL,ICL`). `-details` (both CLIs) is ignored without `-json` and with several CPUs, like `-trace`.
 - **N4 (note).** In A–B mode the instruction card and the views are hidden by design; the A–B trace has no issue strip
   (features-r2 "next ideas").
-- **N5 (note).** A link with `src=1` reopened in a new tab has the imported assembly but not Compiler Explorer's line
+- **N5 (no change needed).** The source row is not built without the line table (srcmap.js `paint()`), so the
+  reopened link has no source row, not an empty one; web_qa2_browser now asserts exactly that (it accepted either before).
+  Was: A link with `src=1` reopened in a new tab has the imported assembly but not Compiler Explorer's line
   table, so the "source" view is not offered until the link is imported again (tested: no error, the same result).
 - **Speed note.** After D1's fix a details request on random blocks costs about twice as much on average (the random-block
   test: 20,000 blocks × 2 analyses in 3.3 s before, about 7 s after, 8 threads), because a quarter of them run the longer
@@ -127,3 +139,8 @@ Shared with other work tonight: `crates/wuica-core/src/analyze.rs` (one `if` aft
 `crates/wuica-core/src/details.rs`, `docs/WASM-API.md` (the Details section). Added: `crates/wuica/tests/details_fuzz.rs`,
 `tests-js/web_qa2_browser.mjs`, this file; extended: `tests-js/interfaces.mjs` (a section before its summary). Not touched:
 web/js (no page change was needed), app.js, views.js, url-state.js, scripts/check.mjs.
+
+Fixes of N2 and N3 (branch qa-r2-fixes): packages/wuica/lib/whatif.js, index.js, cli.js, index.d.ts (`label` always
+present), README.md; server/lib/facade.js; crates/wuica-cli/src/main.rs; tests in packages/wuica/test (mcp, library, cli,
+threads: a repeated arch now gives one row), server/test (mcp, compare-split), tests-js/web_qa2_browser.mjs (N5 assertion).
+No analysis result changes.

@@ -292,7 +292,7 @@ try {
     const n = await p2.eval(`${HELPERS} ${CE} await until(() => (tp() || errorBox()) && !$('results').hasAttribute('aria-busy'), 60000);
       return { tp: tp(), err: errorBox(), srcHidden: $('srcmap-row')?.hidden ?? true, lines: srcLines(), code: $('code').value };`);
     check(n.tp === r.tp && !n.err && n.code === r.code, 'ce: the link of an import reopens with the same result', JSON.stringify(n));
-    check(n.srcHidden || JSON.stringify(n.lines) === JSON.stringify(r.lines), 'ce: the reopened link shows the same source lines or none', JSON.stringify(n));
+    check(n.srcHidden && n.lines.length === 0, 'ce: the reopened link has no source row (the line table is not in the link)', JSON.stringify(n));
     check(sent.every((s) => /^(OPTIONS|GET \/api\/compilers|POST \/api\/compiler\/g82\/compile)/.test(s)), 'ce: only the recorded requests', JSON.stringify(sent));
     check(p.take().length === 0 && p2.take().length === 0, 'ce: no console errors');
     await p2.close();

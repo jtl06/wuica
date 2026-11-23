@@ -112,6 +112,9 @@ test('single-object form, asm alias, AT&T, hex formats, arch names', async () =>
   assert.equal((await w.analyze({ hex: '4801d8' })).arch, 'SKL');
   assert.equal(w.resolveArch('zen3'), 'ZEN3');
   assert.equal(w.resolveArch('nope'), null);
+  assert.equal(w.resolveArch(' skl\t'), 'SKL'); // whitespace around a name is trimmed; blank is the default, as ''
+  assert.equal(w.resolveArch(' '), 'SKL');
+  assert.equal((await w.analyze('adl-p ', { hex: '4801d8' })).arch, 'ADL-P');
 });
 
 test('errors are returned as {code, error, stderr}, not thrown', async () => {
@@ -204,6 +207,9 @@ test('compare', async () => {
   assert.equal(c.results[0].tp, 2);
   assert.equal(c.results[1].prototype, true);
   assert.match(c.results[2].error, /unknown/);
+  // a repeated name (the same id, or the same unknown name) counts once, in the order of its first appearance
+  const d = await w.compare({ hex: HEX, archs: ['SKL', 'zen3 ', 'skl', 'K8', 'ZEN3', ' K8'] });
+  assert.deepEqual(d.results.map((r) => r.arch), ['SKL', 'ZEN3', 'K8']);
   const all = await w.compare({ hex: HEX });
   assert.equal(all.results.length, 15);
   assert.ok(all.results.every((r) => typeof r.tp === 'number'));
