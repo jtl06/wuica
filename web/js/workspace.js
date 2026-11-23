@@ -78,7 +78,7 @@
     if (!view) return;
     if (!opened[0] && view.classList.contains('ws-main')) return;
     var all = opened[0] ? view.querySelectorAll(SCROLLERS) : view.querySelectorAll('.table-wrap');
-    if (all.length !== 1) return;
+    if (!all.length || (all.length > 1 && abOn())) return; // (A–B's two traces: the pane scrolls)
     var scroller = all[0];
     var p = pane.getBoundingClientRect(), r = scroller.getBoundingClientRect(), v = view.getBoundingClientRect();
     var below = Math.max(0, v.bottom - r.bottom);         // the view's own lines under its scroller (legends)

@@ -33,7 +33,7 @@ body.ab-on .toolbar .choice, .ab-head .choice { gap: 0.25rem 0.8rem; }
 }
 /* wide: the input pane a little wider than in single mode (two rows of controls) */
 @media (min-width: 1200px) {
-  body.ab-on .panes { grid-template-columns: minmax(0, clamp(24rem, 35vw, 42rem)) minmax(0, 1fr); }
+  body.ab-on .panes { grid-template-columns: minmax(0, clamp(38.5rem, 35vw, 42rem)) minmax(0, 1fr); } /* (one row of controls per side) */
 }
 
 .ab-tag {

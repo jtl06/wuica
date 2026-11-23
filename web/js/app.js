@@ -290,9 +290,12 @@ function syncUrl(now = false) {
   if (now) go(); else syncTimer = setTimeout(go, 400);
 }
 
-function changed({ rerun = false } = {}) {
+// now: the code was replaced (pasted, imported, an example, swapped): an out-of-date result dims at once, not after a
+// pause in typing (in A–B mode a new A next to an old B would otherwise look current for a moment)
+function changed({ rerun = false, now = false } = {}) {
   keepFocusChecked();
   paintDerived();
+  if (now && el.body.classList.contains('stale')) el.body.classList.add('stale-now');
   syncUrl();
   if (!ready) touched = true;
   if (liveOn && ready) liveSchedule(rerun ? 0 : LIVE_DELAY);
@@ -534,7 +537,7 @@ async function loadExample(ex) {
   // the mock has the reference's result for this microarchitecture
   if (engine?.capabilities.mock && archItems.has(ex.arch) && state.arch !== ex.arch) focusArch(ex.arch, { rerun: false });
   clearMessages();
-  changed();
+  changed({ now: true });
   run();
 }
 
@@ -897,6 +900,8 @@ async function runCompare(id, key, { auto = false, ctrl = null } = {}) {
   }
 }
 
+// an edit of a code box that replaces its code rather than types in it (a paste, a drop, a cut)
+const replaced = (e) => /^(insertFromPaste|insertFromDrop|insertReplacementText|deleteByCut|historyUndo|historyRedo)/.test(e?.inputType ?? '');
 // A–B: the side the views show (the other one if it has no result)
 const okSide = (s) => !!s?.response && !s.response.error && Array.isArray(s.response.rows);
 function abView() {
@@ -938,7 +943,7 @@ function importCode({ mode, syntax, text }, { run: andRun = true } = {}) {
   el.code.value = buffers[state.mode] = text;
   clearMessages();
   writeControls();
-  changed();
+  changed({ now: true });
   return andRun && ready ? run() : null;
 }
 
@@ -991,6 +996,7 @@ async function switchMode(side, mode, other, apply) {
   // clicked format, which wins
   if (now.text !== before.text) { apply({ text: now.text }); return; }
   if (c) keepResult(() => apply(c.same ? null : c)); else apply(null); // the result is kept only for the same machine code
+  if (c) ab?.settleCode(side === 'B' ? 'b' : 'a'); // (and the elements per iteration stay right for it)
 }
 // After an import of machine code, and its analysis: the box gets the assembly, if the box still has the import.
 // The source lines of the last Compiler Explorer import into A (srcmap.js), bound to the bytes of its first analysis.
@@ -1029,6 +1035,7 @@ function setupFeatures() {
   });
   const abSlots = createABSlots({ engine: () => engine, options });
   ab = createAB({
+    replaced,
     drawn: (body, view) => abSlots.decorate(body, view),
     cpusBox: abCpus.box, redraw: () => { if (lastView?.ab) { draw(); updateABCpus(lastView.ab, { auto: true }); } },
     labels: (s) => blockLabel(s),
@@ -1176,7 +1183,7 @@ function bind() {
     el.examples.value = '';
     if (ex) loadExample(ex);
   });
-  el.code.addEventListener('input', () => { buffers[state.mode] = el.code.value; changed(); });
+  el.code.addEventListener('input', (e) => { buffers[state.mode] = el.code.value; changed({ now: replaced(e) }); });
   el.cpuGrid.addEventListener('change', cpusChanged);
   el.cpuAll.addEventListener('click', () => { setChecked([...archItems.keys()]); paintDerived(); syncUrl(true); });
   el.cpuClear.addEventListener('click', () => { setChecked([state.arch]); paintDerived(); syncUrl(true); });
@@ -1233,6 +1240,7 @@ function bind() {
       panels.refreshCpus();
       clearMessages();
       writeControls();
+      ab?.settleCode('a'); ab?.settleCode('b'); // (the link's counts are for its code)
       if (state.mode === 'asm') ensureAssembler().then(() => paintDerived());
       if (el.code.value.trim() !== '') run();
     }

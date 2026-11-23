@@ -134,6 +134,7 @@ const HELPERS = `
   const items = () => [...document.querySelectorAll('.bd-item')].map((b) => [b.dataset.id, b.querySelector('.bd-pct').textContent, b.getAttribute('aria-pressed')]);
   const top = () => [...document.querySelectorAll('.bd-row')].map((b) => b.innerText.replace(/\\s+/g, ' ').trim());
   // the table and the views are tabs of the result (workspace.js): one shows at a time
+  // (SHA-256 below: (the state, not one run: the showcase loads its assembly first, and the fresh visit's own run may end meanwhile)
   const tab = async (name) => { [...document.querySelectorAll('.view-tab')].find((b) => b.textContent === name).click(); await wait(50); };
   const shownTab = () => document.querySelector('.view-tab[aria-selected="true"]')?.textContent;
   const openViews = () => ['bound', 'whatif', 'codemap', 'deps', 'mca', 'cmp-sweep'].filter((id) => $(id)?.open).concat(document.querySelector('details.trace-panel')?.open ? ['trace'] : []);
@@ -203,7 +204,7 @@ try {
     await page.goto(`${origin}/?nosw=1`);
     await page.ready();
     const r = await page.eval(`${HELPERS}
-      await done(() => set($('examples'), 'sha256'));
+      set($('examples'), 'sha256'); await until(() => document.querySelector('#result-body .tp .value')?.textContent === '744.25' && !$('results').hasAttribute('aria-busy') && !$('result-body').classList.contains('stale'), 120000);
       await wait(100);
       const out = { tp: tp(), closed: [$('bound').open, document.querySelector('.bd-body').children.length, $('result-body').dataset.bound, hot().length] };
       const long = []; new PerformanceObserver((l) => { for (const e of l.getEntries()) long.push(Math.round(e.duration)); }).observe({ type: 'longtask' });
@@ -280,7 +281,7 @@ try {
     await page.ready();
     const s = await page.eval(`${HELPERS}
       const long = []; new PerformanceObserver((l) => { for (const e of l.getEntries()) long.push(Math.round(e.duration)); }).observe({ type: 'longtask' });
-      await done(() => set($('examples'), 'sha256'));
+      set($('examples'), 'sha256'); await until(() => document.querySelector('#result-body .tp .value')?.textContent === '744.25' && !$('results').hasAttribute('aria-busy') && !$('result-body').classList.contains('stale'), 120000);
       await wait(200);
       long.length = 0;
       await tab('bound');
@@ -342,7 +343,7 @@ try {
     await page.goto(`${origin}/?nosw=1`);
     await page.ready();
     const r = await page.eval(`${HELPERS}
-      await done(() => set($('examples'), 'sha256'));
+      set($('examples'), 'sha256'); await until(() => document.querySelector('#result-body .tp .value')?.textContent === '744.25' && !$('results').hasAttribute('aria-busy') && !$('result-body').classList.contains('stale'), 120000);
       const long = []; new PerformanceObserver((l) => { for (const e of l.getEntries()) long.push(Math.round(e.duration)); }).observe({ type: 'longtask' });
       const t0 = performance.now();
       document.querySelector('#whatif summary').click();
@@ -400,7 +401,7 @@ try {
     await page.goto(`${origin}/?nosw=1`);
     await page.ready();
     const s = await page.eval(`${HELPERS}
-      await done(() => set($('examples'), 'sha256'));
+      set($('examples'), 'sha256'); await until(() => document.querySelector('#result-body .tp .value')?.textContent === '744.25' && !$('results').hasAttribute('aria-busy') && !$('result-body').classList.contains('stale'), 120000);
       const long = []; new PerformanceObserver((l) => { for (const e of l.getEntries()) long.push(Math.round(e.duration)); }).observe({ type: 'longtask' });
       const t0 = performance.now();
       document.querySelector('#codemap summary').click();
@@ -448,7 +449,7 @@ try {
     await page.goto(`${origin}/?nosw=1`);
     await page.ready();
     const s = await page.eval(`${HELPERS}
-      await done(() => set($('examples'), 'sha256'));
+      set($('examples'), 'sha256'); await until(() => document.querySelector('#result-body .tp .value')?.textContent === '744.25' && !$('results').hasAttribute('aria-busy') && !$('result-body').classList.contains('stale'), 120000);
       // the button past the size limit (data-gate), with its size; picking the tab presses it (workspace.js)
       const seen = []; const obs = new MutationObserver(() => { const b = document.querySelector('#deps .dp-body button[data-gate]'); if (b && !seen.length) seen.push(b.textContent); });
       obs.observe($('deps'), { childList: true, subtree: true });

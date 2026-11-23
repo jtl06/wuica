@@ -95,7 +95,8 @@ async function openPage() {
   page.goto = async (url) => {
     await page.cmd('Page.navigate', { url });
     await sleep(150);
-    for (let t = 0; t < 200; t++) { try { if (await page.eval(`return document.readyState === 'complete'`)) return; } catch { /* navigating */ } await sleep(100); }
+    // (the state, with room for a loaded machine: other suites run beside this one)
+    for (const t0 = Date.now(); Date.now() - t0 < 90000;) { try { if (await page.eval(`return document.readyState === 'complete'`)) return; } catch { /* navigating */ } await sleep(100); }
     throw new Error('page did not load');
   };
   for (const d of ['Runtime', 'Page']) await page.cmd(`${d}.enable`);
@@ -202,9 +203,7 @@ try {
       console.log(`  after a sweep on each of the ${r.archs} CPUs (cap ${r.cap ?? 'none'}, ${r.recycles} recycles): tables per worker ${JSON.stringify(ws.map((s) => s.tables.length))}`);
       console.log(`  WebAssembly memory ${ws.map((s) => (s.wasmBytes / 1048576).toFixed(1)).join(' + ')} = ${(wasmS / 1048576).toFixed(1)} MiB; table bytes kept in the workers ${(keptS / 1048576).toFixed(1)} MiB`);
       check(r.sweepsOk && r.archs === 15, 'sweeps on every CPU: every result', JSON.stringify([r.sweepsOk, r.archs, r.sweepError]));
-      // (how many workers take part in each sweep, and so how many tables each loads, depends on timing: a worker must have
-      // been recycled when the tables loaded could not all fit under the cap)
-      if (r.cap !== null) check(ws.every((s) => s.tables.length <= r.cap) && (r.recycles > 0 || r.tableLoads <= r.cap * r.size), 'sweeps on every CPU: no worker over the cap', JSON.stringify([r.cap, r.recycles, r.tableLoads, ws.map((s) => s.tables)]));
+      if (r.cap !== null) check(ws.every((s) => s.tables.length <= r.cap) && r.recycles > 0, 'sweeps on every CPU: no worker over the cap', JSON.stringify([r.cap, r.recycles, r.tableLoads, ws.map((s) => s.tables)]));
       check(page.problems.length === 0, 'lazy: no console errors', page.problems.join('\n'));
       await page.close();
       check(tableReqs.length > 0, 'tables were fetched');

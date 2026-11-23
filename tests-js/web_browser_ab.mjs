@@ -486,7 +486,8 @@ try {
       out.b = [$('code-b').value, $('b-syntax').value, $('result-body').classList.contains('stale'), $('results').dataset.run === m];
       await done(() => $('cmp-single').click());
       // the SHA-256 showcase (2,949 instructions, machine code only)
-      await done(() => set($('examples'), 'sha256'));
+      // (the state, not one run: the showcase loads its assembly first, and the fresh visit's own run may end meanwhile)
+      set($('examples'), 'sha256'); await until(() => document.querySelector('#result-body .tp .value')?.textContent === '744.25' && !$('results').hasAttribute('aria-busy') && !$('result-body').classList.contains('stale'), 120000);
       const k = $('results').dataset.run;
       let longest = 0;
       const po = new PerformanceObserver((l) => { for (const e of l.getEntries()) longest = Math.max(longest, e.duration); });

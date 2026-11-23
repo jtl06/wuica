@@ -334,7 +334,8 @@ try {
       const long = []; new PerformanceObserver((l) => { for (const e of l.getEntries()) long.push(Math.round(e.duration)); }).observe({ type: 'longtask' });
       const opts = [...$('examples').querySelectorAll('optgroup')].map((g) => g.label + ':' + [...g.children].map((o) => o.value).join(','));
       const t0 = performance.now();
-      await done(() => { $('examples').value = 'sha256'; $('examples').dispatchEvent(new Event('change', { bubbles: true })); });
+      // (the state, not one run: the showcase loads its assembly first, and the fresh visit's own run may end meanwhile)
+      $('examples').value = 'sha256'; $('examples').dispatchEvent(new Event('change', { bubbles: true })); await until(() => document.querySelector('#result-body .tp .value')?.textContent === '744.25' && !$('results').hasAttribute('aria-busy') && !$('result-body').classList.contains('stale'), 120000);
       const ms = performance.now() - t0;
       await wait(300);
       const out = { opts, ms, long: [...long], tp: tp(), asm: $('mode-asm').checked && $('code').value.startsWith('loop:') && $('code').value.includes('mov qword ptr [rsp+0x98], r8'), rows: document.querySelectorAll('table.uops tbody tr').length,

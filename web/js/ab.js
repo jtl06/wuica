@@ -46,7 +46,7 @@ const WORK_TITLE = 'elements per iteration: the elements (or bytes) one iteratio
 //   state, el: {code, body, toolbar}, archItems() -> Map, archTitle(key, experimental), ensureAssembler(), ensureTable(key),
 //   machineCodeA(runId) -> bytes | null (shows A's messages), getA() / setA({mode, syntax, text}, {run}),
 //   changed({rerun}), toggled() (the mode changed), writeControls(), watchLinks(textarea, side, messages), demo() -> {a, b} | null,
-//   redraw() (the shown comparison again: the counts changed), cpusBox (the table per CPU, ab-cpus.js), labels(side) -> the
+//   replaced(inputEvent) -> true for a paste rather than typing, redraw() (the shown comparison again: the counts changed), cpusBox (the table per CPU, ab-cpus.js), labels(side) -> the
 //   label of the block's start for its branch targets (branch-label.js)
 export function createAB(api) {
   const { state } = api;
@@ -226,11 +226,11 @@ export function createAB(api) {
     if (archOk(state.bArch)) api.ensureTable(state.bArch).catch(() => {}); // reported when it runs
     api.changed({ rerun: true });
   });
-  bCode.addEventListener('input', () => { state.bText = buffers[state.bMode] = bCode.value; paintWork(); api.changed(); });
+  bCode.addEventListener('input', (e) => { state.bText = buffers[state.bMode] = bCode.value; paintWork(); api.changed({ now: !!api.replaced?.(e) }); });
   copy.addEventListener('click', () => {
     setB(api.getA(), { work: state.aWork });
     paint();
-    api.changed({ rerun: true });
+    api.changed({ rerun: true, now: true });
     bCode.focus();
   });
   swap.addEventListener('click', () => {
@@ -243,7 +243,7 @@ export function createAB(api) {
     state.aWork = works[0];
     settle('a');
     paint();
-    api.changed({ rerun: true });
+    api.changed({ rerun: true, now: true });
   });
 
   // ---- messages under B ---------------------------------------------------------------------------------------------
@@ -542,9 +542,12 @@ export function createAB(api) {
   return {
     active: () => state.ab,
     paint, inputs, analyze, draw, summary, key, reweigh,
-    setB(code) { setB(code); paint(); api.changed(); },
+    setB(code) { setB(code); paint(); api.changed({ now: true }); },
     // side A's code was replaced (an example, an import): its count starts again at 1
     replacedA() { if (state.aWork !== 1) { state.aWork = 1; } settle('a'); paintWork(); },
+    // a side's code is the same machine code in another form (asm <-> hex), or came with its count (a link): its count
+    // stays right
+    settleCode(s) { settle(s); paintWork(); },
     // the root of a side's table (the page's views of that side shade and point at its rows)
     sideRoot: (s) => api.el.body.querySelector(`#ab-main .ab-col[data-side="${s}"]`),
     getB: () => ({ mode: state.bMode, syntax: state.bSyntax, text: bCode.value }),

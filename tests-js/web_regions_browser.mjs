@@ -187,7 +187,8 @@ try {
     const r = await page.eval(`${HELPERS}
       await until(() => document.querySelector('.tp .value') && instrRows().length && $('srcmap-row') && !$('srcmap-row').hidden && $('srcmap').open && document.querySelector('.sm-list'));
       const items = [...document.querySelectorAll('#srcmap .sm-list > li')].map((li) => li.innerText.replace(/\\s+/g, ' ').trim());
-      const out = { rows: instrRows().length, chip: chip(), items, hint: document.querySelector('.sm-hint')?.textContent, messages: $('input-messages').textContent };
+      const out = { rows: instrRows().length, chip: chip(), items, hint: document.querySelector('.sm-hint')?.textContent, messages: $('input-messages').textContent,
+        tabs: [...document.querySelectorAll('.view-tab')].map((b) => b.textContent) };
       // a click on a line jumps to its costliest row: the table tab shows, the row flashes
       document.querySelector('#srcmap button.sm-l')?.click();
       await wait(50);
@@ -205,6 +206,7 @@ try {
     check(r.items.length === 2 && /^3 .*dot\.c:3$/.test(r.items[0]) && /^4 .*dot\.c:4$/.test(r.items[1]) && r.messages === '', 'the source rows: dot.c:3 and dot.c:4', JSON.stringify(r.items));
     check(/line \d+ \d+%/.test(r.hint ?? ''), 'the summary hint names the costliest line', r.hint);
     check(r.jump.tab === 'table' && !r.jump.open && r.jump.flash, 'a click on a source line: the table tab, the row flashes', JSON.stringify(r.jump));
+    check(r.tabs.at(-1) === 'source' && r.tabs.slice(0, -1).join() === 'table,bound,try,bytes,deps,mca,sweep,trace', 'the source tab comes last: the other tabs keep their places', JSON.stringify(r.tabs));
     check(r.whole.rows === 12 && !r.whole.hidden && r.whole.items.length === 2, 'the whole function: 12 instructions, lines 3 and 4', JSON.stringify(r.whole));
     await page.shot('regions-loc.png');
     check(page.problems.length === 0, 'no console errors (.loc)', page.problems.join('\n'));

@@ -175,7 +175,7 @@ try {
 
   // SHA-256 (2,949 instructions, a large trace): a drag over the head, no task of 100 ms or more; the bound tab shows it
   await tab('trace');
-  await run(`await done(() => set($('examples'), 'sha256')); await until(() => panel()?.querySelector('.trace-msg button') || viewer());
+  await run(`set($('examples'), 'sha256'); await until(() => document.querySelector('#result-body .tp .value')?.textContent === '744.25' && !$('results').hasAttribute('aria-busy') && !$('result-body').classList.contains('stale'), 120000); await until(() => panel()?.querySelector('.trace-msg button') || viewer());
     panel().querySelector('.trace-msg button')?.click();
     await until(() => viewer() && viewer().viewW > 0 && viewer().model.nInstr > 2000, 120000);
     viewer().canvas.scrollIntoView({ block: 'center' }); await wait(300);`);
