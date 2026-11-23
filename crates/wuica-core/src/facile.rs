@@ -26,6 +26,7 @@ use crate::config::UArchConfig;
 use crate::decoded::{DecodedInstr, MemAddr};
 use crate::model::{Instr, InstrList, OpId, Operand};
 use crate::fasthash::FastMap;
+use crate::substr::has;
 use crate::x64::{canonical_reg_cow, reg_size};
 use indexmap::IndexMap;
 use std::borrow::Cow;
@@ -497,15 +498,15 @@ impl<'a> AbstractValueGenerator<'a> {
         if let Some(&first) = instr.input_reg_operands.first() {
             let abs_val = self.get_abstract_value_for_canonical_reg(canon.get(first).clone());
             let s = instr.instr_str.as_str();
-            if s.contains("MOV") && !s.contains("CMOV") {
+            if has(s, "MOV") && !has(s, "CMOV") {
                 abs_val
-            } else if s.contains("ADD") && instr.immediate.is_some() {
+            } else if has(s, "ADD") && instr.immediate.is_some() {
                 AbstractValue { base: abs_val.base, offset: abs_val.offset + instr.immediate.unwrap() as i128 }
-            } else if s.contains("SUB") && instr.immediate.is_some() {
+            } else if has(s, "SUB") && instr.immediate.is_some() {
                 AbstractValue { base: abs_val.base, offset: abs_val.offset - instr.immediate.unwrap() as i128 }
-            } else if s.contains("INC") {
+            } else if has(s, "INC") {
                 AbstractValue { base: abs_val.base, offset: abs_val.offset + 1 }
-            } else if s.contains("DEC") {
+            } else if has(s, "DEC") {
                 AbstractValue { base: abs_val.base, offset: abs_val.offset - 1 }
             } else {
                 self.generate_fresh_abstract_value()

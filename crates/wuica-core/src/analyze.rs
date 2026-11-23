@@ -289,7 +289,18 @@ impl SimView for SimResult {
 pub fn strip_hyperlinks(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
-    while let Some(start) = rest.find("\x1b]8;;") {
+    // the next "\x1b]8;;": the next ESC that starts it (a search for the character is faster than one for the string)
+    let next_link = |rest: &str| {
+        let mut from = 0;
+        while let Some(i) = rest[from..].find('\x1b') {
+            if rest[from + i..].starts_with("\x1b]8;;") {
+                return Some(from + i);
+            }
+            from += i + 1;
+        }
+        None
+    };
+    while let Some(start) = next_link(rest) {
         out.push_str(&rest[..start]);
         let after = &rest[start + 5..];
         // the first terminator (one pass: searching for each kind separately over the whole rest is quadratic)
