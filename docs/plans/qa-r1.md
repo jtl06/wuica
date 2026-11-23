@@ -132,6 +132,11 @@ assertions were changed (3 → 1). If code 3 was intended, reverting e229cf7 (an
 
 ## Open problems (not fixed here: larger changes or decisions)
 
+Status: 1–5 are fixed on branch robust-r2 (one commit each, with tests in `tests-js/web_robust_browser.mjs`,
+`tests-js/web_assembler_rpc.mjs`, `tests-js/web_pool.mjs`, the package's and the server's tests, and
+`tests-js/interfaces.mjs`). For 5 the ranges were documented (packages/wuica/README.md, "Option ranges per interface"),
+not unified. 6 (deploy) is open.
+
 1. **The assembler runs on the page's thread.** A large `.rept` freezes the page while it assembles: `.rept 1000000` /
    `nop` / `.endr` about 0.7 s, `.rept 10000000` about 3.5 s (one run now; it was two runs and 7 s, then a 10 MB block
    for the analyzer). In live mode this happens on each edit that changes the count. Moving `WasmAssembler` into a
