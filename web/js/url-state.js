@@ -1,4 +1,4 @@
-// The state of the page in the URL fragment: input, mode and options. The fragment, never the query string:
+// The state of the page in the URL fragment: input, mode, options and the open compare panels. The fragment, never the query string:
 // a fragment is not sent to the server. No DOM; btoa/atob exist in browsers and in Node.
 
 export const DEFAULT_STATE = Object.freeze({
@@ -13,6 +13,8 @@ export const DEFAULT_STATE = Object.freeze({
   noMacroFusion: false,
   minIterations: 10,
   minCycles: 500,
+  cmpCpus: false,         // the compare panels that are open (compare-view.js)
+  cmpSweep: false,
 });
 
 export const LIMITS = Object.freeze({
@@ -24,6 +26,7 @@ const MAX_TEXT = 200000; // characters accepted from a link
 
 const INTS = { al: 'alignmentOffset', mi: 'minIterations', mc: 'minCycles' };
 const FLAGS = { sfe: 'simpleFrontEnd', nmi: 'noMicroFusion', nma: 'noMacroFusion' };
+const VIEWS = { cmpcpu: 'cmpCpus', cmpsweep: 'cmpSweep' }; // open panels; not analysis options
 
 function toBase64Url(text) {
   const bytes = new TextEncoder().encode(text);
@@ -53,6 +56,7 @@ export function encodeState(state) {
   for (const [k, name] of Object.entries(INTS)) if (s[name] !== DEFAULT_STATE[name]) p.push(`${k}=${s[name]}`);
   if (s.initPolicy !== DEFAULT_STATE.initPolicy) p.push(`ip=${s.initPolicy}`);
   for (const [k, name] of Object.entries(FLAGS)) if (s[name]) p.push(`${k}=1`);
+  for (const [k, name] of Object.entries(VIEWS)) if (s[name]) p.push(`${k}=1`);
   if (s.text !== '') p.push(`c=${toBase64Url(s.text)}`);
   return p.length ? 'v=1&' + p.join('&') : '';
 }
@@ -80,6 +84,7 @@ export function decodeState(fragment) {
   for (const [k, name] of Object.entries(INTS)) if (q.has(k)) s[name] = clampInt(q.get(k), LIMITS[name], DEFAULT_STATE[name]);
   if (['same', 'stack'].includes(q.get('ip'))) s.initPolicy = q.get('ip');
   for (const [k, name] of Object.entries(FLAGS)) if (q.get(k) === '1') s[name] = true;
+  for (const [k, name] of Object.entries(VIEWS)) if (q.get(k) === '1') s[name] = true;
   if (q.has('c')) {
     try {
       const t = fromBase64Url(q.get('c'));

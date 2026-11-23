@@ -331,6 +331,61 @@ pre.listing, pre.report {
 }
 pre.listing { color: var(--code); line-height: 1.45; }
 
+/* ---- live mode and the compare panels (compare-view.js) ------------------------------------------------- */
+
+label.inline.live { cursor: pointer; }
+label.inline.live:has(input:checked) { color: var(--accent); }
+/* while typing, the result dims only if it stays out of date (no flicker between keystrokes) */
+#results.live #result-body.stale { transition-delay: 0.6s; }
+
+.cmp-body { margin-top: 0.4rem; transition: opacity 0.1s; }
+.cmp-body:empty { display: none; }
+.cmp-body.stale { opacity: 0.55; transition-delay: 0.6s; }
+.cmp-wait { margin-bottom: 0.4rem; }
+
+table.cmp-cpus { width: 100%; }
+.cmp-cpus th, .cmp-cpus td { text-align: left; }
+.cmp-cpus td.cmp-tp { text-align: right; }
+.cmp-cpus .cmp-name, .cmp-cpus .cmp-bn { color: var(--description); }
+.cmp-cpus td.cmp-bar { width: 30%; min-width: 3rem; }
+.cmp-cpus .gauge { display: block; height: 0.55em; background: var(--border); }
+.cmp-cpus .gauge > span { display: block; height: 100%; background: rgb(var(--accent-rgb) / 0.45); }
+.cmp-cpus tr.fastest .gauge > span { background: var(--accent); }
+.cmp-cpus tr.fastest td.cmp-tp { color: var(--heading); }
+.cmp-cpus tr.pending td.cmp-tp { color: var(--subtle); }
+.cmp-cpus tr.error td.cmp-tp { color: var(--caveat); }
+.cmp-cpus tbody tr { cursor: pointer; }
+.cmp-cpus tbody tr.current > * { background-color: var(--accent-dim); }
+.cmp-cpus tbody tr.current > th { box-shadow: inset 2px 0 var(--accent); }
+.cmp-cpus button.pick { color: var(--code); text-decoration: none; }
+.cmp-cpus tr.current button.pick { color: var(--heading); }
+.cmp-cpus button.sort { color: var(--subtle); text-decoration: none; }
+.cmp-cpus th[aria-sort] button.sort { color: var(--text); }
+.cmp-cpus button.sort:hover { color: var(--accent-hover); }
+@media (max-width: 640px) { .cmp-cpus .cmp-name { display: none; } }
+
+.sweep-head { color: var(--description); margin-bottom: 0.25rem; }
+.sweep-head .v { color: var(--text); font-variant-numeric: tabular-nums; }
+.sweep-head .min { cursor: help; }
+.sweep-head .max { cursor: help; }
+.sweep-head .min .v { color: var(--heading); }
+.sweep-head .max .v { color: var(--caveat); }
+.sweep-head .sep { color: var(--subtle); }
+.sweep-wrap { background: var(--surface); border: 1px solid var(--border); max-width: 100%; overflow: hidden; }
+.sweep-chart { display: block; }
+.sweep-chart .guide { stroke: var(--border); stroke-dasharray: 2 3; }
+.sweep-chart .ax { fill: var(--subtle); font-size: 11px; font-family: var(--mono); }
+.sweep-chart .line { fill: none; stroke: rgb(var(--accent-rgb) / 0.55); stroke-width: 1.5; }
+.sweep-chart .pt { fill: var(--accent); }
+.sweep-chart .pt.min { fill: var(--heading); }
+.sweep-chart .pt.max { fill: var(--caveat); }
+.sweep-chart .cur { stroke: var(--cursor); stroke-width: 1; }
+.sweep-chart .cur-pt { fill: none; stroke: var(--cursor); stroke-width: 2; }
+.sweep-chart .hit { fill: transparent; cursor: pointer; }
+.sweep-chart .hit:hover { fill: var(--accent-dim); }
+
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
+  /* no animation, but still no dimming between keystrokes: a delayed step */
+  #results.live #result-body.stale, .cmp-body.stale { transition: opacity 0s 0.6s !important; }
 }

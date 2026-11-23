@@ -124,6 +124,7 @@
       <div class="field wrap">
         <button type="button" id="run" class="primary" disabled title="Ctrl/⌘ + Enter" aria-keyshortcuts="Control+Enter Meta+Enter">Analyze</button>
         <button type="button" id="copy-link">Copy link</button>
+        <label class="inline live" title="re-analyze while typing"><input type="checkbox" id="live" checked> live</label>
         <div class="status" id="status-wrap">
           <span id="status" role="status" aria-live="polite">starting…</span>
           <span class="bar" aria-hidden="true"><span id="status-bar"></span></span>
@@ -135,6 +136,28 @@
   <section class="block" id="results" aria-labelledby="h-results">
     <h2 id="h-results">Result</h2>
     <div id="result-body"></div>
+  </section>
+
+  <section class="block" id="compare" aria-labelledby="h-compare">
+    <h2 id="h-compare">Compare</h2>
+    <div class="row">
+      <div class="label">cpus</div>
+      <div class="field">
+        <details id="cmp-cpus" class="cmp">
+          <summary title="the block on every CPU">all <span class="hint" id="cmp-cpus-info"></span></summary>
+          <div id="cmp-cpus-body" class="cmp-body"></div>
+        </details>
+      </div>
+    </div>
+    <div class="row">
+      <div class="label">alignment</div>
+      <div class="field">
+        <details id="cmp-sweep" class="cmp">
+          <summary title="the block at every alignment offset (0–63) on the selected CPU">sweep 0–63 <span class="hint" id="cmp-sweep-info"></span></summary>
+          <div id="cmp-sweep-body" class="cmp-body"></div>
+        </details>
+      </div>
+    </div>
   </section>
 
   <section class="block" id="about" aria-labelledby="h-about">

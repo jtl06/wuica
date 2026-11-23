@@ -310,6 +310,130 @@ try {
     await page.cmd('Page.close');
   }
 
+  // --- 1b. compare panels and live mode with the real analyzer (no service worker), desktop width ---------------------------
+  {
+    const page = await Page.open(browser);
+    await page.goto(`${origin}/?nosw=1#v=1&cmpcpu=1&c=NDggODMgYzAgMDEgNDggODMgYzAgMDEgNDkgZmYgY2YgNzUgZjM`);
+    await page.waitFor(`document.getElementById('cmp-cpus').dataset.state === 'done'`, 'the table of all CPUs from a link', 60000);
+    const c = await page.eval(`${HELPERS}
+      const out = {};
+      const runs = (id) => Number($(id).dataset.runs || 0);
+      const settled = async (id, start) => { const n = runs(id); await start(); await until(() => runs(id) > n && $(id).dataset.state === 'done', 30000); };
+      const rows = () => [...document.querySelectorAll('table.cmp-cpus tbody tr')].map((tr) => [tr.dataset.arch, tr.querySelector('.cmp-tp').textContent, tr.querySelector('.cmp-bn').textContent]);
+      const bn = () => document.querySelector('#result-body .bn')?.textContent ?? 'unknown';
+      out.cold = [$('cmp-cpus').dataset.ms, $('cmp-cpus-info').textContent];
+      out.menu = rows(); out.tp = tp(); out.open = [$('cmp-cpus').open, $('cmp-sweep').open];
+      out.current = document.querySelector('table.cmp-cpus tr[aria-current=true]')?.dataset.arch;
+      out.protos = [...document.querySelectorAll('table.cmp-cpus tbody tr')].filter((tr) => /prototype/.test(tr.textContent)).map((tr) => tr.dataset.arch).join();
+      document.querySelector('table.cmp-cpus button[data-focus=sort-tp]').focus(); document.activeElement.click();
+      out.byTp = rows().map((r) => r[1]); out.sortAria = document.querySelector('table.cmp-cpus th[aria-sort]')?.getAttribute('aria-sort');
+      out.sortFocus = document.activeElement?.getAttribute('data-focus');
+      document.querySelector('table.cmp-cpus button[data-focus=sort-menu]').click();
+      // a row shows that CPU in the main view: the same numbers as a single analysis
+      const before = runs('cmp-cpus');
+      out.picked = [];
+      for (const arch of ['ZEN3', 'HSW']) {
+        const row = rows().find((r) => r[0] === arch);
+        await done(() => document.querySelector('table.cmp-cpus tr[data-arch="' + arch + '"]').click());
+        out.picked.push([arch, row[1], row[2], $('arch').value, tp(), bn(), document.querySelector('table.cmp-cpus tr[aria-current=true]')?.dataset.arch]);
+      }
+      out.notRerun = runs('cmp-cpus') === before;
+      // the sweep: 64 points; a click sets the offset
+      await settled('cmp-sweep', () => document.querySelector('#cmp-sweep summary').click());
+      out.sweep = { ms: $('cmp-sweep').dataset.ms, hits: document.querySelectorAll('.sweep-chart rect.hit').length, pts: document.querySelectorAll('.sweep-chart circle.pt').length,
+        now: document.querySelector('.sweep-chart').getAttribute('aria-valuenow'), hash: location.hash.replace(/&c=.*/, '') };
+      const t5 = document.querySelector('.sweep-chart rect.hit[data-offset="5"] title').textContent;
+      const sweepRuns = runs('cmp-sweep');
+      await done(() => document.querySelector('.sweep-chart rect.hit[data-offset="5"]').dispatchEvent(new MouseEvent('click', { bubbles: true })));
+      out.click = [t5, $('opt-align').value, tp(), document.querySelector('.sweep-chart').getAttribute('aria-valuenow'), location.hash.includes('al=5')];
+      document.querySelector('.sweep-chart').focus();
+      await done(() => document.querySelector('.sweep-chart').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })));
+      out.key = [$('opt-align').value, document.querySelector('.sweep-chart').getAttribute('aria-valuenow'), document.activeElement?.classList.contains('sweep-chart')];
+      out.sweepNotRerun = runs('cmp-sweep') === sweepRuns;
+      await done(() => set($('opt-align'), '0'));
+      // live: typing analyzes without a click (once, for the latest text); the open panels follow
+      const n0 = Number($('results').dataset.run), cr = runs('cmp-cpus'), sr = runs('cmp-sweep');
+      for (const t of ['c5', 'c5 fc', 'c5 fc 58', 'c5 fc 58 c1 49', 'c5 fc 58 c1 49 ff cf 75 f7']) { set($('code'), t); await wait(10); }
+      await until(() => Number($('results').dataset.run) > n0);
+      await until(() => runs('cmp-cpus') > cr && runs('cmp-sweep') > sr && $('cmp-cpus').dataset.state === 'done' && $('cmp-sweep').dataset.state === 'done', 30000);
+      await wait(400);
+      out.live = [Number($('results').dataset.run) - n0, $('result-body').innerText.includes('9 bytes'), tp(), $('result-body').classList.contains('stale'), $('live').checked,
+        rows().find((r) => r[0] === 'HSW')[1] === tp(), runs('cmp-cpus') - cr, runs('cmp-sweep') - sr];
+      // an assembler-free error while typing: the messages show, the result stays (stale), nothing flashes
+      set($('code'), 'c5 fc 5'); await wait(400);
+      out.typo = [$('input-messages').innerText, !!document.querySelector('.tp'), $('result-body').classList.contains('stale')];
+      // assembly: live runs only when the text assembles; errors show next to the input, the result stays
+      if (${!!manifest.assembler}) {
+        $('mode-asm').click(); await until(() => !$('run').disabled); await wait(400);
+        const a0 = Number($('results').dataset.run);
+        set($('code'), 'x:\\n  add rax, 1\\n  dec r15\\n  jnz x\\n');
+        await until(() => Number($('results').dataset.run) > a0, 10000); await wait(300);
+        out.asm1 = [tp(), $('input-messages').innerText, listing()];
+        const a1 = Number($('results').dataset.run);
+        set($('code'), 'x:\\n  add rax, 1\\n  frob r15\\n  jnz x\\n'); await wait(700);
+        out.asm2 = [Number($('results').dataset.run) === a1, $('input-messages').innerText, !!document.querySelector('.tp'), $('result-body').classList.contains('stale')];
+        set($('code'), 'x:\\n  add rax, 1\\n  add rax, 1\\n  dec r15\\n  jnz x\\n');
+        await until(() => Number($('results').dataset.run) > a1, 10000); await wait(300);
+        out.asm3 = [$('input-messages').innerText, $('result-body').classList.contains('stale'), tp(), listing()];
+        $('mode-hex').click(); await wait(400);
+      }
+      // live off: typing does not analyze; it is remembered
+      $('live').click();
+      const n1 = Number($('results').dataset.run);
+      set($('code'), '48 01 d8'); await wait(600);
+      out.off = [Number($('results').dataset.run) === n1, $('result-body').classList.contains('stale'), localStorage.getItem('wuica-live')];
+      await done(() => $('run').click()); out.manual = $('result-body').innerText.includes('3 bytes');
+      return out;`);
+    const menuOrder = 'SNB,IVB,HSW,BDW,SKL,KBL,SKX,CFL,CLX,ICL,TGL,ZEN3,RKL,ICX,ADL-P';
+    check(c.menu.map((r) => r[0]).join() === menuOrder && c.menu.every((r) => /^\d+\.\d\d$/.test(r[1])) && c.open[0] && !c.open[1] && c.current === 'SKL', 'compare: a link opens the table of all CPUs, in menu order, every one with a result', JSON.stringify(c.menu));
+    check(c.menu.find((r) => r[0] === 'SKL')[1] === c.tp && c.menu.find((r) => r[0] === 'ADL-P')[1] === '1.00' && c.protos === 'ZEN3,ICX,ADL-P', 'compare: the row of the selected CPU is the main result; prototypes are marked', JSON.stringify([c.tp, c.protos]));
+    check(c.byTp.every((v, i) => i === 0 || Number(v) >= Number(c.byTp[i - 1])) && c.sortAria === 'ascending' && c.sortFocus === 'sort-tp', 'compare: sortable by throughput (focus stays on the button)', JSON.stringify([c.byTp, c.sortAria, c.sortFocus]));
+    check(c.picked.length === 2 && c.picked.every((p) => p[0] === p[3] && p[1] === p[4] && p[2] === p[5] && p[6] === p[0]) && c.notRerun, 'compare: a row selects that CPU; its single analysis gives the same throughput and bottleneck', JSON.stringify(c.picked));
+    check(c.sweep.hits === 64 && c.sweep.pts === 64 && c.sweep.now === '0' && /cmpcpu=1&cmpsweep=1/.test(c.sweep.hash), 'sweep: 64 points; the open panels are in the fragment', JSON.stringify(c.sweep));
+    check(c.click[1] === '5' && c.click[3] === '5' && c.click[4] && c.click[0] === `offset 5: ${c.click[2]} cycles/iteration`, 'sweep: a click sets the alignment offset; the main result equals the point', JSON.stringify(c.click));
+    check(c.key[0] === '6' && c.key[1] === '6' && c.key[2] && c.sweepNotRerun, 'sweep: arrow keys move the offset; focus stays; the sweep is not recomputed', JSON.stringify([c.key, c.sweepNotRerun]));
+    check(c.live[0] === 1 && c.live[1] && !c.live[3] && c.live[4] && c.live[5] && c.live[6] >= 1 && c.live[7] >= 1, 'live: typing analyzes once, for the latest text; the panels follow', JSON.stringify(c.live));
+    check(/Odd number of hex digits/.test(c.typo[0]) && c.typo[1] && c.typo[2], 'live: an input error is shown; the last result stays, dimmed', JSON.stringify(c.typo));
+    if (manifest.assembler) {
+      check(/^\d\.\d\d$/.test(c.asm1[0] ?? '') && c.asm1[1] === '' && /add rax, 0x1\n.*dec r15\n.*jnz /s.test(c.asm1[2] ?? ''), 'live: assembly is analyzed while typing', JSON.stringify(c.asm1));
+      check(c.asm2[0] && /line 3:3: /.test(c.asm2[1]) && c.asm2[2] && c.asm2[3], 'live: text that does not assemble is not analyzed; the error shows; the result stays', JSON.stringify(c.asm2));
+      check(c.asm3[0] === '' && !c.asm3[1] && c.asm3[2] === '2.00' && c.asm3[3] === CHAIN, 'live: fixed, it is analyzed and the error goes away', JSON.stringify(c.asm3));
+    }
+    check(c.off[0] && c.off[1] && c.off[2] === 'off' && c.manual, 'live: switched off, typing does not analyze (Analyze does); remembered', JSON.stringify([c.off, c.manual]));
+    await page.reload();
+    await page.waitFor(`document.getElementById('cmp-sweep').dataset.state === 'done'`, 'the panels after a reload', 60000);
+    const t = await page.eval(`${HELPERS}
+      const out = { live: $('live').checked, open: [$('cmp-cpus').open, $('cmp-sweep').open] };
+      $('live').click(); out.stored = localStorage.getItem('wuica-live');
+      // timings with the tables loaded: the CPU table and the sweep for each built-in example
+      const runs = (id) => Number($(id).dataset.runs || 0);
+      // one panel at a time (they share the analyzer's worker), on SKL
+      out.times = {};
+      const settle = async (id, start) => { const n = runs(id); await start(); await until(() => runs(id) > n && $(id).dataset.state === 'done', 30000); return Number($(id).dataset.ms); };
+      document.querySelector('#cmp-sweep summary').click(); await wait(50);
+      await done(() => set($('arch'), 'SKL'));
+      for (const id of ['chain', 'loadstore', 'avx', 'stack']) out.times[id] = [await settle('cmp-cpus', () => example(id))];
+      document.querySelector('#cmp-cpus summary').click();
+      out.times.stack.push(await settle('cmp-sweep', () => document.querySelector('#cmp-sweep summary').click()));
+      for (const id of ['chain', 'loadstore', 'avx']) out.times[id].push(await settle('cmp-sweep', () => example(id)));
+      document.querySelector('#cmp-sweep summary').click(); await wait(100);
+      out.closed = location.hash.includes('cmp');
+      return out;`);
+    check(!t.live && t.open[0] && t.open[1] && t.stored === 'on', 'live: off after a reload; switched on again', JSON.stringify(t));
+    check(Object.values(t.times).every((x) => x[0] > 0 && x[1] > 0) && !t.closed, 'compare: timings for the examples; closed panels leave the fragment', JSON.stringify(t));
+    console.log('compare timings on SKL, one panel at a time, tables loaded (ms: all CPUs, sweep):', JSON.stringify(t.times), '; first table with table loading:', c.cold[0]);
+    // phone width, both panels open: no sideways scrolling
+    await page.cmd('Emulation.setDeviceMetricsOverride', { width: 375, height: 812, deviceScaleFactor: 1, mobile: true });
+    await page.goto('about:blank');
+    await page.goto(`${origin}/?nosw=1#v=1&cmpcpu=1&cmpsweep=1&c=NDggODMgYzAgMDEgNDggODMgYzAgMDEgNDkgZmYgY2YgNzUgZjM`);
+    await page.waitFor(`document.getElementById('cmp-sweep').dataset.state === 'done' && document.getElementById('cmp-cpus').dataset.state === 'done'`, 'the panels at phone width', 60000);
+    const m = await page.eval(`${HELPERS} return [overflow(), document.querySelector('.sweep-chart').getBoundingClientRect().right <= innerWidth];`);
+    check(m[0] <= 0 && m[1], 'compare: at 375px the page does not scroll sideways with both panels open', JSON.stringify(m));
+    const problems = page.take();
+    check(problems.length === 0, 'compare: no console errors', problems.join('\n'));
+    await page.cmd('Page.close');
+  }
+
   // --- 2. the real analyzer (in its worker), phone width; then service worker, offline, a new deploy --------------------
   {
     const page = await Page.open(browser, { width: 375, height: 812, mobile: true });

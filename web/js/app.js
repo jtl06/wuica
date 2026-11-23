@@ -10,6 +10,8 @@ import { EXAMPLES, MOCK_EXAMPLES } from './examples.js';
 import { fetchBytes, fetchManifest, PATHS, formatSize, whenIdle } from './loader.js';
 import { WasmAssembler, isWasm } from './assembler.js';
 import { renderResult, renderEmpty, renderFailure, copyText, h } from './render.js';
+import { latestWins } from './compare.js';
+import { createComparePanels } from './compare-view.js';
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -22,7 +24,7 @@ const el = {
   examples: $('examples'), arch: $('arch'), archHint: $('arch-hint'),
   advanced: $('advanced'), advancedSummary: $('advanced-summary'),
   align: $('opt-align'), sfe: $('opt-sfe'), nmi: $('opt-nmi'), nma: $('opt-nma'), iter: $('opt-iter'), cycles: $('opt-cycles'),
-  reset: $('opt-reset'), run: $('run'), copy: $('copy-link'),
+  reset: $('opt-reset'), run: $('run'), copy: $('copy-link'), live: $('live'),
   status: $('status'), statusWrap: $('status-wrap'), statusBar: $('status-bar'),
   results: $('results'), body: $('result-body'), buildId: $('build-id'), updateNote: $('update-note'), reload: $('reload'),
 };
@@ -54,6 +56,40 @@ let assemblerPromise = null;
 let assemblerMissing = false; // true: this build has no assembler (final); a failed load of an existing one is not
 let assemblerError = '';
 let prefetchStarted = false;
+let inflight = { id: 0, key: '' }; // the analysis that is running (busy)
+let cancelledKey = '';              // the input of a run the user cancelled: live mode does not start it again
+let touched = false;                // the input was changed before the analyzer was ready
+
+// Live mode: analyze while typing (LIVE_DELAY after the last change; at once after an option change). At most
+// one live run at a time; requests that come in meanwhile give one more run, with the latest input.
+const LIVE_KEY = 'wuica-live';
+const LIVE_DELAY = 200;
+const LONG_RUN_MS = 1000; // a running analysis older than this is stopped by new input instead of waited for
+let liveOn = true;
+try { liveOn = localStorage.getItem(LIVE_KEY) !== 'off'; } catch { /* storage unavailable: on */ }
+const liveRunner = latestWins(() => run({ auto: true }));
+
+// The compare panels (compare-view.js): all CPUs, alignment sweep. They get every successful result.
+const panels = createComparePanels({
+  els: {
+    cpus: $('cmp-cpus'), cpusInfo: $('cmp-cpus-info'), cpusBody: $('cmp-cpus-body'),
+    sweep: $('cmp-sweep'), sweepInfo: $('cmp-sweep-info'), sweepBody: $('cmp-sweep-body'),
+  },
+  engine: () => engine,
+  items: () => [...archItems.values()],
+  tableLoaded: (key) => !!engine?.hasArch(archItems.get(key)?.table),
+  ensureTable: (key) => ensureTable(key),
+  onArch: (key) => selectArch(key),
+  onAlign: (offset) => setAlign(offset),
+  onToggle: () => {
+    const o = panels.open();
+    if (o.cpus === state.cmpCpus && o.sweep === state.cmpSweep) return;
+    state.cmpCpus = o.cpus;
+    state.cmpSweep = o.sweep;
+    syncUrl(true);
+  },
+  wantResult: () => { if (ready && !lastView && el.code.value.trim() !== '') run(); },
+});
 
 // ---- status line and progress ----------------------------------------------------------------------------------
 
@@ -123,6 +159,7 @@ function writeControls() {
   el.nma.checked = state.noMacroFusion;
   el.iter.value = state.minIterations;
   el.cycles.value = state.minCycles;
+  panels.setOpen({ cpus: state.cmpCpus, sweep: state.cmpSweep });
   paintDerived();
 }
 
@@ -141,7 +178,9 @@ function runKey() {
   return JSON.stringify([state.mode, state.mode === 'asm' ? state.syntax : '', el.code.value, state.arch, options()]);
 }
 function paintStale() {
-  el.body.classList.toggle('stale', !!lastView && runKey() !== lastRunKey);
+  const stale = !!lastView && runKey() !== lastRunKey;
+  el.body.classList.toggle('stale', stale);
+  panels.setStale(stale || !(lastView?.response && !('error' in lastView.response)));
 }
 
 function collectState() {
@@ -164,7 +203,35 @@ function syncUrl(now = false) {
 function changed({ rerun = false } = {}) {
   paintDerived();
   syncUrl();
-  if (rerun && lastView && ready) scheduleRun();
+  if (!ready) touched = true;
+  if (liveOn && ready) liveSchedule(rerun ? 0 : LIVE_DELAY);
+  else if (rerun && lastView && ready) scheduleRun();
+}
+function liveSchedule(ms) {
+  // an analysis that takes long is out of date now: stop it rather than wait for it
+  if (busy && engine?.capabilities.cancel && performance.now() - busySince > LONG_RUN_MS) { runSeq++; engine.cancel(); setBusy(false); }
+  liveRunner.schedule(ms);
+}
+function setLive(on) {
+  liveOn = on;
+  el.live.checked = on;
+  el.results.classList.toggle('live', on); // style.css: the result dims later while typing
+  try { localStorage.setItem(LIVE_KEY, on ? 'on' : 'off'); } catch { /* not remembered */ }
+  if (on && ready && el.code.value.trim() !== '') liveRunner.schedule(0); else liveRunner.cancel();
+}
+function selectArch(key) {
+  if (!archItems.has(key) || (key === state.arch && el.arch.value === key)) return;
+  state.arch = key;
+  el.arch.value = key;
+  ensureTable(key).catch((e) => flash(`table not loaded: ${e?.message ?? e}`, { error: true, ms: 6000 }));
+  changed({ rerun: true });
+}
+function setAlign(offset) {
+  const v = clampInt(offset, LIMITS.alignmentOffset, DEFAULT_STATE.alignmentOffset);
+  if (v === state.alignmentOffset) return;
+  state.alignmentOffset = v;
+  el.align.value = v;
+  changed({ rerun: true });
 }
 let rerunTimer = 0;
 function scheduleRun() {
@@ -176,6 +243,7 @@ function scheduleRun() {
 
 function clearMessages() {
   el.messages.replaceChildren();
+  delete el.messages.dataset.key;
   el.code.removeAttribute('aria-invalid');
 }
 
@@ -195,6 +263,8 @@ function selectLine(line) {
 
 // items: [{line, column, severity, message}]; severity 'error' | 'warning' | 'note'
 function showMessages(items) {
+  const key = JSON.stringify(items);
+  if (el.messages.dataset.key === key && el.messages.firstChild) return; // the same: keep them (and their focus)
   const list = h('ul');
   for (const d of items) {
     const where = d.line ? `line ${d.line}${d.column ? ':' + d.column : ''}: ` : '';
@@ -210,7 +280,8 @@ function showMessages(items) {
     list.append(li);
   }
   el.messages.replaceChildren(list);
-  if (items.some((d) => d.severity === 'error')) el.code.setAttribute('aria-invalid', 'true');
+  el.messages.dataset.key = key;
+  if (items.some((d) => d.severity === 'error')) el.code.setAttribute('aria-invalid', 'true'); else el.code.removeAttribute('aria-invalid');
 }
 
 function showAssemblerMissing() {
@@ -219,6 +290,7 @@ function showAssemblerMissing() {
   const why = assemblerMissing ? 'No assembler in this build'
     : `Assembler could not be loaded (${assemblerError || 'unknown error'}); Analyze retries`;
   el.messages.replaceChildren(h('ul', null, h('li', null, `${why} · `, b)));
+  delete el.messages.dataset.key;
 }
 
 // ---- input modes -------------------------------------------------------------------------------------------------
@@ -336,6 +408,7 @@ async function machineCode(id) {
       showMessages([{ line: p.line ?? null, column: null, severity: 'error', message: p.message }]);
       return null;
     }
+    clearMessages();
     return p.bytes;
   }
   if (text.trim() === '') {
@@ -351,12 +424,20 @@ async function machineCode(id) {
   const items = [...r.diagnostics];
   if (r.ok && r.bytes.length === 0) items.push({ line: null, column: null, severity: 'error', message: 'No machine code' });
   if (r.ok && r.bytes.length && assembler.mock) items.push({ line: null, column: null, severity: 'note', message: 'mock assembler' });
-  if (items.length) showMessages(items);
+  if (items.length) showMessages(items); else clearMessages();
   return r.ok && r.bytes.length ? r.bytes : null;
 }
 
-function setBusy(on) {
+let busySince = 0;
+let busyPaint = 0;
+function setBusy(on, { defer = false } = {}) {
   busy = on;
+  if (on) busySince = performance.now();
+  clearTimeout(busyPaint);
+  if (on && defer) busyPaint = setTimeout(() => paintBusy(true), 150);
+  else paintBusy(on);
+}
+function paintBusy(on) {
   if (on) el.results.setAttribute('aria-busy', 'true'); else el.results.removeAttribute('aria-busy');
   // While an analysis runs, the button stops it (if the engine can be stopped).
   el.run.textContent = on ? (engine.capabilities.cancel ? 'Cancel' : 'Analyzing…') : 'Analyze';
@@ -365,20 +446,26 @@ function setBusy(on) {
 
 function cancelRun() {
   if (!busy) return;
+  cancelledKey = inflight.key;
   runSeq++; // whatever the stopped run still does is ignored
   engine.cancel?.();
   setBusy(false);
   flash('cancelled');
 }
 
-async function run() {
+// auto: a live run (liveRunner). It is skipped if its input is the one shown, running or cancelled; it keeps the
+// messages until it has new ones, and it does not stop a running analysis unless that one takes long.
+async function run({ auto = false } = {}) {
   clearTimeout(rerunTimer);
+  if (!auto) { liveRunner.cancel(); cancelledKey = ''; }
   if (!ready || el.run.disabled) return;
-  if (busy) engine.cancel?.(); // a newer request replaces the one that is running
-  const id = ++runSeq;
-  clearMessages();
   const key = runKey();
+  if (auto && ((busy && key === inflight.key) || key === cancelledKey || (lastView && key === lastRunKey && !el.messages.firstChild))) return;
+  if (busy && (!auto || performance.now() - busySince > LONG_RUN_MS)) engine.cancel?.(); // a newer request replaces the one that is running
+  const id = ++runSeq;
+  if (!auto) clearMessages();
   const archKey = state.arch;
+  const opts = options();
   const item = archItems.get(archKey);
   let bytes;
   try {
@@ -390,13 +477,14 @@ async function run() {
   if (!bytes || id !== runSeq) return;
   const hex = toHex(bytes);
 
-  setBusy(true);
+  setBusy(true, { defer: auto });
+  inflight = { id, key };
   try {
     await ensureTable(archKey);
-    await nextFrame();
+    if (!auto || !engine.capabilities.cancel) await nextFrame();
     if (id !== runSeq) return;
     const t0 = performance.now();
-    const response = await engine.analyze(makeRequest(hex, archKey, options()));
+    const response = await engine.analyze(makeRequest(hex, archKey, opts));
     const elapsedMs = performance.now() - t0;
     if (id !== runSeq) return;
     lastView = {
@@ -406,8 +494,9 @@ async function run() {
     lastRunKey = key;
     draw();
     if (response && !response.error) {
-      flash(`${Number(response.tp).toFixed(2)} cycles/iteration · ${archKey}${response.mock ? ' (mock data)' : ''}`, { ms: 4000 });
-    } else {
+      if (!auto) flash(`${Number(response.tp).toFixed(2)} cycles/iteration · ${archKey}${response.mock ? ' (mock data)' : ''}`, { ms: 4000 });
+      panels.update({ hex, arch: archKey, options: opts, elapsedMs }, { auto });
+    } else if (!auto) {
       flash('analysis failed', { error: true });
     }
     syncUrl(true);
@@ -417,6 +506,7 @@ async function run() {
     lastView = null;
     renderFailure(el.body, `Analysis failed: ${e?.message ?? e}`);
   } finally {
+    if (inflight.id === id) inflight = { id: 0, key: '' };
     if (id === runSeq) {
       setBusy(false);
       el.results.dataset.run = String(id); // the number of the run that is shown (tests wait for it)
@@ -511,11 +601,7 @@ function bind() {
     if (ex) loadExample(ex);
   });
   el.code.addEventListener('input', () => { buffers[state.mode] = el.code.value; changed(); });
-  el.arch.addEventListener('change', () => {
-    state.arch = el.arch.value;
-    ensureTable(state.arch).catch((e) => flash(`table not loaded: ${e?.message ?? e}`, { error: true, ms: 6000 }));
-    changed({ rerun: true });
-  });
+  el.arch.addEventListener('change', () => selectArch(el.arch.value));
   const int = (input, name) => input.addEventListener('change', () => {
     state[name] = clampInt(input.value, LIMITS[name], DEFAULT_STATE[name]);
     input.value = state[name];
@@ -536,7 +622,8 @@ function bind() {
     writeControls();
     changed({ rerun: true });
   });
-  el.run.addEventListener('click', () => (busy ? cancelRun() : run()));
+  el.run.addEventListener('click', () => (busy && el.run.classList.contains('busy') ? cancelRun() : run()));
+  el.live.addEventListener('change', () => setLive(el.live.checked));
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); if (!busy) run(); }
   });
@@ -574,6 +661,8 @@ async function start() {
     buffers.hex = EXAMPLES[0].text.hex;
     buffers.asm = EXAMPLES[0].text.intel;
   }
+  el.live.checked = liveOn;
+  el.results.classList.toggle('live', liveOn);
   writeControls();
   fillExamples();
   bind();
@@ -624,6 +713,7 @@ async function start() {
   }
   paintDerived();
   if (hadState && el.code.value.trim() !== '' && !el.run.disabled) run();
+  else if (liveOn && touched && el.code.value.trim() !== '' && !el.run.disabled) run({ auto: true });
   else renderEmpty(el.body);
 }
 
