@@ -1,5 +1,7 @@
 // Builds the result view. All text goes in through textContent: responses, fragments and diagnostics are data.
 
+import { formatListing } from './listing.js';
+
 const FRONT_END = ['MITE', 'MS', 'DSB', 'LSD'];
 const COUNTS = ['Issued', 'Exec.'];
 const UOPS_INFO = 'https://www.uops.info/';
@@ -9,6 +11,7 @@ export const NOTES = Object.freeze({
   J: 'block not in the DSB (uop cache) because of the JCC erratum',
   X: 'instruction not supported (no data)',
 });
+const LEGEND = Object.freeze({ M: 'macro-fused', J: 'JCC erratum', X: 'no data' });
 
 export function h(tag, attrs, ...children) {
   const el = document.createElement(tag);
@@ -43,6 +46,50 @@ function row(label, ...content) {
 
 function sep() { return h('span', { class: 'sep', text: ' · ' }); }
 
+// Copies text to the clipboard; true if it worked. Falls back to a hidden text area where the API is refused.
+export async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const active = document.activeElement;
+    const t = h('textarea', { readonly: true, 'aria-hidden': 'true', tabindex: '-1' });
+    t.value = text;
+    t.style.position = 'fixed';
+    t.style.opacity = '0';
+    document.body.append(t);
+    t.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch { ok = false; }
+    t.remove();
+    active?.focus?.();
+    return ok;
+  }
+}
+
+function copyButton(getText, what) {
+  const b = h('button', { type: 'button', class: 'plain copy', 'aria-label': `Copy ${what}`, text: 'copy' });
+  b.addEventListener('click', async () => {
+    const ok = await copyText(getText());
+    b.textContent = ok ? 'copied' : 'copy failed';
+    setTimeout(() => { b.textContent = 'copy'; }, 1500);
+  });
+  return b;
+}
+
+// A collapsible block of plain text with a copy button; `open` is kept by the caller across redraws.
+function textBlock(cls, summary, text, open, onToggle) {
+  const d = h('details', { class: `${cls}-wrap text-block`, open },
+    h('summary', { text: summary }),
+    copyButton(() => text, summary),
+    h('pre', { class: cls, tabindex: '0', 'aria-label': summary, text }));
+  let last = !!open; // the toggle event also fires for the initial state: report changes only
+  d.addEventListener('toggle', () => { if (d.open !== last) { last = d.open; onToggle(d.open); } });
+  return d;
+}
+
+const spacedHex = (hex, max = 48) => (hex.slice(0, 2 * max).match(/../g) ?? []).join(' ') + (hex.length > 2 * max ? ' …' : '');
+
 function limitsView(r) {
   const max = Math.max(r.tp || 0, ...r.limits.map((l) => l.tp || 0), 1e-9);
   const box = h('div', { class: 'limits' });
@@ -51,7 +98,7 @@ function limitsView(r) {
     const gauge = h('span', { class: 'gauge' + hot, 'aria-hidden': 'true' }, h('span'));
     gauge.firstChild.style.width = `${Math.min(100, (100 * l.tp) / max).toFixed(1)}%`;
     box.append(
-      h('span', { class: 'name' + hot, text: l.name }),
+      h('span', { class: 'name' + hot, text: l.name, title: `${Number(l.tp).toFixed(2)} cycles/iteration if ${l.name} were the only bottleneck` }),
       h('span', { class: 'val' + hot, text: Number(l.tp).toFixed(2) }),
       gauge,
     );
@@ -101,22 +148,23 @@ function uopTable(r, hideEmpty) {
     shown.map((i) => h('td', { class: cls(i), text: fmt(totals[i]) })));
 
   const table = h('table', { class: 'grid uops' }, h('thead', null, head), body, h('tfoot', null, foot));
-  return { table, hidden: n - shown.length };
+  return { table, hidden: n - shown.length, notes: new Set(r.rows.map((x) => x.notes).filter((k) => NOTES[k])) };
 }
 
 function mockLine(m, archKey) {
-  if (m.synthetic) return `mock data: a synthetic result that only exercises this page; not a prediction`;
-  if (m.exact) return `mock data: the reference's recorded result for this code on ${m.arch}; options are ignored`;
-  if (m.sameCode) return `mock data: recorded for this code on ${m.arch}, not on ${archKey}; not a prediction for ${archKey}`;
-  return `mock data: a recorded sample (another block, ${m.arch}); NOT a prediction for your input`;
+  if (m.synthetic) return 'mock data: synthetic, not a prediction';
+  if (m.exact) return `mock data: recorded on ${m.arch}; options ignored`;
+  if (m.sameCode) return `mock data: recorded on ${m.arch}, not ${archKey}`;
+  return `mock data: another block (${m.arch}), not a prediction`;
 }
 
 // view: {
 //   response,                 a response of docs/WASM-API.md (success or {error})
 //   archKey, archTitle, experimental,
 //   byteCount, hex,           the machine code that was analyzed
+//   inputMode,                'asm' | 'hex': the listing starts open for assembly (it shows what it assembled to)
 //   elapsedMs,
-//   ui: { hideEmpty, reportOpen }, onUi(name, value)
+//   ui: { hideEmpty, reportOpen, listingOpen: {asm, hex} (null: by inputMode) }, onUi(name, value)
 // }
 export function renderResult(root, view) {
   const r = view.response;
@@ -124,64 +172,64 @@ export function renderResult(root, view) {
   const code = h('span', { class: 'code', text: `${view.byteCount} byte${view.byteCount === 1 ? '' : 's'}` });
 
   if (!r || typeof r !== 'object' || 'error' in r || !Array.isArray(r.rows) || !Array.isArray(r.columns)) {
-    let message = 'Analysis failed: the analyzer returned an unexpected response.';
+    let message = 'Analysis failed: unexpected response';
     if (r && typeof r === 'object' && 'error' in r) {
       // `trapped`: the analyzer itself crashed on this input (engine.js restarts it)
-      message = r.trapped ? `The analysis failed for this input (the analyzer stopped${r.detail ? ': ' + r.detail : ''}; it has been restarted).`
+      message = r.trapped ? `Analyzer crashed on this input${r.detail ? ' (' + r.detail + ')' : ''}; restarted`
         : `Analysis failed: ${r.error}`;
     }
     out.push(h('div', { class: 'error-box', role: 'alert' }, message));
-    out.push(row('input', h('span', { class: 'meta' }, view.archTitle, sep(), code)));
+    out.push(row('input', h('span', { class: 'meta' }, view.archTitle, sep(), code,
+      view.hex ? [': ', h('span', { class: 'code', text: spacedHex(view.hex) })] : null)));
   } else {
     const mock = r.mock ? { ...r.mock, sameCode: r.mock.hex === view.hex } : null;
-    const mode = r.mode === 'loop' ? 'analyzed as a loop (the block ends in a branch)'
-      : r.mode === 'unroll' ? 'analyzed unrolled (as if the block were repeated back to back)' : `mode: ${r.mode}`;
+    const mode = r.mode === 'loop' ? h('span', { class: 'tag', title: 'ends in a branch: analyzed as a loop', text: 'loop' })
+      : r.mode === 'unroll' ? h('span', { class: 'tag', title: 'no branch at the end: analyzed as if repeated back to back', text: 'unrolled' })
+        : h('span', { class: 'tag', text: String(r.mode) });
     const instrs = r.rows.filter((x) => x.kind === 'instr').length;
     out.push(row('throughput',
       h('div', { class: 'tp' },
         h('span', { class: 'value', text: Number(r.tp).toFixed(2) }),
-        h('span', { class: 'unit', text: 'cycles per iteration' })),
-      h('div', { class: 'meta' }, mode),
-      h('div', { class: 'meta' }, view.archTitle, sep(), `${instrs} instruction${instrs === 1 ? '' : 's'}`, sep(), code,
+        h('span', { class: 'unit', text: 'cycles/iteration' })),
+      h('div', { class: 'meta' }, mode, sep(), view.archTitle, sep(), `${instrs} instruction${instrs === 1 ? '' : 's'}`, sep(), code,
         view.elapsedMs !== null && !mock ? [sep(), `${view.elapsedMs < 10 ? view.elapsedMs.toFixed(1) : Math.round(view.elapsedMs)} ms`] : null),
       mock ? h('div', { class: 'mock-tag', text: mockLine(mock, view.archKey) }) : null,
-      view.experimental ? h('div', { class: 'caveat', text: 'experimental model: less validated than the stock Intel models' }) : null,
+      view.experimental ? h('div', { class: 'caveat', text: 'prototype model: less validated' }) : null,
       r.decodeErrors > 0 ? h('div', { class: 'caveat', role: 'alert',
-        text: `${r.decodeErrors} position${r.decodeErrors === 1 ? '' : 's'} could not be decoded and ${r.decodeErrors === 1 ? 'was' : 'were'} skipped; only the decoded instructions are analyzed` }) : null));
+        text: `${r.decodeErrors} undecodable position${r.decodeErrors === 1 ? '' : 's'} skipped` }) : null));
 
     out.push(row(r.bottlenecks.length > 1 ? 'bottlenecks' : 'bottleneck',
       r.bottlenecks.length ? h('span', { class: 'bn', text: r.bottlenecks.join(', ') })
-        : h('span', { class: 'hint', text: 'unknown (no single limit explains the throughput)' })));
+        : h('span', { class: 'hint', title: 'no single limit explains the throughput', text: 'unknown' })));
 
     if (r.limits.length) {
-      out.push(row('limits', limitsView(r),
-        h('p', { class: 'hint', text: 'cycles per iteration if the given property were the only bottleneck' })));
+      out.push(h('div', { class: 'row', title: 'cycles/iteration if each were the only bottleneck' },
+        h('div', { class: 'label', text: 'limits' }), h('div', { class: 'field' }, limitsView(r))));
     }
 
-    const { table, hidden } = uopTable(r, view.ui.hideEmpty);
+    const { table, hidden, notes } = uopTable(r, view.ui.hideEmpty);
     const toggle = h('input', { type: 'checkbox', id: 'hide-empty', checked: view.ui.hideEmpty });
     toggle.checked = view.ui.hideEmpty;
     toggle.addEventListener('change', () => view.onUi('hideEmpty', toggle.checked));
     out.push(row('uops',
       h('div', { class: 'table-tools' },
-        h('span', { text: 'average per iteration, by instruction' }),
-        h('label', null, toggle, ` hide empty columns${hidden ? ` (${hidden} hidden)` : ''}`)),
-      h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Uops per instruction' }, table),
-      h('p', { class: 'legend' },
-        Object.entries(NOTES).map(([k, v]) => h('span', null, h('b', { text: k }), ` ${v}`)))));
+        h('label', null, toggle, ` hide empty columns${hidden ? ` (${hidden})` : ''}`)),
+      h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Uops per instruction, average per iteration',
+        title: 'average uops per iteration' }, table),
+      notes.size ? h('p', { class: 'legend' },
+        [...notes].map((k) => h('span', { title: NOTES[k] }, h('b', { text: k }), ` ${LEGEND[k]}`))) : null));
 
-    const report = h('details', { class: 'report-wrap', open: view.ui.reportOpen },
-      h('summary', { text: 'Plain text report' }),
-      h('pre', { class: 'report', tabindex: '0', text: typeof r.text === 'string' ? r.text : '' }));
-    report.addEventListener('toggle', () => view.onUi('reportOpen', report.open));
-    out.push(row('report', report));
+    const listingOpen = view.ui.listingOpen?.[view.inputMode] ?? view.inputMode === 'asm';
+    out.push(row('text',
+      textBlock('listing', 'objdump', formatListing(r.rows).text, listingOpen, (open) => view.onUi('listingOpen', { ...view.ui.listingOpen, [view.inputMode]: open })),
+      textBlock('report', 'uiCA report', typeof r.text === 'string' ? r.text : '', view.ui.reportOpen, (open) => view.onUi('reportOpen', open))));
   }
 
   root.replaceChildren(...out);
 }
 
-export function renderEmpty(root, text) {
-  root.replaceChildren(h('p', { class: 'empty', text }));
+export function renderEmpty(root, text = '') {
+  root.replaceChildren(...(text ? [h('p', { class: 'empty', text })] : []));
 }
 
 export function renderFailure(root, text) {

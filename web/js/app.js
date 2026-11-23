@@ -9,7 +9,7 @@ import { DEFAULT_STATE, LIMITS, encodeState, decodeState, clampInt } from './url
 import { EXAMPLES, MOCK_EXAMPLES } from './examples.js';
 import { fetchBytes, fetchManifest, PATHS, formatSize, whenIdle } from './loader.js';
 import { WasmAssembler, isWasm } from './assembler.js';
-import { renderResult, renderEmpty, renderFailure, h } from './render.js';
+import { renderResult, renderEmpty, renderFailure, copyText, h } from './render.js';
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -27,10 +27,7 @@ const el = {
   results: $('results'), body: $('result-body'), buildId: $('build-id'), updateNote: $('update-note'), reload: $('reload'),
 };
 
-const HINTS = {
-  hex: 'Hex in any common form: 4801d8, 48 01 d8, 0x48, \\x48, or pasted objdump -d / Compiler Explorer output (only the byte column is used).',
-  asm: 'x86-64 assembly; labels and directives work. The block is assembled in your browser.',
-};
+const HINTS = { hex: 'hex or objdump -d', asm: '' };
 const PLACEHOLDERS = {
   hex: '48 83 c0 01 49 ff cf 75 f7',
   asm: 'loop:\n  add rax, 1\n  dec r15\n  jnz loop',
@@ -40,7 +37,7 @@ const PLACEHOLDERS = {
 
 const state = { ...DEFAULT_STATE };
 const buffers = { hex: '', asm: '' }; // the text of each input mode; the text area shows buffers[state.mode]
-const ui = { hideEmpty: true, reportOpen: false };
+const ui = { hideEmpty: true, reportOpen: false, listingOpen: { asm: null, hex: null } }; // per input mode; null: open for assembly
 
 let manifest = { version: 'dev', files: {}, tables: [], assembler: null };
 let uarch = null;
@@ -117,6 +114,7 @@ function writeControls() {
   el.code.placeholder = PLACEHOLDERS[state.mode];
   el.code.setAttribute('aria-label', state.mode === 'asm' ? 'Assembly code' : 'Machine code (hex)');
   el.codeHint.textContent = HINTS[state.mode];
+  el.codeHint.hidden = !HINTS[state.mode];
   if (archItems.has(state.arch)) el.arch.value = state.arch;
   el.align.value = state.alignmentOffset;
   for (const r of document.querySelectorAll('input[name="init"]')) r.checked = r.value === state.initPolicy;
@@ -133,7 +131,7 @@ function paintDerived() {
     .filter((k) => state[k] !== DEFAULT_STATE[k]).length;
   el.advancedSummary.textContent = changed ? `· ${changed} changed` : '';
   const item = archItems.get(state.arch);
-  el.archHint.textContent = item?.experimental ? 'experimental model' : '';
+  el.archHint.textContent = item?.experimental ? 'prototype model' : '';
   el.archHint.classList.toggle('caveat', !!item?.experimental);
   el.run.disabled = !ready || (state.mode === 'asm' && assemblerMissing);
   paintStale();
@@ -216,11 +214,11 @@ function showMessages(items) {
 }
 
 function showAssemblerMissing() {
-  const b = h('button', { type: 'button', class: 'plain', text: 'switch to machine code (hex)' });
+  const b = h('button', { type: 'button', class: 'plain', text: 'use hex' });
   b.addEventListener('click', () => setMode('hex'));
-  const why = assemblerMissing ? 'Assembly input is not available in this build yet.'
-    : `The assembler could not be loaded (${assemblerError || 'unknown error'}); Analyze tries again.`;
-  el.messages.replaceChildren(h('ul', null, h('li', null, `${why} You can `, b, '.')));
+  const why = assemblerMissing ? 'No assembler in this build'
+    : `Assembler could not be loaded (${assemblerError || 'unknown error'}); Analyze retries`;
+  el.messages.replaceChildren(h('ul', null, h('li', null, `${why} · `, b)));
 }
 
 // ---- input modes -------------------------------------------------------------------------------------------------
@@ -289,7 +287,7 @@ function fillArchs() {
   for (const g of groups) {
     const og = h('optgroup', { label: g.label });
     for (const it of g.items) {
-      archItems.set(it.key, { ...it, experimental: g.experimental });
+      archItems.set(it.key, it);
       og.append(h('option', { value: it.key, text: it.title }));
     }
     nodes.push(og);
@@ -341,7 +339,7 @@ async function machineCode(id) {
     return p.bytes;
   }
   if (text.trim() === '') {
-    showMessages([{ line: null, column: null, severity: 'error', message: 'No code: enter assembly' }]);
+    showMessages([{ line: null, column: null, severity: 'error', message: 'No code' }]);
     return null;
   }
   const assembler = await ensureAssembler();
@@ -349,14 +347,11 @@ async function machineCode(id) {
   if (!assembler) { showAssemblerMissing(); paintDerived(); return null; }
   const r = await assembler.assemble(text, state.syntax);
   if (id !== runSeq) return null;
+  // what it assembled to is the result's objdump listing
   const items = [...r.diagnostics];
-  if (r.ok && r.bytes.length === 0) items.push({ line: null, column: null, severity: 'error', message: 'The assembly produced no machine code' });
-  if (r.ok && r.bytes.length) {
-    const shown = toHex(r.bytes.subarray(0, 48)).match(/../g).join(' ');
-    items.push({ line: null, column: null, severity: 'note',
-      message: `assembled${assembler.mock ? ' (mock assembler)' : ''}: ${r.bytes.length} byte${r.bytes.length === 1 ? '' : 's'}: ${shown}${r.bytes.length > 48 ? ' …' : ''}` });
-  }
-  showMessages(items);
+  if (r.ok && r.bytes.length === 0) items.push({ line: null, column: null, severity: 'error', message: 'No machine code' });
+  if (r.ok && r.bytes.length && assembler.mock) items.push({ line: null, column: null, severity: 'note', message: 'mock assembler' });
+  if (items.length) showMessages(items);
   return r.ok && r.bytes.length ? r.bytes : null;
 }
 
@@ -405,13 +400,13 @@ async function run() {
     const elapsedMs = performance.now() - t0;
     if (id !== runSeq) return;
     lastView = {
-      response, elapsedMs, hex, byteCount: bytes.length,
-      archKey, archTitle: archTitle(archKey), experimental: item.experimental,
+      response, elapsedMs, hex, byteCount: bytes.length, inputMode: state.mode,
+      archKey, archTitle: archTitle(archKey, item.experimental), experimental: item.experimental,
     };
     lastRunKey = key;
     draw();
     if (response && !response.error) {
-      flash(`${Number(response.tp).toFixed(2)} cycles per iteration on ${archKey}${response.mock ? ' (mock data)' : ''}`, { ms: 4000 });
+      flash(`${Number(response.tp).toFixed(2)} cycles/iteration · ${archKey}${response.mock ? ' (mock data)' : ''}`, { ms: 4000 });
     } else {
       flash('analysis failed', { error: true });
     }
@@ -420,7 +415,7 @@ async function run() {
   } catch (e) {
     if (id !== runSeq) return;
     lastView = null;
-    renderFailure(el.body, `Could not run the analysis: ${e?.message ?? e}`);
+    renderFailure(el.body, `Analysis failed: ${e?.message ?? e}`);
   } finally {
     if (id === runSeq) {
       setBusy(false);
@@ -477,7 +472,7 @@ async function prefetchTables() {
     } catch {
       break; // offline or a failing host: stop quietly
     }
-    setIdle(`ready · caching for offline use ${done}/${urls.length}`);
+    setIdle(`ready · caching ${done}/${urls.length}`);
   }
   setIdle(done === urls.length && controlled ? 'ready · works offline' : 'ready');
 }
@@ -518,7 +513,7 @@ function bind() {
   el.code.addEventListener('input', () => { buffers[state.mode] = el.code.value; changed(); });
   el.arch.addEventListener('change', () => {
     state.arch = el.arch.value;
-    ensureTable(state.arch).catch((e) => flash(`could not load the instruction table: ${e?.message ?? e}`, { error: true, ms: 6000 }));
+    ensureTable(state.arch).catch((e) => flash(`table not loaded: ${e?.message ?? e}`, { error: true, ms: 6000 }));
     changed({ rerun: true });
   });
   const int = (input, name) => input.addEventListener('change', () => {
@@ -565,24 +560,9 @@ function bind() {
 
 async function copyLink() {
   syncUrl(true);
-  const url = location.href;
-  let ok = false;
-  try {
-    await navigator.clipboard.writeText(url);
-    ok = true;
-  } catch {
-    const t = h('textarea', { readonly: true, 'aria-hidden': 'true', tabindex: '-1' });
-    t.value = url;
-    t.style.position = 'fixed';
-    t.style.opacity = '0';
-    document.body.append(t);
-    t.select();
-    try { ok = document.execCommand('copy'); } catch { ok = false; }
-    t.remove();
-    el.copy.focus();
-  }
+  const ok = await copyText(location.href);
   el.copy.textContent = ok ? 'Copied' : 'Copy link';
-  flash(ok ? 'link copied: it contains the input and options' : 'could not copy; the link is in the address bar', { error: !ok });
+  flash(ok ? 'link copied' : 'copy failed: use the address bar', { error: !ok });
   if (ok) setTimeout(() => { el.copy.textContent = 'Copy link'; }, 1500);
 }
 
@@ -613,8 +593,7 @@ async function start() {
     if (MOCK) {
       const { MockEngine } = await import('./engine-mock.js');
       engine = new MockEngine();
-      showNotice('Mock mode (?mock=1): the analyzer is not loaded.',
-        'Results are the reference\'s recorded results for the built-in examples, and a recorded sample for any other input. They are labelled "mock data".');
+      showNotice('Mock mode: recorded results, no analyzer.');
       fillExamples();
     } else {
       let bytes;
@@ -633,7 +612,7 @@ async function start() {
   } catch (e) {
     setIdle('not ready');
     el.statusWrap.classList.add('error');
-    renderFailure(el.body, `wuica could not start: ${e?.message ?? e}. Reload the page to try again.`);
+    renderFailure(el.body, `Could not start: ${e?.message ?? e}. Reload to retry.`);
     return;
   }
 
@@ -645,7 +624,7 @@ async function start() {
   }
   paintDerived();
   if (hadState && el.code.value.trim() !== '' && !el.run.disabled) run();
-  else renderEmpty(el.body, 'No result yet. Press Analyze (Ctrl/⌘ + Enter) to analyze the code above.');
+  else renderEmpty(el.body);
 }
 
 start();

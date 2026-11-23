@@ -127,7 +127,14 @@ const HELPERS = `
   const done = async (start) => { const n = $('results').dataset.run; start(); await until(() => $('results').dataset.run !== n); }; // a run has finished
   const example = (id) => done(() => set($('examples'), id));
   const overflow = () => document.documentElement.scrollWidth - innerWidth;
+  const mode = () => document.querySelector('.meta .tag')?.textContent;
+  const listing = () => document.querySelector('pre.listing')?.textContent;
+  const listingOpen = () => !!document.querySelector('details.listing-wrap')?.open;
+  const caveats = () => [...document.querySelectorAll('#result-body .caveat')].map((e) => e.textContent).join(' / ');
 `;
+
+// the objdump listing of the first example
+const CHAIN = '   0:  48 83 c0 01    add rax, 0x1\n   4:  48 83 c0 01    add rax, 0x1\n   8:  49 ff cf       dec r15\n   b:  75 f3          jnz 0xfffffffffffffff5\n';
 
 // ---- the test ---------------------------------------------------------------------------------------------------------------
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-web-test-'));
@@ -168,11 +175,19 @@ try {
       out.focusable = ['code', 'arch', 'run', 'copy-link', 'examples', 'mode-asm', 'mode-hex'].every((id) => $(id).tabIndex >= 0);
       out.labelled = [...document.querySelectorAll('input, select, textarea')].filter((e) => !(e.labels?.length || e.getAttribute('aria-label') || e.getAttribute('aria-labelledby'))).map((e) => e.id || e.name);
       out.empty = $('result-body').innerText;
+      out.csp = document.querySelector('meta[http-equiv=Content-Security-Policy]').content;
       // Ctrl+Enter runs
       $('code').focus();
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }));
       await until(() => tp());
-      out.tp = tp(); out.meta = $('result-body').innerText;
+      out.tp = tp(); out.meta = $('result-body').innerText; out.mode = mode();
+      out.listing = [listing(), listingOpen()];
+      let copied = null; navigator.clipboard.writeText = async (t) => { copied = t; };
+      document.querySelector('details.listing-wrap summary').click(); await wait(50);
+      const cb = document.querySelector('details.listing-wrap button.copy');
+      out.copyVisible = cb.offsetParent !== null; cb.click(); await wait(50);
+      out.copied = [copied, cb.textContent, cb.getAttribute('aria-label')];
+      document.querySelector('details.listing-wrap summary').click(); await wait(50);
       out.rows = [...document.querySelectorAll('table.uops tbody tr')].map((tr) => tr.innerText.trim().replace(/\\t+/g, '|'));
       out.total = document.querySelector('table.uops tfoot tr').innerText.replace(/\\t+/g, '|');
       out.link = document.querySelector('table.uops tbody a').href;
@@ -184,25 +199,31 @@ try {
       out.hash = location.hash; out.search = location.search;
       for (const id of ['loadstore', 'avx', 'stack', 'synthetic']) { await example(id); out[id] = [tp(), $('arch').value, document.querySelector('.mock-tag').textContent.slice(0, 44), document.querySelectorAll('table.uops tr.extra').length, overflow()]; }
       out.reportStaysOpen = document.querySelector('details.report-wrap').open;
-      out.synthetic2 = { notes: [...document.querySelectorAll('table.uops td.note')].map((td) => td.textContent).join(''), nolink: !document.querySelector('table.uops tr.unsupported a'), caveat: [...document.querySelectorAll('.caveat')].map((e) => e.textContent).join(' / '), mode: $('result-body').innerText.includes('analyzed unrolled') };
+      out.synthetic2 = { notes: [...document.querySelectorAll('table.uops td.note')].map((td) => td.textContent).join(''), nolink: !document.querySelector('table.uops tr.unsupported a'), caveat: caveats(), mode: mode() === 'unrolled',
+        listing: listing().trimEnd().split('\\n'), instrs: document.querySelectorAll('table.uops tbody tr:not(.extra)').length, legend: document.querySelector('.legend').innerText };
       const hidden = document.querySelectorAll('table.uops thead th').length; $('hide-empty').click(); await wait(50);
       out.columns = [hidden, document.querySelectorAll('table.uops thead th').length];
       await example('error'); out.error = document.querySelector('.error-box')?.textContent;
       return out;`);
     check(r.robots === 'noindex' && /wuica/.test(r.title), 'mock: title and robots');
     check(/Mock mode/.test(r.notice), 'mock: the notice says so', r.notice);
-    check(r.groups[0] === 'Intel: RKL,TGL,ICL,CLX,CFL,SKX,KBL,SKL,BDW,HSW,IVB,SNB' && r.groups[1] === 'Experimental (this fork): ZEN3,ADL-P,ICX' && r.arch === 'SKL', 'mock: the microarchitecture menu', JSON.stringify(r.groups));
+    check(r.groups.length === 1 && r.groups[0] === 'by release date: SNB,IVB,HSW,BDW,SKL,KBL,SKX,CFL,CLX,ICL,TGL,ZEN3,RKL,ICX,ADL-P' && r.arch === 'SKL', 'mock: the microarchitecture menu', JSON.stringify(r.groups));
     check(r.examples === ',chain,loadstore,avx,stack,synthetic,error', 'mock: the examples menu', r.examples);
     check(r.focusable && r.labelled.length === 0, 'mock: controls are focusable and labelled', JSON.stringify(r.labelled));
-    check(/No result yet/.test(r.empty), 'mock: empty state', r.empty);
-    check(r.tp === '2.00' && /cycles per iteration/.test(r.meta) && /analyzed as a loop/.test(r.meta) && /mock data/.test(r.meta) && /Dependencies/.test(r.meta), 'mock: Ctrl+Enter gives the result of the first example', r.meta.slice(0, 300));
+    check(r.empty === '', 'mock: empty state', r.empty);
+    check(/script-src 'self' 'wasm-unsafe-eval' https:\/\/static\.cloudflareinsights\.com;/.test(r.csp) && /connect-src 'self' https:\/\/cloudflareinsights\.com;/.test(r.csp) && !/unsafe-inline/.test(r.csp), 'mock: the CSP allows the Cloudflare beacon and nothing else', r.csp);
+    check(r.tp === '2.00' && /cycles\/iteration/.test(r.meta) && r.mode === 'loop' && /mock data/.test(r.meta) && /Dependencies/.test(r.meta), 'mock: Ctrl+Enter gives the result of the first example', r.meta.slice(0, 300));
+    check(r.listing[0] === CHAIN && !r.listing[1], 'mock: the objdump listing (closed for hex input)', JSON.stringify(r.listing));
+    check(r.copyVisible && r.copied[0] === CHAIN && r.copied[1] === 'copied' && r.copied[2] === 'Copy objdump', 'mock: the listing copies as text', JSON.stringify(r.copied));
     check(r.rows.length === 4 && r.rows[0] === 'add rax, 0x1|1|1|1|0.22|0.22|0.29|0.27' && r.rows[3] === 'jnz 0xfffffffffffffff5|M' && r.total === 'Total|3|3|3|0.5|0.52|0.52|1.47', 'mock: the uop table (empty columns hidden, zeros blank, totals)', JSON.stringify([r.rows, r.total]));
     check(r.link === 'https://www.uops.info/html-instr/ADD_R64_I8.html' && r.heat === '0.22,0.22,0.29' && !r.blank, 'mock: links and shading', `${r.link} ${r.heat}`);
     check(r.reportHidden && r.report === 'Throughput (in cycles per iteration): 2.00\n' && r.reportStaysOpen, 'mock: the text report toggles and stays open', JSON.stringify(r.report));
     check(/^#v=1&c=/.test(r.hash) && r.search === '?mock=1&nosw=1', 'mock: the state is in the fragment, not in the query string', r.hash);
     check(r.loadstore[0] === '1.00' && r.loadstore[1] === 'ZEN3' && r.avx[0] === '4.00' && r.avx[1] === 'ADL-P' && r.stack[0] === '2.10' && r.stack[3] === 1, 'mock: the other examples', JSON.stringify([r.loadstore, r.avx, r.stack]));
     check([r.loadstore, r.avx, r.stack, r.synthetic].every((x) => x[4] <= 0), 'mock: the page never scrolls sideways at 1280px', JSON.stringify([r.loadstore[4], r.avx[4], r.stack[4], r.synthetic[4]]));
-    check(r.synthetic[0] === '23.57' && r.synthetic[3] === 2 && r.synthetic2.notes === 'XJM' && r.synthetic2.nolink && r.synthetic2.mode && /could not be decoded/.test(r.synthetic2.caveat), 'mock: synthetic case (extra rows, notes, unrolled, decode errors)', JSON.stringify([r.synthetic, r.synthetic2]));
+    check(r.synthetic[0] === '23.57' && r.synthetic[3] === 2 && r.synthetic2.notes === 'XJM' && r.synthetic2.nolink && r.synthetic2.mode && /1 undecodable position skipped/.test(r.synthetic2.caveat), 'mock: synthetic case (extra rows, notes, unrolled, decode errors)', JSON.stringify([r.synthetic, r.synthetic2]));
+    check(r.synthetic2.listing.length === r.synthetic2.instrs && r.synthetic2.listing.every((l) => /^ *[0-9a-f]+:  [0-9a-f]{2}( [0-9a-f]{2})* +\S/.test(l)) && !r.synthetic2.listing.some((l) => /Uop/.test(l)), 'mock: the listing has the instructions only (no inserted uops)', JSON.stringify(r.synthetic2.listing));
+    check(/X no data/.test(r.synthetic2.legend) && /J JCC erratum/.test(r.synthetic2.legend) && /M macro-fused/.test(r.synthetic2.legend), 'mock: the legend lists the notes that occur', r.synthetic2.legend);
     check(r.columns[1] > r.columns[0], 'mock: "hide empty columns" toggles', JSON.stringify(r.columns));
     check(/Analysis failed: mock/.test(r.error ?? ''), 'mock: an analysis error is shown', r.error);
 
@@ -218,7 +239,7 @@ try {
       $('mode-asm').click(); await wait(300);
       out.asm = [$('code').value.split('\\n')[1], !$('syntax-wrap').hidden, $('run').disabled];
       set($('syntax'), 'att'); await wait(50); out.att = $('code').value.split('\\n')[1];
-      await done(() => $('run').click()); out.assembled = $('input-messages').innerText;
+      await done(() => $('run').click()); out.assembled = [$('input-messages').innerText, listing(), listingOpen()];
       set($('code'), 'loop:\\n  frobnicate %rax\\n  decq %r15\\n    bogus\\n'); out.stale = $('result-body').classList.contains('stale');
       await run(); out.diag = $('input-messages').innerText;
       $('input-messages').querySelectorAll('button')[1].click(); out.selected = $('code').value.slice($('code').selectionStart, $('code').selectionEnd);
@@ -231,7 +252,7 @@ try {
     check(s.objdump[0] === '' && s.objdump[1] && s.objdump[2] === null, 'mock: pasted objdump output is analyzed', JSON.stringify(s.objdump));
     check(s.asm[0] === '  add rax, 1' && s.asm[1] && !s.asm[2] && s.att === '  addq $1, %rax', 'mock: assembly mode and syntax switch', JSON.stringify([s.asm, s.att]));
     // with wuica_asm.wasm in the build, mock mode uses the real assembler (only the analyzer is mocked)
-    check((manifest.assembler ? /^assembled: 13 bytes: 48 83 c0 01 48 83 c0 01 49 ff cf 75 f3$/ : /assembled \(mock assembler\): 13 bytes: 48 83 c0 01/).test(s.assembled), 'mock: assembly is assembled', s.assembled);
+    check(s.assembled[0] === (manifest.assembler ? '' : 'mock assembler') && s.assembled[1] === CHAIN && s.assembled[2], 'mock: assembly is assembled; the listing shows it, open', JSON.stringify(s.assembled));
     check(s.stale && /line 2:3: .*\n.*line 4:5: /.test(s.diag) && s.selected === '    bogus', 'mock: assembler diagnostics with lines; a click selects the line', JSON.stringify([s.stale, s.diag, s.selected]));
     check(s.hexKept, 'mock: each input mode keeps its text');
     check(s.options[0] === '63' && s.options[1] === '· 4 changed' && s.options[2] === '#v=1&al=63&mc=1234&ip=stack&nma=1', 'mock: options are clamped and go into the fragment', JSON.stringify(s.options));
@@ -260,6 +281,30 @@ try {
     check(u.second === 'true|SKL|48 83 c0 01 48 83 c0 01 49 ff cf 75 f3|0' && u.anchor === '48 83 c0 01 48 83 c0 01 49 ff cf 75 f3', 'mock: a changed fragment is applied; an anchor is not a state', JSON.stringify([u.second, u.anchor]));
     check(u.copied === `${origin}/?mock=1&nosw=1#v=1&c=NDggODMgYzAgMDEgNDggODMgYzAgMDEgNDkgZmYgY2YgNzUgZjM` && u.copied === u.href && u.label === 'Copied', 'mock: Copy link', JSON.stringify([u.copied, u.label]));
     check(/copied|address bar/.test(u.afterDenied), 'mock: a refused clipboard is handled', u.afterDenied);
+
+    // color theme: follows the system until the toggle sets it; the choice is remembered and applied before paint
+    const theme = async () => page.eval(`${HELPERS} return [document.documentElement.getAttribute('data-theme'), getComputedStyle(document.documentElement).backgroundColor, $('theme-toggle').textContent, $('theme-toggle').getAttribute('aria-label'), (() => { try { return localStorage.getItem('wuica-theme'); } catch { return 'n/a'; } })()];`);
+    await page.cmd('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
+    await sleep(100);
+    const t1 = await theme();
+    await page.eval(`document.getElementById('theme-toggle').click(); return 1;`);
+    const t2 = await theme();
+    await page.reload(); await page.ready();
+    const t3 = await theme();
+    await page.eval(`document.getElementById('theme-toggle').click(); return 1;`);
+    const t4 = await theme();
+    await page.cmd('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
+    await sleep(100);
+    const t5 = await theme();
+    await page.eval(`localStorage.removeItem('wuica-theme'); return 1;`);
+    await page.reload(); await page.ready();
+    const t6 = await theme();
+    check(t1[0] === null && t1[1] === 'rgb(251, 246, 234)' && t1[2] === 'light' && t1[3] === 'Color theme: light', 'theme: follows a light system theme', JSON.stringify(t1));
+    check(t2[0] === 'dark' && t2[1] === 'rgb(9, 10, 9)' && t2[2] === 'dark' && t2[4] === 'dark', 'theme: the toggle switches to dark and remembers it', JSON.stringify(t2));
+    check(t3[0] === 'dark' && t3[1] === 'rgb(9, 10, 9)', 'theme: the choice survives a reload', JSON.stringify(t3));
+    check(t4[0] === 'light' && t4[1] === 'rgb(251, 246, 234)' && t5[1] === 'rgb(251, 246, 234)' && t5[2] === 'light', 'theme: a stored choice overrides the system theme', JSON.stringify([t4, t5]));
+    check(t6[0] === null && t6[1] === 'rgb(9, 10, 9)' && t6[2] === 'dark', 'theme: without a stored choice, a dark system gives dark', JSON.stringify(t6));
+    await page.cmd('Emulation.setEmulatedMedia', { features: [] });
     const problems = page.take();
     check(problems.length === 0, 'mock: no console errors', problems.join('\n'));
     await page.cmd('Page.close');
@@ -291,9 +336,10 @@ try {
       for (const [id, arch] of [['loadstore', 'ZEN3'], ['avx', 'ADL-P'], ['stack', 'SKL']]) {
         if ($('arch').value !== arch) await done(() => set($('arch'), arch));
         await example(id);
+        if (arch === 'ADL-P') out.prototype = [$('arch-hint').textContent, caveats()];
         out[id] = [tp(), $('result-body').innerText.includes(arch), document.querySelector('table.uops thead').innerText.trim().replace(/\\s*\\t+/g, '|'), document.querySelectorAll('table.uops tr.extra').length, notes(), overflow(), document.querySelector('pre.report').textContent];
       }
-      out.experimental = [$('arch-hint').textContent, $('result-body').innerText.includes('experimental model')];
+      out.notPrototype = [$('arch-hint').textContent, caveats()]; // SKL
       // options change the result
       await example('chain');
       out.before = notes();
@@ -311,24 +357,25 @@ try {
       await until(() => document.querySelector('.error-box, .tp') && !$('results').hasAttribute('aria-busy') && !$('result-body').classList.contains('stale'), 60000);
       out.crash = document.querySelector('.error-box')?.textContent ?? ('no error: ' + tp());
       $('opt-reset').click(); await example('chain'); out.afterCrash = tp();
-      // a long analysis does not block the page and can be cancelled
+      // a long analysis does not block the page and can be cancelled (many iterations: the analyzer keeps getting faster)
+      await done(() => set($('opt-iter'), '1000'));
       set($('code'), '4801d8'.repeat(20000));
       $('run').click(); await wait(300);
       let ticks = 0; const t = setInterval(() => ticks++, 20); await wait(700); clearInterval(t);
       out.long = [$('run').textContent, $('results').getAttribute('aria-busy'), ticks];
       $('run').click(); await wait(100);
       out.cancelled = [$('run').textContent, $('results').hasAttribute('aria-busy'), $('status').textContent, tp()];
-      await example('chain'); out.afterCancel = [tp(), $('run').textContent];
+      $('opt-reset').click(); await example('chain'); out.afterCancel = [tp(), $('run').textContent];
       $('mode-asm').click(); await wait(600);
       out.asm = [$('input-messages').innerText, $('run').disabled];
       if (${!!manifest.assembler}) {
         // the real assembler: both syntaxes, diagnostics, a block that assembles to nothing
-        set($('syntax'), 'intel'); await example('chain'); out.asmChain = [tp(), $('input-messages').innerText];
-        set($('syntax'), 'att'); await done(() => $('run').click()); out.asmAtt = [tp(), $('code').value.split('\\n')[1], $('input-messages').innerText];
+        set($('syntax'), 'intel'); await example('chain'); out.asmChain = [tp(), $('input-messages').innerText, listing(), listingOpen()];
+        set($('syntax'), 'att'); await done(() => $('run').click()); out.asmAtt = [tp(), $('code').value.split('\\n')[1], listing()];
         set($('syntax'), 'intel');
         set($('code'), 'loop:\\n  vaddps ymm0, ymm1, ymm2\\n  frobnicate rax\\n  jmp loop\\n'); $('run').click(); await wait(1500);
         out.asmErr = [$('input-messages').innerText, $('code').getAttribute('aria-invalid')];
-        set($('code'), 'x:\\n  vaddps ymm0, ymm0, ymm1\\n  dec r15\\n  jnz x\\n'); await done(() => $('run').click()); out.asmAvx = [tp(), $('input-messages').innerText];
+        set($('code'), 'x:\\n  vaddps ymm0, ymm0, ymm1\\n  dec r15\\n  jnz x\\n'); await done(() => $('run').click()); out.asmAvx = [tp(), $('input-messages').innerText, listing()];
         set($('code'), '.data\\n  .byte 1\\n'); $('run').click(); await wait(1500); out.asmEmpty = $('input-messages').innerText;
         $('mode-hex').click(); await wait(50);
       } else {
@@ -339,11 +386,12 @@ try {
     check(r.failed === '' && r.notice === '' && r.build === manifest.version, 'real: the page starts with the real analyzer and shows the build', JSON.stringify([r.failed, r.notice, r.build]));
     check(requests.some((x) => x.includes('wuica_wasm.wasm')) && requests.some((x) => x.includes('data/arch/SKL.json')) && requests.some((x) => x.includes('js/engine-worker.js')), 'real: the analyzer, its worker and the selected table are fetched');
     check(r.examples === ',chain,loadstore,avx,stack', 'real: no mock-only examples', r.examples);
-    check(r.first.tp === '2.00' && !r.first.mock && /analyzed as a loop/.test(r.first.text) && /bottleneck\s+Dependencies/.test(r.first.text) && / ms\n/.test(r.first.text), 'real: the first example: 2.00 cycles, a loop, bottleneck Dependencies', r.first.text.slice(0, 300));
+    check(r.first.tp === '2.00' && !r.first.mock && /^loop · /m.test(r.first.text) && /bottleneck\s+Dependencies/.test(r.first.text) && / ms\n/.test(r.first.text), 'real: the first example: 2.00 cycles, a loop, bottleneck Dependencies', r.first.text.slice(0, 300));
     check(r.first.rows.length === 4 && r.first.rows[0] === 'add rax, 0x1|1|1|1|0.22|0.22|0.29|0.27' && r.first.rows[3] === 'jnz 0xfffffffffffffff5|M' && r.first.total === 'Total|3|3|3|0.5|0.52|0.52|1.47', 'real: the uop table equals the reference (rounded like uiCA, totals as in its "Total" line)', JSON.stringify([r.first.rows, r.first.total]));
     check(r.first.report.startsWith('Throughput (in cycles per iteration): 2.00\nBottleneck: Dependencies\n') && r.first.report.includes('│ Total'), 'real: the text report');
     check(r.loadstore[0] === '1.00' && r.loadstore[1] && /ALU0\|ALU1\|ALU2\|ALU3\|AGU0\|AGU1\|AGU2\|SD0$/.test(r.loadstore[2]) && r.loadstore[4] === '----M', 'real: load/store example on ZEN3 (1.00, Zen port names)', JSON.stringify(r.loadstore.slice(0, 6)));
     check(r.avx[0] === '4.00' && r.avx[1] && /Port 0\|Port 1\|Port 5\|Port 6\|Port B$/.test(r.avx[2]), 'real: AVX example on ADL-P (4.00, ports up to B)', JSON.stringify(r.avx.slice(0, 6)));
+    check(r.prototype[0] === 'prototype model' && r.prototype[1] === 'prototype model: less validated' && r.notPrototype[0] === '' && r.notPrototype[1] === '', 'real: a prototype model (ADL-P) is marked next to the menu and in the result; SKL is not', JSON.stringify([r.prototype, r.notPrototype]));
     check(r.stack[0] === '2.10' && r.stack[3] === 1 && /unknown/.test(r.stack[6].split('\n')[1]), 'real: stack example on SKL (2.10, a stack-sync row, bottleneck unknown)', JSON.stringify(r.stack.slice(0, 6)));
     check([r.loadstore, r.avx, r.stack].every((x) => x[5] <= 0) && r.overflow0 <= 0 && r.overflow1 <= 0 && r.tableScrolls[0] && r.tableScrolls[1] === 'auto', 'real: at 375px the page never scrolls sideways; the table scrolls in its container', JSON.stringify([r.overflow0, r.overflow1, r.tableScrolls]));
     check(r.fontSize[0] === '16px' && r.fontSize[1] === '15px' && /IBM Plex Mono/.test(r.fontSize[2]), 'real: font sizes', JSON.stringify(r.fontSize));
@@ -351,20 +399,20 @@ try {
     check(r.aligned[0] === '2.00' && r.aligned[1] && /Issue 0.75 Dependencies 2.00|Issue/.test(r.simpleFrontEnd[0]) && !/DSB|LSD|Decoder/.test(r.simpleFrontEnd[0]), 'real: alignment offset and simple front end reach the analyzer', JSON.stringify([r.aligned, r.simpleFrontEnd]));
     check(r.reset[0] === '2.00' && r.reset[1] === '---M', 'real: reset restores the default result', JSON.stringify(r.reset));
     check(/Analysis failed: no instructions found/.test(r.noInstr ?? ''), 'real: an error response is shown (no instructions)', r.noInstr);
-    check(/1 position could not be decoded/.test(r.partial[1]) && r.partial[2].includes('X'), 'real: decode errors and unsupported instructions are marked', JSON.stringify(r.partial));
-    check(/failed for this input/.test(r.crash) && r.afterCrash === '2.00', 'real: a crash of the analyzer is reported and the analyzer is restarted', JSON.stringify([r.crash, r.afterCrash]));
+    check(/1 undecodable position skipped/.test(r.partial[1]) && r.partial[2].includes('X'), 'real: decode errors and unsupported instructions are marked', JSON.stringify(r.partial));
+    check(/crashed on this input/.test(r.crash) && r.afterCrash === '2.00', 'real: a crash of the analyzer is reported and the analyzer is restarted', JSON.stringify([r.crash, r.afterCrash]));
     check(r.long[0] === 'Cancel' && r.long[1] === 'true' && r.long[2] >= 20, 'real: a long analysis runs in the worker: the page stays responsive', JSON.stringify(r.long));
     check(r.cancelled[0] === 'Analyze' && !r.cancelled[1] && r.cancelled[2] === 'cancelled' && r.afterCancel[0] === '2.00', 'real: Cancel stops it; the next analysis works', JSON.stringify([r.cancelled, r.afterCancel]));
     if (!manifest.assembler) {
-      check(/Assembly input is not available in this build yet/.test(r.asm[0]) && r.asm[1] && r.back[0] && !r.back[1], 'real: without the assembler, assembly mode says so and offers hex mode', JSON.stringify([r.asm, r.back]));
+      check(/No assembler in this build/.test(r.asm[0]) && r.asm[1] && r.back[0] && !r.back[1], 'real: without the assembler, assembly mode says so and offers hex mode', JSON.stringify([r.asm, r.back]));
       check(!requests.some((x) => x.includes('wuica_asm')), 'real: the missing assembler is not requested');
     } else {
       check(!/not available/.test(r.asm[0]) && !r.asm[1] && requests.some((x) => x.includes('wuica_asm.wasm')), 'real: the assembler is loaded when assembly mode is chosen', JSON.stringify([r.asm, requests.filter((x) => x.includes('asm'))]));
-      check(r.asmChain[0] === '2.00' && /^assembled: 13 bytes: 48 83 c0 01 48 83 c0 01 49 ff cf 75 f3$/.test(r.asmChain[1]), 'real: the chain example assembled (Intel) gives the hex result', JSON.stringify(r.asmChain));
-      check(r.asmAtt[0] === '2.00' && r.asmAtt[1] === '  addq $1, %rax' && /13 bytes: 48 83 c0 01/.test(r.asmAtt[2]), 'real: AT&T syntax', JSON.stringify(r.asmAtt));
+      check(r.asmChain[0] === '2.00' && r.asmChain[1] === '' && r.asmChain[2] === CHAIN && r.asmChain[3], 'real: the chain example assembled (Intel) gives the hex result; the listing is open and shows the bytes', JSON.stringify(r.asmChain));
+      check(r.asmAtt[0] === '2.00' && r.asmAtt[1] === '  addq $1, %rax' && r.asmAtt[2] === CHAIN, 'real: AT&T syntax', JSON.stringify(r.asmAtt));
       check(/^line 3:3: .*frobnicate|^line 3:3: invalid instruction/m.test(r.asmErr[0]) && r.asmErr[1] === 'true', 'real: assembler diagnostics with line and column', JSON.stringify(r.asmErr));
-      check(/^\d\.\d\d$/.test(r.asmAvx[0] ?? '') && /assembled: 9 bytes: c5 fc 58 c1 49 ff cf 75 f7/.test(r.asmAvx[1]), 'real: an AVX block typed in assembly is analyzed', JSON.stringify(r.asmAvx));
-      check(/no machine code/.test(r.asmEmpty), 'real: assembly without code in .text is reported', r.asmEmpty);
+      check(/^\d\.\d\d$/.test(r.asmAvx[0] ?? '') && r.asmAvx[1] === '' && /^ {3}0:  c5 fc 58 c1    vaddps ymm0, ymm0, ymm1\n {3}4:  49 ff cf       dec r15\n {3}7:  75 f7          jnz /.test(r.asmAvx[2]), 'real: an AVX block typed in assembly is analyzed', JSON.stringify(r.asmAvx));
+      check(/no machine code/i.test(r.asmEmpty), 'real: assembly without code in .text is reported', r.asmEmpty);
       check(r.back[0] && !r.back[1], 'real: back to hex mode');
     }
 
@@ -392,12 +440,12 @@ try {
       await wait(300); out.status = $('status').textContent; out.font = document.fonts.check('15px "IBM Plex Mono"');
       if (${!!manifest.assembler}) {
         $('mode-asm').click(); await wait(300); set($('syntax'), 'intel');
-        await example('chain'); out.asm = [tp(), $('input-messages').innerText];
+        await example('chain'); out.asm = [tp(), listing()];
       }
       return out;`);
     check(off.tp === '4.00' && off.arch === 'ADL-P' && off.build === manifest.version && off.real, 'offline: a shared link loads and is analyzed with the server stopped (also with a query string)', JSON.stringify(off));
     check(off.switched && off.font, 'offline: another microarchitecture (its table) and the font come from the cache', JSON.stringify(off));
-    if (manifest.assembler) check(off.asm?.[0] === '2.00' && /^assembled: 13 bytes/.test(off.asm?.[1] ?? ''), 'offline: assembly mode works (the assembler comes from the cache)', JSON.stringify(off.asm));
+    if (manifest.assembler) check(off.asm?.[0] === '2.00' && off.asm?.[1] === CHAIN, 'offline: assembly mode works (the assembler comes from the cache)', JSON.stringify(off.asm));
     const offProblems = page.take();
     check(offProblems.length === 0, 'offline: no console errors', offProblems.join('\n'));
     if (manifest.assembler) {
@@ -407,7 +455,7 @@ try {
       await page.goto(`${origin}/#v=1&m=asm&c=bG9vcDoKICBhZGQgcmF4LCAxCiAgZGVjIHIxNQogIGpueiBsb29wCg`);
       await page.waitFor(`document.getElementById('input-messages').innerText.includes('could not be loaded')`, 'the assembler load failure');
       const fail = await page.eval(`${HELPERS} return [$('input-messages').innerText, $('run').disabled];`);
-      check(/could not be loaded/.test(fail[0]) && !/not available in this build/.test(fail[0]) && fail[1] === false, 'offline: a missing assembler download is reported as such and can be retried', JSON.stringify(fail));
+      check(/could not be loaded/.test(fail[0]) && !/No assembler in this build/.test(fail[0]) && fail[1] === false, 'offline: a missing assembler download is reported as such and can be retried', JSON.stringify(fail));
       page.take(); // the failed fetch of wuica_asm.wasm is logged by the browser
     }
 

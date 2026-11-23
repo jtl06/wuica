@@ -7,10 +7,11 @@ import { MockEngine, recordedCases, SYNTHETIC_HEX, MOCK_ERROR_HEX } from '../web
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES, MOCK_EXAMPLES } from '../web/js/examples.js';
 import { parseHexInput } from '../web/js/hex-input.js';
-import { archGroups, INTEL_ORDER, ARCH_INFO } from '../web/js/archs.js';
+import { archGroups, ARCH_ORDER, ARCH_INFO } from '../web/js/archs.js';
 import { DEFAULT_STATE, encodeState, decodeState, clampInt } from '../web/js/url-state.js';
 import { WasmAssembler, parseDiagnostics, isWasm, stripHints } from '../web/js/assembler.js';
 import { MockAssembler } from '../web/js/assembler-mock.js';
+import { formatListing } from '../web/js/listing.js';
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -125,24 +126,58 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
   const g = archGroups({ configs: {
     SKL: { name: 'SKL', XEDName: 'SKYLAKE', experimental: false }, SNB: { name: 'SNB', XEDName: 'SANDYBRIDGE', experimental: false },
     RKL: { name: 'RKL', XEDName: 'ICE_LAKE', experimental: false }, CLX: { name: 'CLX', XEDName: 'CASCADE_LAKE', experimental: false },
+    ICL: { name: 'ICL', XEDName: 'ICE_LAKE', experimental: false },
     CLX_noLSD: { name: 'CLX', XEDName: 'CASCADE_LAKE', experimental: false }, CLX_SimplePorts_noMoveElim: { name: 'CLX', XEDName: 'CASCADE_LAKE', experimental: false },
     ICX: { name: 'ICX', XEDName: 'ICE_LAKE_SERVER', experimental: true }, ZEN3: { name: 'ZEN3', XEDName: 'ALL', experimental: true },
     'ADL-P': { name: 'ADL-P', XEDName: 'ALDER_LAKE', experimental: true }, NEW: { name: 'NEWT', XEDName: 'FUTURE', experimental: false }, ZEN4: { name: 'ZEN4', XEDName: 'ALL', experimental: true },
   } });
-  check(g.length === 2 && g[0].label === 'Intel' && g[1].label === 'Experimental (this fork)', 'archs: two groups');
-  check(g[0].items.map((i) => i.key).join() === 'RKL,CLX,SKL,SNB,NEW', 'archs: stock models newest first, unknown ones last', g[0].items.map((i) => i.key).join());
-  check(g[1].items.map((i) => i.key).join() === 'ZEN3,ADL-P,ICX,ZEN4', 'archs: experimental group', g[1].items.map((i) => i.key).join());
-  check(![...g[0].items, ...g[1].items].some((i) => i.key.includes('_')), 'archs: configurations with "_" are hidden');
-  check(g[0].items[0].title === 'RKL · Rocket Lake (2021)' && g[1].items[0].title === 'ZEN3 · AMD Zen 3' && g[0].items[4].title === 'NEW', 'archs: titles');
-  check(g[0].items[4].table === 'NEWT' && g[0].items[4].chip === 'FUTURE', 'archs: table and chip come from the configuration');
-  const years = INTEL_ORDER.map((k) => ARCH_INFO[k].year);
-  check(INTEL_ORDER.length === 12 && years.every((y, i) => i === 0 || y <= years[i - 1]), 'archs: the order is newest to oldest', years.join());
+  const keys = g[0].items.map((i) => i.key).join();
+  check(g.length === 1 && g[0].label === 'by release date', 'archs: one group');
+  check(keys === 'SNB,SKL,CLX,ICL,ZEN3,RKL,ICX,ADL-P,NEW,ZEN4', 'archs: in order of release, unknown ones last', keys);
+  check(!g[0].items.some((i) => i.key.includes('_')), 'archs: configurations with "_" are hidden');
+  const t = Object.fromEntries(g[0].items.map((i) => [i.key, i]));
+  check(t.ICL.title === 'ICL · Ice Lake client (2019)' && t.ICX.title === 'ICX · Ice Lake server (2021) · prototype' && t.ZEN3.title === 'ZEN3 · AMD Zen 3 (2020) · prototype' && t.NEW.title === 'NEW' && t.ZEN4.title === 'ZEN4 · prototype', 'archs: titles', JSON.stringify(g[0].items.map((i) => i.title)));
+  check(t.ICX.experimental && t.ZEN3.experimental && !t.ICL.experimental && !t.SKL.experimental, 'archs: prototypes are marked');
+  check(t.NEW.table === 'NEWT' && t.NEW.chip === 'FUTURE', 'archs: table and chip come from the configuration');
+  const years = ARCH_ORDER.map((k) => ARCH_INFO[k].year);
+  check(ARCH_ORDER.length === 15 && years.every((y, i) => i === 0 || y >= years[i - 1]), 'archs: the order is oldest to newest', years.join());
   check(archGroups(null).length === 0, 'archs: no data');
   if (exists('data/uarch.json')) {
     const real = archGroups(JSON.parse(fs.readFileSync(new URL('data/uarch.json', root))));
-    check(real[0].items.map((i) => i.key).join() === INTEL_ORDER.join() && real[1].items.map((i) => i.key).join() === 'ZEN3,ADL-P,ICX', 'archs: the real uarch.json', JSON.stringify(real.map((x) => x.items.map((i) => i.key))));
-    check([...real[0].items, ...real[1].items].every((i) => exists(`data/arch/${i.table}.json`)), 'archs: every listed model has its table in data/arch');
+    check(real.length === 1 && real[0].items.map((i) => i.key).join() === ARCH_ORDER.join(), 'archs: the real uarch.json', JSON.stringify(real.map((x) => x.items.map((i) => i.key))));
+    check(real[0].items.every((i) => exists(`data/arch/${i.table}.json`)), 'archs: every listed model has its table in data/arch');
   }
+}
+
+// --- objdump listing ------------------------------------------------------------------------------------------------
+{
+  const m = new MockEngine();
+  await m.loadUarch(JSON.stringify(UARCH));
+  await m.loadArch('SKL', '{}');
+  const chain = await m.analyze(makeRequest(EXAMPLES[0].hex, 'SKL'));
+  const l = formatListing(chain.rows);
+  check(l.text === '   0:  48 83 c0 01    add rax, 0x1\n   4:  48 83 c0 01    add rax, 0x1\n   8:  49 ff cf       dec r15\n   b:  75 f3          jnz 0xfffffffffffffff5\n', 'listing: the first example, objdump style', JSON.stringify(l.text));
+  check(l.lines.map((x) => x.offset).join() === '0,4,8,11' && l.lines[3].bytes === '75 f3', 'listing: offsets and bytes (the macro-fused branch is its own line)', JSON.stringify(l.lines));
+  check(parseHexInput(l.text).hex === EXAMPLES[0].hex, 'listing: pasted into the hex input it gives the same machine code');
+  for (const c of recordedCases()) {
+    await m.loadArch(c.arch, '{}');
+    const r = await m.analyze(makeRequest(c.hex, c.arch));
+    const t = formatListing(r.rows);
+    const instrs = r.rows.filter((x) => x.kind === 'instr');
+    check(t.lines.length === instrs.length && t.lines.every((x, i) => x.text === instrs[i].label), `listing ${c.source}/${c.arch}: one line per instruction`);
+    check(parseHexInput(t.text).hex === instrs.map((x) => x.opcode).join('').toLowerCase(), `listing ${c.source}/${c.arch}: round trip through the hex input`);
+  }
+  const syn = await m.analyze(makeRequest(SYNTHETIC_HEX, 'SKL'));
+  const st = formatListing(syn.rows);
+  check(syn.rows.some((x) => x.kind !== 'instr') && st.lines.length === syn.rows.filter((x) => x.kind === 'instr').length && !/Uop/.test(st.text), 'listing: regMerge/stackSync rows are not instructions', st.text);
+  check(syn.rows.some((x) => x.notes === 'M') && st.lines.some((x) => x.text === syn.rows.find((y) => y.notes === 'M').label), 'listing: the macro-fused row is listed');
+  // offsets grow past four digits; a 15-byte instruction; no rows
+  const many = Array.from({ length: 5000 }, () => ({ kind: 'instr', opcode: '4883C001', label: 'add rax, 0x1' }));
+  many.push({ kind: 'instr', opcode: '26663E2E6567F0F2F348C7841100000000FF', label: 'long' }, { kind: 'stackSync', label: '<Stack Sync Uop>' });
+  const big = formatListing(many);
+  const last = big.text.trimEnd().split('\n').at(-1);
+  check(big.lines.length === 5001 && last.startsWith('4e20:  26 66 3e') && big.text.startsWith('   0:  48 83 c0 01') && big.lines[5000].bytes.split(' ').length === 18, 'listing: wide offsets, long instructions', last);
+  check(formatListing([]).text === '' && formatListing(null).lines.length === 0, 'listing: nothing to list');
 }
 
 // --- URL state ------------------------------------------------------------------------------------------------------
