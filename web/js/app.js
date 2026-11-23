@@ -21,6 +21,8 @@ import { createInsight } from './insight-view.js';
 import { createPool, poolSize, tableCap } from './pool.js';  // workers for the views with many analyses
 import { createConverter } from './asm-text.js';  // hex <-> asm
 import { createViews } from './views.js';         // the opt-in views below the result
+import { withRegions } from './asm-regions.js';     // marked regions and .loc lines of pasted assembly
+import { createRegionChip } from './region-chip.js';
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -118,7 +120,9 @@ const insight = createInsight({
   pool: () => getPool(),
   onToggle: () => { const o = insight.open(); state.cost = o.cost; state.costNop = o.cost && o.nop; syncUrl(true); },
 });
-const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o), onToggle: (open) => { Object.assign(state, open); syncUrl(true); }, getSel: () => state.sel, getSource: () => ceSource });
+let pastedSource = null; // the .loc lines of pasted assembly (asm-regions.js), bound to its bytes
+const regionChip = createRegionChip(el.messages, (line) => selectLine(line));
+const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o), onToggle: (open) => { Object.assign(state, open); syncUrl(true); }, getSel: () => state.sel, getSource: () => (ceSource && (!pastedSource || ceSource.hex === lastView?.hex) ? ceSource : pastedSource) });
 // The trace (trace.js), below both panes; linked to the uop table (trace-link.js). Its open state and the selected row
 // are in the URL.
 const traceOpened = (open) => { if (state.trace === open) return; state.trace = open; syncUrl(true); };
@@ -375,6 +379,7 @@ function scheduleRun() {
 // ---- messages next to the input ---------------------------------------------------------------------------------
 
 function clearMessages() {
+  regionChip.show(null);
   el.messages.replaceChildren();
   delete el.messages.dataset.key;
   el.code.removeAttribute('aria-invalid');
@@ -442,7 +447,7 @@ function setMode(mode, converted = null) { // converted: the code in the new for
 }
 
 function ensureAssembler() {
-  assemblerPromise ??= (async () => {
+  assemblerPromise ??= (async () => withRegions(await (async () => {
     if (manifest.assembler !== false) { // false: build.sh found no module, so do not even ask for it
       try {
         const bytes = await download('assembler', PATHS.assembler);
@@ -466,7 +471,7 @@ function ensureAssembler() {
     }
     assemblerMissing = true;
     return null;
-  })();
+  })()))();
   return assemblerPromise;
 }
 
@@ -620,6 +625,7 @@ function draw() {
 
 async function machineCode(id) {
   const text = el.code.value;
+  pastedSource = null; regionChip.show(null);
   if (state.mode === 'hex') {
     const p = parseHexInput(text);
     if (!p.ok) {
@@ -653,6 +659,7 @@ async function machineCode(id) {
   if (r.ok && r.bytes.length === 0) items.push({ line: null, column: null, severity: 'error', message: 'No machine code' });
   if (r.ok && r.bytes.length && assembler.mock) items.push({ line: null, column: null, severity: 'note', message: 'mock assembler' });
   if (items.length) showMessages(items); else clearMessages();
+  if (r.ok && r.bytes.length) { regionChip.show(r.region ?? null); pastedSource = r.source ? { ...r.source, hex: toHex(r.bytes) } : null; }
   return r.ok && r.bytes.length ? r.bytes : null;
 }
 

@@ -1,0 +1,7 @@
+/* The marked-region chip next to the input's messages (js/region-chip.js). Colours only from the theme's custom properties. */
+
+.region-chip { display: inline-block; margin-top: 0.3rem; padding: 0 0.6ch; max-width: 100%; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; color: var(--description); border: 1px solid var(--border);
+  background: var(--surface); text-decoration: none; font-variant-numeric: tabular-nums; }
+.region-chip:hover { color: var(--text); }
+.region-chip[hidden] { display: none; }
