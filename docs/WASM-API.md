@@ -191,7 +191,7 @@ as without it, byte for byte (`crates/wuica/tests/details.rs` checks this on eve
   steady-state window (one round). Issue runs ahead of retirement until the reorder buffer or the scheduler is full, and the
   simulation of `minCycles` often ends before that (about a quarter of random blocks, e.g. `mov rax, [rax]; dec rcx; jnz` on
   ADL-P: 48 iterations issued in 16 cycles). Then, without `includeTrace`, the log is that of a longer simulation (8 or 64
-  times `minCycles`, at most about 10^6 instructions; the rest of the response is still that of the simulation of
+  times `minCycles`, at most 250,000 instructions simulated, and only if longer than the simulation was; the rest of the response is still that of the simulation of
   `minCycles`): `cycles / iterations` is the throughput (within 3 % and two cycles) but in about 1 % of random blocks. With
   `includeTrace`, the log is that of the trace's cycles (`first` is a cycle of the trace), also when it is warm-up.
   With `simpleFrontEnd`, the front end delivers the unfused uops one by one (as uiCA's simple front end): `issued` counts
@@ -204,7 +204,7 @@ Speed (`crates/wuica/examples/phases.rs` with `DETAILS=1`; `tests-js/analyze_fix
 more time per analysis natively and 11 % in WebAssembly for small blocks, about 27 % for the 2,949-instruction SHA-256
 example (18.5 → 23.5 ms natively: building the details, and their JSON); a request without the flag is as fast as before.
 A block whose issue had not reached the steady state takes one or two longer simulations more (8 and 64 times `minCycles`,
-limited to about 10^6 instructions: at most about 0.25 s natively; the page's examples: under 2 ms).
+limited to 250,000 instructions simulated: a few tens of ms natively; the page's examples: under 2 ms).
 
 ## Assembler
 

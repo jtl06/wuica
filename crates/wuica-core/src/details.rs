@@ -322,8 +322,8 @@ pub fn window_is_steady(cycles: i64, iterations: i64, tp: f64) -> bool {
     (cpi - tp).abs() <= 0.03 * tp + 2.0 / iterations as f64
 }
 
-/// the most instructions (instructions × iterations) a longer simulation for the issue log may simulate (about 0.25 s natively)
-const STEADY_BUDGET: f64 = 1.0e6;
+/// the most instructions (instructions × iterations) a longer simulation for the issue log may simulate (a few tens of ms natively; the first result is kept meanwhile, so it also bounds the memory)
+const STEADY_BUDGET: f64 = 2.5e5;
 
 /// With details (and no trace, whose cycles the issue log must match): if the issue log of `sim` is not in the steady state, the
 /// log of a longer simulation (8 and 64 times minCycles) that is; the main result is not changed (`sim` keeps its throughput
@@ -342,10 +342,16 @@ pub fn steady_issue_log(instrs: &InstrList, config: &UArchConfig, uarch: &crate:
     let mut best = off(log, sim.tp);
     let n = instrs.instrs.len().max(1) as f64;
     let base = options.min_cycles.max(500);
+    // the cycles simulated already (the simulation also runs until minIterations are done)
+    let simulated = log.issued.len() as i64;
     for factor in [8, 64] {
         let min_cycles = base * factor;
-        // the instructions a simulation of min_cycles runs at about the throughput: (min_cycles / tp) iterations of n
-        if n * min_cycles as f64 / sim.tp.max(0.25) > STEADY_BUDGET {
+        if min_cycles <= simulated {
+            continue; // the same simulation again
+        }
+        // the instructions a simulation of min_cycles runs: at least minIterations iterations, else (min_cycles / tp), of n
+        let iterations = (options.min_iterations.max(1) as f64).max(min_cycles as f64 / sim.tp.max(0.25));
+        if n * iterations > STEADY_BUDGET {
             return;
         }
         let longer = crate::sim::SimOptions { min_cycles, ..options.clone() };
