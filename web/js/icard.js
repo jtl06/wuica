@@ -34,8 +34,9 @@ export function layout(response, alignmentOffset = 0) {
 }
 const crosses = (offset, length) => [16, 32, 64].filter((b) => length > 0 && Math.floor(offset / b) !== Math.floor((offset + length - 1) / b));
 
-// The badges of each row: [{row, hz: 'µ 64', title}] for the rows that have any.
-export function hazards(response, alignmentOffset = 0) {
+// The badges of each row: [{row, hz: 'µ 64 L', title}] for the rows that have any. With the details (once a card or the
+// bound view fetched them): L, a length-changing prefix.
+export function hazards(response, alignmentOffset = 0, details = null) {
   const lay = layout(response, alignmentOffset);
   const out = [];
   for (const [row, { offset, length }] of lay) {
@@ -44,6 +45,7 @@ export function hazards(response, alignmentOffset = 0) {
     if (ms > 0) { marks.push('µ'); titles.push(`microcoded: ${fmt(ms)} uops/iteration from the microcode sequencer`); }
     // (a block that is not a loop is unrolled: its copies sit at other offsets, so only a loop's lines are marked)
     if (response.mode === 'loop' && crosses(offset, length).includes(64)) { marks.push('64'); titles.push(`crosses a 64-byte line (bytes ${offset}–${offset + length - 1} at alignment ${Number(alignmentOffset) || 0})`); }
+    if (details?.rows?.[row]?.lcp) { marks.push('L'); titles.push('length-changing prefix: the predecoder stalls'); }
     if (marks.length) out.push({ row, hz: marks.join(' '), title: titles.join('\n') });
   }
   return out;
@@ -112,6 +114,8 @@ const STICK_ROWS = 24; // a longer table: the card sticks to the bottom of the w
 export function createICard(env) {
   let root = null, view = null, card = null, shown = -1, closed = false;
   const bound = new WeakSet();
+  // the details arrived (a card, the bound view): the badges that need them
+  env.details?.onLoad?.((v) => { if (v === view && root && ok() && table()) badges(); });
 
   const table = () => root?.querySelector('table.uops');
   const trs = () => table()?.tBodies[0]?.rows ?? [];
@@ -121,11 +125,14 @@ export function createICard(env) {
 
   function badges() {
     const rows = trs();
-    for (const { row, hz, title } of hazards(view.response, align())) {
+    const d = env.details?.peek(view) ?? null;
+    for (const { row, hz, title } of hazards(view.response, align(), d)) {
       const td = rows[row]?.querySelector('td.note');
       if (!td) continue;
+      if (td.dataset.hz === hz) continue;
       td.dataset.hz = hz;
-      td.title = [td.title, title].filter(Boolean).join('\n');
+      td.dataset.hzTitle ??= td.title;
+      td.title = [td.dataset.hzTitle, title].filter(Boolean).join('\n');
     }
   }
 

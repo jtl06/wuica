@@ -59,7 +59,9 @@ const isCancel = (e) => e?.name === 'CancelledError';
 export function createDetails(env) {
   const done = new WeakMap();    // view -> details | null
   const pending = new WeakMap(); // view -> promise
+  const listeners = [];          // (view, details): details arrived (for any of the views that asked)
   return {
+    onLoad(f) { listeners.push(f); },
     peek(view) { return done.get(view); }, // undefined: not fetched
     get(view) {
       if (!view) return Promise.resolve(null);
@@ -73,6 +75,7 @@ export function createDetails(env) {
           const res = await env.engine().analyze({ ...view.request, details: true });
           const d = detailsFit(r, res) ? res.details : null;
           done.set(view, d);
+          if (d) for (const f of listeners) { try { f(view, d); } catch { /* a view's problem */ } }
           return d;
         } catch (e) {
           if (!isCancel(e)) done.set(view, null);

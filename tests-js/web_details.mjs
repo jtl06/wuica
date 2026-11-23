@@ -52,6 +52,7 @@ const near = (a, b, eps = 1e-9) => Math.abs(a - b) < eps;
   check(hz.length === 2 && hz[0].row === 0 && hz[0].hz === '64' && hz[1].row === 2 && hz[1].hz === 'µ', 'badges: a line split, a microcoded instruction', JSON.stringify(hz));
   check(hazards(r, 0).map((x) => x.hz).join() === 'µ', 'badges: no split at offset 0');
   check(hazards({ ...r, mode: 'unroll' }, 52).map((x) => x.hz).join() === 'µ', 'badges: no line split for an unrolled block (its copies sit elsewhere)');
+  check(hazards(r, 52, { rows: [null, null, { lcp: true }, null] }).map((x) => x.hz).join() === '64,µ L', 'badges: LCP once the details are there');
   check(cardModel(r, 1, null) === null && cardModel(r, 9, null) === null, 'card: none for the extra uops');
   const basic = cardModel(r, 0, null, 52);
   check(basic.length === 14 && basic.crosses.join() === '16,32,64' && !basic.details && basic.issued === 1, 'card: without details, from the response', JSON.stringify(basic));
