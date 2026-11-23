@@ -63,8 +63,8 @@ for (const ex of EXAMPLES) want[ex.id] = { remove: await expectedCost(ex, 'remov
 check(JSON.stringify(want.chain.remove.slice(0, 3)) === JSON.stringify(CHAIN_REMOVE.map((r) => fmt(r.tp - 2))), 'node: the chain example, removal', JSON.stringify([want.chain.remove, CHAIN_REMOVE.map((r) => r.tp)]));
 check(JSON.stringify(want.chain.nop.slice(0, 3)) === JSON.stringify(CHAIN_NOP.map((r) => fmt(Math.round((r.tp - 2) * 100) / 100))), 'node: the chain example, NOPs', JSON.stringify([want.chain.nop, CHAIN_NOP.map((r) => r.tp)]));
 
-// a large block: 400 x add rax, rbx; dec r15; jnz (rel32)
-const BIG_BODY = '4801d8'.repeat(400) + '49ffcf';
+// a large block: 1000 x add rax, rbx; dec r15; jnz (rel32): about 100 times the budget of 2 s (0.2 s per analysis today)
+const BIG_BODY = '4801d8'.repeat(1000) + '49ffcf';
 const BIG = BIG_BODY + '0f85' + (0x100000000 - (BIG_BODY.length / 2 + 6)).toString(16).padStart(8, '0').match(/../g).reverse().join('');
 
 // ---- server and browser (as in web_trace_browser.mjs) ---------------------------------------------------------------------
@@ -221,7 +221,7 @@ try {
       await wait(100);
       out.off = body().dataset.cost;
       return out;`);
-    check(r.button === 'compute (401 analyses)' && r.cells.join() === '…,…' && r.running && r.off === 'off', 'cost: a large block waits for a click, then runs; off stops it', JSON.stringify(r));
+    check(r.button === 'compute (1001 analyses)' && r.cells.join() === '…,…' && r.running && r.off === 'off', 'cost: a large block waits for a click, then runs; off stops it', JSON.stringify(r));
     check(page.problems.length === 0, 'no console errors (large block)', page.problems.join('\n'));
     await page.cmd('Page.close');
   }

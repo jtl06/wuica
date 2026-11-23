@@ -123,6 +123,28 @@ if (!fs.existsSync(wasm) || !fs.existsSync(new URL('data/uarch.json', root))) {
   const other = await e.analyze(makeRequest(chainEx.hex.slice(0, -2) + '80', 'SKL'));
   check(other.tp === r.tp && other.mode === 'loop', 'real: the displacement of the loop branch does not change the result');
 
+  // a macro-fused pair in the middle (cmp rax, rbx; jz +0; add rax, 1; dec r15; jnz): removed together
+  {
+    const mid = '4839d874004883c00149ffcf75f2';
+    const base = await e.analyze(makeRequest(mid, 'SKL'));
+    const u = costUnits(base, mid);
+    check(base.rows.map((x) => x.notes).join() === ',M,,,M' && u.units.map((x) => x.rows.join('+')).join(' ') === '0+1 2 3 4', 'real: a fused pair in the middle is one unit', JSON.stringify(u.units));
+    const results = new Map();
+    for (const j of costJobs(u.units, mid)) results.set(j.unit, summarize(await e.analyze(makeRequest(j.hex, 'SKL'))));
+    const cells = costCells(base, u, results);
+    const pair = await e.analyze(makeRequest('4883c00149ffcf75f2', 'SKL')); // hard-coded: without cmp and jz
+    check(cells[0].delta === delta(pair.tp, base.tp) && cells[1].text === '↑' && cells[4].text === '—', 'real: the pair\'s Δ is that of the block without both', JSON.stringify([cells.map((c) => c.text), pair.tp, base.tp]));
+  }
+  // an unrolled block: every instruction can go; undecodable bytes: no cost column
+  {
+    const un = '4801d84801c3';
+    const base = await e.analyze(makeRequest(un, 'SKL'));
+    const u = costUnits(base, un);
+    check(base.mode === 'unroll' && u.ok && u.units.every((x) => !x.fixed) && costJobs(u.units, un).map((j) => j.hex).join() === '4801c3,4801d8', 'real: an unrolled block');
+    const bad = await e.analyze(makeRequest('4801d806', 'SKL'));
+    check(bad.decodeErrors > 0 && !costUnits(bad, '4801d806').ok, 'real: no cost column with undecodable bytes', JSON.stringify(bad.rows?.map((x) => x.opcode)));
+  }
+
   // the cost column of every example, against independent analyses of the modified blocks
   for (const ex of EXAMPLES) {
     for (const variant of ['remove', 'nop']) {
