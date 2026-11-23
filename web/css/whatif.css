@@ -1,0 +1,16 @@
+/* What-if experiments (js/whatif.js). Colours only from the theme's custom properties. */
+
+.wi-body:empty { display: none; }
+.wi-body { margin-top: 0.4rem; }
+.wi-body .table-wrap { width: fit-content; max-width: 100%; }
+.wi-wait { margin-bottom: 0.35rem; }
+.wi-table { width: auto; }
+.wi-table tbody th { color: var(--code); cursor: help; }
+.wi-table td.wi-tp { min-width: 7ch; }
+.wi-table td.wi-d, .wi-table td.wi-x { min-width: 7ch; color: var(--subtle); }
+.wi-table td.neg { color: var(--heading); }
+.wi-table td.pos { color: var(--caveat); }
+.wi-table td.hint { cursor: help; }
+.wi-table td.wi-link { text-align: center; }
+.wi-open { text-decoration: none; padding: 0 0.4ch; }
+.wi-body[data-state="running"] .wi-table, .wi-body[data-state="queued"] .wi-table { opacity: 0.85; }

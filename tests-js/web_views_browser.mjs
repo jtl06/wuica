@@ -176,7 +176,7 @@ try {
       out.reopened = [hot().length > 0, /[#&]bound=1(&|$)/.test(location.hash)];
       return out;`);
     const lim = Object.fromEntries(want.limits.map((l) => [l.name, l.tp]));
-    check(r.tp === '2.00' && r.open && r.label === 'bound' && r.afterSweep === 'sweep-row', 'bound: a row before the sweep, open from the link', JSON.stringify(r));
+    check(r.tp === '2.00' && r.open && r.label === 'bound' && r.afterSweep === 'whatif-row', 'bound: a row before the experiments and the sweep, open from the link', JSON.stringify(r));
     check(r.summary === `by resource · next DSB ≤×${(want.tp / lim.DSB).toFixed(1)}`, 'bound: the summary names the next limit and the speedup at best', r.summary);
     // in groups: front end, issue, ports (the limit, then each port), chain
     const expItems = [...want.limits.filter((l) => l.name !== 'Dependencies').map((l) => [l.name, pct(l.tp / want.tp)])];
@@ -230,15 +230,79 @@ try {
     console.log(`bound: SHA-256: long tasks while opening ${JSON.stringify(r.long)} ms, switch ${r.switchMs.toFixed(1)} ms; chain top rows ${order.join(',')}`);
   }
 
+  // --- what if: the chain example, with and without the worker pool, against analyses made here ------------------------------
+  {
+    const chain = ex('chain');
+    // the listing's instructions: add, add | dec, jnz (macro-fused on SKL): the body is the two adds
+    const lines = chain.text.hex.trimEnd().split('\n').map((l) => l.split(/:\s+/)[1].split(/\s{2,}/)[0].replace(/ /g, ''));
+    const body = lines.slice(0, 2).join(''), tail = lines.slice(2).join('');
+    const base = await analyze(chain.hex);
+    const f = (x) => x.toFixed(2);
+    const d = (x) => (Math.abs(x) < 0.005 ? '0.00' : `${x < 0 ? '−' : '+'}${Math.abs(x).toFixed(2)}`);
+    const want = [];
+    for (const n of [2, 4, 8]) { const r = await analyze(body.repeat(n) + tail); want.push([`unroll${n}`, f(r.tp / n), d(r.tp / n - base.tp), `×${(base.tp / (r.tp / n)).toFixed(2)}`]); }
+    for (const k of ['simpleFrontEnd', 'noMacroFusion', 'noMicroFusion']) { const r = await analyze(chain.hex, 'SKL', { [k]: true }); want.push([k, f(r.tp), d(r.tp - base.tp), `×${(base.tp / r.tp).toFixed(2)}`]); }
+    const others = base.limits.filter((l) => l.name !== 'Dependencies').map((l) => l.tp);
+    want.push(['nochain', `≈${f(Math.max(...others))}`, d(Math.max(...others) - base.tp), `×${(base.tp / Math.max(...others)).toFixed(2)}`]);
+    const read = `
+      await until(() => document.querySelector('#whatif .wi-body')?.dataset.state === 'done', 20000);
+      const rows = [...document.querySelectorAll('.wi-table tbody tr')].map((tr) => [tr.dataset.id, ...[...tr.querySelectorAll('td')].slice(0, 3).map((td) => td.textContent)]);`;
+    const out = {};
+    for (const pool of ['', '&pool=0']) {
+      await page.goto(`${origin}/?nosw=1${pool}#v=1&whatif=1&c=${b64(chain.text.hex)}`);
+      await page.result();
+      out[pool || 'pool'] = await page.eval(`${HELPERS} ${read}
+        const a = document.querySelector('.wi-table tr[data-id="unroll2"] a.wi-open'); a.dispatchEvent(new Event('focus'));
+        return { rows, label: $('whatif-row').querySelector('.label').textContent, href: a.getAttribute('href'), target: a.target, hash: location.hash, order: [...$('more').children].map((e) => e.id) };`);
+    }
+    for (const [k, r] of Object.entries(out)) {
+      check(JSON.stringify(r.rows) === JSON.stringify(want), `what if (${k}): every experiment equals an analysis made here`, JSON.stringify([r.rows, want]));
+    }
+    const r = out.pool;
+    check(r.label === 'try' && /[#&]whatif=1(&|$)/.test(r.hash) && r.order.join() === 'bound-row,whatif-row,sweep-row,trace-slot', 'what if: a row "try" after "bound", open from the link', JSON.stringify(r));
+    const { decodeState } = await import('../web/js/url-state.js');
+    const s = decodeState(r.href.split('#')[1]);
+    check(r.target === '_blank' && s.mode === 'hex' && s.text.replace(/ /g, '') === body.repeat(2) + tail && s.arch === 'SKL', 'what if: a variant opens in a new tab as machine code', r.href);
+    // closed: nothing runs; the A–B mode hides it
+    await page.goto(`${origin}/?nosw=1#v=1&c=${b64(chain.text.hex)}`);
+    await page.result();
+    const c = await page.eval(`${HELPERS} await wait(300); return [$('whatif').open, $('whatif').querySelector('.wi-body').dataset.state, document.querySelectorAll('.wi-table').length];`);
+    check(c[0] === false && c[1] === 'closed' && c[2] === 0, 'what if: closed by default, nothing analyzed', JSON.stringify(c));
+    await page.shot('whatif-chain.png');
+  }
+
+  // --- what if: SHA-256: the main thread stays free; unroll ×2 as analyzed here -----------------------------------------------
+  {
+    const sha = (await import('../web/js/examples.js')).SHOWCASE_EXAMPLES[0];
+    await page.goto(`${origin}/?nosw=1`);
+    await page.ready();
+    const r = await page.eval(`${HELPERS}
+      await done(() => set($('examples'), 'sha256'));
+      const long = []; new PerformanceObserver((l) => { for (const e of l.getEntries()) long.push(Math.round(e.duration)); }).observe({ type: 'longtask' });
+      const t0 = performance.now();
+      document.querySelector('#whatif summary').click();
+      await until(() => ['waiting', 'done'].includes(document.querySelector('#whatif .wi-body')?.dataset.state) || document.querySelector('.wi-go'), 120000);
+      const waited = !!document.querySelector('.wi-go');
+      document.querySelector('.wi-go')?.click();
+      await until(() => document.querySelector('#whatif .wi-body')?.dataset.state === 'done', 180000);
+      return { waited, ms: Math.round(performance.now() - t0), long: [...long], u2: document.querySelector('.wi-table tr[data-id="unroll2"] td').textContent };`);
+    // the block's instructions as the analyzer decodes them; the last two (dec rdx; jnz) are the macro-fused branch
+    const ops = (await analyze(sha.hex)).rows.filter((x) => x.kind === 'instr').map((x) => x.opcode.toLowerCase());
+    const u = ops.slice(0, -2).join('').repeat(2) + ops.slice(-2).join('');
+    const want = (await analyze(u, 'SKL')).tp / 2;
+    check(r.long.every((ms) => ms < 100) && r.u2 === want.toFixed(2), 'what if: SHA-256: no long task on the page; unroll ×2 equals an analysis made here', JSON.stringify([r, want]));
+    console.log(`what if: SHA-256: ${r.waited ? 'waited for a click, then ' : ''}all experiments in ${r.ms} ms; long tasks ${JSON.stringify(r.long)}`);
+  }
+
   // --- layout: no sideways scrolling with the views open, both themes -------------------------------------------------------
   {
     const out = [];
     for (const [w, hgt, theme] of [[320, 640, 'light'], [375, 812, 'light'], [768, 1024, 'dark'], [1440, 900, 'dark'], [2560, 1440, 'light']]) {
       await page.size(w, hgt);
       await page.theme(theme);
-      await page.goto(`${origin}/?nosw=1#v=1&m=asm&bound=1&c=${b64(ex('dot1').text.intel)}`);
+      await page.goto(`${origin}/?nosw=1#v=1&m=asm&bound=1&whatif=1&c=${b64(ex('dot1').text.intel)}`);
       await page.result();
-      out.push(await page.eval(`${HELPERS} await until(() => document.querySelector('.bd-item')); return { w: ${w}, o: overflow(), bg: getComputedStyle(document.documentElement).backgroundColor };`));
+      out.push(await page.eval(`${HELPERS} await until(() => document.querySelector('.bd-item') && document.querySelector('#whatif .wi-body')?.dataset.state === 'done'); return { w: ${w}, o: overflow(), bg: getComputedStyle(document.documentElement).backgroundColor };`));
     }
     check(out.every((m) => m.o <= 0), 'layout: no sideways scrolling from 320 to 2560 px with the views open', JSON.stringify(out));
     check(out[0].bg !== out[2].bg, 'layout: both themes', JSON.stringify(out.map((m) => m.bg)));
