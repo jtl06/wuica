@@ -52,7 +52,7 @@ false sharing (perf c2c), sampling confidence, call trees and flame graphs.
 Every new view is opt-in (closed by default, computed only when opened, its open state in the URL); the default result
 is unchanged except for three small copy buttons next to the cost toggle. The views are rows of the "more" section below
 the panes (hidden in A–B mode, like the sweep and the trace). Shared files touched: app.js (an import, one createViews()
-call, one line in writeControls, one in draw), url-state.js (five flags), index.html (five stylesheet links).
+call, one line in writeControls, one in draw), url-state.js (four view flags: bound, whatif, codemap, deps), index.html (five stylesheet links).
 
 | View | Row | Module | URL | What |
 |---|---|---|---|---|
