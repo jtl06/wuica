@@ -125,7 +125,9 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
   check(['dot1', 'dot4'].every((id) => CLASSIC_EXAMPLES.some((e) => e.id === id)), 'examples: the A–B demo pair exists');
   for (const ex of SHOWCASE_EXAMPLES) {
     const p = parseHexInput(ex.text.hex);
-    check(ex.hexOnly && p.ok && p.hex === ex.hex && !ex.text.intel && !all.some((e) => e.id === ex.id), `example ${ex.id}: hex only, parses to its machine code`);
+    const asm = typeof ex.asm === 'function' ? await ex.asm() : null;
+    check(!ex.hexOnly && p.ok && p.hex === ex.hex && typeof asm === 'string' && asm.startsWith('loop:\n') && /\n {2}jnz loop\n$/.test(asm) && !all.some((e) => e.id === ex.id),
+      `example ${ex.id}: its hex parses to its machine code; its Intel assembly loads on request (showcase-asm.js)`);
   }
   for (const ex of all) {
     const p = parseHexInput(ex.text.hex);

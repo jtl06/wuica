@@ -200,10 +200,10 @@ export function createDeps(env) {
       const nb = neighbours(g, i);
       const name = (x) => `${short(g.nodes[x.node].label, 28)}${x.dist ? ' ↻' : ''}`;
       const sv = slack ? fmtSlack(slack[i]) : '';
-      info.replaceChildren(h('span', { class: 'code', text: g.nodes[i].label }),
+      info.replaceChildren(...[h('span', { class: 'code', text: g.nodes[i].label }),
         sv ? h('span', { class: 'dp-s', title: 'slack: cycles it could be delayed in every iteration without lengthening the chain', text: ` slack ${sv}` }) : null,
         nb.reads.length ? h('span', { class: 'dp-r' }, ' ← ', nb.reads.map(name).join(', ')) : null,
-        nb.feeds.length ? h('span', { class: 'dp-f' }, ' → ', nb.feeds.map(name).join(', ')) : null);
+        nb.feeds.length ? h('span', { class: 'dp-f' }, ' → ', nb.feeds.map(name).join(', ')) : null].filter(Boolean)); // (replaceChildren writes a null as "null")
     };
     const select = (i, jump = false) => {
       sel = Math.max(0, Math.min(n - 1, i));
@@ -265,7 +265,7 @@ export function createDeps(env) {
     const instrs = r.rows.filter((x) => x.kind === 'instr').length;
     const est = traceEstimate(instrs, v.request);
     if (est > TRACE_LIMIT && forcedKey !== key) {
-      const b = h('button', { type: 'button', class: 'plain', text: `trace ${instrs.toLocaleString('en-US')} instructions` , title: `a trace of about ${est.toLocaleString('en-US')} uops` });
+      const b = h('button', { type: 'button', class: 'plain', text: `trace ${instrs.toLocaleString('en-US')} instructions` , title: `a trace of about ${est.toLocaleString('en-US')} uops`, 'data-gate': '' });
       b.addEventListener('click', () => { forcedKey = key; update(); });
       body.replaceChildren(h('p', null, b));
       body.dataset.state = 'waiting';

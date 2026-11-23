@@ -1,0 +1,13 @@
+/* The llvm-mca view (mca.js) */
+.mca-tools { display: flex; flex-wrap: wrap; gap: 0.25rem 1.5rem; color: var(--subtle); margin-bottom: 0.35rem; }
+.mca-opt { cursor: pointer; }
+.mca-head { margin-bottom: 0.35rem; }
+.mca-tp b { font-weight: 400; color: var(--heading); font-size: 1.15em; }
+.mca-vs { color: var(--description); }
+.mca-near { color: var(--accent); }
+.mca-far { color: var(--caveat); }
+.mca-out {
+  margin: 0; max-height: 34rem; overflow: auto; background: var(--surface); border: 1px solid var(--border);
+  padding: 0.4rem 0.6rem; color: var(--description); white-space: pre; tab-size: 8; line-height: 1.35;
+}
+.mca-warn { color: var(--date); margin-top: 0.35rem; max-height: 8rem; }

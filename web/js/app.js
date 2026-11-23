@@ -3,7 +3,7 @@
 
 import { WasmEngine, makeRequest } from './engine.js';
 import { WorkerEngine } from './engine-rpc.js';
-import { parseHexInput, toHex } from './hex-input.js';
+import { parseHexInput, toHex, hexToBytes } from './hex-input.js';
 import { archGroups, archTitle, DEFAULT_ARCH, ARCH_INFO, PROTOTYPE, accuracyNote } from './archs.js';
 import { DEFAULT_STATE, LIMITS, encodeState, decodeState, clampInt } from './url-state.js';
 import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES, MOCK_EXAMPLES } from './examples.js';
@@ -33,7 +33,7 @@ const MOCK = query.get('mock') === '1';       // ?mock=1: do not load the analyz
 const NO_SW = query.get('nosw') === '1';      // ?nosw=1: do not register the service worker
 // ?pool=N: N workers for the compare panels and the cost column (0: none, they share the main analyzer's worker)
 const POOL_SIZE = query.has('pool') ? Math.max(0, Math.min(16, Number.parseInt(query.get('pool'), 10) || 0)) : poolSize();
-const VERSION = '0.1.4';                  // the page's version (footer); bump it here
+const VERSION = '0.1.5';                  // the page's version (footer); bump it here
 
 const el = {
   notice: $('notice'), code: $('code'), codeHint: $('code-hint'), messages: $('input-messages'),
@@ -127,7 +127,15 @@ const insight = createInsight({
 });
 let pastedSource = null; // the .loc lines of pasted assembly (asm-regions.js), bound to its bytes
 const regionChip = createRegionChip(el.messages, (line) => selectLine(line));
-const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o), onToggle: (open) => { Object.assign(state, open); syncUrl(true); if ('bound' in open) cmpSlots.decorate(); }, getSel: () => state.sel, getSource: () => (ceSource && (!pastedSource || ceSource.hex === lastView?.hex) ? ceSource : pastedSource) });
+const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o), onToggle: (open) => { Object.assign(state, open); syncUrl(true); if ('bound' in open) cmpSlots.decorate(); }, getSel: () => state.sel, getSource: () => (ceSource && (!pastedSource || ceSource.hex === lastView?.hex) ? ceSource : pastedSource),
+  // llvm-mca (mca.js): its module only if the build has it, downloaded on first use; the bytes as Intel assembly
+  mca: {
+    available: () => !!manifest.mca && !MOCK,
+    module: () => (mcaModule ??= download('llvm-mca', PATHS.mca).then((b) => WebAssembly.compile(b)).catch((e) => { mcaModule = null; throw e; })),
+    toAsm: (hex) => converter.fromBytes(hexToBytes(hex)),
+    spawn: () => new Worker(new URL('./mca-worker.js', import.meta.url)),
+  } });
+let mcaModule = null;
 // The trace (trace.js), below both panes; linked to the uop table (trace-link.js). Its open state and the selected row
 // are in the URL.
 const traceOpened = (open) => { if (state.trace === open) return; state.trace = open; syncUrl(true); };
@@ -157,7 +165,7 @@ let flashTimer = 0;
 
 function paintStatus() {
   if (flashTimer) return;
-  el.statusWrap.classList.remove('error');
+  el.statusWrap.classList.remove('error', 'idle');
   if (downloads.size) {
     let got = 0, total = 0;
     for (const d of downloads.values()) { got += d.got; total += Math.max(d.total, d.got); }
@@ -167,11 +175,13 @@ function paintStatus() {
   } else {
     el.status.textContent = idleStatus;
     el.statusBar.style.width = '0';
+    el.statusWrap.classList.add('idle'); // dense mode hides it: the result says the same
   }
 }
 function setIdle(text) { idleStatus = text; paintStatus(); }
 function flash(text, { error = false, ms = 2500 } = {}) {
   clearTimeout(flashTimer);
+  el.statusWrap.classList.remove('idle');
   el.status.textContent = text;
   el.statusWrap.classList.toggle('error', error);
   flashTimer = setTimeout(() => { flashTimer = 0; paintStatus(); }, ms);
@@ -488,9 +498,17 @@ async function assemblerForRun() {
   return a && { mock: a.mock, assemble: (text, syntax) => a.assemble(text, syntax, { signal }) };
 }
 
-function loadExample(ex) {
+async function loadExample(ex) {
+  if (ex.asm && ex.text.intel == null) { try { ex.text.intel = await ex.asm(); } catch { /* offline and not cached: hex */ } }
   settleMode({ replacing: true }); // the example replaces the code
   if (ex.hexOnly && state.mode !== 'hex') setMode('hex'); // machine code only
+  if (ex.asm) { // Intel assembly only (else machine code): opens in asm mode
+    if (ex.text.intel == null) { if (state.mode !== 'hex') setMode('hex'); }
+    else {
+      if (state.mode !== 'asm') setMode('asm');
+      if (state.syntax !== 'intel') { state.syntax = 'intel'; writeControls(); }
+    }
+  }
   const key = state.mode === 'asm' ? state.syntax : 'hex';
   el.code.value = buffers[state.mode] = ex.text[key];
   // the mock has the reference's result for this microarchitecture

@@ -7,7 +7,7 @@
 // reloads itself once when it is idle (app.js, updated()), or shows a note asking for a reload.
 const VERSION = '__WUICA_VERSION__';
 const CACHE = `wuica-${VERSION}`;
-const LAZY = /^(data\/arch\/|wuica_asm\.wasm$)/; // large, fetched when needed (the page prefetches the tables)
+const LAZY = /^(data\/arch\/|wuica_asm\.wasm$|wuica_mca\.wasm$|js\/showcase-asm\.js$)/; // large, fetched when needed (the page prefetches the tables; llvm-mca and the showcase's assembly only on use)
 
 const scope = new URL(self.registration.scope);
 

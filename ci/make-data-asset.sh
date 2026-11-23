@@ -5,10 +5,10 @@
 #   ci/make-data-asset.sh TAG [SRC]
 #
 #   TAG  the release tag it will be uploaded to (ci-data-v1, ci-data-v2, ...)
-#   SRC  a checkout that has data/, fixtures/generated/ and assembler/dist/wuica_asm.wasm (default: this repository)
+#   SRC  a checkout that has data/, fixtures/generated/, assembler/dist/wuica_asm.wasm and mca/dist/wuica_mca.wasm (default: this repository)
 #
 # Contents: data/ (instruction tables, uarch.json), the four fixture files the suites read
-# (fixtures/generated/{,extra_}{instr,sim}_fixtures.jsonl.gz), assembler/dist/wuica_asm.wasm, and MANIFEST.txt (sha256 of every
+# (fixtures/generated/{,extra_}{instr,sim}_fixtures.jsonl.gz), assembler/dist/wuica_asm.wasm, mca/dist/wuica_mca.wasm, and MANIFEST.txt (sha256 of every
 # file, for `sha256sum -c`). The tar is written by Python (sorted names, fixed mtime, owner 0, mode 0644, no extended
 # attributes) and compressed with xz (preset 6, one thread), so the same inputs give the same bytes.
 # Output: target/ci-data/wuica-ci-data.tar.xz. Then upload it (see docs/PORTING.md, "CI"):
@@ -28,6 +28,7 @@ files=(
   fixtures/generated/extra_instr_fixtures.jsonl.gz
   fixtures/generated/extra_sim_fixtures.jsonl.gz
   assembler/dist/wuica_asm.wasm
+  mca/dist/wuica_mca.wasm
   data/uarch.json
 )
 for f in "$src"/data/arch/*.json; do files+=("data/arch/$(basename "$f")"); done

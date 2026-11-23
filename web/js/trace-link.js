@@ -1,7 +1,7 @@
 // The uop table and the trace, linked (app.js calls decorate() after renderResult and the insight views): a row of the
 // table under the pointer or the keyboard focus marks its instruction's uops in the trace, and a uop of the trace marks
-// its row; a click (or Enter) on a row selects the instruction and scrolls the trace to it (opening the trace), a click
-// on a uop selects its row and scrolls the table to it. The selection is in the URL (app.js).
+// its row; a click (or Enter) on a row selects the instruction and scrolls the trace to it (now, or when the trace tab is
+// opened), a click on a uop selects its row and scrolls the table to it. The selection is in the URL (app.js).
 // Also the wait column ("waits"): where each instruction's uops spent their time in the trace (trace.js, waitBreakdown),
 // as a stacked bar; it needs the trace, which it asks the trace panel for.
 //

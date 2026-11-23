@@ -6,7 +6,7 @@
 #   web/build.sh                  then serve web/dist/ with any static file server, e.g.
 #   python3 -m http.server -d web/dist 8000
 #
-# Environment: WUICA_WASM (path of the analyzer), WUICA_ASM_WASM (path of the assembler).
+# Environment: WUICA_WASM (path of the analyzer), WUICA_ASM_WASM (path of the assembler), WUICA_MCA_WASM (llvm-mca).
 # It writes manifest.json (version, files with sizes, tables) and stamps the version, a hash of all files,
 # into sw.js: a deploy with any change gives the service worker a new cache.
 set -euo pipefail
@@ -16,6 +16,7 @@ root="$(dirname "$here")"
 out="$here/dist"
 wasm="${WUICA_WASM:-$root/target/wasm32-unknown-unknown/release/wuica_wasm.wasm}"
 asm="${WUICA_ASM_WASM:-$root/assembler/dist/wuica_asm.wasm}"
+mca="${WUICA_MCA_WASM:-$root/mca/dist/wuica_mca.wasm}"
 
 die() { echo "web/build.sh: $*" >&2; exit 1; }
 [ -f "$wasm" ] || die "the analyzer is missing: $wasm (run ./build-wasm.sh, or set WUICA_WASM)"
@@ -40,6 +41,8 @@ cp "$root"/data/arch/*.json "$out/data/arch/"
 cp "$wasm" "$out/wuica_wasm.wasm"
 assembler=false
 if [ -f "$asm" ]; then cp "$asm" "$out/wuica_asm.wasm"; assembler=true; fi
+mcafound=false
+if [ -f "$mca" ]; then cp "$mca" "$out/wuica_mca.wasm"; mcafound=true; fi
 
 cd "$out"
 # What the page can request (not _headers and 404.html, which are for the host), in a stable order.
@@ -47,7 +50,7 @@ files="$(find . -type f ! -name _headers ! -name 404.html | sed 's|^\./||' | LC_
 version="$( { echo "$files" | while IFS= read -r f; do sha "$f"; done; sha "$here/sw.js"; } | sha | cut -c1-12)"
 
 {
-  printf '{\n  "version": "%s",\n  "assembler": %s,\n  "tables": [' "$version" "$assembler"
+  printf '{\n  "version": "%s",\n  "assembler": %s,\n  "mca": %s,\n  "tables": [' "$version" "$assembler" "$mcafound"
   sep=''
   for t in data/arch/*.json; do n="$(basename "$t" .json)"; printf '%s"%s"' "$sep" "$n"; sep=', '; done
   printf '],\n  "files": {\n'
@@ -62,4 +65,4 @@ sed "s/__WUICA_VERSION__/$version/" "$here/sw.js" > sw.js
 grep -q "'$version'" sw.js || die "could not stamp the version into sw.js"
 
 total="$(find . -type f -exec cat {} + | wc -c | tr -d ' ')"
-echo "web/dist: version $version, $(echo "$files" | wc -l | tr -d ' ') files, $((total / 1024)) KiB; assembler: $assembler"
+echo "web/dist: version $version, $(echo "$files" | wc -l | tr -d ' ') files, $((total / 1024)) KiB; assembler: $assembler; llvm-mca: $mcafound"

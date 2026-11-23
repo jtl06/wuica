@@ -5,6 +5,8 @@
 let waiting = null; // {root, row}: a jump that waits for the table to be drawn in full
 
 export function jumpToRow(root, row) {
+  // the table is a tab of the result (workspace.js): show it first
+  if (typeof document !== 'undefined') document.dispatchEvent(new CustomEvent('wuica:show-table'));
   const tr = root?.querySelector('table.uops')?.tBodies[0]?.rows[row];
   if (!tr) {
     const all = root?.querySelector('.more-rows button');

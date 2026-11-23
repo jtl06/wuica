@@ -114,7 +114,9 @@ export function createKeys(env = {}) {
     if (row >= 0) select(row);
   }
   function view(name) {
-    const d = [...document.querySelectorAll(VIEWS[name] ?? '')].find((x) => x.isConnected && x.getClientRects().length > 0); // (not one hidden, e.g. in A–B mode)
+    // (not one hidden, e.g. in A–B mode; a closed view of the tabbed workspace, dense.css, has no box but a tab)
+    const shown = (x) => x.getClientRects().length > 0 || !!x.closest('html.dense body:not(.ab-on) #more > .row:not([hidden])');
+    const d = [...document.querySelectorAll(VIEWS[name] ?? '')].find((x) => x.isConnected && shown(x));
     if (!d) return;
     d.open = !d.open;
     if (d.open) d.querySelector('summary')?.scrollIntoView({ block: 'nearest' });

@@ -45,7 +45,8 @@ export function createInsight(env) {
       h('div', { class: 'label', text: 'chain' }),
       h('div', { class: 'field' },
         h('span', { class: 'ins-chain' }, parts),
-        h('span', { class: 'hint' }, `${info.ratio.toFixed(2)} cycles/iteration${info.iterations > 1 ? ` (over ${info.iterations} iterations)` : ''}${bottleneck ? '' : ' · not the bottleneck'}`)));
+        h('span', { class: 'hint' }, `${info.ratio.toFixed(2)} cycles/iteration${info.iterations > 1 ? ` (over ${info.iterations} iterations)` : ''}`,
+          bottleneck ? null : h('span', { class: 'aside', text: ' · not the bottleneck' }))));
   }
 
   function markChain(table, r, info) {

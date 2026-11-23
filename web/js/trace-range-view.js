@@ -5,7 +5,8 @@
 //   as a band, the port and issue shares in the head's gutter are the range's, and a chip in the tools names it.
 // - in the bound view (bound.js calls rangeGroup): while a range of the shown run is selected, its ports and issue slots
 //   replace the steady-state breakdown.
-// Closing the trace or another run clears the range.
+// Another run clears the range. Closing the trace does not: the trace and the bound view are tabs of the result
+// (workspace.js), so a range picked in the trace is shown in the bound tab.
 
 import { h } from './render.js';
 import { traceRange, rangeStats, rangeSlotParts, steadyShares } from './trace-range.js';
@@ -15,11 +16,12 @@ const pct = (x) => `${Math.round(x * 100)}%`;
 const label = (r) => (r.a === r.b ? `c ${r.a}` : `c ${r.a}–${r.b}`);
 const HEAD_KEYS = 'the cycles under a drag on the head of the trace, or [ and ] on the focused timeline';
 
-let closeWatch = false;
-function watchClose() { // the trace panel was closed: no range (toggle does not bubble; seen in the capture phase)
-  if (closeWatch || typeof document === 'undefined') return;
-  closeWatch = true;
-  document.addEventListener('toggle', (e) => { if (e.target?.matches?.('details.trace-panel') && !e.target.open) traceRange.clear(); }, true);
+// where the focus goes from the bound view once its range is gone: its summary, or its tab when the tabbed workspace
+// hides the summary of the open view (workspace.js, dense.css)
+function home(el) {
+  const sum = el.closest('details')?.querySelector(':scope > summary');
+  if (sum && sum.getClientRects().length) return sum;
+  return document.querySelector('.view-tab[aria-selected="true"]') ?? sum;
 }
 
 // focus(): where the focus goes once the button is gone or hidden
@@ -33,7 +35,6 @@ function clearButton(focus) {
 
 // viewer: a trace.js Viewer (single mode); tools: its tool bar. Sets viewer.ext (the hooks trace.js calls).
 export function attachRange(viewer, tools) {
-  watchClose();
   const text = h('span', { class: 'tr-c' });
   const chip = h('span', { class: 'tr-chip', hidden: true, title: HEAD_KEYS }, text, clearButton(() => viewer.canvas));
   tools.append(chip);
@@ -168,7 +169,7 @@ export function rangeGroup(view) {
   });
   const out = [
     h('div', { class: 'bd-group tr-head' }, h('span', { class: 'bd-g', text: 'range', title: HEAD_KEYS }),
-      h('span', { class: 'tr-chip' }, h('span', { class: 'tr-c', text: label(s) }), h('span', { class: 'hint', text: ` ${s.cycles} cyc` }), clearButton((b) => b.closest('details')?.querySelector('summary')))),
+      h('span', { class: 'tr-chip' }, h('span', { class: 'tr-c', text: label(s) }), h('span', { class: 'hint', text: ` ${s.cycles} cyc` }), clearButton(home))),
     h('div', { class: 'bd-group', role: 'group', 'aria-label': 'ports' }, h('span', { class: 'bd-g', text: 'ports', title: 'the share of the range\'s cycles in which each port dispatched a uop' }), h('span', { class: 'bd-items' }, ports)),
   ];
   const parts = rangeSlotParts(s.slots);
@@ -189,9 +190,9 @@ export function rangeGroup(view) {
   box.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     e.preventDefault();
-    const sum = box.closest('details')?.querySelector('summary');
+    const to = home(box);
     traceRange.clear();
-    sum?.focus({ preventScroll: true });
+    to?.focus({ preventScroll: true });
   });
   return box;
 }

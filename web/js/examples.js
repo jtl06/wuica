@@ -83,7 +83,9 @@ export const CLASSIC_EXAMPLES = [
 // A large block that shows the analyzer's speed (menu group "showcase"). Machine code only: `hexOnly` examples switch the
 // input to hex.
 export const SHOWCASE_EXAMPLES = [
-  { id: 'sha256', title: 'SHA-256 block (2,949 instr)', arch: 'SKL', hexOnly: true, hex: SHA256_BLOCK_HEX.replace(/\s+/g, ''), text: { hex: SHA256_BLOCK_HEX } },
+  { id: 'sha256', title: 'SHA-256 block (2,949 instr)', arch: 'SKL', hex: SHA256_BLOCK_HEX.replace(/\s+/g, ''), text: { hex: SHA256_BLOCK_HEX },
+    // Intel assembly, loaded when picked (showcase-asm.js, about 60 KB); the example opens in asm mode, hex if it cannot load
+    asm: () => import('./showcase-asm.js').then((m) => m.SHA256_BLOCK_ASM) },
 ];
 
 // Only offered while the mock engine is active: inputs that make it return what the recorded results lack.

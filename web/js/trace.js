@@ -1347,6 +1347,8 @@ export async function loadTrace(side, { analyze, config = () => null }) {
 }
 
 const button = (text, f) => { const b = el('button', { type: 'button', class: 'plain', text }); b.addEventListener('click', f); return b; };
+// the button past a size limit: the result's tabs press it when the view is picked (workspace.js)
+const gate = (b) => { b.dataset.gate = ''; return b; };
 
 // The panel in the result view: a <details> that shows the trace when it is opened. The trace of the shown run is
 // loaded once, when the panel is opened or something else asks for it (want(): the wait column), and shared.
@@ -1412,7 +1414,7 @@ export function createTracePanel({ analyze, config = () => null, onToggle = null
     if (tr.state === 'mock') { message('The mock engine (?mock=1) has no traces.'); return; }
     if (tr.state === 'large') {
       const g = traceGuard(view);
-      message(`The trace of ${g.instrs} instructions × ${g.iterations} iterations would be very large. `, button('load it anyway', () => want(true)));
+      message(`The trace of ${g.instrs} instructions × ${g.iterations} iterations would be very large. `, gate(button('load it anyway', () => want(true))));
       return;
     }
     if (tr.state === 'loading') { message('simulating again with the trace…'); body.firstChild.classList.add('loading'); return; }
@@ -1465,7 +1467,7 @@ export function createTracePanel({ analyze, config = () => null, onToggle = null
       viewer?.setSel(selKey);
       if (!reveal || selKey === null) return;
       pending = { view, key: selKey };
-      if (!details.open) { details.open = true; return; } // the toggle shows the trace (when it is there), then scrolls
+      if (!details.open) return; // the trace is another tab: it scrolls there when it is opened (render: applyPending)
       applyPending();
     },
   };
@@ -1519,7 +1521,7 @@ export function createABTracePanel({ analyze, config = () => null, onToggle = nu
     if (job.state === 'ready') { if (!viewers.length) build(); return; }
     if (job.state === 'missing') { message('Both sides need a result.'); return; }
     if (job.state === 'mock') { message('The mock engine (?mock=1) has no traces.'); return; }
-    if (job.state === 'large') { message('The traces would be very large. ', button('load them anyway', () => want(true))); return; }
+    if (job.state === 'large') { message('The traces would be very large. ', gate(button('load them anyway', () => want(true)))); return; }
     if (job.state === 'loading') { message('simulating both again with the trace…'); body.firstChild.classList.add('loading'); return; }
     const e = job.error;
     message(e?.name === 'CancelledError' ? 'The trace was cancelled. ' : `${String(e?.message ?? e).replace(/^(?!The trace)/, 'The trace could not be made: ')} `,

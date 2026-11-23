@@ -36,7 +36,7 @@ export async function fetchManifest() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const m = await res.json();
     if (typeof m?.version !== 'string' || typeof m.files !== 'object') throw new Error('unexpected content');
-    return { version: m.version, files: m.files, tables: Array.isArray(m.tables) ? m.tables : [], assembler: !!m.assembler };
+    return { version: m.version, files: m.files, tables: Array.isArray(m.tables) ? m.tables : [], assembler: !!m.assembler, mca: !!m.mca };
   } catch {
     return { version: 'dev', files: {}, tables: [], assembler: null };
   }
@@ -45,6 +45,7 @@ export async function fetchManifest() {
 export const PATHS = Object.freeze({
   wasm: 'wuica_wasm.wasm',
   assembler: 'wuica_asm.wasm',
+  mca: 'wuica_mca.wasm',
   uarch: 'data/uarch.json',
   table: (name) => `data/arch/${encodeURIComponent(name)}.json`,
 });
