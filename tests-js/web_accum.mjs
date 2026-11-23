@@ -45,6 +45,20 @@ const CRC = {
   check(/implicit/.test(accumulatorText(div, 'f7f101d049ffc875f7', 2).reason), 'refused: the chain register is an implicit operand of div');
   const ah = { ...CRC, rows: [instr('add ah, bl', '00DC'), instr('dec r8', '49FFC8'), instr('jnz 0x0', '75F9', 'M')], criticalPath: { edges: [edge(0, 0, 'AH', true)] } };
   check(!accumulatorText(ah, '00dc49ffc875f9', 2).ok, 'refused: ah has no form in r8..');
+  // aliases: al is rax; an off-chain use of the chain register in any form refuses; a register used in any form is not free
+  const storeAl = { ...CRC, rows: [instr('add eax, ecx', '01C8'), instr('mov byte ptr [rdi], al', '8807'), instr('dec r9', '49FFC9'), instr('jnz 0x0', '75F7', 'M')], criticalPath: { edges: [edge(0, 0, 'EAX', true)] } };
+  check(/eax is also used off the chain \(mov byte ptr \[rdi\], al\)/.test(accumulatorText(storeAl, '01c8880749ffc975f7', 2).reason), 'refused: the chain register stored off the chain (as al)', accumulatorText(storeAl, '01c8880749ffc975f7', 2).reason);
+  const r8b = { ...CRC, rows: [instr('add eax, ecx', '01C8'), instr('add r8b, 0x1', '4180C001'), instr('dec r9', '49FFC9'), instr('jnz 0x0', '75F7', 'M')], criticalPath: { edges: [edge(0, 0, 'EAX', true)] } };
+  check(accumulatorText(r8b, '01c84180c00149ffc975f7', 2).renamed[0].to[0] === 'r10d', 'free registers: r8 (used as r8b) and r9 are not free; eax gets r10d', j(accumulatorText(r8b, '01c84180c00149ffc975f7', 2)));
+  // implicit operands: the legacy blendvps reads xmm0, so xmm0 is not free for a copy
+  const blend = { ...CRC, rows: [instr('blendvps xmm1, xmm2', '660F3814CA'), instr('dec r9', '49FFC9'), instr('jnz 0x0', '75F6', 'M')], criticalPath: { edges: [edge(0, 0, 'XMM1', true)] } };
+  check(accumulatorText(blend, '660f3814ca49ffc975f6', 2).renamed[0].to[0] === 'xmm3', 'implicit xmm0 (blendvps): not free; xmm1 gets xmm3', j(accumulatorText(blend, '660f3814ca49ffc975f6', 2)));
+  const blend0 = { ...blend, criticalPath: { edges: [edge(0, 0, 'XMM0', true)] }, rows: [instr('blendvps xmm0, xmm2', '660F3814C2'), ...blend.rows.slice(1)] };
+  check(/implicit operand/.test(accumulatorText(blend0, '660f3814c249ffc975f6', 2).reason), 'refused: the chain is xmm0, an implicit operand of blendvps');
+  for (const [mn, reg] of [['cdq', 'EDX'], ['mul rcx', 'RDX'], ['rep stosb', 'RCX'], ['cpuid', 'RBX'], ['xgetbv', 'RCX'], ['sha256rnds2 xmm1, xmm2', 'XMM0'], ['vzeroupper', 'YMM3']]) {
+    const x = { ...CRC, rows: [instr(mn, '90'), instr('dec r9', '49FFC9'), instr('jnz 0x0', '75F6', 'M')], criticalPath: { edges: [edge(0, 0, reg, true)] } };
+    check(/implicit operand/.test(accumulatorText(x, '9049ffc975f6', 2).reason ?? ''), `refused: ${reg.toLowerCase()} is implicit in ${mn}`, j(accumulatorText(x, '9049ffc975f6', 2)));
+  }
   const ptr = { ...CRC, criticalPath: { edges: [edge(2, 2, 'RDX', true)] } };
   check(/induction variable rdx/.test(accumulatorText(ptr, CRC_HEX, 2).reason), 'refused: a chain through the pointer (used in an address) is not an accumulator');
   const notLoop = accumulatorText({ ...CRC, mode: 'unroll' }, CRC_HEX, 2);
@@ -96,6 +110,18 @@ if (!fs.existsSync(wasm) || !fs.existsSync(asmPath) || !fs.existsSync(new URL('d
   const v = Object.fromEntries(w.variants.map((x) => [x.id, x]));
   check(v.acc2.tp === 3 && v.acc3.tp === 2 && v.acc4.tp === 2 && v.acc3.speedup === 3 && v.unroll2.tp === 6 && w.accumulators.best === 3 && j(v.acc3.renamed) === j([{ from: 'rax', to: ['r8', 'r9'] }]),
     'what_if: acc2..acc8 per original iteration, the best N, the renamed registers; unroll ×2 alone gives nothing', j(w));
+  // the prefix sum: the running sum is also stored, so no accumulator rows (a short reason)
+  const psumHex = await assembleHex('.L:\n  imul rdx, rdx, 3\n  add rdx, [rdi+rax*8]\n  mov [rsi+rax*8], rdx\n  inc rax\n  cmp rax, rcx\n  jne .L\n');
+  const pb = await e.analyze(makeRequest(psumHex, 'SKL'));
+  const pe = experiments(pb, psumHex, {});
+  check(pe.filter((x) => /^acc/.test(x.id)).length === 1 && /rdx is also used off the chain/.test(pe.find((x) => x.id === 'acc').error), 'prefix sum: no accumulator rows, the reason', j(pe.map((x) => [x.id, x.error])));
+  // three free registers: 2, 3 and 4 accumulators, and 8 with its own reason (not "no loop-carried chain")
+  const few = await assembleHex('.L:\n  crc32 rax, qword ptr [rdi+rdx]\n  add r8, r9\n  add r10, r11\n  add r12, rbx\n  add rbp, rsi\n  add rdx, 8\n  cmp rdx, rcx\n  jb .L\n');
+  const fb = await e.analyze(makeRequest(few, 'SKL'));
+  const fw = await whatIf(analyze, 'SKL', { hex: few }, ['acc2', 'acc4', 'acc8'], { assemble: async (t) => { const h = await assembleHex(t); return h ? { code: 0, hex: h } : { code: 2, error: 'x' }; } });
+  const fv = Object.fromEntries(fw.variants.map((x) => [x.id, x]));
+  check(fb.criticalPath && fv.acc2.tp > 0 && fv.acc4.tp > 0 && /7 free registers needed for rax/.test(fv.acc8.error), 'acc8 without enough free registers: its own reason', j(fw.variants));
+  check(experiments(fb, few, {}).find((x) => x.id === 'acc8')?.error && experiments(fb, few, {}).find((x) => x.id === 'acc4')?.text, 'the page: acc8 with its reason, acc4 as text');
   const noAsm = await whatIf(analyze, 'ZEN3', { hex: CRC_HEX }, ['acc2']);
   check(/no assembler/.test(noAsm.variants[0].error), 'what_if without an assembler: the accumulator variants say so');
 }

@@ -15,18 +15,38 @@ const GPR = [
 const FAMILY = new Map(GPR.flatMap((names) => names.map((n, size) => [n, { kind: 'gpr', base: names[0], size }])));
 // the registers a copy can get, in this order (not rsp; the ones with implicit uses last)
 const GPR_FREE = ['r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15', 'rbx', 'rbp', 'rsi', 'rdi', 'rcx', 'rdx', 'rax'];
-// instructions with implicit register operands (renaming their register would change what they do): family -> test
+// Instructions with implicit register operands (the response has no operand sets without the details: this list is
+// the x86-64 instructions that read or write a register they do not name): [test, registers]. 'vall': every vector
+// register. Renaming such a register would change what they do, and none of them may get a copy's register.
 const IMPLICIT = [
-  [['rax', 'rdx'], /^(?:i?div|mul|cdq|cqo|cwd|cdqe|cbw|cwde|cmpxchg\w*|lahf|sahf|cpuid|rdtscp?|rdpmc|xgetbv|syscall|mulx|in|out|xlatb?)$/],
-  [['rax'], /^(?:stos\w*|lods\w*|scas\w*)$/],
-  [['rcx'], /^(?:rep\w*|loop\w*|jrcxz|jecxz|movs[bwdq]?|stos\w*|cmps\w*|scas\w*|lods\w*|cpuid|rdtscp|rdpmc|xgetbv|syscall)$/],
-  [['rsi', 'rdi'], /^(?:movs[bwdq]?|cmps[bwdq]?|stos\w*|lods\w*|scas\w*|rep\w*)$/],
-  [['rbx'], /^(?:cpuid|xlatb?|cmpxchg16b|cmpxchg8b)$/],
-  [['rsp'], /^(?:push\w*|pop\w*|call\w*|ret\w*|enter|leave)$/],
-  [['rbp'], /^(?:enter|leave)$/],
+  [/^(?:i?div|mul|cdq|cqo|cwd|rdtsc|xsave\w*|xrstor\w*|in|out)$/, ['rax', 'rdx']],
+  [/^(?:cbw|cwde|cdqe|lahf|sahf|cmpxchg|stos\w*|lods\w*|scas\w*)$/, ['rax']],
+  [/^(?:cpuid|cmpxchg8b|cmpxchg16b)$/, ['rax', 'rbx', 'rcx', 'rdx']],
+  [/^(?:rdtscp|xgetbv|xsetbv|rdmsr|wrmsr|rdpmc|monitor\w*)$/, ['rax', 'rcx', 'rdx']],
+  [/^(?:mwait\w*)$/, ['rax', 'rcx']],
+  [/^(?:mulx)$/, ['rdx']],
+  [/^(?:xlatb?)$/, ['rax', 'rbx']],
+  [/^(?:syscall|sysret\w*)$/, ['rax', 'rcx', 'r11']],
+  [/^(?:rep\w*|loop\w*|jrcxz|jecxz)$/, ['rcx']],
+  [/^(?:movs[bwdq]?|cmps[bwdq]?|stos\w*|lods\w*|scas\w*|ins[bwd]?|outs[bwd]?)$/, ['rsi', 'rdi', 'rcx']],
+  [/^(?:ins[bwd]?|outs[bwd]?)$/, ['rdx']],
+  [/^(?:v?maskmovq|maskmovdqu|vmaskmovdqu)$/, ['rdi']],
+  [/^(?:push\w*|pop\w*|call\w*|ret\w*|enter|leave)$/, ['rsp']],
+  [/^(?:enter|leave)$/, ['rbp']],
+  // the legacy (non-VEX) blends and SHA-256 rounds read xmm0; the string compares write ecx or xmm0
+  [/^(?:blendvps|blendvpd|pblendvb|sha256rnds2)$/, ['v0']],
+  [/^(?:v?pcmpestri)$/, ['rax', 'rdx', 'rcx']],
+  [/^(?:v?pcmpestrm)$/, ['rax', 'rdx', 'v0']],
+  [/^(?:v?pcmpistri)$/, ['rcx']],
+  [/^(?:v?pcmpistrm)$/, ['v0']],
+  [/^(?:vzeroupper|vzeroall)$/, ['vall']],
 ];
 // a one-operand imul uses rax and rdx implicitly
-const implicitUse = (mnemonic, operands) => (mnemonic === 'imul' && !operands.includes(',') ? ['rax', 'rdx'] : IMPLICIT.filter(([, re]) => re.test(mnemonic)).flatMap(([f]) => f));
+export const implicitUse = (mnemonic, operands) => {
+  const m = String(mnemonic).toLowerCase().replace(/^(?:lock|rep\w*)\s+/, '');
+  if (m === 'imul' && !String(operands).includes(',')) return ['rax', 'rdx'];
+  return IMPLICIT.filter(([re]) => re.test(m)).flatMap(([, regs]) => regs);
+};
 
 const VEC = /^([xyz]mm)(\d+)$/;
 
@@ -93,12 +113,12 @@ export function accumulatorText(response, hex, n) {
   const rows = Array.isArray(response.rows) ? response.rows : [];
   const ins = [];
   let at = 0;
-  for (const x of rows) {
-    if (x.kind !== 'instr') continue;
+  rows.forEach((x, row) => {
+    if (x.kind !== 'instr') return;
     const op = String(x.opcode ?? '').toLowerCase();
-    ins.push({ op, label: String(x.label ?? ''), fused: x.notes === 'M', start: at });
+    ins.push({ op, row, label: String(x.label ?? ''), fused: x.notes === 'M', start: at });
     at += op.length / 2;
-  }
+  });
   if (!ins.length || ins.map((i) => i.op).join('') !== String(hex ?? '').toLowerCase()) return { ok: false, reason: 'the code has bytes that are not instructions' };
   const chain = chainRegisters(response);
   if (!chain.ok) return chain;
@@ -106,18 +126,29 @@ export function accumulatorText(response, hex, n) {
   const tailFrom = ins[last].fused && last > 0 ? last - 1 : last;
   if (tailFrom === 0) return { ok: false, reason: 'nothing but the branch' };
   const body = ins.slice(0, tailFrom), tail = ins.slice(tailFrom);
-  // registers in use (any form), and the implicit ones of the body's instructions
-  const used = new Set(ins.flatMap((i) => regsIn(i.label)).map((r) => family(r)?.base).filter(Boolean));
+  // registers in use (any form: al/ax/eax/rax, xmm/ymm/zmm are one register), and the implicit ones
+  const uses = (i) => { const s = splitInstr(i.label); return new Set([...regsIn(i.label).map((r) => family(r)?.base).filter(Boolean), ...implicitUse(s.mnemonic, s.operands)]); };
+  const usesOf = new Map(ins.map((i) => [i, uses(i)]));
+  const used = new Set(ins.flatMap((i) => [...usesOf.get(i)]));
   const implicit = new Set(ins.flatMap((i) => { const s = splitInstr(i.label); return implicitUse(s.mnemonic, s.operands); }));
-  for (const b of chain.bases) if (implicit.has(b)) return { ok: false, reason: `the chain's ${b} is an implicit operand` };
+  for (const b of chain.bases) {
+    if (implicit.has(b) || (b.startsWith('v') && implicit.has('vall'))) return { ok: false, reason: `${chain.names[chain.bases.indexOf(b)]} is an implicit operand` };
+  }
   // a register used in an address is the loop's induction variable (a pointer or an index), not an accumulator
   const addressed = new Set(ins.flatMap((i) => [...i.label.matchAll(/\[([^\]]*)\]/g)].flatMap((m) => regsIn(m[1]))).map((r) => family(r)?.base));
   const induction = chain.bases.find((b) => addressed.has(b));
   if (induction) return { ok: false, reason: `the chain is the induction variable ${chain.names[chain.bases.indexOf(induction)]} (used in an address), not an accumulator` };
+  // the chain's register used by an instruction off the chain (a store of a running sum): renaming would change it
+  const onChain = new Set(response.criticalPath.edges.flatMap((e) => [e.from, e.to]));
+  for (const i of ins) {
+    if (onChain.has(i.row)) continue;
+    const b = chain.bases.find((x) => usesOf.get(i).has(x));
+    if (b) return { ok: false, reason: `${chain.names[chain.bases.indexOf(b)]} is also used off the chain (${i.label})` };
+  }
   // free registers for the copies after the first
   const freeGpr = GPR_FREE.filter((r) => !used.has(r) && !implicit.has(r));
   const usesEvex = ins.some((i) => /\b[xyz]mm(?:1[6-9]|2\d|3[01])\b/i.test(i.label));
-  const freeVec = Array.from({ length: usesEvex ? 32 : 16 }, (_, k) => `v${k}`).filter((v) => !used.has(v));
+  const freeVec = Array.from({ length: usesEvex ? 32 : 16 }, (_, k) => `v${k}`).filter((v) => !used.has(v) && !implicit.has(v));
   const maps = Array.from({ length: n }, () => new Map());
   const renamed = [];
   for (const b of chain.bases) {

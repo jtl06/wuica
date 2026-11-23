@@ -25,6 +25,7 @@ import { createABSlots } from './ab-slots.js';     // A–B: the issue slots of 
 import { createCmpSlots } from './cmp-slots.js';   // the issue slots per CPU in the CPU table (bound view open)
 import { withRegions } from './asm-regions.js';     // marked regions and .loc lines of pasted assembly
 import { createRegionChip, createLoopChip } from './region-chip.js';
+import { replacesText } from './loop-find.js';
 import { createKeys } from './keys.js';           // keyboard shortcuts, the ? overlay
 
 const $ = (id) => document.getElementById(id);
@@ -129,7 +130,17 @@ let pastedSource = null; // the .loc lines of pasted assembly (asm-regions.js), 
 const regionChip = createRegionChip(el.messages, (line) => selectLine(line));
 // what of pasted assembly is analyzed (loop-find.js): the loop chip sets state.loop
 const loopChip = createLoopChip(el.messages, (v) => { if (state.loop === v) return; state.loop = v; changed({ rerun: true }); });
-let autoAlignText = null; // the text whose addresses last set the alignment offset (an edit of the offset then stays)
+// Where the alignment offset came from: 'auto' (the analyzed code's address, objdump input: set again for each pick, and
+// back to the default for a text without addresses), 'manual' (by hand, a link, an import: kept until the text is
+// replaced), or null (the default).
+let alignBy = null;
+// Side B of A–B: its own pick (not in the link) and its loop chip (made with the A–B view)
+let bLoop = 'auto';
+let bLoopChip = null;
+// (a text that replaces the box's text: loop-find.js, replacesText)
+let textA = '', textB = '';
+function newTextA() { state.loop = 'auto'; if (alignBy === 'manual') alignBy = null; textA = el.code.value; }
+function newTextB() { bLoop = 'auto'; textB = document.getElementById('code-b')?.value ?? ''; }
 const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o),
   assemble: async (text) => { const a = await ensureAssembler(); return a ? a.assemble(text, 'intel') : null; }, cpus: () => checked, onToggle: (open) => { Object.assign(state, open); syncUrl(true); if ('bound' in open) cmpSlots.decorate(); }, getSel: () => state.sel, getSource: () => (ceSource && (!pastedSource || ceSource.hex === lastView?.hex) ? ceSource : pastedSource),
   // llvm-mca (mca.js): its module only if the build has it, downloaded on first use; the bytes as Intel assembly
@@ -253,7 +264,7 @@ function paintDerived() {
 // The input of a run. input: the parts a run captured at its start ({mode, syntax, text, arch, ab}); the loop and the
 // options are always the current ones (the assembly can set the loop back to auto and the alignment offset).
 function runInput() {
-  return { mode: state.mode, syntax: state.syntax, text: el.code.value, arch: state.arch, ab: ab?.key() ?? '' };
+  return { mode: state.mode, syntax: state.syntax, text: el.code.value, arch: state.arch, ab: `${ab?.key() ?? ''}|${state.ab ? bLoop : ''}` };
 }
 function runKey(input = runInput()) {
   return JSON.stringify([input.mode, input.mode === 'asm' ? input.syntax : '', input.text, input.mode === 'asm' ? state.loop : '', input.arch, options(), input.ab]);
@@ -518,7 +529,15 @@ function ensureAssembler() {
 async function assemblerForRun() {
   const signal = assembling?.signal;
   const a = await ensureAssembler();
-  return a && { mock: a.mock, assemble: (text, syntax) => a.assemble(text, syntax, { signal, loop: 'auto' }) };
+  if (!a) return a;
+  const assemble = async (text, syntax) => {
+    let r = await a.assemble(text, syntax, { signal, loop: bLoop });
+    // a loop picked for another text: the first one again
+    if (!r.ok && bLoop !== 'auto' && r.diagnostics.some((d) => /^loop: /.test(d.message))) { bLoop = 'auto'; r = await a.assemble(text, syntax, { signal, loop: bLoop }); }
+    bLoopChip?.show(r.choosable ? r : null, text);
+    return r;
+  };
+  return { mock: a.mock, assemble };
 }
 
 async function loadExample(ex) {
@@ -534,6 +553,7 @@ async function loadExample(ex) {
   }
   const key = state.mode === 'asm' ? state.syntax : 'hex';
   el.code.value = buffers[state.mode] = ex.text[key];
+  newTextA();
   // the mock has the reference's result for this microarchitecture
   if (engine?.capabilities.mock && archItems.has(ex.arch) && state.arch !== ex.arch) focusArch(ex.arch, { rerun: false });
   clearMessages();
@@ -706,10 +726,14 @@ async function machineCode(id) {
     throw e;
   }
   if (id !== runSeq) return null;
-  // the alignment offset from the text's addresses (objdump), once per text: a change of the offset by hand stays
-  if (r.ok && Number.isInteger(r.alignment) && text !== autoAlignText) {
-    autoAlignText = text;
-    if (state.alignmentOffset !== r.alignment) { state.alignmentOffset = r.alignment; el.align.value = r.alignment; paintDerived(); }
+  // the alignment offset from the analyzed code's address (objdump), for each pick; none for a text without addresses
+  // (not one left from the last text); an offset set by hand, in a link or by an import stays
+  if (r.ok && alignBy !== 'manual') {
+    const want = Number.isInteger(r.alignment) ? r.alignment : alignBy === 'auto' ? DEFAULT_STATE.alignmentOffset : null;
+    if (want !== null) {
+      alignBy = Number.isInteger(r.alignment) ? 'auto' : null;
+      if (state.alignmentOffset !== want) { state.alignmentOffset = want; el.align.value = want; paintDerived(); }
+    }
   }
   // what it assembled to is the result's objdump listing
   const items = [...r.diagnostics];
@@ -717,6 +741,7 @@ async function machineCode(id) {
   if (r.ok && r.bytes.length && assembler.mock) items.push({ line: null, column: null, severity: 'note', message: 'mock assembler' });
   if (items.length) showMessages(items); else clearMessages();
   if (r.ok && r.bytes.length) { regionChip.show(r.region ?? null, text); loopChip.show(r, text); pastedSource = r.source ? { ...r.source, hex: toHex(r.bytes) } : null; }
+  else if (r.choosable) loopChip.show(r, text); // the pick does not assemble: "whole" (or another loop) stays reachable
   return r.ok && r.bytes.length ? r.bytes : null;
 }
 
@@ -908,6 +933,7 @@ function importCode({ mode, syntax, text }, { run: andRun = true } = {}) {
   if (mode === 'asm' || mode === 'hex') setMode(mode);
   if (syntax === 'intel' || syntax === 'att') state.syntax = syntax;
   el.code.value = buffers[state.mode] = text;
+  newTextA();
   clearMessages();
   writeControls();
   changed();
@@ -992,9 +1018,9 @@ function setupFeatures() {
     sides: () => (state.ab ? ['A', 'B'] : ['A']),
     getCode: (side) => (side === 'B' ? ab.getB() : { mode: state.mode, syntax: state.syntax, text: el.code.value }),
     importInto(side, code, { alignment = null, undo = false, source = null } = {}) {
-      if (alignment !== null) state.alignmentOffset = alignment;
       let analysis = null;
-      if (side === 'B') { ab.setB(code); writeControls(); if (ready && !undo) analysis = run(); } else analysis = importCode(code, { run: !undo });
+      if (side === 'B') { ab.setB(code); newTextB(); writeControls(); if (ready && !undo) analysis = run(); } else analysis = importCode(code, { run: !undo });
+      if (alignment !== null) { state.alignmentOffset = alignment; el.align.value = alignment; alignBy = 'manual'; }
       if (side === 'A') ceSourceOf(source, analysis);
       if (!undo && code.mode === 'hex') importAsAsm(side, code.text, analysis);
     },
@@ -1026,6 +1052,16 @@ function setupFeatures() {
     switchMode: (mode, other, apply) => switchMode('B', mode, other, apply),
   });
   ce.watch(el.code, 'A', el.messages);
+  // side B's loop chip, and its pick back to the first loop when B's text is replaced
+  const bCode = document.getElementById('code-b');
+  if (bCode) {
+    bLoopChip = createLoopChip(document.getElementById('b-messages'), (v) => { if (bLoop === v) return; bLoop = v; changed({ rerun: true }); });
+    textB = bCode.value;
+    bCode.addEventListener('input', () => {
+      if (replacesText(textB, bCode.value)) newTextB(); else textB = bCode.value;
+      bLoopChip.sync(state.bMode === 'asm' ? bCode.value : null);
+    });
+  }
 }
 
 // ---- offline: service worker and background caching ------------------------------------------------------------------
@@ -1119,7 +1155,8 @@ function restore(fragment) {
   if (!s) return false;
   Object.assign(state, s);
   // an alignment offset in the link is kept (not replaced by one from the text's addresses)
-  if (s.alignmentOffset !== DEFAULT_STATE.alignmentOffset) autoAlignText = s.text;
+  if (s.alignmentOffset !== DEFAULT_STATE.alignmentOffset) alignBy = 'manual';
+  textA = s.text;
   buffers.hex = buffers.asm = '';
   buffers[state.mode] = s.text;
   delete state.text;
@@ -1147,7 +1184,12 @@ function bind() {
     el.examples.value = '';
     if (ex) loadExample(ex);
   });
-  el.code.addEventListener('input', () => { buffers[state.mode] = el.code.value; changed(); });
+  el.code.addEventListener('input', () => {
+    buffers[state.mode] = el.code.value;
+    if (state.mode === 'asm' && replacesText(textA, el.code.value)) newTextA(); else textA = el.code.value;
+    changed();
+  });
+  el.align.addEventListener('change', () => { alignBy = 'manual'; });
   el.cpuGrid.addEventListener('change', cpusChanged);
   el.cpuAll.addEventListener('click', () => { setChecked([...archItems.keys()]); paintDerived(); syncUrl(true); });
   el.cpuClear.addEventListener('click', () => { setChecked([state.arch]); paintDerived(); syncUrl(true); });

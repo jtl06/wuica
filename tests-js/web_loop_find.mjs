@@ -5,7 +5,7 @@
 // tests-js/fixtures/loop-find are from the 0.1.4 dogfood run (gcc 16.2 -O3 -march=native).
 // Usage: node tests-js/web_loop_find.mjs
 import fs from 'node:fs';
-import { preparePaste, fromObjdump, leadingSemicolons, findLoops, scan } from '../web/js/loop-find.js';
+import { preparePaste, fromObjdump, leadingSemicolons, findLoops, scan, replacesText } from '../web/js/loop-find.js';
 import { withRegions } from '../web/js/asm-regions.js';
 import { WasmAssembler } from '../web/js/assembler.js';
 import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
@@ -40,7 +40,12 @@ const j = JSON.stringify;
   check(leadingSemicolons('; note\n  add rax, 1 ; x\n') === '# note\n  add rax, 1 ; x\n', "a ';' at the start of a line is a comment; one after a statement stays");
   const body = preparePaste('f:\n  endbr64\n  push rbp\n  mov rbp, rsp\n  movss DWORD PTR [rbp-20], xmm0\n  mulss xmm0, xmm0\n  pop rbp\n  ret\n');
   check(body.choice === 'body' && body.pick.begin === 5 && body.pick.end === 6 && body.choosable, 'no loop, ends in ret: the body without prologue and epilogue', j(body.pick));
-  check(preparePaste('  add rax, 1\n  ret\n').choice === 'body', 'a block that ends in ret: without the ret');
+  // a bare snippet that ends in ret is analyzed as typed; a compiler's function (label, directives, prologue) is trimmed
+  check(preparePaste('  add rax, 1\n  ret\n').choice === null && !preparePaste('  add rax, 1\n  ret\n').choosable, 'a bare snippet ending in ret: as typed (no trim)');
+  check(preparePaste('f:\n  add rax, 1\n  ret\n').choice === 'body' && preparePaste('\t.text\n  add rax, 1\n  ret\n').choice === 'body' && preparePaste('  push rbx\n  add rax, 1\n  pop rbx\n  ret\n').choice === 'body', 'a function label, a directive or a prologue: the body');
+  check(preparePaste('.L5:\n  add rax, 1\n  ret\n').choice === null, 'a local label alone is not a function');
+  // replacing vs editing a text (the page's pick goes back to auto when the text is replaced)
+  check(replacesText('.L1:\n add rax, 1\n jnz .L1\n', 'f:\n mov ecx, 2\n ret\n') && !replacesText('.L1:\n add rax, 1\n jnz .L1\n', '.L1:\n add rax, 2\n jnz .L1\n') && !replacesText('abc', 'abc'), 'replacesText: a new text vs an edit');
   check(preparePaste('  add rax, 1\n  imul rax, rbx\n').choice === null, 'straight-line code without ret: as it is');
   const ex = preparePaste('.L1:\n  add rax, [rdi]\n  jae .Lout\n  jae out\n  jmp far\n  dec rcx\n  jnz .L1\n');
   check(j(ex.stubs) === j(['.Lout', 'out']), 'exits: .Lout and out are stubs (not taken)', j(ex.stubs));
@@ -108,12 +113,22 @@ if (!fs.existsSync(asmPath)) {
   check(semi.ok && hex(semi.bytes) === await plain('.L1:\n add rax, 1\n dec rcx\n jnz .L1\n'), "';' comments: at the start of a line and after a statement; ';' between statements stays a separator", j(semi.diagnostics));
   const semi2 = await wa.assemble('add rax, 1 ; one', 'intel');
   check(!semi2.ok, "(LLVM alone rejects '; one')");
+  // after a statement: what does not assemble is a comment (nothing after ';' makes a valid line an error); a note only if
+  // it starts with a mnemonic; what assembles is assembled, with a note unless written as GNU as chains ("dec rcx; jnz")
   const typo = await an('  add rax, 1 ; addd rbx, 2\n');
-  check(!typo.ok && /invalid instruction mnemonic 'addd'/.test(typo.diagnostics[0].message), "after ';', a mistyped instruction stays an error", j(typo.diagnostics));
+  check(typo.ok && hex(typo.bytes) === '4883c001' && typo.diagnostics.length === 0, "after ';', a non-mnemonic: a comment, silently", j(typo.diagnostics));
   const prose = await an('  add rax, [rdi] ; a[i], next\n  add rbx, 1 ; rax = sum\n');
   check(prose.ok && prose.bytes.length === 7, "';' comments with brackets, commas and '=' in them", j(prose.diagnostics));
-  const typo2 = await an('  add rax, 1 ; incc rax\n');
-  check(!typo2.ok, "after ';', a mistyped instruction with a register stays an error", j(typo2.diagnostics));
+  const mnem = await an('  add rax, 1 ; add the next element\n');
+  check(mnem.ok && hex(mnem.bytes) === '4883c001' && mnem.diagnostics.length === 1 && mnem.diagnostics[0].severity === 'note' && /text after ';' taken as a comment/.test(mnem.diagnostics[0].message), "after ';', a mnemonic that does not assemble: a comment, with a note", j(mnem.diagnostics));
+  const sep = await an('.L1:\n  add rax, [rdi]\n  add rdi, 8 ; call helper\n  dec rcx\n  jnz .L1\n');
+  check(sep.ok && /e8000000/.test(hex(sep.bytes)) && sep.diagnostics.some((d) => d.severity === 'note' && d.line === 3 && d.message === "';' separates statements: 'call helper' was assembled (use # for a comment)"), "after ' ; ', an instruction that assembles: assembled, with a note naming it", j(sep.diagnostics));
+  const gas = await an('1:\n  add rax, 1\n  dec rcx; jnz 1b\n');
+  check(gas.ok && gas.diagnostics.length === 0 && hex(gas.bytes) === await plain('1:\n add rax, 1\n dec rcx\n jnz 1b\n'), "GNU as chaining ('dec rcx; jnz 1b'): no note", j(gas.diagnostics));
+  for (const c of ['loop back', 'not taken', 'add the next element', 'i++', 'sum += a[i]', 'x = y', 'mul by 2', 'in loop', 'or else', 'jne next']) {
+    const r = await an(`.L1:\n  add rax, [rdi]\n  add rdi, 8 ; ${c}\n  dec rcx\n  jnz .L1\n`);
+    check(r.ok, `after ';', "${c}" never makes the line an error`, j(r.diagnostics));
+  }
   const semiPlain = await A.assemble('  add rax, 1 ; one\n', 'intel');
   check(semiPlain.ok && hex(semiPlain.bytes) === '4883c001', "';' comments also without loop finding (the converter)", j(semiPlain.diagnostics));
 
@@ -133,6 +148,48 @@ if (!fs.existsSync(asmPath)) {
     }
   }
   check(same > 10, 'the examples: unchanged', String(same));
+
+  // review round 1 ------------------------------------------------------------------------------------------------------
+  // objdump whose branch target looks like a GNU numeric label (1b): an address
+  const od1b = '0000000000000000 <psum>:\n   0:\t85 f6                \ttest   esi,esi\n   2:\t7e 1f                \tjle    23 <psum+0x23>\n   4:\t31 c0                \txor    eax,eax\n'
+    + '  1b:\t03 14 87             \tadd    edx,DWORD PTR [rdi+rax*4]\n  1e:\t48 83 c0 01          \tadd    rax,0x1\n  22:\t48 39 c6             \tcmp    rsi,rax\n  25:\t75 f4                \tjne    1b <psum+0x1b>\n  27:\tc3                   \tret\n';
+  const r1 = await an(od1b);
+  check(r1.ok && hex(r1.bytes) === '0314874883c0014839c675f4' && r1.loop?.address === 0x1b, 'objdump: jne 1b <psum+0x1b> is the address 0x1b', j([hex(r1.bytes), r1.loop, r1.diagnostics]));
+  const noraw1b = od1b.split('\n').slice(1).map((l) => l.replace(/^(\s*[0-9a-f]+:)\t[0-9a-f ]+\t/, '$1\t')).join('\n');
+  check(hex((await an(noraw1b)).bytes) === '0314874883c0014839c675f4', 'objdump without bytes and header: the same');
+  check((await an('  mov ecx, 5\n10: add rax, 1\n  dec ecx\n  jne 10b\n  ret\n')).loop?.name === 'loop 10b', 'GNU numeric labels (10: … jne 10b) still work');
+  // CRLF
+  const crlf = await an(fx('psum.objdump').replace(/\n/g, '\r\n'));
+  check(crlf.ok && crlf.loop?.address === 0x10 && hex(crlf.bytes) === PSUM, 'objdump with CRLF line ends', j(crlf.loop));
+  check((await an('  mov ecx, 5\r\n.L1:\r\n  add rax, 1\r\n  dec ecx\r\n  jnz .L1\r\n')).loop?.name === 'loop .L1' && preparePaste('a\rb').text === 'a\nb', 'CRLF and a lone CR in assembly');
+  // a rejected line inside the analyzed code is an error (with its line); only lines outside the pick are dropped
+  const badText = '   0:\tadd rax,0x1\n   4:\tfoo rbx\n   7:\tdec rcx\n   a:\tjne 0 <f>\n';
+  const badW = await an(badText, 'whole');
+  check(!badW.ok && badW.diagnostics[0].line === 2, 'objdump, whole: a line the assembler rejects is an error', j(badW.diagnostics));
+  const badN = await an('   0:\tadd rax,0x1\n   4:\tfoo rbx\n   7:\tdec rcx\n   a:\timul rax,rbx\n');
+  check(!badN.ok && badN.diagnostics[0].line === 2, 'objdump without a loop: a rejected line is an error', j(badN.diagnostics));
+  // .text.startup (gcc's main), -ffunction-sections
+  const main = '\t.text\n\t.section\t.text.startup,"ax",@progbits\n\t.globl\tmain\n\t.type\tmain, @function\nmain:\n\txor\teax, eax\n\tmov\tecx, 100\n.L2:\n\tadd\trax, rcx\n\tdec\trcx\n\tjne\t.L2\n\tret\n';
+  const rm = await an(main);
+  check(rm.ok && hex(rm.bytes) === '4801c848ffc975f8' && rm.choosable, 'main in .text.startup: its loop', j([hex(rm.bytes), rm.diagnostics]));
+  check(hex((await an(main, 'whole')).bytes) === '31c0b9640000004801c848ffc975f8c3', 'main in .text.startup, whole: all of it');
+  check(hex((await an(main.replace('.text.startup', '.text.main'))).bytes) === '4801c848ffc975f8', '-ffunction-sections (.text.main)');
+  // the pick fails: the choice is still offered (whole is reachable)
+  const failPick = await an('f:\n  mov ecx, 9\n.L1:\n  addd rax, 1\n  dec rcx\n  jnz .L1\n  ret\n');
+  check(!failPick.ok && failPick.choosable && failPick.loops.length === 1, 'a pick that does not assemble: still choosable', j(failPick));
+  // a tail call jumping back to an earlier function is not a loop
+  const tail = 'impl:\n  lea eax, [rdi+rdi]\n  ret\nwrapper:\n  add edi, 1\n  jmp impl\nsum:\n  xor eax, eax\n.L3:\n  add eax, DWORD PTR [rdi]\n  add rdi, 4\n  cmp rdi, rsi\n  jne .L3\n  ret\n';
+  const rt = await an(tail);
+  check(rt.loop?.name === 'loop .L3' && rt.loops.length === 1, 'a backward tail call (jmp impl) is not a loop: the loop .L3', j(rt.loops));
+  check(findLoops(scan('\t.globl\tg\nf:\n  add rax, 1\ng:\n  dec rcx\n  jnz f\n')).length === 0, 'a span over a .globl function label is not a loop');
+  // hex-looking labels (a:, b:) are labels, not objdump; whole means no pick
+  const ab = 'a: add rax, 1\nb: dec rcx\n   jnz a\n';
+  check(!fromObjdump(ab).objdump && preparePaste(ab).loops.length === 1, 'a: / b: labels: assembly, not objdump');
+  const rab = await an(ab);
+  check(rab.ok && hex(rab.bytes) === '4883c00148ffc975f7' && rab.diagnostics.length === 0, 'a: / b: with jnz a: the 2-instruction loop', j([hex(rab.bytes), rab.diagnostics]));
+  check(!fromObjdump('a: add rax, 1\nb: dec rcx\nc: jnz a\n').objdump, 'a:/b:/c: all prefixed: steps of 1 byte do not fit "add rax, 1": not objdump');
+  check(fromObjdump('  40: crc32 rax, qword ptr [rdi]\n  45: add rdi, 8\n  49: dec rcx\n  4c: jne 40\n').objdump, '40: crc32 … (every line addressed, plausible steps): objdump');
+  check((await an(fx('crc_a.s'), 'whole')).loop === null && preparePaste(fx('psum.noraw'), { loop: 'whole' }).pick === null, "loop 'whole': never a pick");
 }
 
 console.log(`${count} loop-find checks, ${failed} failed`);

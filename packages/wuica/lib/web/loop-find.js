@@ -8,14 +8,18 @@
 //     statements, line for line (diagnostics keep their lines): addresses that are branch targets become labels
 //     .Lwuica_a<hex>, a branch to an address outside the text a branch to a symbol. A line with its bytes is assembled
 //     as those bytes (the exact encoding); a line without them that the assembler rejects outside the analyzed code
-//     (padding: "cs nop ...") is left out. A GNU numeric label ("1: ... jnz 1b") is not an address: objdump
-//     text is told apart by a header line, hex letters in an address, a <sym+off> target, a byte column, or three or
-//     more increasing addresses without any "1b"/"1f" reference.
+//     (padding: "cs nop ...") is left out. objdump text is told apart from assembly by a header line, a byte column or
+//     a <sym+off> branch target; without those, by three or more lines that are all address-prefixed, with
+//     increasing addresses whose steps fit their instructions and no branch to a GNU numeric label ("jnz 1b"). In
+//     objdump text, a branch target is always an address ("jne 1b <psum+0x1b>" goes to 0x1b).
+//   - line ends: CRLF and a lone CR are line feeds (normalizeText).
 //   - a ';' that starts a line is a comment (as '#'); one after a statement stays a separator unless the assembler
-//     rejects what follows it (asm-regions.js retries with semicolonFixes).
-//   - the loops: backward branches to a label (or to an address); innermost first, in the order of the code. The pick is
-//     the first one, unless the text is that loop already; with no loop, a text that ends in ret is analyzed without its
-//     prologue and epilogue (its body). Region markers (LLVM-MCA-BEGIN, wuica-begin, IACA) win: no pick.
+//     rejects what follows it (asm-regions.js: commentFixes, separatorNotes).
+//   - the loops: backward branches to a label (or to an address); innermost first, in the order of the code. A span
+//     that holds a ret or a function's label is not a loop (a tail call to an earlier function). The pick is the first
+//     one, unless the text is that loop already; with no loop, a compiler's function (a function label, directives, or
+//     a prologue/epilogue) that ends in ret is analyzed without its prologue, epilogue and ret (its body); a bare snippet
+//     is analyzed as typed. Region markers (LLVM-MCA-BEGIN, wuica-begin, IACA) win: no pick. loop "whole": no pick.
 //   - conditional branches to a symbol the text does not define (the loop's exits: jae .Lout) are "not taken": the
 //     symbol is defined right after the analyzed code (stubs), so they assemble, short, as a compiler would emit them.
 //     An undefined target of a jmp is a warning (it is encoded as a 32-bit jump to an external symbol).
@@ -56,6 +60,9 @@ export function statements(line) {
   return out;
 }
 
+// CRLF and a lone CR as LF (lines stay).
+export const normalizeText = (text) => String(text ?? '').replace(/\r\n?/g, '\n');
+
 // Block comments blanked (columns and lines stay).
 function blankBlockComments(text) {
   return text.replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '));
@@ -66,22 +73,6 @@ function blankBlockComments(text) {
 // A ';' at the start of a line (after white space) is a comment: it becomes '#' (same column).
 export function leadingSemicolons(text) {
   return String(text).replace(/^([ \t]*);/gm, '$1#');
-}
-
-// The lines to change after a failed assembly: an error right after a ';' ("invalid instruction mnemonic 'note'" in
-// "add rax, 1 ; note") means the ';' was meant as a comment. Map line (1-based) -> the line with that ';' as '#'.
-export function semicolonFixes(diagnostics, text) {
-  const lines = String(text).split('\n');
-  const out = new Map();
-  for (const d of diagnostics ?? []) {
-    if (d.severity !== 'error' || !d.line || !d.column || !/^(invalid instruction mnemonic|unexpected token at start of statement|unknown use of instruction mnemonic)/.test(d.message)) continue;
-    const l = out.get(d.line) ?? lines[d.line - 1] ?? '';
-    const before = l.slice(0, d.column - 1);
-    const m = /;\s*$/.exec(before);
-    if (!m) continue;
-    out.set(d.line, l.slice(0, m.index) + '#' + l.slice(m.index + 1));
-  }
-  return out;
 }
 
 // ---- objdump -------------------------------------------------------------------------------------------------------
@@ -99,32 +90,45 @@ function byteColumn(rest) {
   return { bytes: m[1].split(' ').map((b) => parseInt(b, 16)), rest: rest.slice(m[0].length).trim() };
 }
 
+// One-byte instructions that have operands (an objdump step of 1 for an instruction with operands must be one of these).
+const ONE_BYTE = /^(?:push|pop|xchg|in|out|ins\w*|outs\w*|stos\w*|lods\w*|movs\w*|scas\w*|cmps\w*|bswap|int)$/i;
+
 // {text, objdump: true, addresses: Map line -> address, bytes: Map line -> the line as .byte} or {objdump: false}.
 export function fromObjdump(text) {
-  const lines = String(text).split('\n');
-  let count = 0, header = false, letters = false, symbolic = false, column = false, increasing = true, last = -1;
+  const lines = normalizeText(text).split('\n');
+  let header = false, symbolic = false, column = false, increasing = true, other = 0, plausible = true;
+  const rows = [];
   for (const l of lines) {
     if (OD_HEADER.test(l)) { header = true; continue; }
-    if (OD_NOISE.test(l)) continue;
+    if (OD_NOISE.test(l) || /^\s*(?:$|#|\/\/|;)/.test(l)) continue;
     const m = OD_ADDR.exec(l);
-    if (!m) continue;
+    if (!m) { other++; continue; }
     const a = parseInt(m[2], 16);
-    count++;
-    if (/[a-f]/i.test(m[2])) letters = true;
     if (/<[^>]*>/.test(m[4])) symbolic = true;
-    if (byteColumn(m[4]).bytes && /\t|  /.test(m[4])) column = true;
-    if (a <= last) increasing = false;
-    last = a;
+    const bc = byteColumn(m[4]);
+    if (bc.bytes && /\t|  /.test(m[4])) column = true;
+    if (rows.length && a <= rows.at(-1).a) increasing = false;
+    rows.push({ a, rest: bc.rest });
   }
-  if (count < 2 || !increasing) return { objdump: false };
-  // a GNU numeric label referenced as 1b / 1f: assembly, not a listing
-  if (/\b(?:j[a-z]{1,4}|jmp|call|loop[a-z]*)\s+\d+[bf]\b/i.test(text)) return { objdump: false };
-  if (!(header || letters || symbolic || column || count >= 3)) return { objdump: false };
+  if (rows.length < 2 || !increasing) return { objdump: false };
+  if (!(header || column || symbolic)) {
+    // weak evidence ("40: crc32 ..."): every line address-prefixed, at least three, the steps fit the instructions
+    // (an instruction with operands takes at least 2 bytes, at most 15), no branch to a GNU numeric label (1b, 1f)
+    if (other > 0 || rows.length < 3) return { objdump: false };
+    for (let k = 0; k + 1 < rows.length; k++) {
+      const step = rows[k + 1].a - rows[k].a;
+      const [mn, ops] = rows[k].rest.trim().split(/\s+(.*)/);
+      if (step > 15 || (step < 2 && ops && !ONE_BYTE.test(mn ?? ''))) plausible = false;
+    }
+    if (!plausible) return { objdump: false };
+    if (rows.some((r) => /^\s*(?:\S+\s+)*?(?:j[a-z]{1,4}|jmp\w*|call\w*|loop[a-z]*)\s+\d+[bf]\s*$/i.test(r.rest))) return { objdump: false };
+  }
 
   const parsed = lines.map((l) => {
     if (OD_HEADER.test(l) || OD_NOISE.test(l)) return { kind: 'blank' };
     const m = OD_ADDR.exec(l);
-    if (!m) return { kind: 'keep', text: l };
+    // other lines of a listing (objdump -S: the source) are not code
+    if (!m) return /^\s*(?:$|#|\/\/|;)/.test(l) ? { kind: 'keep', text: l } : { kind: 'blank' };
     const { bytes, rest } = byteColumn(m[4]);
     if (!rest) return { kind: 'more', bytes: bytes ?? [] }; // a continuation line: more bytes of the instruction above
     return { kind: 'instr', indent: m[1] || '  ', address: parseInt(m[2], 16), bytes, text: rest.replace(/\s+#.*$/, '').replace(/\s+/g, ' ').trim() };
@@ -171,13 +175,15 @@ function splitInstr(body) {
 }
 
 const sectionName = (args) => (/^\s*("?)([^",\s]+)\1/.exec(args)?.[2] ?? '');
+// .text and the code sections of -ffunction-sections and gcc's main (.text.startup, .text.unlikely, .text.f)
+export const isText = (args) => { const n = sectionName(args); return n === '.text' || n.startsWith('.text.'); };
 
 // {labels: Map name -> line, symbols: Set (assigned with = / .set / .equ), instrs: [{line, col, mnemonic, operands,
 // kind: 'jcc' | 'jmp' | 'call' | 'ret' | 'other', target}], numeric: [{name, line}]}. Lines 1-based; only .text code.
 export function scan(text) {
   const lines = blankBlockComments(String(text)).split('\n');
-  const labels = new Map(), symbols = new Set(), instrs = [], numeric = [];
-  let inText = true, prev = true;
+  const labels = new Map(), symbols = new Set(), instrs = [], numeric = [], functions = new Set();
+  let inText = true, prev = true, directives = 0;
   const stack = [];
   for (let i = 0; i < lines.length; i++) {
     for (const st of statements(lines[i])) {
@@ -196,11 +202,14 @@ export function scan(text) {
         const d = /^\.([\w.]+)\s*(.*)$/.exec(body);
         const name = d?.[1].toLowerCase() ?? '';
         const args = d?.[2] ?? '';
+        directives++;
         if (name === 'set' || name === 'equ' || name === 'equiv') { const s = /^([\w.$@]+)/.exec(args); if (s) symbols.add(s[1]); }
+        else if (name === 'globl' || name === 'global') { const s = /^([\w.$@]+)/.exec(args); if (s) functions.add(s[1]); }
+        else if (name === 'type') { const s = /^([\w.$@]+)\s*,\s*[@%]function/.exec(args); if (s) functions.add(s[1]); }
         else if (name === 'text') { prev = inText; inText = true; }
         else if (name === 'data' || name === 'bss') { prev = inText; inText = false; }
-        else if (name === 'section') { prev = inText; inText = sectionName(args) === '.text' || sectionName(args).startsWith('.text.'); }
-        else if (name === 'pushsection') { stack.push(inText); prev = inText; inText = sectionName(args) === '.text'; }
+        else if (name === 'section') { prev = inText; inText = isText(args); }
+        else if (name === 'pushsection') { stack.push(inText); prev = inText; inText = isText(args); }
         else if (name === 'popsection') { prev = inText; inText = stack.pop() ?? true; }
         else if (name === 'previous') { [inText, prev] = [prev, inText]; }
         continue;
@@ -221,7 +230,7 @@ export function scan(text) {
       instrs.push({ line: i + 1, col: st.at + lead, end: st.at + st.text.length, mnemonic, operands, kind, target, body });
     }
   }
-  return { labels, symbols, instrs, numeric };
+  return { labels, symbols, instrs, numeric, functions, directives };
 }
 
 // The line a branch target refers to (a label, or a numeric label "1b" / "1f" seen from `line`), or null.
@@ -249,8 +258,13 @@ export function findLoops(s) {
     if (same) same.end = Math.max(same.end, ins.line);
     else loops.push({ begin: t, end: ins.line, label: ins.target });
   }
-  for (const l of loops) l.inner = !loops.some((o) => o !== l && o.begin >= l.begin && o.end <= l.end && (o.begin !== l.begin || o.end !== l.end));
-  return loops.sort((a, b) => Number(b.inner) - Number(a.inner) || a.begin - b.begin || a.end - b.end);
+  // not a loop: a span with a ret, or with a function's label in it (a tail call jumping back to an earlier function)
+  const fn = (name, l) => !name.startsWith('.L') && !/^\d+$/.test(name) && (s.functions?.has(name)
+    || s.instrs.some((x) => (x.kind === 'call' || x.kind === 'jmp' || x.kind === 'jcc') && x.target === name && (x.line < l.begin || x.line > l.end)));
+  const real = loops.filter((l) => !s.instrs.some((x) => x.kind === 'ret' && x.line > l.begin && x.line < l.end)
+    && ![...s.labels].some(([name, d]) => d.line > l.begin && d.line <= l.end && fn(name, l)));
+  for (const l of real) l.inner = !real.some((o) => o !== l && o.begin >= l.begin && o.end <= l.end && (o.begin !== l.begin || o.end !== l.end));
+  return real.sort((a, b) => Number(b.inner) - Number(a.inner) || a.begin - b.begin || a.end - b.end);
 }
 
 const PROLOGUE = [
@@ -281,7 +295,8 @@ export function functionBody(s) {
   while (a <= b && PROLOGUE.some((re) => re.test(ins[a].body.replace(/\s+/g, ' ')))) a++;
   while (b >= a && EPILOGUE.some((re) => re.test(ins[b].body.replace(/\s+/g, ' ')))) b--;
   if (a > b) return null;
-  return { begin: ins[a].line, end: ins[b].line };
+  // trimmed: prologue and epilogue instructions besides the ret
+  return { begin: ins[a].line, end: ins[b].line, trimmed: a + (last - b - 1) };
 }
 
 // What to analyze: see the top. text: the pasted assembly; loop: 'auto' (default), 'whole', or the index of a loop.
@@ -290,9 +305,12 @@ export function functionBody(s) {
 //   body: {begin, end} | null, alignment: number | null, address: number | null, stubs: [names],
 //   notes: [{line, column, severity, message}], fallback: Map line -> text, error?}
 export function preparePaste(text, { loop = 'auto' } = {}) {
-  let t = leadingSemicolons(String(text ?? '').replace(/^﻿/, ''));
+  let t = leadingSemicolons(normalizeText(text).replace(/^﻿/, ''));
   const od = fromObjdump(t);
   if (od.objdump) t = od.text;
+  // code sections other than .text (gcc's main in .text.startup, -ffunction-sections): into .text, which the assembler
+  // returns (the statement keeps its line; it is the same layout as one .text)
+  t = t.replace(/^([ \t]*)\.(?:section|pushsection)[ \t]+"?\.text\.[^\n#;]*/gm, (m, ind) => (/^\s*\.push/.test(m) ? `${ind}.pushsection .text` : `${ind}.text`));
   const s = scan(t);
   const marked = MARKER.test(t) || IACA.test(t);
   const all = findLoops(s);
@@ -318,7 +336,14 @@ export function preparePaste(text, { loop = 'auto' } = {}) {
   if (!marked) {
     // choosable: there is code around the loop (or a prologue around the body), so the choice matters
     if (loops.length) out.choosable = !(loops.length === 1 && code.every((x) => x.line >= loops[0].begin && x.line <= loops[0].end));
-    else { out.body = functionBody(s); out.choosable = !!out.body; }
+    else {
+      // a compiler's function (a function label, directives, objdump, or a prologue/epilogue): its body; a bare snippet
+      // ("add rax, 1 / ret") is analyzed as typed
+      const b = functionBody(s);
+      const compiled = od.objdump || s.directives > 0 || [...s.labels.keys()].some((n) => !n.startsWith('.L') && !/^\d+$/.test(n)) || b?.trimmed > 0;
+      out.body = b && compiled ? { begin: b.begin, end: b.end } : null;
+      out.choosable = !!out.body;
+    }
     if (out.choosable && loop !== 'whole') {
       if (loops.length) {
         const k = Number.isInteger(loop) ? loop : 0;
@@ -347,12 +372,26 @@ export function preparePaste(text, { loop = 'auto' } = {}) {
     }
   }
   if (od.objdump) {
-    for (const line of od.addresses.keys()) if (!od.bytes.has(line) && !(out.pick && line >= out.pick.begin && line <= out.pick.end)) out.fallback.set(line, '');
+    // a line the assembler rejects is left out only outside the analyzed code (padding around a loop); in it, an error
+    if (out.pick) for (const line of od.addresses.keys()) if (!od.bytes.has(line) && (line < out.pick.begin || line > out.pick.end)) out.fallback.set(line, '');
     const first = code.find((x) => !out.pick || x.line >= out.pick.begin);
     const a = first ? od.addresses.get(first.line) : undefined;
     if (a !== undefined) { out.address = a; out.alignment = a % 64; }
   }
   return out;
+}
+
+// A text that replaces an editor's text (a paste over most of it, an example, an import) starts with the first loop again (the page's
+// pick goes back to auto).
+// Not an edit: what the old and the new text share at their start and end is less than half of the old one.
+export function replacesText(before, after) {
+  if (before === after) return false;
+  let p = 0;
+  const n = Math.min(before.length, after.length);
+  while (p < n && before[p] === after[p]) p++;
+  let s = 0;
+  while (s < n - p && before[before.length - 1 - s] === after[after.length - 1 - s]) s++;
+  return p + s < before.length / 2;
 }
 
 // The loops as the page's chip names them: "loop .L3", "loop 0x10", "body".

@@ -4,13 +4,18 @@
 //   rmw-index  a read-modify-write to an indexed address (inc dword ptr [rsp+rdx*4]), or a load and a store to the same
 //              indexed address: whether an iteration's load waits for an earlier store (store forwarding) depends on the
 //              data (a histogram of repeated bytes); uiCA assumes it does not.
-//   exit       a loop with an exit before its branch (a search): the exit's mispredict, once per call, is not modelled;
+//   exit       a loop with an exit before its branch (a search; a forward branch within the loop, an if, is not an
+//              exit): the exit's mispredict, once per call, is not modelled;
 //              with short trip counts it can cost more than the loop.
 //   split      loads at an offset that is not a multiple of their width (ymmword ptr [rdi+rax*4+0x4]): with a base
 //              aligned to the width, some of them cross a 64-byte line (split loads cost extra; not modelled).
 
 const SIZE = { byte: 1, word: 2, dword: 4, qword: 8, xmmword: 16, ymmword: 32, zmmword: 64, tbyte: 10 };
-const RMW = /^(?:lock )?(?:add|adc|sub|sbb|and|or|xor|inc|dec|neg|not|shl|shr|sar|sal|rol|ror|rcl|rcr|xadd|btc|btr|bts)$/;
+const RMW = /^(?:add|adc|sub|sbb|and|or|xor|inc|dec|neg|not|shl|shr|sar|sal|rol|ror|rcl|rcr|xadd|btc|btr|bts|cmpxchg\w*)$/;
+// a memory operand in any position is read and written (xchg [mem], reg or xchg reg, [mem])
+const RMW_ANY = /^xchg$/;
+// an address that is not an access (lea), or hints that move no data the loop uses
+const NO_ACCESS = /^(?:lea|nop\w*|prefetch\w*|clflush\w*|clwb|cldemote)$/;
 // instructions whose memory destination is only written (a store, not a read)
 const STORE_ONLY = /^(?:v?mov\w*|movnt\w*|stos\w*|set\w+|v?pextr\w+|v?extract\w*|vextract\w+|v?pmovm\w*|vp?scatter\w+|vmaskmov\w*|vpmaskmov\w*|v?cvt\w*|push\w*|pop\w*|fstp?\w*|fistp?\w*)$/;
 const COND_BRANCH = /^(?:j(?!mp)[a-z]+|loop\w*)$/;
@@ -21,6 +26,7 @@ export function memOperand(label) {
   const sp = t.indexOf(' ');
   if (sp < 0) return null;
   const mnemonic = t.slice(0, sp).toLowerCase();
+  if (NO_ACCESS.test(mnemonic)) return null;
   const ops = t.slice(sp + 1);
   const m = /(?:(\w+) ptr )?\[([^\]]*)\]/.exec(ops);
   if (!m) return null;
@@ -47,17 +53,25 @@ export function caveats(response) {
   const out = [];
   const rmw = [], split = [], early = [];
   const loads = new Map(), stores = new Map();
-  let last = -1;
-  rows.forEach((x, row) => { if (x?.kind === 'instr') last = row; });
+  let last = -1, total = 0;
+  const offset = new Map();
+  rows.forEach((x, row) => { if (x?.kind === 'instr') { last = row; offset.set(row, total); total += String(x.opcode ?? '').length / 2; } });
   rows.forEach((x, row) => {
     if (x?.kind !== 'instr') return;
-    if (row !== last && COND_BRANCH.test(String(x.label).trim().split(' ')[0].toLowerCase())) early.push(row);
+    const [mn, op] = String(x.label).trim().split(/\s+/);
+    if (row !== last && COND_BRANCH.test(mn.toLowerCase())) {
+      // the label's target is relative to the branch (XED, as if it were at address 0): inside the loop's code (an
+      // if) it is not an exit
+      const v = /^0x[0-9a-f]+$/i.test(op ?? '') ? Number(BigInt.asIntN(64, BigInt(op))) : null;
+      const to = v === null ? null : offset.get(row) + v;
+      if (to === null || to < 0 || to >= total) early.push(row);
+    }
     const m = memOperand(x.label);
     if (!m) return;
     const storeOnly = m.first && STORE_ONLY.test(m.mnemonic);
     // read-modify-write, or a load and a store, to the same indexed address
     if (m.index) {
-      if (m.first && RMW.test(m.mnemonic)) rmw.push(row);
+      if ((m.first && RMW.test(m.mnemonic)) || RMW_ANY.test(m.mnemonic)) rmw.push(row);
       else if (storeOnly) (stores.get(m.text) ?? stores.set(m.text, []).get(m.text)).push(row);
       else if (!m.first) (loads.get(m.text) ?? loads.set(m.text, []).get(m.text)).push(row);
     }

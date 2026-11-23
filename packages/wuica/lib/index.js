@@ -20,7 +20,8 @@ import { CODES, WARM_HEX, failure, tableFailure, analysisResult, compareFields }
 import { ThreadPool, threadLimit, threadOption, threadsFor } from './threads.js';
 // the web page's reading of pasted assembly (copies of web/js in lib/web: tests-js/web_pkg_copies.mjs): the loop of a whole function, objdump lines,
 // exits as not taken, ';' comments, region markers
-import { assembleMarked, commentFixes } from './web/asm-regions.js';
+import { assembleMarked, commentFixes, separatorNotes } from './web/asm-regions.js';
+import { normalizeText } from './web/loop-find.js';
 
 export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, CODES, WARM_HEX, parseDiagnostics, insights };
 export { whatIf, VARIANTS as WHAT_IF_VARIANTS } from './whatif.js';
@@ -188,11 +189,14 @@ class Wuica {
     if (s < 0) return failure(CODES.REQUEST, `unknown syntax "${syntax}" (use "intel" or "att")`);
     // a byte order mark (a file saved by some Windows editors) is not part of the code: LLVM would reject it
     const asm = await this.#getAssembler();
-    let text = source.replace(/^\uFEFF/, '');
+    // (CRLF and a lone CR are line feeds)
+    let text = normalizeText(source).replace(/^\uFEFF/, '');
     let r = asm.assemble(text, s);
     // ';' comments: a ';' whose rest the assembler rejects is retried as '#' (web/js/asm-regions.js)
-    for (let round = 0; !r.ok && r.status !== 'trap' && round < 4; round++) {
-      const fixes = commentFixes(parseDiagnostics(r.message), text);
+    const notes = [];
+    for (let round = 0; !r.ok && r.status !== 'trap' && round < 8; round++) {
+      const { fixes, notes: n } = commentFixes(parseDiagnostics(r.message), text);
+      notes.push(...n);
       if (!fixes.size) break;
       const lines = text.split('\n');
       for (const [l, t] of fixes) lines[l - 1] = t;
@@ -205,7 +209,8 @@ class Wuica {
       const error = first ? `assembly failed: ${first.line !== null ? `line ${first.line}: ` : ''}${first.message}` : 'assembly failed';
       return failure(CODES.ASSEMBLER, error, stderrLines(r.message));
     }
-    return { code: CODES.OK, hex: Buffer.from(r.bytes).toString('hex'), length: r.bytes.length, bytes: r.bytes, stderr: stderrLines(r.message) };
+    return { code: CODES.OK, hex: Buffer.from(r.bytes).toString('hex'), length: r.bytes.length, bytes: r.bytes,
+      stderr: [...stderrLines(r.message), ...diagnosticLines([...notes, ...separatorNotes(text)])] };
   }
 
   // The machine code an analysis of assembly text gets (as the web page reads it): the loop of a whole function, objdump
@@ -223,7 +228,7 @@ class Wuica {
       if (!r.ok && r.status === 'trap') trap = r.message;
       return { ok: r.ok, bytes: r.bytes, diagnostics: parseDiagnostics(r.message) };
     };
-    const text = source.replace(/^\uFEFF/, '');
+    const text = normalizeText(source).replace(/^\uFEFF/, '');
     const r = await assembleMarked(assemble, text, { loop: loopChoice(loop) });
     if (trap) return failure(CODES.ASSEMBLER, trap, undefined, { trapped: true });
     if (!r.ok) {

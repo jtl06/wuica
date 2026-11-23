@@ -50,7 +50,8 @@ export function experiments(response, hex, options = {}) {
   if (response?.mode === 'loop' && response.criticalPath?.edges?.length) {
     for (const n of ACCUMULATORS) {
       const a = accumulatorText(response, hex, n);
-      if (!a.ok) { if (n === ACCUMULATORS[0]) out.push({ id: 'acc', label: 'accumulators', per: 1, error: a.reason, options }); break; }
+      if (!a.ok && n === ACCUMULATORS[0]) { out.push({ id: 'acc', label: 'accumulators', per: 1, error: a.reason, options }); break; }
+      if (!a.ok) { out.push({ id: `acc${n}`, label: `${n} accumulators`, per: n, error: a.reason, options }); continue; }
       out.push({ id: `acc${n}`, label: `${n} accumulators`, per: n, text: a.text, options, renamed: a.renamed });
     }
   }

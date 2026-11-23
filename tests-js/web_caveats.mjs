@@ -40,6 +40,16 @@ const loop = (...labels) => ({ mode: 'loop', rows: labels.map(instr) });
   check(fir.length === 1 && fir[0].id === 'split' && j(fir[0].rows) === '[1]' && fir[0].text === 'split loads? (1)', 'split: a ymm load at +4; not at +0 or +32, not a store', j(fir));
   check(ids(loop('mov eax, dword ptr [rdi+0x2]', 'movzx ecx, byte ptr [rdi+0x3]', 'jnz 0x0')) === 'split' && caveats(loop('mov eax, dword ptr [rdi+0x2]', 'movzx ecx, byte ptr [rdi+0x3]', 'jnz 0x0'))[0].rows.length === 1, 'split: a dword at +2; a byte never');
   check(ids({ rows: [] }) === '' && ids(null) === '', 'nothing: no caveats');
+  // review round 1: a forward branch inside the loop (an if) is not an exit; lea is not an access; xchg is a read-modify-write
+  const op = (label, opcode) => ({ kind: 'instr', label, opcode, notes: '', values: [] });
+  const ifLoop = { mode: 'loop', rows: [op('mov eax, dword ptr [rdi]', '8b07'), op('test eax, eax', '85c0'), op('jle 0x5', '7e03'), op('add rbx, rax', '4801c3'), op('add rdi, 0x4', '4883c704'), op('dec rcx', '48ffc9'), op('jnz 0xffffffffffffffeb', '75eb')] };
+  check(ids(ifLoop) === '', 'an if inside the loop (jle to a later instruction of the loop): not an exit', j(caveats(ifLoop)));
+  const out = { ...ifLoop, rows: ifLoop.rows.map((x, k) => (k === 2 ? op('jle 0x12', '7e10') : x)) };
+  check(ids(out) === 'exit', 'a branch past the end of the loop: an exit');
+  check(ids(loop('lea rdx, ptr [rdi+rax*4]', 'mov dword ptr [rdi+rax*4], ecx', 'inc rax', 'jnz 0x0')) === '', 'lea with an indexed address and a store to it: not a read-modify-write');
+  check(memOperand('lea rdx, ptr [rdi+rax*4+0x3]') === null, 'lea: no memory access (not a split load either)');
+  check(ids(loop('xchg dword ptr [rsi+rax*4], edx', 'inc rax', 'jnz 0x0')) === 'rmw-index' && ids(loop('xchg edx, dword ptr [rsi+rax*4]', 'jnz 0x0')) === 'rmw-index', 'xchg with an indexed address: a read-modify-write');
+  check(ids(loop('lock cmpxchg dword ptr [rsi+rax*4], edx', 'jnz 0x0')) === 'rmw-index' && ids(loop('lock xadd dword ptr [rsi+rax*4], edx', 'jnz 0x0')) === 'rmw-index', 'cmpxchg and xadd (lock): read-modify-writes');
 }
 
 // --- the dogfood loops ---------------------------------------------------------------------------------------------

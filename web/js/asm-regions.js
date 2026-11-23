@@ -19,7 +19,7 @@
 // for a reason of its own (a region or a .loc in another section), the plain text is assembled instead.
 
 import { stripHints } from './assembler.js';
-import { statements, preparePaste, semicolonFixes, loopName } from './loop-find.js';
+import { statements, preparePaste, loopName, normalizeText, isText } from './loop-find.js';
 
 const MAGIC = 0x77756963; // 'ciuw'
 // a cheap test first: without any of these the text is assembled as it is (no other work)
@@ -140,8 +140,8 @@ export function planMarked(text, { pick = null, stubs = [] } = {}) {
           if (m && q.length) files.set(Number(m[1]), q.length > 1 ? q[1] : q[0]);
         } else if (name === 'text') { prev = inText; inText = true; }
         else if (name === 'data' || name === 'bss') { prev = inText; inText = false; }
-        else if (name === 'section') { prev = inText; inText = sectionName(args) === '.text'; }
-        else if (name === 'pushsection') { stack.push(inText); prev = inText; inText = sectionName(args) === '.text'; }
+        else if (name === 'section') { prev = inText; inText = isText(args); }
+        else if (name === 'pushsection') { stack.push(inText); prev = inText; inText = isText(args); }
         else if (name === 'popsection') { prev = inText; inText = stack.pop() ?? true; }
         else if (name === 'previous') { [inText, prev] = [prev, inText]; }
         continue;
@@ -284,16 +284,59 @@ async function assembleOnce(assemble, text, prep) {
   return { ok: false, diagnostics: [{ line: plan.region.line, column: null, severity: 'error', message: 'the marked region is not in .text' }] };
 }
 
-// A ';' whose rest the assembler rejected is a comment, unless that rest looks like an instruction (a word, then a
-// register, a memory operand or a number: "addd rbx, 2"): a typo after a separator stays an error.
-const OPERAND = /^(?:%?(?:[re]?(?:ax|bx|cx|dx|si|di|sp|bp)|[abcd][lh]|(?:si|di|sp|bp)l|r(?:[89]|1[0-5])[dwb]?|[xyz]mm\d+|k[0-7]),?|(?:byte|word|dword|qword|xmmword|ymmword|zmmword|tbyte)|[[(]|\$|-?(?:0x[0-9a-f]+|\d+),?)/i;
-export function commentFixes(diagnostics, text) {
-  const fixes = semicolonFixes(diagnostics, text);
-  for (const [line, fixed] of fixes) {
-    const words = fixed.slice(fixed.lastIndexOf('#') + 1).trim().split(/\s+/);
-    if (words.length > 1 && /^[a-z][a-z0-9.]*$/i.test(words[0]) && OPERAND.test(words[1])) fixes.delete(line);
+// ';' after a statement. LLVM (like GNU as) reads it as a separator: what follows is assembled as a statement if it can
+// be. Pasted listings use it for comments (MASM, NASM, Compiler Explorer). The rule:
+//   - what follows assembles: it is assembled (a separator), with a note that names it, unless the ';' chains
+//     statements as GNU as code writes it (no space before the ';': "dec rcx; jnz 1b")
+//   - it does not assemble, for any reason: it is a comment (nothing after a ';' turns a valid line into an error),
+//     with a note if it starts with a mnemonic ("add the next element"); silently if it does not ("sum += a[i]")
+// A ';' at the start of a line is always a comment (loop-find.js, leadingSemicolons).
+
+// The columns (0-based) of the ';' separators of a line, outside quotes and before a comment.
+function separators(line) {
+  const out = [];
+  let q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) { if (c === '\\') i++; else if (c === '"') q = false; continue; }
+    if (c === '"') q = true;
+    else if (c === '#' || (c === '/' && line[i + 1] === '/')) break;
+    else if (c === ';') out.push(i);
   }
-  return fixes;
+  return out;
+}
+
+// After a failed assembly: the lines whose error lies after a ';' get that ';' as '#'. {fixes: Map line -> new text,
+// notes: [{line, column, severity: 'note', message}]}.
+export function commentFixes(diagnostics, text) {
+  const lines = String(text).split('\n');
+  const fixes = new Map(), notes = [];
+  for (const d of diagnostics ?? []) {
+    if (d.severity !== 'error' || !d.line || !d.column) continue;
+    const l = fixes.get(d.line) ?? lines[d.line - 1] ?? '';
+    const at = separators(l).filter((p) => p < d.column - 1).pop();
+    if (at === undefined || !l.slice(0, at).trim()) continue;
+    fixes.set(d.line, l.slice(0, at) + '#' + l.slice(at + 1));
+    if (!/^(?:invalid instruction mnemonic|unexpected token at start of statement)/.test(d.message)) {
+      notes.push({ line: d.line, column: at + 1, severity: 'note', message: "text after ';' taken as a comment" });
+    }
+  }
+  return { fixes, notes };
+}
+
+// After a successful assembly: a note for each ';' whose rest was assembled as a statement (see above), unless the ';'
+// is written as GNU as chains statements, right after the statement ("dec rcx; jnz 1b").
+export function separatorNotes(text) {
+  const notes = [];
+  String(text).split('\n').forEach((l, i) => {
+    const seps = separators(l);
+    seps.forEach((at, k) => {
+      const before = l.slice(0, at), seg = l.slice(at + 1, seps[k + 1] ?? l.length).replace(/(#|\/\/).*$/, '').trim();
+      if (!before.trim() || !seg || !/\s$/.test(before)) return;
+      notes.push({ line: i + 1, column: at + 1, severity: 'note', message: `';' separates statements: '${seg}' was assembled (use # for a comment)` });
+    });
+  });
+  return notes;
 }
 
 // Assembles text with its marked region and .loc lines: assembler.assemble's result plus region ({name, line, index,
@@ -308,14 +351,16 @@ export async function assembleMarked(assemble, text, opts = {}) {
   const analysis = opts.loop !== undefined && opts.loop !== null;
   const prep = analysis ? preparePaste(text, { loop: opts.loop }) : null;
   if (prep?.error) return { ok: false, diagnostics: [{ line: null, column: null, severity: 'error', message: prep.error }] };
-  let work = prep ? prep.text : String(text ?? '');
+  let work = prep ? prep.text : normalizeText(text);
   const fallback = new Map(prep?.fallback ?? []);
+  const commentNotes = [];
   let r;
   for (let round = 0; ; round++) {
     r = await assembleOnce(assemble, work, prep);
-    if (r.ok || round >= 4) break;
+    if (r.ok || round >= 8) break;
     // retry: ';' comments; objdump lines the assembler rejects, as their bytes
-    const fixes = commentFixes(r.diagnostics, work);
+    const { fixes, notes } = commentFixes(r.diagnostics, work);
+    commentNotes.push(...notes);
     for (const d of r.diagnostics) {
       if (d.severity === 'error' && d.line && !fixes.has(d.line) && fallback.has(d.line)) { fixes.set(d.line, fallback.get(d.line)); fallback.delete(d.line); }
     }
@@ -323,6 +368,10 @@ export async function assembleMarked(assemble, text, opts = {}) {
     const lines = work.split('\n');
     for (const [l, t] of fixes) lines[l - 1] = t;
     work = lines.join('\n');
+  }
+  if (r.ok) {
+    const notes = [...commentNotes, ...separatorNotes(work)];
+    if (notes.length) r = { ...r, diagnostics: [...r.diagnostics, ...notes] };
   }
   if (!prep) return r;
   const loop = prep.choice === null ? null : {

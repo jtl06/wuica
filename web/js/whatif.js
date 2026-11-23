@@ -71,7 +71,9 @@ export function experiments(response, hex, options) {
   if (response?.mode === 'loop' && response.criticalPath?.edges?.length) {
     for (const n of ACCUMULATORS) {
       const a = accumulatorText(response, hex, n);
-      if (!a.ok) { if (n === ACCUMULATORS[0]) out.push({ id: 'acc', label: 'accumulators', per: 1, error: a.reason, options, title: `N accumulators: ${a.reason}` }); break; }
+      // none possible: one row with the reason; a larger N alone (no free registers left): its row with the reason
+      if (!a.ok && n === ACCUMULATORS[0]) { out.push({ id: 'acc', label: 'accumulators', per: 1, error: a.reason, options, title: `N accumulators: ${a.reason}` }); break; }
+      if (!a.ok) { out.push({ id: `acc${n}`, label: `${n} accumulators`, per: n, error: a.reason, options, title: `${n} accumulators: ${a.reason}` }); continue; }
       const names = a.renamed.map((x) => `${x.from} → ${x.to.join(', ')}`).join('; ');
       out.push({ id: `acc${n}`, label: `${n} accumulators`, per: n, text: a.text, options,
         title: `unrolled ×${n} with the chain's register renamed in each copy (${names}): ${n} independent chains; per original iteration` });
@@ -272,7 +274,7 @@ export function createWhatIf(env) {
     if (!row || !open || !job) return;
     const { base, exps, results } = job;
     const best = bestOf(base.tp, exps, results);
-    const done = exps.filter((x) => /^acc\d+$/.test(x.id)).every((x) => results.has(x.id));
+    const done = exps.filter((x) => /^acc\d+$/.test(x.id) && !x.error).every((x) => results.has(x.id));
     const lines = exps.map((x) => {
       const o = outcome(base, x, results.get(x.id));
       const cells = !o ? [h('td', { class: 'wi-tp hint', text: '…' }), h('td'), h('td')]

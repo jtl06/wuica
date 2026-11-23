@@ -162,7 +162,7 @@ export interface AnalyzeSummary {
 export interface Insights {
   /** Each limit (by name) and execution port (by column name): cycles / tp. 1 = busy every cycle. */
   utilization: Record<string, number>;
-  /** The bottleneck(s) uiCA names: the same as the response's `bottlenecks` (limits only). [] when it names none (no
+  /** The bottleneck(s) uiCA names: the same as the response's `bottlenecks` (limit names, and "Divider", which has no limit of its own). [] when it names none (no
    * single limit explains tp; the web page says "unknown"): then see `largest`. */
   binding: string[];
   /** Only when `binding` is []: the largest limit(s), the nearest bound, which alone does not reach tp. */
