@@ -8,6 +8,8 @@ import { detailsFit, portString, portThroughput, latencyPairs, createDetails } f
 import { layout, hazards, cardModel, frontTags, bottleneckShare } from '../web/js/icard.js';
 import { portSetBlame, setName } from '../web/js/portset.js';
 import { slotParts } from '../web/js/slots.js';
+import { issueLog, issueAt, issueShare, issueText } from '../web/js/trace-issue.js';
+import { loadTrace } from '../web/js/trace.js';
 import { ACCURACY, accuracyNote } from '../web/js/archs.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
@@ -72,6 +74,13 @@ const near = (a, b, eps = 1e-9) => Math.abs(a - b) < eps;
   const sp = slotParts({ width: 4, cycles: 10, iterations: 10, slots: { issued: 2, frontEnd: 1, rob: 0.5, rs: 0, other: 0.5 } });
   check(sp.map((p) => p.key).join() === 'issued,frontEnd,rob,rs,other' && near(sp[0].share, 0.5) && near(sp[2].share, 0.125), 'slots: shares');
   check(slotParts({ width: 4, slots: { issued: 0, frontEnd: 0, rob: 0, rs: 0, other: 0 } }) === null && slotParts(null) === null, 'slots: none');
+
+  // the trace's issue strip
+  const log = issueLog({ issue: { width: 4, first: 10, issued: [4, 2, 0], cause: '.FR', slots: {} } });
+  check(log && issueAt(log, 9) === null && issueAt(log, 11).cause === 'F' && issueAt(log, 13) === null, 'issue strip: cycles of the window');
+  check(near(issueShare(log, 0, 100), 0.5) && near(issueShare(log, 11, 11), 0.5) && issueShare(log, 20, 30) === null, 'issue strip: share of the slots');
+  check(issueText(log, 10) === 'issued 4/4' && /^issued 0\/4 · reorder buffer full$/.test(issueText(log, 12)) && issueText(log, 50) === null, 'issue strip: text', issueText(log, 12));
+  check(issueLog({ issue: { width: 4, first: 0, issued: [1], cause: '' } }) === null && issueLog(null) === null, 'issue strip: unusable logs');
 
   // the fetcher: one analysis per view, null without the details, a cancelled call tried again
   let calls = 0, mode = 'ok';
@@ -165,6 +174,22 @@ if (!fs.existsSync(wasm) || !fs.existsSync(new URL('data/uarch.json', root))) {
     }
   }
   check(cases > 150, 'examples analyzed', String(cases));
+  // the trace gets the issue log of the same simulation
+  {
+    const request = makeRequest(EXAMPLES[0].hex, 'SKL');
+    const base = await e.analyze(request);
+    const { model } = await loadTrace({ response: base, request }, { analyze: (q) => e.analyze(q) });
+    const d = (await e.analyze({ ...request, details: true })).details;
+    check(model.issue && model.issue.first === d.issue.first && model.issue.cause === d.issue.cause && model.issue.first < model.nCycles, 'trace: the issue log of its simulation', JSON.stringify(model.issue?.first));
+    // the issued uops per cycle are the trace's own (addedToRB, fused uops)
+    let ok = model.issue.issued.slice(0, 50).some((n) => n > 0);
+    for (let k = 0; k < model.issue.issued.length && k < 50; k++) {
+      const c = model.issue.first + k;
+      const n = new Set(model.uops.filter((u) => u.issued === c && u.fUopID !== undefined).map((u) => `${u.rnd}/${u.instrID}/${u.lamUopID}/${u.fUopID}`)).size;
+      if (n !== model.issue.issued[k]) { ok = false; break; }
+    }
+    check(ok, 'trace: the issue log counts the fused uops the trace issues');
+  }
   // the showcase: details for every row
   const sha = String(Array.isArray(SHA256_BLOCK_HEX) ? SHA256_BLOCK_HEX.join('') : SHA256_BLOCK_HEX).replace(/[^0-9a-f]/gi, '');
   const r = await e.analyze({ ...makeRequest(sha, 'SKL'), details: true });
