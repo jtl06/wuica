@@ -1,9 +1,21 @@
 //! The front end: `FrontEnd`, `DSB`, `MicrocodeSequencer`, `Decoder`, `PreDecoder`, `ReorderBuffer`, the cache-block generators
 //! and the DSB helpers.
+//!
+//! The instruction instances that a cache-block generator creates for one cache block are created one after the other, so a
+//! cache block is a range of instance indices ([`Block`]). The queues of blocks (`DSBBlockQueue`, `B16BlockQueue`) are stored
+//! as one queue of entries and a queue of block lengths, and the lists that the Python methods return are written to buffers
+//! that are reused from cycle to cycle.
 
 use super::prep::NONE;
-use super::{crash, Sim, SimError, UopSource};
-use std::collections::{HashSet, VecDeque};
+use super::{crash, FxHashSet, Sim, SimError, UopSource};
+use std::collections::VecDeque;
+
+/// a cache block: the instruction instances `.0 .. .1`
+pub(crate) type Block = (u32, u32);
+
+fn block_vec(b: Block) -> Vec<u32> {
+    (b.0..b.1).collect()
+}
 
 /// `DSBEntry`
 pub(crate) struct DsbEntry {
@@ -11,8 +23,82 @@ pub(crate) struct DsbEntry {
     inst: u32,
     /// laminated uop or NONE
     uop: u32,
-    ms_uops: Vec<u32>,
+    /// `MSUops`: the laminated uops `ms_uops.0 .. ms_uops.0 + ms_uops.1`
+    ms_uops: (u32, u32),
     requires_extra_entry: bool,
+}
+
+/// a queue of lists of `DSBEntry` (`DSBBlockQueue`, and the result of `getDSBBlocks`): the entries of all blocks, and the
+/// number of entries of each block
+#[derive(Default)]
+pub(crate) struct DsbBlockQueue {
+    entries: VecDeque<DsbEntry>,
+    block_lens: VecDeque<u32>,
+}
+
+impl DsbBlockQueue {
+    /// the number of blocks
+    fn len(&self) -> usize {
+        self.block_lens.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.block_lens.is_empty()
+    }
+
+    fn start_block(&mut self) {
+        self.block_lens.push_back(0);
+    }
+
+    /// the number of entries of the last block
+    fn last_block_len(&self) -> usize {
+        *self.block_lens.back().unwrap() as usize
+    }
+
+    /// appends an entry to the last block
+    fn push(&mut self, e: DsbEntry) {
+        *self.block_lens.back_mut().unwrap() += 1;
+        self.entries.push_back(e);
+    }
+
+    /// `self[0][0]`
+    fn first_entry(&self) -> Option<&DsbEntry> {
+        match self.block_lens.front() {
+            Some(&n) if n > 0 => self.entries.front(),
+            _ => None,
+        }
+    }
+
+    /// `self[0][-1]` (None if the first block is empty or there is no block)
+    fn first_block_last_entry(&self) -> Option<&DsbEntry> {
+        match self.block_lens.front() {
+            Some(&n) if n > 0 => self.entries.get(n as usize - 1),
+            _ => None,
+        }
+    }
+
+    /// `self[0].popleft()`
+    fn pop_first_entry(&mut self) -> Option<DsbEntry> {
+        match self.block_lens.front_mut() {
+            Some(n) if *n > 0 => {
+                *n -= 1;
+                self.entries.pop_front()
+            }
+            _ => None,
+        }
+    }
+
+    /// `not self[0]`
+    fn first_block_is_empty(&self) -> bool {
+        self.block_lens.front() == Some(&0)
+    }
+
+    /// `self.popleft()` for an empty first block
+    fn pop_empty_first_block(&mut self) {
+        debug_assert!(self.first_block_is_empty());
+        self.block_lens.pop_front();
+    }
+
 }
 
 /// the state of `CacheBlockGenerator`
@@ -20,7 +106,6 @@ struct CacheBlockGenerator {
     unroll: bool,
     rnd: i64,
     pos: usize,
-    cache_block: Vec<u32>,
     next_addr: i64,
 }
 
@@ -28,32 +113,46 @@ pub(crate) struct FrontEnd {
     pub unroll: bool,
     pub alignment_offset: i64,
     instruction_queue: VecDeque<u32>,
-    op_cache_round: VecDeque<u32>,
+    /// the instances of the current round of the op cache that have not been delivered yet: `.0 .. .1`
+    op_cache_round: Block,
     op_cache_rnd: i64,
     rsp_offset: i64,
     pub all_generated_instr_instances: Vec<u32>,
-    addresses_in_dsb: HashSet<i64>,
+    addresses_in_dsb: FxHashSet<i64>,
     pub lsd_unroll_count: i64,
     /// None, MITE, DSB or LSD
     pub uop_source: Option<UopSource>,
     cbg: CacheBlockGenerator,
     // CacheBlocksForNextRoundGenerator
-    nrg_cache_blocks: Vec<Vec<u32>>,
+    nrg_cache_blocks: Vec<Block>,
     nrg_prev_rnd: i64,
     // MicrocodeSequencer
     ms_uop_queue: VecDeque<u32>,
     ms_stalled: i64,
     ms_post_stall: i64,
     // DSB
-    dsb_block_queue: VecDeque<VecDeque<DsbEntry>>,
+    dsb_block_queue: DsbBlockQueue,
     dsb_delay_in_prev_cycle: bool,
     // PreDecoder
-    b16_block_queue: VecDeque<VecDeque<u32>>,
+    /// `B16BlockQueue`: the instances of all blocks, and the number of instances of each block
+    b16_entries: VecDeque<u32>,
+    b16_block_lens: VecDeque<u32>,
     cur_block: VecDeque<u32>,
     non_stalled_predec_cycles_for_cur_block: i64,
     pre_dec_queue: Vec<u32>,
     predec_stalled: i64,
     partial_instr_i: u32,
+    // reused buffers
+    /// the uops issued in a cycle
+    issue_uops: Vec<u32>,
+    /// (instruction instance, laminated uop or NONE) from the decoders or the DSB
+    instr_i_uops: Vec<(u32, u32)>,
+    /// laminated uops added to the IDQ
+    new_uops: Vec<u32>,
+    round_blocks: Vec<Block>,
+    split_buf1: Vec<u32>,
+    split_buf2: Vec<u32>,
+    split_buf3: Vec<u32>,
 }
 
 impl FrontEnd {
@@ -62,27 +161,35 @@ impl FrontEnd {
             unroll,
             alignment_offset,
             instruction_queue: VecDeque::new(),
-            op_cache_round: VecDeque::new(),
+            op_cache_round: (0, 0),
             op_cache_rnd: 0,
             rsp_offset: 0,
             all_generated_instr_instances: Vec::new(),
-            addresses_in_dsb: HashSet::new(),
+            addresses_in_dsb: FxHashSet::default(),
             lsd_unroll_count: 1,
             uop_source: None,
-            cbg: CacheBlockGenerator { unroll: true, rnd: 0, pos: 0, cache_block: Vec::new(), next_addr: alignment_offset },
+            cbg: CacheBlockGenerator { unroll: true, rnd: 0, pos: 0, next_addr: alignment_offset },
             nrg_cache_blocks: Vec::new(),
             nrg_prev_rnd: 0,
             ms_uop_queue: VecDeque::new(),
             ms_stalled: 0,
             ms_post_stall: 0,
-            dsb_block_queue: VecDeque::new(),
+            dsb_block_queue: DsbBlockQueue::default(),
             dsb_delay_in_prev_cycle: false,
-            b16_block_queue: VecDeque::new(),
+            b16_entries: VecDeque::new(),
+            b16_block_lens: VecDeque::new(),
             cur_block: VecDeque::new(),
             non_stalled_predec_cycles_for_cur_block: 0,
             pre_dec_queue: Vec::new(),
             predec_stalled: 0,
             partial_instr_i: NONE,
+            issue_uops: Vec::new(),
+            instr_i_uops: Vec::new(),
+            new_uops: Vec::new(),
+            round_blocks: Vec::new(),
+            split_buf1: Vec::new(),
+            split_buf2: Vec::new(),
+            split_buf3: Vec::new(),
         }
     }
 }
@@ -102,24 +209,26 @@ impl<'a> Sim<'a> {
         self.prep.info[self.inst_instr(inst)].len
     }
 
+    /// `[ii for ii in block if b*size <= ii.address % modulus < (b+1)*size]`, written to `out`
+    fn split_part(&self, block: &[u32], modulus: i64, size: i64, b: i64, out: &mut Vec<u32>) {
+        out.clear();
+        for &ii in block {
+            let a = self.inst_addr(ii).rem_euclid(modulus);
+            if b * size <= a && a < (b + 1) * size {
+                out.push(ii);
+            }
+        }
+    }
+
     /// `[[ii for ii in block if b*size <= ii.address % modulus < (b+1)*size] for b in range(0, n)]`
     fn split(&self, block: &[u32], modulus: i64, size: i64, n: i64) -> Vec<Vec<u32>> {
         (0..n)
             .map(|b| {
-                block
-                    .iter()
-                    .copied()
-                    .filter(|&ii| {
-                        let a = self.inst_addr(ii).rem_euclid(modulus);
-                        b * size <= a && a < (b + 1) * size
-                    })
-                    .collect()
+                let mut v = Vec::new();
+                self.split_part(block, modulus, size, b, &mut v);
+                v
             })
             .collect()
-    }
-
-    fn split_64_to_16(&self, block: &[u32]) -> Vec<Vec<u32>> {
-        self.split(block, 64, 16, 4)
     }
 
     fn split_32_to_16(&self, block: &[u32]) -> Vec<Vec<u32>> {
@@ -138,14 +247,14 @@ impl<'a> Sim<'a> {
     // ---- generators ----
 
     /// `next(CacheBlockGenerator(instructions, unroll, alignmentOffset))`
-    fn next_cache_block(&mut self) -> Vec<u32> {
+    fn next_cache_block(&mut self) -> Block {
         let n = self.instrs.len();
+        let first = self.insts.len() as u32;
         loop {
             let instr = self.fe.cbg.pos;
             let (addr, rnd) = (self.fe.cbg.next_addr, self.fe.cbg.rnd);
-            let inst = self.new_instr_instance(instr, addr, rnd);
+            self.new_instr_instance(instr, addr, rnd);
             let g = &mut self.fe.cbg;
-            g.cache_block.push(inst);
             g.pos += 1;
             if g.pos == n {
                 g.pos = 0;
@@ -153,27 +262,28 @@ impl<'a> Sim<'a> {
             }
             if !g.unroll && instr == n - 1 {
                 g.next_addr = self.fe.alignment_offset;
-                return std::mem::take(&mut g.cache_block);
+                return (first, self.insts.len() as u32);
             }
             let prev_addr = g.next_addr;
             g.next_addr = prev_addr + self.prep.info[instr].len;
             if prev_addr.div_euclid(64) != g.next_addr.div_euclid(64) {
-                return std::mem::take(&mut g.cache_block);
+                return (first, self.insts.len() as u32);
             }
         }
     }
 
-    /// `next(CacheBlocksForNextRoundGenerator(instructions, alignmentOffset))`: the cache blocks of one round. The generator
-    /// creates the first cache block of the following round before it returns.
-    fn next_round_cache_blocks(&mut self) -> Vec<Vec<u32>> {
+    /// `next(CacheBlocksForNextRoundGenerator(instructions, alignmentOffset))`: the cache blocks of one round, written to `out`.
+    /// The generator creates the first cache block of the following round before it returns.
+    fn next_round_cache_blocks(&mut self, out: &mut Vec<Block>) {
+        out.clear();
         loop {
             let cache_block = self.next_cache_block();
-            let cur_rnd = self.insts[*cache_block.last().unwrap() as usize].rnd;
+            let cur_rnd = self.insts[cache_block.1 as usize - 1].rnd;
             if self.fe.nrg_prev_rnd != cur_rnd {
-                let result = std::mem::take(&mut self.fe.nrg_cache_blocks);
+                std::mem::swap(out, &mut self.fe.nrg_cache_blocks);
                 self.fe.nrg_prev_rnd = cur_rnd;
                 self.fe.nrg_cache_blocks.push(cache_block);
-                return result;
+                return;
             }
             self.fe.nrg_cache_blocks.push(cache_block);
         }
@@ -181,10 +291,11 @@ impl<'a> Sim<'a> {
 
     // ---- DSB helpers ----
 
-    /// `getDSBBlocks`
-    fn get_dsb_blocks(&self, cache_block: &[u32]) -> Vec<VecDeque<DsbEntry>> {
+    /// `getDSBBlocks`: appends the blocks to `dsb_blocks`
+    fn get_dsb_blocks(&self, cache_block: &[u32], dsb_blocks: &mut DsbBlockQueue) {
         let mut remaining_entries_in_cur_block: i64 = 0;
-        let mut dsb_blocks: Vec<VecDeque<DsbEntry>> = Vec::new();
+        // the first instruction that is not macro-fused with the previous one always starts a new block
+        let mut started = false;
         for &inst in cache_block {
             let ii = self.inst_instr(inst);
             let instr = &self.instrs[ii];
@@ -196,27 +307,30 @@ impl<'a> Sim<'a> {
             let requires_extra_entry = info.dsb_requires_extra_entry;
             if instr.uops_ms != 0 || n_required_entries + requires_extra_entry as i64 > remaining_entries_in_cur_block {
                 remaining_entries_in_cur_block = 6;
-                dsb_blocks.push(VecDeque::new());
+                dsb_blocks.start_block();
+                started = true;
             }
-            let cur_block = dsb_blocks.last_mut().unwrap();
-            let uops: Vec<u32> = self.insts[inst as usize].uops().collect();
-            let n_mite = (instr.uops_mite.max(0) as usize).min(uops.len());
+            assert!(started, "getDSBBlocks: no current block");
+            let i = &self.insts[inst as usize];
+            let (first_uop, n_uops) = (i.first_uop, i.n_uops);
+            let n_mite = (instr.uops_mite.max(0) as u32).min(n_uops);
             if instr.uops_mite != 0 {
-                for (i, &lam) in uops[..n_mite].iter().enumerate() {
-                    let slot = cur_block.len();
-                    if i as i64 == instr.uops_mite - 1 {
-                        cur_block.push_back(DsbEntry { slot, inst, uop: lam, ms_uops: uops[n_mite..].to_vec(), requires_extra_entry });
+                for k in 0..n_mite {
+                    let lam = first_uop + k;
+                    let slot = dsb_blocks.last_block_len();
+                    if k as i64 == instr.uops_mite - 1 {
+                        dsb_blocks.push(DsbEntry { slot, inst, uop: lam, ms_uops: (first_uop + n_mite, n_uops - n_mite), requires_extra_entry });
                     } else {
-                        cur_block.push_back(DsbEntry { slot, inst, uop: lam, ms_uops: Vec::new(), requires_extra_entry: false });
+                        dsb_blocks.push(DsbEntry { slot, inst, uop: lam, ms_uops: (0, 0), requires_extra_entry: false });
                     }
                     remaining_entries_in_cur_block -= 1;
                 }
             } else if instr.uops_ms != 0 {
-                let slot = cur_block.len();
-                cur_block.push_back(DsbEntry { slot, inst, uop: NONE, ms_uops: uops, requires_extra_entry: false });
+                let slot = dsb_blocks.last_block_len();
+                dsb_blocks.push(DsbEntry { slot, inst, uop: NONE, ms_uops: (first_uop, n_uops), requires_extra_entry: false });
             } else {
-                let slot = cur_block.len();
-                cur_block.push_back(DsbEntry { slot, inst, uop: NONE, ms_uops: Vec::new(), requires_extra_entry: false });
+                let slot = dsb_blocks.last_block_len();
+                dsb_blocks.push(DsbEntry { slot, inst, uop: NONE, ms_uops: (0, 0), requires_extra_entry: false });
                 remaining_entries_in_cur_block -= 1;
             }
             if requires_extra_entry {
@@ -226,15 +340,21 @@ impl<'a> Sim<'a> {
                 remaining_entries_in_cur_block = 0;
             }
         }
-        dsb_blocks
+    }
+
+    /// `len(getDSBBlocks(cacheBlock))`
+    fn n_dsb_blocks(&self, cache_block: &[u32]) -> usize {
+        let mut q = DsbBlockQueue::default();
+        self.get_dsb_blocks(cache_block, &mut q);
+        q.len()
     }
 
     /// `canBeInDSB`
     fn can_be_in_dsb(&self, block: &[u32], dsb_block_size: i64) -> bool {
-        if dsb_block_size == 32 && self.get_dsb_blocks(block).len() > 3 {
+        if dsb_block_size == 32 && self.n_dsb_blocks(block) > 3 {
             return false;
         }
-        if dsb_block_size == 64 && self.get_dsb_blocks(block).len() > 6 {
+        if dsb_block_size == 64 && self.n_dsb_blocks(block) > 6 {
             return false;
         }
         if self.instrs[self.inst_instr(*block.last().unwrap())].cannot_be_in_dsb_due_to_jcc_erratum {
@@ -273,32 +393,35 @@ impl<'a> Sim<'a> {
             return Ok(());
         }
         self.fe.cbg.unroll = false;
-        let cache_blocks_for_first_round = self.next_round_cache_blocks();
+        let mut cache_blocks_for_first_round = Vec::new();
+        self.next_round_cache_blocks(&mut cache_blocks_for_first_round);
         let bs = self.cfg.dsb_block_size;
 
         let all_blocks_can_be_cached = if bs == 32 {
             cache_blocks_for_first_round
                 .iter()
-                .all(|cb| self.split_64_to_32(cb).iter().filter(|b| !b.is_empty()).all(|b| self.can_be_in_dsb(b, bs)))
+                .all(|&cb| self.split_64_to_32(&block_vec(cb)).iter().filter(|b| !b.is_empty()).all(|b| self.can_be_in_dsb(b, bs)))
         } else {
-            cache_blocks_for_first_round.iter().all(|b| self.can_be_in_dsb(b, bs))
+            cache_blocks_for_first_round.iter().all(|&b| self.can_be_in_dsb(&block_vec(b), bs))
         };
         let all_instrs_can_be_used_by_lsd =
-            cache_blocks_for_first_round.iter().flatten().all(|&ii| self.prep.info[self.inst_instr(ii)].can_be_used_by_lsd);
-        let n_uops: i64 = cache_blocks_for_first_round.iter().flatten().map(|&ii| self.insts[ii as usize].n_uops as i64).sum();
+            cache_blocks_for_first_round.iter().flat_map(|&b| b.0..b.1).all(|ii| self.prep.info[self.inst_instr(ii)].can_be_used_by_lsd);
+        let n_uops: i64 = cache_blocks_for_first_round.iter().flat_map(|&b| b.0..b.1).map(|ii| self.insts[ii as usize].n_uops as i64).sum();
         if all_blocks_can_be_cached && self.cfg.lsd_enabled && all_instrs_can_be_used_by_lsd && n_uops <= self.cfg.idq_width {
             self.fe.uop_source = Some(UopSource::Lsd);
             self.fe.lsd_unroll_count = self.cfg.lsd_unrolling.get(&n_uops.to_string()).map_or(1, |&n| n as i64);
             let mut blocks = cache_blocks_for_first_round;
+            let mut round = Vec::new();
             for _ in 0..self.fe.lsd_unroll_count - 1 {
-                blocks.extend(self.next_round_cache_blocks());
+                self.next_round_cache_blocks(&mut round);
+                blocks.extend_from_slice(&round);
             }
             for cache_block in blocks {
                 self.add_new_cache_block(cache_block);
             }
         } else {
             self.find_cacheable_addresses(&cache_blocks_for_first_round);
-            for cache_block in cache_blocks_for_first_round {
+            for &cache_block in &cache_blocks_for_first_round {
                 self.add_new_cache_block(cache_block);
             }
             if self.fe.addresses_in_dsb.contains(&self.fe.alignment_offset) {
@@ -310,15 +433,17 @@ impl<'a> Sim<'a> {
 
     /// `FrontEnd.cycle`
     pub(crate) fn front_end_cycle(&mut self, clock: i64) -> Result<(), SimError> {
-        let mut issue_uops = Vec::new();
+        let mut issue_uops = std::mem::take(&mut self.fe.issue_uops);
+        issue_uops.clear();
         if !self.rob_is_full() && !self.scheduler_is_full() {
-            issue_uops = self.renamer_cycle()?;
+            self.renamer_cycle(&mut issue_uops)?;
         }
         for &fused in &issue_uops {
             self.fused[fused as usize].issued = Some(clock);
         }
         self.rob_cycle(clock, &issue_uops);
         self.scheduler_cycle(clock, &issue_uops)?;
+        self.fe.issue_uops = issue_uops;
 
         let cfg = self.cfg;
         if self.idq.len() as i64 + cfg.dsb_width > cfg.idq_width {
@@ -332,10 +457,10 @@ impl<'a> Sim<'a> {
                 let mut n_fields = 0;
                 let mut entry_window: Option<i64> = None;
                 loop {
-                    if self.fe.op_cache_round.is_empty() {
-                        self.fe.op_cache_round = self.new_round().into();
+                    if self.fe.op_cache_round.0 == self.fe.op_cache_round.1 {
+                        self.fe.op_cache_round = self.new_round();
                     }
-                    let inst = self.fe.op_cache_round[0];
+                    let inst = self.fe.op_cache_round.0;
                     let ii = self.inst_instr(inst);
                     let slots = self.insts[inst as usize].n_uops as i64 + self.prep.info[ii].has_i64 as i64;
                     let window = (self.inst_addr(inst) + self.inst_len(inst) - 1).div_euclid(64);
@@ -350,7 +475,7 @@ impl<'a> Sim<'a> {
                     } else {
                         entry_window = Some(window);
                     }
-                    self.fe.op_cache_round.pop_front();
+                    self.fe.op_cache_round.0 += 1;
                     self.fe.all_generated_instr_instances.push(inst);
                     for lam in self.insts[inst as usize].uops() {
                         let first = self.lams[lam as usize].first_uop;
@@ -360,14 +485,15 @@ impl<'a> Sim<'a> {
                     }
                     n_ops += slots;
                     n_fields += fields;
-                    if self.fe.op_cache_round.is_empty() {
+                    if self.fe.op_cache_round.0 == self.fe.op_cache_round.1 {
                         break; // the entry ends at the end of the loop
                     }
                 }
             }
         } else if self.fe.uop_source.is_none() {
             while (self.idq.len() as i64) < cfg.issue_width {
-                for inst in self.next_cache_block() {
+                let (first, end) = self.next_cache_block();
+                for inst in first..end {
                     self.fe.all_generated_instr_instances.push(inst);
                     for lam in self.insts[inst as usize].uops() {
                         let first = self.lams[lam as usize].first_uop;
@@ -387,33 +513,42 @@ impl<'a> Sim<'a> {
             }
         } else if self.fe.uop_source == Some(UopSource::Lsd) {
             if self.idq.is_empty() {
+                let mut round = std::mem::take(&mut self.fe.round_blocks);
                 for _ in 0..self.fe.lsd_unroll_count {
-                    for cache_block in self.next_round_cache_blocks() {
+                    self.next_round_cache_blocks(&mut round);
+                    for &cache_block in &round {
                         self.add_new_cache_block(cache_block);
                     }
                 }
+                self.fe.round_blocks = round;
             }
         } else {
             // add new cache blocks
-            while self.fe.dsb_block_queue.len() < 2 && self.fe.b16_block_queue.len() < 4 {
+            while self.fe.dsb_block_queue.len() < 2 && self.fe.b16_block_lens.len() < 4 {
                 if self.fe.unroll {
                     let cache_block = self.next_cache_block();
                     self.add_new_cache_block(cache_block);
                 } else {
-                    for cache_block in self.next_round_cache_blocks() {
+                    let mut round = std::mem::take(&mut self.fe.round_blocks);
+                    self.next_round_cache_blocks(&mut round);
+                    for &cache_block in &round {
                         self.add_new_cache_block(cache_block);
                     }
+                    self.fe.round_blocks = round;
                 }
             }
 
             // add new uops to IDQ
-            let mut new_uops: Vec<u32> = Vec::new();
+            let mut new_uops = std::mem::take(&mut self.fe.new_uops);
+            new_uops.clear();
             if self.ms_is_busy() {
-                new_uops = self.ms_cycle();
+                self.ms_cycle(&mut new_uops);
             } else if self.fe.uop_source == Some(UopSource::Mite) {
                 self.pre_decoder_cycle(clock);
-                let new_instr_i_uops = self.decoder_cycle(clock)?;
-                new_uops = new_instr_i_uops.iter().filter(|x| x.1 != NONE).map(|x| x.1).collect();
+                let mut new_instr_i_uops = std::mem::take(&mut self.fe.instr_i_uops);
+                new_instr_i_uops.clear();
+                self.decoder_cycle(clock, &mut new_instr_i_uops)?;
+                new_uops.extend(new_instr_i_uops.iter().filter(|x| x.1 != NONE).map(|x| x.1));
                 if !self.fe.unroll {
                     if let Some(&(cur_inst, _)) = new_instr_i_uops.last() {
                         let ii = self.inst_instr(cur_inst);
@@ -426,9 +561,12 @@ impl<'a> Sim<'a> {
                         }
                     }
                 }
+                self.fe.instr_i_uops = new_instr_i_uops;
             } else if self.fe.uop_source == Some(UopSource::Dsb) {
-                let new_instr_i_uops = self.dsb_cycle()?;
-                new_uops = new_instr_i_uops.iter().filter(|x| x.1 != NONE).map(|x| x.1).collect();
+                let mut new_instr_i_uops = std::mem::take(&mut self.fe.instr_i_uops);
+                new_instr_i_uops.clear();
+                self.dsb_cycle(&mut new_instr_i_uops)?;
+                new_uops.extend(new_instr_i_uops.iter().filter(|x| x.1 != NONE).map(|x| x.1));
                 if let Some(&last_lam) = new_uops.last() {
                     let l = &self.lams[last_lam as usize];
                     let last_uop = l.first_uop + l.n_uops - 1;
@@ -444,14 +582,16 @@ impl<'a> Sim<'a> {
                         }
                     }
                 }
+                self.fe.instr_i_uops = new_instr_i_uops;
             }
 
-            for lam in new_uops {
+            for &lam in &new_uops {
                 let first = self.lams[lam as usize].first_uop;
                 self.add_stack_sync_uop(clock, first);
                 self.idq.push_back(lam);
                 self.lams[lam as usize].added_to_idq = Some(clock);
             }
+            self.fe.new_uops = new_uops;
         }
         Ok(())
     }
@@ -463,30 +603,30 @@ impl<'a> Sim<'a> {
     }
 
     /// `FrontEnd.newRound`
-    fn new_round(&mut self) -> Vec<u32> {
-        let mut instr_is = Vec::new();
+    fn new_round(&mut self) -> Block {
+        let first = self.insts.len() as u32;
         let mut addr = self.fe.alignment_offset;
         for instr in 0..self.instrs.len() {
             let rnd = self.fe.op_cache_rnd;
-            instr_is.push(self.new_instr_instance(instr, addr, rnd));
+            self.new_instr_instance(instr, addr, rnd);
             addr += self.prep.info[instr].len;
         }
         self.fe.op_cache_rnd += 1;
-        instr_is
+        (first, self.insts.len() as u32)
     }
 
     /// `FrontEnd.findCacheableAddresses`
-    fn find_cacheable_addresses(&mut self, cache_blocks_for_first_round: &[Vec<u32>]) {
+    fn find_cacheable_addresses(&mut self, cache_blocks_for_first_round: &[Block]) {
         let bs = self.cfg.dsb_block_size;
-        for cache_block in cache_blocks_for_first_round {
+        for &cache_block in cache_blocks_for_first_round {
             let split_cache_blocks: Vec<Vec<u32>>;
             if bs == 32 {
-                split_cache_blocks = self.split_64_to_32(cache_block).into_iter().filter(|b| !b.is_empty()).collect();
+                split_cache_blocks = self.split_64_to_32(&block_vec(cache_block)).into_iter().filter(|b| !b.is_empty()).collect();
                 if self.cfg.both_32byte_blocks_must_be_cacheable && split_cache_blocks.iter().any(|b| !self.can_be_in_dsb(b, bs)) {
                     return;
                 }
             } else {
-                split_cache_blocks = vec![cache_block.clone()];
+                split_cache_blocks = vec![block_vec(cache_block)];
             }
             for block in &split_cache_blocks {
                 if self.can_be_in_dsb(block, bs) {
@@ -502,48 +642,69 @@ impl<'a> Sim<'a> {
     }
 
     /// `FrontEnd.addNewCacheBlock`
-    fn add_new_cache_block(&mut self, cache_block: Vec<u32>) {
-        self.fe.all_generated_instr_instances.extend_from_slice(&cache_block);
+    fn add_new_cache_block(&mut self, cache_block: Block) {
+        let (first, end) = cache_block;
+        self.fe.all_generated_instr_instances.extend(first..end);
         if self.fe.uop_source == Some(UopSource::Lsd) {
-            for &inst in &cache_block {
+            for inst in first..end {
                 self.insts[inst as usize].source = Some(UopSource::Lsd);
                 for lam in self.insts[inst as usize].uops() {
                     self.idq.push_back(lam);
                     self.lams[lam as usize].uop_source = Some(UopSource::Lsd);
                 }
             }
-        } else {
-            let bs = self.cfg.dsb_block_size;
-            let blocks = if bs == 32 { self.split_64_to_32(&cache_block) } else { vec![cache_block] };
-            for block in blocks {
-                if block.is_empty() {
-                    continue;
+            return;
+        }
+        let bs = self.cfg.dsb_block_size;
+        let mut cb = std::mem::take(&mut self.fe.split_buf1);
+        let mut block = std::mem::take(&mut self.fe.split_buf2);
+        cb.clear();
+        cb.extend(first..end);
+        // blocks: splitTo32ByteBlocks(cacheBlock) if DSBBlockSize == 32 else [cacheBlock]
+        let n_blocks = if bs == 32 { 2 } else { 1 };
+        let mut b16_block = std::mem::take(&mut self.fe.split_buf3);
+        for b in 0..n_blocks {
+            if bs == 32 {
+                self.split_part(&cb, 64, 32, b, &mut block);
+            } else {
+                block.clear();
+                block.extend_from_slice(&cb);
+            }
+            if block.is_empty() {
+                continue;
+            }
+            if self.fe.addresses_in_dsb.contains(&self.inst_addr(block[0])) {
+                for &inst in &block {
+                    self.insts[inst as usize].source = Some(UopSource::Dsb);
                 }
-                if self.fe.addresses_in_dsb.contains(&self.inst_addr(block[0])) {
-                    for &inst in &block {
-                        self.insts[inst as usize].source = Some(UopSource::Dsb);
+                // DSBBlockQueue.extend(getDSBBlocks(block))
+                let mut queue = std::mem::take(&mut self.fe.dsb_block_queue);
+                self.get_dsb_blocks(&block, &mut queue);
+                self.fe.dsb_block_queue = queue;
+            } else {
+                for &inst in &block {
+                    self.insts[inst as usize].source = Some(UopSource::Mite);
+                }
+                // split32ByteBlockTo16ByteBlocks or split64ByteBlockTo16ByteBlocks
+                let (modulus, n_b16) = if bs == 32 { (32, 2) } else { (64, 4) };
+                for b16 in 0..n_b16 {
+                    self.split_part(&block, modulus, 16, b16, &mut b16_block);
+                    if b16_block.is_empty() {
+                        continue;
                     }
-                    let dsb_blocks = self.get_dsb_blocks(&block);
-                    self.fe.dsb_block_queue.extend(dsb_blocks);
-                } else {
-                    for &inst in &block {
-                        self.insts[inst as usize].source = Some(UopSource::Mite);
-                    }
-                    let b16_blocks = if bs == 32 { self.split_32_to_16(&block) } else { self.split_64_to_16(&block) };
-                    for b16_block in b16_blocks {
-                        if b16_block.is_empty() {
-                            continue;
-                        }
-                        let last = *b16_block.last().unwrap();
-                        self.fe.b16_block_queue.push_back(b16_block.into_iter().collect());
-                        if self.instrs[self.inst_instr(last)].is_branch_instr && self.inst_addr(last).rem_euclid(16) + self.inst_len(last) > 16 {
-                            // branch instr. ends in next block
-                            self.fe.b16_block_queue.push_back(VecDeque::new());
-                        }
+                    let last = *b16_block.last().unwrap();
+                    self.fe.b16_entries.extend(b16_block.iter().copied());
+                    self.fe.b16_block_lens.push_back(b16_block.len() as u32);
+                    if self.instrs[self.inst_instr(last)].is_branch_instr && self.inst_addr(last).rem_euclid(16) + self.inst_len(last) > 16 {
+                        // branch instr. ends in next block
+                        self.fe.b16_block_lens.push_back(0);
                     }
                 }
             }
         }
+        self.fe.split_buf1 = cb;
+        self.fe.split_buf2 = block;
+        self.fe.split_buf3 = b16_block;
     }
 
     /// `FrontEnd.addStackSyncUop`
@@ -583,12 +744,12 @@ impl<'a> Sim<'a> {
 
     // ---- DSB ----
 
-    /// `DSB.cycle`
-    fn dsb_cycle(&mut self) -> Result<Vec<(u32, u32)>, SimError> {
-        let mut ret_list: Vec<(u32, u32)> = Vec::new();
+    /// `DSB.cycle`: writes the result to `ret_list` (which must be empty)
+    fn dsb_cycle(&mut self, ret_list: &mut Vec<(u32, u32)>) -> Result<(), SimError> {
+        debug_assert!(ret_list.is_empty());
         let dsb_width = self.cfg.dsb_width;
         let bs = self.cfg.dsb_block_size;
-        let Some(first_entry) = self.fe.dsb_block_queue.front().and_then(|b| b.front()) else {
+        let Some(first_entry) = self.fe.dsb_block_queue.first_entry() else {
             return Err(crash("IndexError: deque index out of range (DSBBlockQueue)"));
         };
         let new_dsb_block_started = first_entry.slot == 0;
@@ -600,9 +761,10 @@ impl<'a> Sim<'a> {
         let mut dsb_block_is_empty = false;
         while remaining_slots > 0 {
             if dsb_block_is_empty {
-                let next_ok = match self.fe.dsb_block_queue.front() {
-                    Some(b) => b.back().map_or(true, |e| e.ms_uops.is_empty()),
-                    None => false,
+                let next_ok = if self.fe.dsb_block_queue.is_empty() {
+                    false
+                } else {
+                    self.fe.dsb_block_queue.first_block_last_entry().map_or(true, |e| e.ms_uops.1 == 0)
                 };
                 if !second_dsb_block_loaded && next_ok {
                     second_dsb_block_loaded = true;
@@ -610,25 +772,30 @@ impl<'a> Sim<'a> {
                     let Some(&(prev_inst, _)) = ret_list.last() else {
                         return Err(crash("IndexError: list index out of range (DSB.cycle)"));
                     };
-                    let next_inst = self.fe.dsb_block_queue[0][0].inst;
+                    let Some(next) = self.fe.dsb_block_queue.first_entry() else {
+                        return Err(crash("IndexError: deque index out of range (DSBBlock)"));
+                    };
+                    let next_inst = next.inst;
                     if self.inst_addr(prev_inst) + self.inst_len(prev_inst) != self.inst_addr(next_inst)
                         && !self.prep.info[self.inst_instr(prev_inst)].is_last_decoded
                     {
                         // next instr not in DSB
-                        return Ok(ret_list);
+                        return Ok(());
                     }
                 } else {
-                    return Ok(ret_list);
+                    return Ok(());
                 }
             }
 
             {
-                let entry = &self.fe.dsb_block_queue[0][0];
+                let Some(entry) = self.fe.dsb_block_queue.first_entry() else {
+                    return Err(crash("IndexError: deque index out of range (DSBBlock)"));
+                };
                 if entry.requires_extra_entry && remaining_slots < 2 {
-                    return Ok(ret_list);
+                    return Ok(());
                 }
             }
-            let entry = self.fe.dsb_block_queue[0].pop_front().unwrap();
+            let entry = self.fe.dsb_block_queue.pop_first_entry().unwrap();
             if entry.uop != NONE {
                 ret_list.push((entry.inst, entry.uop));
                 self.lams[entry.uop as usize].uop_source = Some(UopSource::Dsb);
@@ -639,16 +806,19 @@ impl<'a> Sim<'a> {
                     remaining_slots -= 1;
                 }
             }
-            if !entry.ms_uops.is_empty() {
-                self.ms_add_uops(&entry.ms_uops, UopSource::Dsb);
+            if entry.ms_uops.1 != 0 {
+                self.ms_add_uops(entry.ms_uops, UopSource::Dsb);
                 remaining_slots = 0;
             }
 
-            if self.fe.dsb_block_queue[0].is_empty() {
-                self.fe.dsb_block_queue.pop_front();
+            if self.fe.dsb_block_queue.first_block_is_empty() {
+                self.fe.dsb_block_queue.pop_empty_first_block();
                 dsb_block_is_empty = true;
                 if remaining_slots != 0 && !self.fe.dsb_block_queue.is_empty() && dsb_width == 6 {
-                    let next_instr_addr = self.inst_addr(self.fe.dsb_block_queue[0][0].inst);
+                    let Some(next) = self.fe.dsb_block_queue.first_entry() else {
+                        return Err(crash("IndexError: deque index out of range (DSBBlock)"));
+                    };
+                    let next_instr_addr = self.inst_addr(next.inst);
                     let next_instr_in_same_memory_block = next_instr_addr.div_euclid(bs) == self.inst_addr(entry.inst).div_euclid(bs);
                     let is_last_decoded = self.prep.info[self.inst_instr(entry.inst)].is_last_decoded;
                     if bs == 32 && next_instr_in_same_memory_block && is_last_decoded && !delay_in_prev_cycle {
@@ -672,14 +842,13 @@ impl<'a> Sim<'a> {
                 }
             }
         }
-        Ok(ret_list)
+        Ok(())
     }
 
     // ---- MicrocodeSequencer ----
 
-    /// `MicrocodeSequencer.cycle`
-    fn ms_cycle(&mut self) -> Vec<u32> {
-        let mut uops = Vec::new();
+    /// `MicrocodeSequencer.cycle`: writes the uops to `uops` (which must be empty)
+    fn ms_cycle(&mut self, uops: &mut Vec<u32>) {
         if self.fe.ms_stalled != 0 {
             self.fe.ms_stalled -= 1;
         } else if !self.fe.ms_uop_queue.is_empty() {
@@ -693,13 +862,12 @@ impl<'a> Sim<'a> {
                 self.fe.ms_stalled = self.fe.ms_post_stall;
             }
         }
-        uops
     }
 
-    /// `MicrocodeSequencer.addUops`
-    fn ms_add_uops(&mut self, uops: &[u32], prev_uop_source: UopSource) {
-        self.fe.ms_uop_queue.extend(uops.iter().copied());
-        for &lam in uops {
+    /// `MicrocodeSequencer.addUops`: adds the laminated uops `uops.0 .. uops.0 + uops.1`
+    fn ms_add_uops(&mut self, uops: (u32, u32), prev_uop_source: UopSource) {
+        self.fe.ms_uop_queue.extend(uops.0..uops.0 + uops.1);
+        for lam in uops.0..uops.0 + uops.1 {
             self.lams[lam as usize].uop_source = Some(UopSource::Ms);
         }
         if prev_uop_source == UopSource::Mite {
@@ -718,10 +886,10 @@ impl<'a> Sim<'a> {
 
     // ---- Decoder ----
 
-    /// `Decoder.cycle`
-    fn decoder_cycle(&mut self, clock: i64) -> Result<Vec<(u32, u32)>, SimError> {
+    /// `Decoder.cycle`: writes the result to `uops_list` (which must be empty)
+    fn decoder_cycle(&mut self, clock: i64, uops_list: &mut Vec<(u32, u32)>) -> Result<(), SimError> {
         let cfg = self.cfg;
-        let mut uops_list: Vec<(u32, u32)> = Vec::new();
+        debug_assert!(uops_list.is_empty());
         let mut n_decoded_instrs = 0;
         let mut remaining_decoder_slots = cfg.n_decoders;
         let predecoded = |sim: &Sim, inst: u32| sim.insts[inst as usize].predecoded.ok_or_else(|| crash("TypeError: predecoded is None"));
@@ -750,10 +918,10 @@ impl<'a> Sim<'a> {
             self.fe.instruction_queue.pop_front();
             self.insts[inst as usize].removed_from_iq = Some(clock);
 
-            let uops: Vec<u32> = self.insts[inst as usize].uops().collect();
-            let n_mite = (instr.uops_mite.max(0) as usize).min(uops.len());
+            let (first_uop, n_uops) = (self.insts[inst as usize].first_uop, self.insts[inst as usize].n_uops);
+            let n_mite = (instr.uops_mite.max(0) as u32).min(n_uops);
             if instr.uops_mite != 0 {
-                for &lam in &uops[..n_mite] {
+                for lam in first_uop..first_uop + n_mite {
                     uops_list.push((inst, lam));
                     self.lams[lam as usize].uop_source = Some(UopSource::Mite);
                 }
@@ -762,7 +930,7 @@ impl<'a> Sim<'a> {
             }
 
             if instr.uops_ms != 0 {
-                self.ms_add_uops(&uops[n_mite..], UopSource::Mite);
+                self.ms_add_uops((first_uop + n_mite, n_uops - n_mite), UopSource::Mite);
                 break;
             }
 
@@ -782,7 +950,7 @@ impl<'a> Sim<'a> {
                 break;
             }
         }
-        Ok(uops_list)
+        Ok(())
     }
 
     // ---- PreDecoder ----
@@ -793,7 +961,7 @@ impl<'a> Sim<'a> {
         let block_size = cfg.pre_decode_block_size;
         if self.fe.predec_stalled == 0 {
             if self.fe.pre_dec_queue.is_empty()
-                && (!self.fe.b16_block_queue.is_empty() || self.fe.partial_instr_i != NONE)
+                && (!self.fe.b16_block_lens.is_empty() || self.fe.partial_instr_i != NONE)
                 && self.fe.instruction_queue.len() as i64 + cfg.pre_decode_width <= cfg.iq_width
             {
                 if self.fe.partial_instr_i != NONE {
@@ -802,12 +970,15 @@ impl<'a> Sim<'a> {
                 }
 
                 if self.fe.cur_block.is_empty() {
-                    if (self.fe.b16_block_queue.len() as i64) < block_size / 16 {
+                    if (self.fe.b16_block_lens.len() as i64) < block_size / 16 {
                         return;
                     }
                     for _ in 0..block_size / 16 {
-                        let b = self.fe.b16_block_queue.pop_front().unwrap();
-                        self.fe.cur_block.extend(b);
+                        let n = self.fe.b16_block_lens.pop_front().unwrap();
+                        for _ in 0..n {
+                            let ii = self.fe.b16_entries.pop_front().unwrap();
+                            self.fe.cur_block.push_back(ii);
+                        }
                     }
                     let lcp: i64 = self.fe.cur_block.iter().filter(|&&ii| self.instrs[self.inst_instr(ii)].lcp_stall).count() as i64 * 3;
                     self.fe.predec_stalled = (lcp - (self.fe.non_stalled_predec_cycles_for_cur_block - 1).max(0)).max(0);
@@ -878,7 +1049,7 @@ impl<'a> Sim<'a> {
             self.rob.push_back(fused);
             for u in self.fused[fused as usize].unfused_uops() {
                 let uop = &mut self.uops[u as usize];
-                if self.prep.props[uop.prop as usize].ports.is_empty() || uop.eliminated {
+                if self.prep.props[uop.prop as usize].ports.1 == 0 || uop.eliminated {
                     uop.executed = Some(clock as f64);
                 }
             }

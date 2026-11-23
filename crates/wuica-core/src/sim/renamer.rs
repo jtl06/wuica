@@ -1,9 +1,8 @@
 //! `Renamer`, `StoreBufferEntry`, and `AbstractValueGenerator` (from `utils.py`).
 
 use super::prep::{AvKind, Key, MemAddrInfo, KEY_NONE, NONE};
-use super::{crash, FusedUop, InitPolicy, LaminatedUop, RenamedOperand, Sim, SimError, READY_UNSET};
+use super::{crash, FusedUop, FxHashMap, InitPolicy, LaminatedUop, RenamedOperand, Sim, SimError, READY_UNSET};
 use crate::config::Slots;
-use std::collections::HashMap;
 
 /// `AbstractValue`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -19,12 +18,112 @@ pub(crate) type AbstractAddress = (Option<AbstractValue>, Option<AbstractValue>,
 pub(crate) struct StoreBufferEntry {
     pub abstract_address: Option<AbstractAddress>,
     /// uops that write to this entry
-    pub uops: Vec<u32>,
+    pub uops: SmallU32List,
     pub address_ready_cycle: Option<i64>,
     pub data_ready_cycle: Option<i64>,
     /// width of the store (bits)
     pub width: Option<i64>,
     pub renamable: bool,
+}
+
+/// A list of `u32` that stores its first elements inline.
+#[derive(Default, Clone)]
+pub(crate) struct SmallU32List {
+    len: u32,
+    inline: [u32; 4],
+    spill: Vec<u32>,
+}
+
+impl SmallU32List {
+    pub fn push(&mut self, x: u32) {
+        if (self.len as usize) < self.inline.len() {
+            self.inline[self.len as usize] = x;
+        } else {
+            self.spill.push(x);
+        }
+        self.len += 1;
+    }
+
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    pub fn get(&self, i: usize) -> u32 {
+        if i < self.inline.len() {
+            self.inline[i]
+        } else {
+            self.spill[i - self.inline.len()]
+        }
+    }
+}
+
+/// A small ordered list of keys (a value of `multiUseGPRDict`/`multiUseSIMDDict`) that stores up to 6 keys inline.
+#[derive(Default, Clone)]
+pub(crate) struct SmallKeys {
+    len: u32,
+    spilled: bool,
+    inline: [Key; 6],
+    heap: Vec<Key>,
+}
+
+impl SmallKeys {
+    pub fn as_slice(&self) -> &[Key] {
+        if self.spilled {
+            &self.heap
+        } else {
+            &self.inline[..self.len as usize]
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn push(&mut self, k: Key) {
+        if self.spilled {
+            self.heap.push(k);
+        } else if (self.len as usize) < self.inline.len() {
+            self.inline[self.len as usize] = k;
+        } else {
+            self.heap.extend_from_slice(&self.inline);
+            self.heap.push(k);
+            self.spilled = true;
+        }
+        self.len += 1;
+    }
+
+    pub fn retain(&mut self, f: impl Fn(&Key) -> bool) {
+        if self.spilled {
+            self.heap.retain(|k| f(k));
+            self.len = self.heap.len() as u32;
+        } else {
+            let mut n = 0;
+            for i in 0..self.len as usize {
+                let k = self.inline[i];
+                if f(&k) {
+                    self.inline[n] = k;
+                    n += 1;
+                }
+            }
+            self.len = n as u32;
+        }
+    }
+
+    /// removes the element at `pos`, keeping the order
+    pub fn remove(&mut self, pos: usize) {
+        if self.spilled {
+            self.heap.remove(pos);
+        } else {
+            let n = self.len as usize;
+            assert!(pos < n);
+            self.inline.copy_within(pos + 1..n, pos);
+        }
+        self.len -= 1;
+    }
 }
 
 /// `RenameDictEntry`
@@ -39,7 +138,7 @@ struct AbstractValueGenerator {
     init_policy: InitPolicy,
     load_value_numbering: bool,
     /// abstract address -> (width, abstract value)
-    mem_value_dict: HashMap<Option<AbstractAddress>, (i64, AbstractValue)>,
+    mem_value_dict: FxHashMap<Option<AbstractAddress>, (i64, AbstractValue)>,
     next_base: u32,
     init_value: AbstractValue,
     abstract_value_dict: Vec<Option<AbstractValue>>,
@@ -86,14 +185,14 @@ pub(crate) struct Renamer {
     cur_instr_pseudo_op_dict: Vec<(u32, u32)>,
     n_gpr_move_elim_in_cycle: Vec<i64>,
     /// renamed operand -> registers
-    multi_use_gpr_dict: Vec<(u32, Vec<Key>)>,
+    multi_use_gpr_dict: Vec<(u32, SmallKeys)>,
     multi_use_gpr_dict_use_in_cycle: Vec<i64>,
     n_simd_move_elim_in_cycle: Vec<i64>,
-    multi_use_simd_dict: Vec<(u32, Vec<Key>)>,
+    multi_use_simd_dict: Vec<(u32, SmallKeys)>,
     multi_use_simd_dict_use_in_cycle: Vec<i64>,
     renamer_active_cycle: i64,
     cur_store_buffer_entry: u32,
-    store_buffer_entry_dict: HashMap<Option<AbstractAddress>, u32>,
+    store_buffer_entry_dict: FxHashMap<Option<AbstractAddress>, u32>,
     /// register -> width of the operation if its value was computed by the renamer
     folded_width: Vec<Option<i64>>,
     cur_instr_folded_width: Vec<(Key, i64)>,
@@ -107,7 +206,7 @@ impl Renamer {
         let mut g = AbstractValueGenerator {
             init_policy,
             load_value_numbering,
-            mem_value_dict: HashMap::new(),
+            mem_value_dict: FxHashMap::default(),
             next_base: 0,
             init_value: AbstractValue { base: 0, offset: 0 },
             abstract_value_dict: vec![None; n_keys],
@@ -127,7 +226,7 @@ impl Renamer {
             multi_use_simd_dict_use_in_cycle: vec![0],
             renamer_active_cycle: 0,
             cur_store_buffer_entry: NONE,
-            store_buffer_entry_dict: HashMap::new(),
+            store_buffer_entry_dict: FxHashMap::default(),
             folded_width: vec![None; n_keys],
             cur_instr_folded_width: Vec::new(),
             last_reg_merge_issued: NONE,
@@ -210,13 +309,13 @@ impl<'a> Sim<'a> {
         mem_addr.as_ref().map(|m| self.rn.abs_val_gen.get_address_key(m))
     }
 
-    /// `Renamer.cycle`: returns the fused uops that are issued in this cycle
-    pub(crate) fn renamer_cycle(&mut self) -> Result<Vec<u32>, SimError> {
+    /// `Renamer.cycle`: writes the fused uops that are issued in this cycle to `renamer_uops` (which must be empty)
+    pub(crate) fn renamer_cycle(&mut self, renamer_uops: &mut Vec<u32>) -> Result<(), SimError> {
         let cfg = self.cfg;
         self.rn.renamer_active_cycle += 1;
         let active_cycle = self.rn.renamer_active_cycle;
 
-        let mut renamer_uops: Vec<u32> = Vec::new();
+        debug_assert!(renamer_uops.is_empty());
         while let Some(&lam) = self.idq.front() {
             let first_unfused_uop = self.lams[lam as usize].first_uop;
             let prop = &self.prep.props[self.uops[first_unfused_uop as usize].prop as usize];
@@ -265,7 +364,7 @@ impl<'a> Sim<'a> {
         let mut n_simd_move_elim: i64 = 0;
         let pipeline_length = cfg.move_elimination_pipeline_length;
 
-        for &fused in &renamer_uops {
+        for &fused in renamer_uops.iter() {
             for u in self.fused[fused as usize].unfused_uops() {
                 let prop = &self.prep.props[self.uops[u as usize].prop as usize];
                 let ii = prop.instr as usize;
@@ -314,7 +413,7 @@ impl<'a> Sim<'a> {
             self.rn.multi_use_simd_dict.retain(|e| e.1.len() > 1);
         }
 
-        for &fused in &renamer_uops {
+        for &fused in renamer_uops.iter() {
             for u in self.fused[fused as usize].unfused_uops() {
                 self.rename_uop(u)?;
             }
@@ -331,7 +430,7 @@ impl<'a> Sim<'a> {
         let n = self.rn.multi_use_simd_dict.len() as i64;
         self.rn.multi_use_simd_dict_use_in_cycle.push(n);
 
-        Ok(renamer_uops)
+        Ok(())
     }
 
     /// the body of the second loop over the uops in `Renamer.cycle`
@@ -361,12 +460,12 @@ impl<'a> Sim<'a> {
             let pos = match cur_multi_use_dict.iter().position(|e| e.0 == entry.renamed_op) {
                 Some(p) => p,
                 None => {
-                    cur_multi_use_dict.push((entry.renamed_op, Vec::new()));
+                    cur_multi_use_dict.push((entry.renamed_op, SmallKeys::default()));
                     cur_multi_use_dict.len() - 1
                 }
             };
             for k in [canonical_inp_reg, canonical_out_reg] {
-                if !cur_multi_use_dict[pos].1.contains(&k) {
+                if !cur_multi_use_dict[pos].1.as_slice().contains(&k) {
                     cur_multi_use_dict[pos].1.push(k);
                 }
             }
@@ -382,7 +481,7 @@ impl<'a> Sim<'a> {
                 let sbe_id = self.rn.sbes.len() as u32;
                 let mut sbe = StoreBufferEntry {
                     abstract_address: key,
-                    uops: Vec::new(),
+                    uops: SmallU32List::default(),
                     address_ready_cycle: None,
                     data_ready_cycle: None,
                     width: instr_mem_width,
@@ -465,8 +564,9 @@ impl<'a> Sim<'a> {
             }
 
             let ren_in_start = self.ren_lists.len() as u32;
-            for i in 0..self.prep.props[prop_id].in_keys.len() {
-                let k = &self.prep.props[prop_id].in_keys[i];
+            let (in_start, n_in) = self.prep.props[prop_id].in_keys;
+            for i in in_start..in_start + n_in {
+                let k = &self.prep.in_key_list[i as usize];
                 let (op, is_pseudo, key) = (k.op, k.is_pseudo, k.key);
                 let ren_op = if is_pseudo {
                     match self.rn.cur_instr_pseudo_op_dict.iter().find(|e| e.0 == op) {
@@ -480,8 +580,9 @@ impl<'a> Sim<'a> {
             }
             let ren_out_start = self.ren_lists.len() as u32;
             self.uops[u as usize].ren_in = (ren_in_start, ren_out_start - ren_in_start);
-            for i in 0..self.prep.props[prop_id].out_keys.len() {
-                let k = &self.prep.props[prop_id].out_keys[i];
+            let (out_start, n_out) = self.prep.props[prop_id].out_keys;
+            for i in out_start..out_start + n_out {
+                let k = &self.prep.out_key_list[i as usize];
                 let (op, is_pseudo, key, is_reg, lat) = (k.op, k.is_pseudo, k.key, k.is_reg, k.lat);
                 let ren_op = self.new_renamed_operand(u, READY_UNSET, lat);
                 self.ren_lists.push(ren_op);
@@ -534,7 +635,7 @@ impl<'a> Sim<'a> {
                         } else if key != KEY_NONE && key_info.has_mm {
                             if let Some(e) = self.rn.multi_use_simd_dict.iter_mut().find(|e| e.0 == prev_ren_op) {
                                 if !e.1.is_empty() {
-                                    match e.1.iter().position(|&k| k == key) {
+                                    match e.1.as_slice().iter().position(|&k| k == key) {
                                         Some(p) => {
                                             e.1.remove(p);
                                         }

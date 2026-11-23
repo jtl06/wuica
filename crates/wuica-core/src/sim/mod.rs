@@ -245,6 +245,63 @@ pub struct SimResult {
     pub(crate) parameters: serde_json::Value,
 }
 
+/// A fast non-cryptographic hasher (FxHash) for the maps of the simulator that are never iterated (iteration order does not
+/// matter for them, see docs/DESIGN.md).
+#[derive(Default, Clone, Copy)]
+pub(crate) struct FxHasher {
+    hash: u64,
+}
+
+impl FxHasher {
+    #[inline]
+    fn add(&mut self, w: u64) {
+        self.hash = (self.hash.rotate_left(5) ^ w).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+}
+
+impl std::hash::Hasher for FxHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        let mut chunks = bytes.chunks_exact(8);
+        for c in &mut chunks {
+            self.add(u64::from_le_bytes(c.try_into().unwrap()));
+        }
+        for &b in chunks.remainder() {
+            self.add(b as u64);
+        }
+    }
+    #[inline]
+    fn write_u8(&mut self, i: u8) {
+        self.add(i as u64);
+    }
+    #[inline]
+    fn write_u32(&mut self, i: u32) {
+        self.add(i as u64);
+    }
+    #[inline]
+    fn write_u64(&mut self, i: u64) {
+        self.add(i);
+    }
+    #[inline]
+    fn write_i64(&mut self, i: i64) {
+        self.add(i as u64);
+    }
+    #[inline]
+    fn write_usize(&mut self, i: usize) {
+        self.add(i as u64);
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.hash
+    }
+}
+
+pub(crate) type FxBuild = std::hash::BuildHasherDefault<FxHasher>;
+/// a `HashMap` with [`FxHasher`]; only for maps that are never iterated
+pub(crate) type FxHashMap<K, V> = std::collections::HashMap<K, V, FxBuild>;
+/// a `HashSet` with [`FxHasher`]; only for sets that are never iterated
+pub(crate) type FxHashSet<K> = std::collections::HashSet<K, FxBuild>;
+
 /// Python's `round(x, 2)`
 pub(crate) fn round2(x: f64) -> f64 {
     format!("{x:.2}").parse().unwrap()
@@ -274,26 +331,9 @@ pub(crate) struct Sim<'a> {
 impl<'a> Sim<'a> {
     /// `Uop(prop, instrI)`
     pub(crate) fn new_uop(&mut self, prop: u32, inst: u32) -> u32 {
-        let p = &self.prep.props[prop as usize];
-        self.uops.push(Uop {
-            prop,
-            instr_instance: inst,
-            fused_uop: NONE,
-            actual_port: None,
-            eliminated: false,
-            ren_in: (0, 0),
-            ren_out: (0, 0),
-            store_buffer_entry: NONE,
-            mem_renaming_blocked: false,
-            forward_fails: false,
-            lat_reduced_due_to_fast_ptr_chasing: false,
-            ready_for_dispatch: None,
-            dispatched: None,
-            executed: None,
-            div_cycles: p.div_cycles,
-            is_stack_sync_uop: p.is_stack_sync,
-            is_reg_merge_uop: p.is_reg_merge,
-        });
+        let mut u = self.prep.new_uop(prop);
+        u.instr_instance = inst;
+        self.uops.push(u);
         (self.uops.len() - 1) as u32
     }
 
@@ -310,41 +350,35 @@ impl<'a> Sim<'a> {
     /// `InstrInstance(instr, address, rnd)`
     pub(crate) fn new_instr_instance(&mut self, instr: usize, address: i64, rnd: i64) -> u32 {
         let inst = self.insts.len() as u32;
-        let (first_prop, n_props) = (self.prep.info[instr].first_prop, self.prep.info[instr].n_props);
-        let first_uop = self.uops.len() as u32;
-        for p in first_prop..first_prop + n_props {
-            self.new_uop(p, inst);
-        }
-        let first_lam = self.lams.len() as u32;
-        let mut uop = first_uop;
         let info = &self.prep.info[instr];
-        for lam_group in &info.grouping {
-            let lam = self.lams.len() as u32;
-            let first_fused = self.fused.len() as u32;
-            let lam_first_uop = uop;
-            for &n in lam_group {
-                let fused = self.fused.len() as u32;
-                self.fused.push(FusedUop { first_uop: uop, n_uops: n, laminated_uop: lam, issued: None, retired: None, retire_idx: None });
-                for u in uop..uop + n {
-                    self.uops[u as usize].fused_uop = fused;
-                }
-                uop += n;
-            }
-            self.lams.push(LaminatedUop {
-                first_fused_uop: first_fused,
-                n_fused_uops: lam_group.len() as u32,
-                first_uop: lam_first_uop,
-                n_uops: uop - lam_first_uop,
-                added_to_idq: None,
-                uop_source: None,
-            });
-        }
+        let (u_base, f_base, l_base) = (self.uops.len() as u32, self.fused.len() as u32, self.lams.len() as u32);
+        let (s, n) = info.tmpl_uops;
+        self.uops.extend(self.prep.tmpl_uops[s as usize..(s + n) as usize].iter().map(|t| {
+            let mut u = t.clone();
+            u.instr_instance = inst;
+            u.fused_uop += f_base;
+            u
+        }));
+        let (s, n) = info.tmpl_fused;
+        self.fused.extend(self.prep.tmpl_fused[s as usize..(s + n) as usize].iter().map(|t| {
+            let mut f = t.clone();
+            f.first_uop += u_base;
+            f.laminated_uop += l_base;
+            f
+        }));
+        let (s, n_lams) = info.tmpl_lams;
+        self.lams.extend(self.prep.tmpl_lams[s as usize..(s + n_lams) as usize].iter().map(|t| {
+            let mut l = t.clone();
+            l.first_fused_uop += f_base;
+            l.first_uop += u_base;
+            l
+        }));
         self.insts.push(InstrInstance {
             instr: instr as u32,
             address,
             rnd,
-            first_uop: first_lam,
-            n_uops: self.lams.len() as u32 - first_lam,
+            first_uop: l_base,
+            n_uops: n_lams,
             reg_merge_uops: Vec::new(),
             stack_sync_uops: Vec::new(),
             source: None,
@@ -355,11 +389,19 @@ impl<'a> Sim<'a> {
     }
 
     /// `RenamedOperand.getReadyCycle`
+    #[inline]
     pub(crate) fn get_ready_cycle(&mut self, ren_op: u32) -> Option<i64> {
-        let ro = self.ren_ops[ren_op as usize];
-        if ro.ready != READY_UNSET {
-            return Some(ro.ready);
+        let ready = self.ren_ops[ren_op as usize].ready;
+        if ready != READY_UNSET {
+            return Some(ready);
         }
+        self.compute_ready_cycle(ren_op)
+    }
+
+    /// `RenamedOperand.getReadyCycle` for an operand whose ready cycle is not known yet
+    #[inline(never)]
+    fn compute_ready_cycle(&mut self, ren_op: u32) -> Option<i64> {
+        let ro = self.ren_ops[ren_op as usize];
         let u = ro.uop as usize;
         let prop = &self.prep.props[self.uops[u].prop as usize];
         let (is_load, forward_delay, forward_fail_delay, instr) = (prop.is_load, prop.forward_delay, prop.forward_fail_delay, prop.instr);
@@ -372,7 +414,7 @@ impl<'a> Sim<'a> {
             let mut first = true;
             let mut max_ready = 0;
             for i in 0..self.rn.sbes[sbe as usize].uops.len() {
-                let su = self.rn.sbes[sbe as usize].uops[i] as usize;
+                let su = self.rn.sbes[sbe as usize].uops.get(i) as usize;
                 if self.prep.props[self.uops[su].prop as usize].is_store_data {
                     let (start, n) = self.uops[su].ren_in;
                     for j in start..start + n {
@@ -437,16 +479,26 @@ pub fn simulate(list: &InstrList, config: &UArchConfig, uarch: &UArch, options: 
     let prep = Prep::new(list, config, uarch)?;
     let n_ports = prep.ports.len();
     let unroll = !instrs[instrs.len() - 1].is_branch_instr;
+    // An estimate of the sizes of the entity arrays (only a capacity, to avoid reallocating large arrays): the simulation runs
+    // for at least minCycles cycles and minIterations rounds; at most issueWidth fused uops are issued per cycle.
+    let (n_uops_per_round, n_ren_per_round) = prep.props_per_round();
+    let n_fused_per_round = instrs.iter().map(|i| i.retire_slots.max(1) as usize).sum::<usize>().max(1);
+    let est_rounds = ((options.min_cycles.clamp(0, 1 << 30) as u64 * config.issue_width.clamp(1, 1 << 10) as u64) / n_fused_per_round as u64)
+        .max(options.min_iterations.clamp(0, 1 << 30) as u64)
+        .saturating_add(4)
+        .min(1 << 20) as usize;
+    // (bounded, so that options like a large minCycles do not reserve much memory up front, e.g. in WebAssembly)
+    let cap = |per_round: usize| per_round.saturating_mul(est_rounds).min(1 << 16);
     let mut sim = Sim {
         cfg: config,
         instrs,
         n_ports,
-        uops: Vec::new(),
-        fused: Vec::new(),
-        lams: Vec::new(),
-        insts: Vec::new(),
-        ren_ops: Vec::new(),
-        ren_lists: Vec::new(),
+        uops: Vec::with_capacity(cap(n_uops_per_round)),
+        fused: Vec::with_capacity(cap(n_uops_per_round)),
+        lams: Vec::with_capacity(cap(n_uops_per_round)),
+        insts: Vec::with_capacity(cap(instrs.len())),
+        ren_ops: Vec::with_capacity(cap(n_ren_per_round)),
+        ren_lists: Vec::with_capacity(cap(n_ren_per_round * 2)),
         idq: VecDeque::new(),
         rob: VecDeque::new(),
         retire_queue: VecDeque::new(),
@@ -455,6 +507,8 @@ pub fn simulate(list: &InstrList, config: &UArchConfig, uarch: &UArch, options: 
         sched: scheduler::Scheduler::new(n_ports, prep.n_resources),
         prep,
     };
+    sim.fe.all_generated_instr_instances.reserve(cap(instrs.len()));
+    sim.sched.reserve(cap(n_uops_per_round));
     sim.front_end_init(simple_front_end)?;
 
     let last_applicable_instr = instrs.iter().position(|i| i.is_last_decoded_instr()).ok_or_else(|| crash("StopIteration: no last instruction"))?;

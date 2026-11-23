@@ -3,7 +3,7 @@
 use super::prep::{PortList, NONE};
 use super::{crash, Sim, SimError};
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::collections::{BinaryHeap, VecDeque};
 
 /// index of 'div' in `blockedResources`; 'port' + p is at 1 + (index of p)
 const RES_DIV: usize = 0;
@@ -26,9 +26,18 @@ pub(crate) struct Scheduler {
     /// used as a tie-breaker on AMD CPUs
     port_last_assigned: Vec<i64>,
     n_ports_assigned: i64,
-    uops_ready_in_cycle: HashMap<i64, Vec<u32>>,
+    uops_ready_in_cycle: CycleBuckets,
     /// uops not yet added to uopsReadyInCycle (in order)
     non_ready_uops: Vec<u32>,
+    /// reused buffers
+    non_ready_uops_spare: Vec<u32>,
+    pending_uops_spare: Vec<u32>,
+    uops_dispatched_spare: Vec<u32>,
+    ready_bucket_spare: Vec<u32>,
+    port_combinations_buf: Vec<(u32, usize)>,
+    dispatched_sorted_buf: Vec<u32>,
+    sorted_port_usages_buf: Vec<(i64, i64, usize)>,
+    sorted_ports_buf: Vec<usize>,
     /// dispatched, but not finished uops (sorted)
     pending_uops: Vec<u32>,
     pending_store_fence_uops: VecDeque<u32>,
@@ -37,8 +46,55 @@ pub(crate) struct Scheduler {
     load_uops_since_last_load_fence: Vec<u32>,
     /// for how many remaining cycles a resource will be blocked
     blocked_resources: Vec<f64>,
-    /// uops that have an operand that is written by a non-executed uop
-    dependent_uops: HashMap<u32, Vec<u32>>,
+    /// uops that have an operand that is written by a non-executed uop: producer uop -> uops (in insertion order), as linked
+    /// lists in `dep_nodes`: (first node, last node) for each producer
+    dep_lists: Vec<(u32, u32)>,
+    /// (uop, next node)
+    dep_nodes: Vec<(u32, u32)>,
+}
+
+/// `uopsReadyInCycle`: cycle -> uops, for the cycles after the current one. A ring of buckets indexed by `cycle & mask`; it
+/// grows when a uop becomes ready further in the future than it covers. Every bucket holds the uops of exactly one cycle in
+/// `clock + 1 ..= clock + len`, because the scheduler takes the bucket of each cycle in that cycle.
+struct CycleBuckets {
+    slots: Vec<Vec<u32>>,
+}
+
+impl CycleBuckets {
+    fn new() -> CycleBuckets {
+        CycleBuckets { slots: (0..64).map(|_| Vec::new()).collect() }
+    }
+
+    /// adds `u` to the bucket of `cycle` (`clock < cycle`)
+    fn push(&mut self, clock: i64, cycle: i64, u: u32) {
+        debug_assert!(cycle > clock);
+        let mut len = self.slots.len() as i64;
+        if cycle - clock > len {
+            // grow: move every bucket to its position in the larger ring
+            while cycle - clock > len {
+                len *= 2;
+            }
+            let old = std::mem::take(&mut self.slots);
+            let old_mask = old.len() as i64 - 1;
+            self.slots = (0..len).map(|_| Vec::new()).collect();
+            for (i, v) in old.into_iter().enumerate() {
+                if v.is_empty() {
+                    continue;
+                }
+                // the cycle of this bucket: the one in clock+1 ..= clock+old_len with (c & old_mask) == i
+                let c = clock + 1 + (i as i64 - (clock + 1)).rem_euclid(old_mask + 1);
+                self.slots[(c & (len - 1)) as usize] = v;
+            }
+        }
+        let mask = self.slots.len() as i64 - 1;
+        self.slots[(cycle & mask) as usize].push(u);
+    }
+
+    /// takes the bucket of `cycle` (leaves an empty bucket with the capacity of `spare`)
+    fn take(&mut self, cycle: i64, spare: Vec<u32>) -> Vec<u32> {
+        let mask = self.slots.len() as i64 - 1;
+        std::mem::replace(&mut self.slots[(cycle & mask) as usize], spare)
+    }
 }
 
 impl Scheduler {
@@ -56,16 +112,33 @@ impl Scheduler {
             ready_div_uops: BinaryHeap::new(),
             port_last_assigned: vec![-1; n_ports],
             n_ports_assigned: 0,
-            uops_ready_in_cycle: HashMap::new(),
+            uops_ready_in_cycle: CycleBuckets::new(),
             non_ready_uops: Vec::new(),
+            non_ready_uops_spare: Vec::new(),
+            pending_uops_spare: Vec::new(),
+            uops_dispatched_spare: Vec::new(),
+            ready_bucket_spare: Vec::new(),
+            port_combinations_buf: Vec::new(),
+            dispatched_sorted_buf: Vec::new(),
+            sorted_port_usages_buf: Vec::new(),
+            sorted_ports_buf: Vec::new(),
             pending_uops: Vec::new(),
             pending_store_fence_uops: VecDeque::new(),
             store_uops_since_last_store_fence: Vec::new(),
             pending_load_fence_uops: VecDeque::new(),
             load_uops_since_last_load_fence: Vec::new(),
             blocked_resources: vec![0.0; n_resources],
-            dependent_uops: HashMap::new(),
+            dep_lists: Vec::new(),
+            dep_nodes: Vec::new(),
         }
+    }
+}
+
+impl Scheduler {
+    /// reserves space for about `n_uops` uops
+    pub fn reserve(&mut self, n_uops: usize) {
+        self.dep_lists.reserve(n_uops);
+        self.dep_nodes.reserve(n_uops);
     }
 }
 
@@ -82,8 +155,10 @@ impl<'a> Sim<'a> {
 
     /// `Scheduler.cycle`
     pub(crate) fn scheduler_cycle(&mut self, clock: i64, new_uops: &[u32]) -> Result<(), SimError> {
-        if let Some(ready) = self.sched.uops_ready_in_cycle.remove(&clock) {
-            for u in ready {
+        {
+            let spare = std::mem::take(&mut self.sched.ready_bucket_spare);
+            let mut ready = self.sched.uops_ready_in_cycle.take(clock, spare);
+            for &u in &ready {
                 let uop = &self.uops[u as usize];
                 if uop.div_cycles != 0 {
                     self.sched.ready_div_uops.push(Reverse(u));
@@ -92,6 +167,8 @@ impl<'a> Sim<'a> {
                     self.sched.ready_queue[port as usize].push(Reverse(u));
                 }
             }
+            ready.clear();
+            self.sched.ready_bucket_spare = ready;
         }
         self.add_new_uops(clock, new_uops)?;
         self.dispatch_uops(clock)?;
@@ -109,7 +186,7 @@ impl<'a> Sim<'a> {
     /// `Scheduler.dispatchUops`
     fn dispatch_uops(&mut self, clock: i64) -> Result<(), SimError> {
         let cfg = self.cfg;
-        let mut applicable = vec![true; self.n_ports];
+        let mut applicable = [true; 32];
 
         if let (Some(p4), Some(p9)) = (self.port(b'4'), self.port(b'9')) {
             if let (Some(&Reverse(uop4)), Some(&Reverse(uop9))) = (self.sched.ready_queue[p4].peek(), self.sched.ready_queue[p9].peek()) {
@@ -152,7 +229,8 @@ impl<'a> Sim<'a> {
 
         let divider_port = if cfg.divider_port.len() == 1 { self.port(cfg.divider_port.as_bytes()[0]) } else { None };
         let port4 = self.port(b'4');
-        let mut uops_dispatched = Vec::new();
+        let mut uops_dispatched = std::mem::take(&mut self.sched.uops_dispatched_spare);
+        uops_dispatched.clear();
         for port in 0..self.n_ports {
             if !applicable[port] {
                 continue;
@@ -174,9 +252,8 @@ impl<'a> Sim<'a> {
 
             self.uops[u as usize].dispatched = Some(clock);
             s.n_uops -= 1;
+            // also added to pendingUops (in processPendingUops)
             uops_dispatched.push(u);
-            let pos = s.pending_uops.binary_search(&u).unwrap_or_else(|p| p);
-            s.pending_uops.insert(pos, u);
 
             s.blocked_resources[RES_DIV] += self.uops[u as usize].div_cycles as f64;
             if cfg.slow_256bit_mem_acc
@@ -192,15 +269,36 @@ impl<'a> Sim<'a> {
             let port = self.uops[u as usize].actual_port.ok_or_else(|| crash("KeyError: None (portUsage)"))?;
             self.sched.port_usage[port as usize] -= 1;
         }
-        self.sched.uops_dispatched_in_prev_cycle = uops_dispatched;
+        self.sched.uops_dispatched_spare = std::mem::replace(&mut self.sched.uops_dispatched_in_prev_cycle, uops_dispatched);
         Ok(())
     }
 
     /// `Scheduler.processPendingUops`
     fn process_pending_uops(&mut self) -> Result<(), SimError> {
-        // program order
-        let pending = std::mem::take(&mut self.sched.pending_uops);
-        let mut still_pending = Vec::new();
+        // program order: the pending uops and the uops dispatched in this cycle, sorted
+        let mut pending = std::mem::take(&mut self.sched.pending_uops_spare);
+        let mut still_pending = std::mem::take(&mut self.sched.pending_uops);
+        {
+            let mut new = std::mem::take(&mut self.sched.dispatched_sorted_buf);
+            new.clear();
+            new.extend_from_slice(&self.sched.uops_dispatched_in_prev_cycle);
+            new.sort_unstable();
+            pending.clear();
+            let (mut i, mut j) = (0, 0);
+            while i < still_pending.len() && j < new.len() {
+                if still_pending[i] < new[j] {
+                    pending.push(still_pending[i]);
+                    i += 1;
+                } else {
+                    pending.push(new[j]);
+                    j += 1;
+                }
+            }
+            pending.extend_from_slice(&still_pending[i..]);
+            pending.extend_from_slice(&new[j..]);
+            self.sched.dispatched_sorted_buf = new;
+        }
+        still_pending.clear();
         for &u in &pending {
             let prop = &self.prep.props[self.uops[u as usize].prop as usize];
             let (is_first, is_store_addr, is_store_data, ii) = (prop.is_first, prop.is_store_addr, prop.is_store_data, prop.instr as usize);
@@ -257,15 +355,21 @@ impl<'a> Sim<'a> {
                 }
             }
 
-            if let Some(dep_uops) = self.sched.dependent_uops.remove(&u) {
-                for dep_uop in dep_uops {
+            // dependentUops.pop(uop): uops that are added to the list of this uop while it is processed are in a new list
+            if let Some(list) = self.sched.dep_lists.get_mut(u as usize) {
+                let mut node = list.0;
+                *list = (NONE, NONE);
+                while node != NONE {
+                    let (dep_uop, next) = self.sched.dep_nodes[node as usize];
                     self.check_depending_uops_executed(dep_uop);
+                    node = next;
                 }
             }
 
             self.uops[u as usize].executed = Some(finish_time);
         }
         self.sched.pending_uops = still_pending;
+        self.sched.pending_uops_spare = pending;
         Ok(())
     }
 
@@ -288,7 +392,8 @@ impl<'a> Sim<'a> {
     /// `Scheduler.processNonReadyUops`
     fn process_non_ready_uops(&mut self, clock: i64) -> Result<(), SimError> {
         let non_ready = std::mem::take(&mut self.sched.non_ready_uops);
-        let mut remaining = Vec::new();
+        let mut remaining = std::mem::take(&mut self.sched.non_ready_uops_spare);
+        remaining.clear();
         for &u in &non_ready {
             if !self.check_uop_ready(clock, u)? {
                 remaining.push(u);
@@ -297,6 +402,7 @@ impl<'a> Sim<'a> {
         // checkUopReady does not add uops to nonReadyUops
         debug_assert!(self.sched.non_ready_uops.is_empty());
         self.sched.non_ready_uops = remaining;
+        self.sched.non_ready_uops_spare = non_ready;
         Ok(())
     }
 
@@ -346,7 +452,7 @@ impl<'a> Sim<'a> {
         let Some(ready_for_dispatch_cycle) = self.get_ready_for_dispatch_cycle(clock, u)? else { return Ok(false) };
 
         self.uops[u as usize].ready_for_dispatch = Some(ready_for_dispatch_cycle);
-        self.sched.uops_ready_in_cycle.entry(ready_for_dispatch_cycle).or_default().push(u);
+        self.sched.uops_ready_in_cycle.push(clock, ready_for_dispatch_cycle, u);
 
         if is_first {
             if let Some(tp) = instr.tp {
@@ -374,14 +480,17 @@ impl<'a> Sim<'a> {
             self.sched.port_usage_prev_cycle.copy_from_slice(&self.sched.port_usage);
         }
         // frozenset(possiblePorts) -> count
-        let mut port_combinations_in_cur_cycle: Vec<(u32, usize)> = Vec::new();
+        let mut port_combinations_in_cur_cycle = std::mem::take(&mut self.sched.port_combinations_buf);
+        port_combinations_in_cur_cycle.clear();
+        let mut sorted_port_usages = std::mem::take(&mut self.sched.sorted_port_usages_buf);
+        let mut sorted_ports = std::mem::take(&mut self.sched.sorted_ports_buf);
         let n_ports = self.n_ports;
         let icl_assignment = cfg.port_assignment.as_deref() == Some("ICL") || (cfg.port_assignment.is_none() && n_ports == 10);
 
         for (issue_slot, &fused) in new_uops.iter().enumerate() {
             for u in self.fused[fused as usize].unfused_uops() {
                 let prop = &self.prep.props[self.uops[u as usize].prop as usize];
-                if prop.ports.is_empty() || self.uops[u as usize].eliminated {
+                if prop.ports.1 == 0 || self.uops[u as usize].eliminated {
                     continue;
                 }
                 let s = &mut self.sched;
@@ -392,12 +501,13 @@ impl<'a> Sim<'a> {
                     p
                 };
                 let port: usize;
-                if prop.ports.len() == 1 {
-                    port = prop.ports[0] as usize;
+                if prop.ports.1 == 1 {
+                    port = prop.port0 as usize;
                 } else if cfg.is_amd {
                     // least-loaded applicable port; ties are broken in favor of the port that was not used for the longest time
-                    let mut best = prop.ports[0] as usize;
-                    for &p in &prop.ports[1..] {
+                    let mut best = prop.port0 as usize;
+                    let (start, n) = prop.ports;
+                    for &p in &self.prep.port_lists[start as usize + 1..(start + n) as usize] {
                         let p = p as usize;
                         if (s.port_usage[p], s.port_last_assigned[p]) < (s.port_usage[best], s.port_last_assigned[best]) {
                             best = p;
@@ -408,11 +518,20 @@ impl<'a> Sim<'a> {
                     s.port_last_assigned[port] = s.n_ports_assigned;
                 } else if icl_assignment {
                     // (usage, -int(port, 16), port)
-                    let mut sorted_port_usages: Vec<(i64, i64, usize)> =
-                        (0..n_ports).filter(|&p| prop.port_mask & (1 << p) != 0).map(|p| (s.port_usage_prev_cycle[p], -hex[p], p)).collect();
+                    sorted_port_usages.clear();
+                    for p in 0..n_ports {
+                        if prop.port_mask & (1 << p) != 0 {
+                            sorted_port_usages.push((s.port_usage_prev_cycle[p], -hex[p], p));
+                        }
+                    }
                     sorted_port_usages.sort();
                     let min_port_usage = sorted_port_usages[0].0;
-                    let sorted_ports: Vec<usize> = sorted_port_usages.iter().filter(|x| x.0 < min_port_usage + 5).map(|x| x.2).collect();
+                    sorted_ports.clear();
+                    for x in sorted_port_usages.iter() {
+                        if x.0 < min_port_usage + 5 {
+                            sorted_ports.push(x.2);
+                        }
+                    }
 
                     let n_pc = match port_combinations_in_cur_cycle.iter_mut().find(|e| e.0 == prop.port_mask) {
                         Some(e) => {
@@ -448,10 +567,22 @@ impl<'a> Sim<'a> {
                         }
                     };
                 } else if n_ports == 8 {
-                    let applicable: Vec<(i64, i64, usize)> =
-                        (0..n_ports).filter(|&p| prop.port_mask & (1 << p) != 0).map(|p| (s.port_usage_cur_cycle[p], -hex[p], p)).collect();
+                    // the applicable ports as (usage, -int(port, 16), port); the keys are unique
+                    let key = |p: usize| (s.port_usage_cur_cycle[p], -hex[p], p);
+                    let min_excluding = |excluded: usize| -> Option<(i64, i64, usize)> {
+                        let mut m: Option<(i64, i64, usize)> = None;
+                        for p in 0..n_ports {
+                            if prop.port_mask & (1 << p) != 0 && p != excluded {
+                                let k = key(p);
+                                if m.map_or(true, |m| k < m) {
+                                    m = Some(k);
+                                }
+                            }
+                        }
+                        m
+                    };
                     // port with minimum usage so far
-                    let &(min_port_usage, _, min_port) = applicable.iter().min().unwrap();
+                    let (min_port_usage, _, min_port) = min_excluding(usize::MAX).unwrap();
                     if prop.port_list == PortList::P23 {
                         let c = alternate(&mut s.next_p23_port, b'2', b'3');
                         port = self.prep.port_idx[c as usize] as usize;
@@ -459,17 +590,28 @@ impl<'a> Sim<'a> {
                         port = min_port;
                     } else {
                         // port with second smallest usage so far
-                        let Some(&(min2_port_usage, _, min2_port)) = applicable.iter().filter(|x| x.2 != min_port).min() else {
+                        let Some((min2_port_usage, _, min2_port)) = min_excluding(min_port) else {
                             return Err(crash("ValueError: min() arg is an empty sequence"));
                         };
                         port = if min2_port_usage >= min_port_usage + 3 { min_port } else { min2_port };
                     }
                 } else {
-                    let applicable: Vec<(i64, i64, usize)> =
-                        (0..n_ports).filter(|&p| prop.port_mask & (1 << p) != 0).map(|p| (s.port_usage_cur_cycle[p], hex[p], p)).collect();
-                    let &(_, _, min_port) = applicable.iter().min().unwrap();
-                    let max_usage = applicable.iter().map(|x| x.0).max().unwrap();
-                    let min_usage = applicable.iter().map(|x| x.0).min().unwrap();
+                    // the applicable ports as (usage, int(port, 16), port); the keys are unique
+                    let mut min_key = (i64::MAX, i64::MAX, usize::MAX);
+                    let mut max_key = (i64::MIN, i64::MIN, 0usize);
+                    for p in 0..n_ports {
+                        if prop.port_mask & (1 << p) != 0 {
+                            let k = (s.port_usage_cur_cycle[p], hex[p], p);
+                            if k < min_key {
+                                min_key = k;
+                            }
+                            if k > max_key {
+                                max_key = k;
+                            }
+                        }
+                    }
+                    let min_port = min_key.2;
+                    let (max_usage, min_usage) = (max_key.0, min_key.0);
                     if prop.port_list == PortList::P23 {
                         let c = alternate(&mut s.next_p23_port, b'2', b'3');
                         port = self.prep.port_idx[c as usize] as usize;
@@ -486,7 +628,7 @@ impl<'a> Sim<'a> {
                     } else if issue_slot % 2 == 0 {
                         port = min_port;
                     } else {
-                        port = applicable.iter().max().unwrap().2;
+                        port = max_key.2;
                     }
                 }
 
@@ -508,6 +650,9 @@ impl<'a> Sim<'a> {
                 }
             }
         }
+        self.sched.port_combinations_buf = port_combinations_in_cur_cycle;
+        self.sched.sorted_port_usages_buf = sorted_port_usages;
+        self.sched.sorted_ports_buf = sorted_ports;
         Ok(())
     }
 
@@ -520,7 +665,20 @@ impl<'a> Sim<'a> {
             if self.get_ready_cycle(r).is_none() {
                 let producer = self.ren_ops[r as usize].uop;
                 if producer != NONE && self.uops[producer as usize].executed.is_none() {
-                    self.sched.dependent_uops.entry(producer).or_default().push(u);
+                    let s = &mut self.sched;
+                    if s.dep_lists.len() <= producer as usize {
+                        s.dep_lists.resize(self.uops.len().max(producer as usize + 1), (NONE, NONE));
+                    }
+                    let node = s.dep_nodes.len() as u32;
+                    s.dep_nodes.push((u, NONE));
+                    let list = &mut s.dep_lists[producer as usize];
+                    if list.0 == NONE {
+                        *list = (node, node);
+                    } else {
+                        let last = list.1;
+                        list.1 = node;
+                        s.dep_nodes[last as usize].1 = node;
+                    }
                     return;
                 }
             }
