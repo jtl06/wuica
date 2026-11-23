@@ -304,6 +304,14 @@ try {
       out.rate = $('ce-status').textContent;
       $('ce-url').value = 'https://example.com/#g:abc'; $('ce-load').click(); await wait(50);
       out.host = $('ce-status').textContent;
+      // a link with only assembly source (no compiler pane): imported as it is
+      const asmState = { sessions: [{ id: 1, language: 'assembly', source: 'loop:\\n  vaddps ymm0, ymm0, ymm1\\n  dec r15\\n  jnz loop', compilers: [] }] };
+      $('ce-url').value = 'https://godbolt.org/clientstate/' + btoa(JSON.stringify(asmState)); $('ce-load').click();
+      await until(() => /imported as it is/.test($('ce-status').textContent));
+      out.source = [document.querySelector('.ce-pane-list').innerText.trim(), [...document.querySelectorAll('.ce-buttons button')].map((b) => b.textContent).join('|')];
+      await done(() => $('ce-import-b').click());
+      out.sourceIn = [$('b-mode-asm').checked, $('code-b').value, vals().length, $('b-messages').innerText];
+      $('b-import').click(); await wait(50);
       $('ce-close').click();
       out.closed = !$('ce-dialog').open;
       return out;`);
@@ -318,6 +326,7 @@ try {
     check(r.short[0] === links.short && r.short[2].join('|') === 'square(int)|main' && r.short[3].join('|') === 'Import into B|Import into A', 'ce: a short link; in A–B mode both sides are offered, the pasted-into side first', JSON.stringify(r.short));
     check(/^\s+0:\s+55\s+push rbp$/.test(r.intoB[0]) && r.intoB[1] === 2 && r.intoB[2], 'ce: imported into B, A unchanged, both analyzed', JSON.stringify(r.intoB));
     check(r.asText, 'ce: "paste the link as text"');
+    check(/assembly source \(editor #1\)/.test(r.source[0]) && r.source[1] === 'Import into B|Import into A' && r.sourceIn[0] && r.sourceIn[1] === 'loop:\n  vaddps ymm0, ymm0, ymm1\n  dec r15\n  jnz loop\n' && r.sourceIn[2] === 2 && /^assembled: 9 bytes/.test(r.sourceIn[3]), 'ce: an assembly-only link is imported as assembly and analyzed', JSON.stringify([r.source, r.sourceIn]));
     check(/limiting the rate of requests; try again in 42 s/.test(r.rate) && /not a Compiler Explorer link/.test(r.host) && r.closed, 'ce: rate limit and a foreign link are reported', JSON.stringify([r.rate, r.host]));
     const sent = ce.requests.filter((x) => !x.startsWith('OPTIONS'));
     check(JSON.stringify(sent) === JSON.stringify(['GET /api/compilers/c%2B%2B?fields=id,name,lang,instructionSet,supportsBinary,supportsBinaryObject', 'POST /api/compiler/g82/compile',

@@ -5,8 +5,9 @@ import fs from 'node:fs';
 import {
   risonDecode, unrisonify, lzDecompressFromBase64, unminifyLayout, decodeFragment, parseCeLink, isCeLink, fromClientState,
   resolveShortLink, compilersOf, compilePane, compileRequest, outputModes, ceRequest, CeError, compilerMessages,
-  parseListing, findLoops, defaultSelection, extractRange, sourceAsAssembly, targetProblem, is32bit, CE_ORIGIN,
+  parseListing, findLoops, defaultSelection, extractRange, sourceAsAssembly, targetProblem, is32bit, CE_ORIGIN, gasToLlvmIntel,
 } from '../web/js/godbolt.js';
+import { WasmAssembler } from '../web/js/assembler.js';
 import { parseHexInput, toHex } from '../web/js/hex-input.js';
 
 let failed = 0, count = 0;
@@ -139,6 +140,12 @@ function fakeFetch(routes) {
   const fb = fakeFetch([[/compile$/, () => ({ body: n++ === 0 ? noBytes : fx('compile-g82-countSetBits.json') })]]);
   const res2 = await compilePane(st1.compilers[0], st1.editors[0].source, null, { fetch: fb });
   check(fb.calls.length === 2 && fb.calls[1].body.options.filters.binary === true && res2.mode === 'binary', 'compile: falls back to the linked binary', j(fb.calls.map((c) => c.body.options.filters)));
+  // a compiler that only links (no object file): code without main() fails to link, so the assembly text is used
+  const linkErr = { code: 1, asm: [], stderr: [{ text: "ld: (.text+0x1b): undefined reference to `main'" }] };
+  const asmText = fx('compile-clang1810-text.json').response;
+  const fl = fakeFetch([[/compile$/, (url, init) => ({ body: JSON.parse(init.body).options.filters.binary ? linkErr : asmText })]]);
+  const res4 = await compilePane({ compiler: 'gfortran', lang: 'fortran', options: '-O2', libs: [] }, 'x', { supportsBinary: true, supportsBinaryObject: false }, { fetch: fl });
+  check(fl.calls.length === 2 && res4.mode === 'asm' && !res4.failed, 'compile: a failed link falls back to the assembly text', j(fl.calls.map((c) => c.body.options.filters.binary)));
   // a compilation error: not retried, messages without terminal colours
   const fe = fakeFetch([[/compile$/, { body: fx('compile-g142-error.json') }]]);
   const res3 = await compilePane({ compiler: 'g142', lang: 'c++', options: '-O2', libs: [] }, 'int f( {', infos.get('g142'), { fetch: fe });
@@ -189,6 +196,27 @@ function fakeFetch(routes) {
   const et = extractRange(T.functions[dt.fn], dt.start, dt.end, T);
   const tlines = et.text.trim().split('\n');
   check(et.mode === 'asm' && et.syntax === 'intel' && /^\.LBB0_\d+:$/.test(tlines[0]) && tlines.at(-1) === `  jne ${tlines[0].slice(0, -1)}` && tlines.some((l) => /paddd/.test(l)), 'text listing: the first (vectorized main) loop, with its label, as assembly', et.text);
+
+  // the assembly text goes through the page's assembler (LLVM): also a range with a jump out of it
+  check(gasToLlvmIntel('mov eax, OFFSET FLAT:.LC0') === 'mov eax, offset .LC0' && gasToLlvmIntel('movsx rsi, esi') === 'movsxd rsi, esi' && gasToLlvmIntel('movsx eax, al') === 'movsx eax, al', 'GNU as Intel syntax for LLVM');
+  const asmWasm = new URL('../assembler/dist/wuica_asm.wasm', import.meta.url);
+  if (fs.existsSync(asmWasm)) {
+    const a = await WasmAssembler.create(fs.readFileSync(asmWasm));
+    const results = [];
+    for (const f of T.functions) {
+      const ranges = [[0, f.items.length - 1], ...findLoops(f).map((l) => [l.start, l.end])];
+      const firstJump = f.items.findIndex((it) => it.kind === 'instr' && /^j/.test(it.mnemonic) && it.target > 0);
+      if (firstJump > 0) ranges.push([0, firstJump]); // ends in a jump to a label outside the range
+      for (const [s, e] of ranges) {
+        const x = extractRange(f, s, e, T);
+        const r = await a.assemble(x.text, 'intel');
+        results.push(r.ok && r.bytes.length > 0 ? 'ok' : `${f.name} ${s}-${e}: ${j(r.diagnostics)} ${x.text}`);
+      }
+    }
+    check(results.length >= 6 && results.every((x) => x === 'ok'), 'text output: whole functions, loops and ranges with exits assemble', results.filter((x) => x !== 'ok').join('\n'));
+    const gas = await a.assemble(extractRange({ items: [{ kind: 'instr', text: 'mov eax, OFFSET FLAT:.LC0', mnemonic: 'mov' }, { kind: 'instr', text: 'movsx rsi, esi', mnemonic: 'movsx' }, { kind: 'instr', text: 'jne .L3', mnemonic: 'jne', target: null }] }, 0, 2, { binary: false }).text, 'intel');
+    check(gas.ok, 'GCC\'s Intel syntax with outside labels assembles', j(gas.diagnostics));
+  }
 
   // NASM, through the assembler pane: the loop label is local, so the target is the function
   const N = parseListing(fx('compile-nasm-loop.json').response);

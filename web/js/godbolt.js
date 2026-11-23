@@ -404,7 +404,8 @@ export async function compilePane(pane, source, info, opts = {}) {
     const ok = !!response && response.code === 0 && Array.isArray(response.asm);
     last = { response, mode, failed: !ok };
     if (ok && (mode === 'asm' || response.asm.some((l) => Array.isArray(l.opcodes) && l.opcodes.length))) return last;
-    if (!ok && (info || mode === 'asm')) return last;
+    // a linked binary also fails for code without main(): then the assembly text
+    if (!ok && ((info && mode === 'binaryObject') || mode === 'asm')) return last;
   }
   return last;
 }
@@ -536,8 +537,20 @@ export function extractRange(fn, start, end, { binary }) {
   // a label right before the range belongs to it (the loop's own label)
   let s = start;
   while (s > 0 && fn.items[s - 1].kind === 'label') s--;
-  const text = fn.items.slice(s, end + 1).map((it) => (it.kind === 'label' ? `${it.name}:` : `  ${it.text}`)).join('\n') + '\n';
+  // Local labels (.L...) that the range uses but does not contain (an exit of the loop, a constant) would be
+  // undefined temporary symbols, which the assembler rejects: they get an ordinary name (an external symbol).
+  const defined = new Set(fn.items.slice(s, end + 1).filter((it) => it.kind === 'label').map((it) => it.name));
+  const outside = (t) => t.replace(/(^|[^\w.$@])(\.L[\w.$@]*)/g, (m, pre, name) => (defined.has(name) ? m : `${pre}outside${name.slice(1)}`));
+  const text = fn.items.slice(s, end + 1).map((it) => (it.kind === 'label' ? `${it.name}:` : `  ${outside(gasToLlvmIntel(it.text))}`)).join('\n') + '\n';
   return { ...info, mode: 'asm', syntax: 'intel', text, bytes: null, startAddress: null };
+}
+
+// GNU as's Intel syntax (GCC's output) where LLVM's assembler reads it differently: "OFFSET FLAT:sym" and
+// "movsx r64, r32" (LLVM: movsxd).
+export function gasToLlvmIntel(text) {
+  return text
+    .replace(/\bOFFSET FLAT:/gi, 'offset ')
+    .replace(/^movsx (r\w+), (e[a-z]{2}|r\d+d)$/i, 'movsxd $1, $2');
 }
 
 // An assembly editor without a compiler pane: its source as it is (assembly mode; AT&T if it uses %registers).
