@@ -59,7 +59,7 @@ function limitsView(r) {
   return box;
 }
 
-function uopTable(r, hideEmpty) {
+export function uopTable(r, hideEmpty) { // (also used by the A–B view, ab.js)
   const n = r.columns.length;
   const totals = new Array(n).fill(0);
   for (const x of r.rows) for (let i = 0; i < n; i++) totals[i] += Number(x.values?.[i]) || 0;

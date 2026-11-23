@@ -7,13 +7,16 @@
 <meta name="referrer" content="no-referrer">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#090a09">
-<!-- Everything the page loads comes from its own origin; nothing is sent anywhere. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<!-- Everything the page loads comes from its own origin. The one exception: "Import from Compiler Explorer" fetches
+     from https://godbolt.org, only when the user imports a link (js/godbolt.js). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://godbolt.org; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="description" content="wuica: WebAssembly uiCA, an independent port of uiCA that runs in your browser. Predicts the throughput of x86-64 basic blocks.">
 <title>wuica: WebAssembly uiCA</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="preload" href="fonts/IBMPlexMono-Regular-Latin1.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/ab.css">
+<link rel="stylesheet" href="css/godbolt.css">
 <script type="module" src="js/app.js"></script>
 </head>
 <body>
@@ -147,7 +150,7 @@
       <p class="field text">wuica predicts how many CPU cycles one iteration of a block of x86-64 machine code takes on a given
         microarchitecture, by simulating the pipeline (front end, renamer, scheduler, execution ports) the way uiCA does.
         It runs entirely in your browser: the code you enter is not sent to a server, and the page works offline after
-        the first visit.</p>
+        the first visit. (Only "Import from Compiler Explorer" contacts godbolt.org, when you use it.)</p>
     </div>
     <div class="row">
       <div class="label">loops</div>

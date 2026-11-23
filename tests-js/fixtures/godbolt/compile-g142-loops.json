@@ -1,0 +1,620 @@
+{
+ "source": "int sum(const int* a, int n) {\n  int s = 0;\n  for (int i = 0; i < n; i++) s += a[i] * 3;\n  return s;\n}\n\nvoid scale(float* x, int n, float k) {\n  for (int i = 0; i < n; i++)\n    for (int j = 0; j < 4; j++) x[i*4+j] *= k;\n}\n",
+ "response": {
+  "inputFilename": "example.cpp",
+  "code": 0,
+  "okToCache": true,
+  "timedOut": false,
+  "stdout": [],
+  "stderr": [],
+  "truncated": false,
+  "execTime": 100,
+  "processExecutionResultTime": 0.005179000087082386,
+  "instructionSet": "amd64",
+  "compilationOptions": [
+   "-g",
+   "-o",
+   "/app/output.s",
+   "-fno-verbose-asm",
+   "-c",
+   "-fdiagnostics-color=always",
+   "-O2",
+   "/app/example.cpp"
+  ],
+  "downloads": [],
+  "tools": [],
+  "asmSize": 4272,
+  "asm": [
+   {
+    "labels": [],
+    "source": null,
+    "text": "sum(int const*, int):"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "85",
+     "f6"
+    ],
+    "address": 0,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 3
+    },
+    "text": " test   esi,esi"
+   },
+   {
+    "labels": [
+     {
+      "name": "sum(int const*, int)",
+      "range": {
+       "startCol": 13,
+       "endCol": 33
+      }
+     }
+    ],
+    "opcodes": [
+     "7e",
+     "24"
+    ],
+    "address": 2,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 3
+    },
+    "text": " jle    28 <sum(int const*, int)+0x28>"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "48",
+     "63",
+     "f6"
+    ],
+    "address": 4,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 3
+    },
+    "text": " movsxd rsi,esi"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "31",
+     "d2"
+    ],
+    "address": 7,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 2
+    },
+    "text": " xor    edx,edx"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "48",
+     "8d",
+     "0c",
+     "b7"
+    ],
+    "address": 9,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 2
+    },
+    "text": " lea    rcx,[rdi+rsi*4]"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "0f",
+     "1f",
+     "00"
+    ],
+    "address": 13,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 2
+    },
+    "text": " nop    DWORD PTR [rax]"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "8b",
+     "07"
+    ],
+    "address": 16,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 3
+    },
+    "text": " mov    eax,DWORD PTR [rdi]"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "48",
+     "83",
+     "c7",
+     "04"
+    ],
+    "address": 18,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 3
+    },
+    "text": " add    rdi,0x4"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "8d",
+     "04",
+     "40"
+    ],
+    "address": 22,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 3
+    },
+    "text": " lea    eax,[rax+rax*2]"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "01",
+     "c2"
+    ],
+    "address": 25,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 3
+    },
+    "text": " add    edx,eax"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "48",
+     "39",
+     "cf"
+    ],
+    "address": 27,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 3
+    },
+    "text": " cmp    rdi,rcx"
+   },
+   {
+    "labels": [
+     {
+      "name": "sum(int const*, int)",
+      "range": {
+       "startCol": 13,
+       "endCol": 33
+      }
+     }
+    ],
+    "opcodes": [
+     "75",
+     "f0"
+    ],
+    "address": 30,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 3
+    },
+    "text": " jne    10 <sum(int const*, int)+0x10>"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "89",
+     "d0"
+    ],
+    "address": 32,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 5
+    },
+    "text": " mov    eax,edx"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "c3"
+    ],
+    "address": 34,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 5
+    },
+    "text": " ret"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "0f",
+     "1f",
+     "44",
+     "00",
+     "00"
+    ],
+    "address": 35,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 5
+    },
+    "text": " nop    DWORD PTR [rax+rax*1+0x0]"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "31",
+     "d2"
+    ],
+    "address": 40,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 2
+    },
+    "text": " xor    edx,edx"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "89",
+     "d0"
+    ],
+    "address": 42,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 5
+    },
+    "text": " mov    eax,edx"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "c3"
+    ],
+    "address": 44,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 5
+    },
+    "text": " ret"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "0f",
+     "1f",
+     "00"
+    ],
+    "address": 45,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 5
+    },
+    "text": " nop    DWORD PTR [rax]"
+   },
+   {
+    "labels": [],
+    "source": null,
+    "text": "scale(float*, int, float):"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "85",
+     "f6"
+    ],
+    "address": 48,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 8
+    },
+    "text": " test   esi,esi"
+   },
+   {
+    "labels": [
+     {
+      "name": "scale(float*, int, float)",
+      "range": {
+       "startCol": 13,
+       "endCol": 38
+      }
+     }
+    ],
+    "opcodes": [
+     "7e",
+     "3f"
+    ],
+    "address": 50,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 8
+    },
+    "text": " jle    73 <scale(float*, int, float)+0x43>"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "48",
+     "63",
+     "f6"
+    ],
+    "address": 52,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 8
+    },
+    "text": " movsxd rsi,esi"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "0f",
+     "c6",
+     "c0",
+     "00"
+    ],
+    "address": 55,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 8
+    },
+    "text": " shufps xmm0,xmm0,0x0"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "48",
+     "c1",
+     "e6",
+     "04"
+    ],
+    "address": 59,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 8
+    },
+    "text": " shl    rsi,0x4"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "48",
+     "8d",
+     "04",
+     "37"
+    ],
+    "address": 63,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 8
+    },
+    "text": " lea    rax,[rdi+rsi*1]"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "66",
+     "66",
+     "2e",
+     "0f",
+     "1f",
+     "84",
+     "00",
+     "00",
+     "00",
+     "00",
+     "00"
+    ],
+    "address": 67,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 8
+    },
+    "text": " data16 cs nop WORD PTR [rax+rax*1+0x0]"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "66",
+     "66",
+     "2e",
+     "0f",
+     "1f",
+     "84",
+     "00",
+     "00",
+     "00",
+     "00",
+     "00"
+    ],
+    "address": 78,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 8
+    },
+    "text": " data16 cs nop WORD PTR [rax+rax*1+0x0]"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "0f",
+     "1f",
+     "80",
+     "00",
+     "00",
+     "00",
+     "00"
+    ],
+    "address": 89,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 8
+    },
+    "text": " nop    DWORD PTR [rax+0x0]"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "0f",
+     "10",
+     "0f"
+    ],
+    "address": 96,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 9
+    },
+    "text": " movups xmm1,XMMWORD PTR [rdi]"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "48",
+     "83",
+     "c7",
+     "10"
+    ],
+    "address": 99,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 8
+    },
+    "text": " add    rdi,0x10"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "0f",
+     "59",
+     "c8"
+    ],
+    "address": 103,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 9
+    },
+    "text": " mulps  xmm1,xmm0"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "0f",
+     "11",
+     "4f",
+     "f0"
+    ],
+    "address": 106,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 9
+    },
+    "text": " movups XMMWORD PTR [rdi-0x10],xmm1"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "48",
+     "39",
+     "f8"
+    ],
+    "address": 110,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 8
+    },
+    "text": " cmp    rax,rdi"
+   },
+   {
+    "labels": [
+     {
+      "name": "scale(float*, int, float)",
+      "range": {
+       "startCol": 13,
+       "endCol": 38
+      }
+     }
+    ],
+    "opcodes": [
+     "75",
+     "ed"
+    ],
+    "address": 113,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 8
+    },
+    "text": " jne    60 <scale(float*, int, float)+0x30>"
+   },
+   {
+    "labels": [],
+    "opcodes": [
+     "c3"
+    ],
+    "address": 115,
+    "source": {
+     "file": null,
+     "mainsource": "true",
+     "line": 10
+    },
+    "text": " ret"
+   }
+  ],
+  "labelDefinitions": {
+   "sum(int const*, int)": 1,
+   "scale(float*, int, float)": 21
+  },
+  "parsingTime": 1,
+  "filteredCount": 24,
+  "externalParserUsed": true,
+  "objdumpTime": 26,
+  "optOutput": [],
+  "popularArguments": {},
+  "retreivedFromCache": true,
+  "retreivedFromCacheTime": 28.342335999011993
+ }
+}

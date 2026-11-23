@@ -10,6 +10,8 @@ import { EXAMPLES, MOCK_EXAMPLES } from './examples.js';
 import { fetchBytes, fetchManifest, PATHS, formatSize, whenIdle } from './loader.js';
 import { WasmAssembler, isWasm } from './assembler.js';
 import { renderResult, renderEmpty, renderFailure, h } from './render.js';
+import { createAB } from './ab.js';                 // A–B comparison
+import { createCeImport } from './godbolt-ui.js';   // import from Compiler Explorer
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -57,6 +59,8 @@ let assemblerPromise = null;
 let assemblerMissing = false; // true: this build has no assembler (final); a failed load of an existing one is not
 let assemblerError = '';
 let prefetchStarted = false;
+let ab = null; // the A–B comparison (ab.js); in A–B mode lastView is {ab: view}
+let ce = null; // the Compiler Explorer import (godbolt-ui.js)
 
 // ---- status line and progress ----------------------------------------------------------------------------------
 
@@ -126,6 +130,7 @@ function writeControls() {
   el.iter.value = state.minIterations;
   el.cycles.value = state.minCycles;
   paintDerived();
+  ab?.paint();
 }
 
 function paintDerived() {
@@ -140,7 +145,7 @@ function paintDerived() {
 }
 
 function runKey() {
-  return JSON.stringify([state.mode, state.mode === 'asm' ? state.syntax : '', el.code.value, state.arch, options()]);
+  return JSON.stringify([state.mode, state.mode === 'asm' ? state.syntax : '', el.code.value, state.arch, options(), ab?.key() ?? '']);
 }
 function paintStale() {
   el.body.classList.toggle('stale', !!lastView && runKey() !== lastRunKey);
@@ -326,6 +331,7 @@ function nextFrame() { // lets the busy state paint before the (synchronous) ana
 
 function draw() {
   if (!lastView) return;
+  if (lastView.ab) { ab.draw(lastView.ab); paintStale(); return; }
   renderResult(el.body, { ...lastView, ui, onUi: (k, v) => { ui[k] = v; if (k === 'hideEmpty') draw(); } });
   paintStale();
 }
@@ -383,6 +389,7 @@ async function run() {
   const id = ++runSeq;
   clearMessages();
   const key = runKey();
+  if (ab?.active()) { await runCompare(id, key); return; }
   const archKey = state.arch;
   const item = archItems.get(archKey);
   let bytes;
@@ -427,6 +434,81 @@ async function run() {
       el.results.dataset.run = String(id); // the number of the run that is shown (tests wait for it)
     }
   }
+}
+
+// A–B mode: both sides, one after the other (ab.js gets the machine code and draws the comparison).
+async function runCompare(id, key) {
+  const current = () => id === runSeq;
+  let input;
+  try {
+    input = await ab.inputs(id, current);
+  } catch (e) {
+    showMessages([{ line: null, column: null, severity: 'error', message: `The assembler failed: ${e?.message ?? e}` }]);
+    return;
+  }
+  if (!input || !current()) return;
+  setBusy(true);
+  try {
+    await Promise.all([...new Set([input.a?.arch, input.b?.arch].filter(Boolean))].map(ensureTable));
+    await nextFrame();
+    if (!current()) return;
+    const view = await ab.analyze(input, (hex, arch) => engine.analyze(makeRequest(hex, arch, options())), current);
+    if (!view || !current()) return;
+    lastView = { ab: view };
+    lastRunKey = key;
+    draw();
+    flash(ab.summary(view), { ms: 4000 });
+    syncUrl(true);
+    prefetchTables();
+  } catch (e) {
+    if (!current()) return;
+    lastView = null;
+    renderFailure(el.body, `Could not run the comparison: ${e?.message ?? e}`);
+  } finally {
+    if (current()) {
+      setBusy(false);
+      el.results.dataset.run = String(id);
+    }
+  }
+}
+
+// Puts code into the page's editor (side A), e.g. from Compiler Explorer or a swap.
+function importCode({ mode, syntax, text }, { run: andRun = true } = {}) {
+  if (mode === 'asm' || mode === 'hex') setMode(mode);
+  if (syntax === 'intel' || syntax === 'att') state.syntax = syntax;
+  el.code.value = buffers[state.mode] = text;
+  clearMessages();
+  writeControls();
+  changed();
+  if (andRun && ready) run();
+}
+
+function setupFeatures() {
+  ce = createCeImport({
+    sides: () => (state.ab ? ['A', 'B'] : ['A']),
+    importInto(side, code, { alignment = null } = {}) {
+      if (alignment !== null) state.alignmentOffset = alignment;
+      if (side === 'B') { ab.setB(code); writeControls(); if (ready) run(); } else importCode(code);
+    },
+  });
+  ab = createAB({
+    state, el: { code: el.code, body: el.body }, archItems: () => archItems, archTitle, ensureAssembler, ensureTable,
+    machineCodeA: machineCode, changed, writeControls,
+    getA: () => ({ mode: state.mode, syntax: state.syntax, text: el.code.value }),
+    setA: importCode,
+    toggled() { // single <-> A–B
+      lastView = null;
+      changed();
+      if (ready && !el.run.disabled && el.code.value.trim() !== '') run();
+      else renderEmpty(el.body, 'No result yet. Press Analyze (Ctrl/⌘ + Enter).');
+    },
+    openImport: (side) => ce.open(side),
+    watchPaste: (textarea, side) => ce.watchPaste(textarea, side),
+  });
+  ce.watchPaste(el.code, 'A');
+  const open = h('button', { type: 'button', class: 'plain', id: 'ce-open', title: 'import code from a Compiler Explorer link (fetches from godbolt.org)' }, 'Import from Compiler Explorer…');
+  open.addEventListener('click', () => ce.open('A'));
+  el.examples.closest('label')?.after(open);
 }
 
 // ---- offline: service worker and background caching ------------------------------------------------------------------
@@ -597,6 +679,7 @@ async function start() {
   writeControls();
   fillExamples();
   bind();
+  setupFeatures();
 
   manifest = await fetchManifest();
   el.buildId.textContent = manifest.version;

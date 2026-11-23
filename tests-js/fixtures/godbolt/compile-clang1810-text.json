@@ -1,0 +1,1363 @@
+{
+ "source": "int sum(const int* a, int n) {\n  int s = 0;\n  for (int i = 0; i < n; i++) s += a[i] * 3;\n  return s;\n}\n\nvoid scale(float* x, int n, float k) {\n  for (int i = 0; i < n; i++)\n    for (int j = 0; j < 4; j++) x[i*4+j] *= k;\n}\n",
+ "response": {
+  "inputFilename": "example.cpp",
+  "code": 0,
+  "okToCache": true,
+  "timedOut": false,
+  "stdout": [],
+  "stderr": [],
+  "truncated": false,
+  "execTime": 256,
+  "processExecutionResultTime": 0.0043299999088048935,
+  "instructionSet": "amd64",
+  "compilationOptions": [
+   "-g",
+   "-o",
+   "/app/output.s",
+   "-mllvm",
+   "--x86-asm-syntax=intel",
+   "-fno-verbose-asm",
+   "-S",
+   "--gcc-toolchain=/opt/compiler-explorer/gcc-13.2.0",
+   "-fcolor-diagnostics",
+   "-fno-crash-diagnostics",
+   "-O2",
+   "/app/example.cpp"
+  ],
+  "downloads": [],
+  "tools": [],
+  "asmSize": 11900,
+  "asm": [
+   {
+    "text": "sum(int const*, int):",
+    "source": null,
+    "labels": []
+   },
+   {
+    "text": "        test    esi, esi",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 21
+    },
+    "labels": []
+   },
+   {
+    "text": "        jle     .LBB0_1",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 3
+    },
+    "labels": [
+     {
+      "name": ".LBB0_1",
+      "range": {
+       "startCol": 17,
+       "endCol": 24
+      }
+     }
+    ]
+   },
+   {
+    "text": "        mov     ecx, esi",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 21
+    },
+    "labels": []
+   },
+   {
+    "text": "        cmp     esi, 8",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        jae     .LBB0_4",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 3
+    },
+    "labels": [
+     {
+      "name": ".LBB0_4",
+      "range": {
+       "startCol": 17,
+       "endCol": 24
+      }
+     }
+    ]
+   },
+   {
+    "text": "        xor     edx, edx",
+    "source": {
+     "file": null,
+     "line": 0,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        xor     eax, eax",
+    "source": {
+     "file": null,
+     "line": 0,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        jmp     .LBB0_7",
+    "source": {
+     "file": null,
+     "line": 0,
+     "column": 3
+    },
+    "labels": [
+     {
+      "name": ".LBB0_7",
+      "range": {
+       "startCol": 17,
+       "endCol": 24
+      }
+     }
+    ]
+   },
+   {
+    "text": ".LBB0_1:",
+    "source": null,
+    "labels": []
+   },
+   {
+    "text": "        xor     eax, eax",
+    "source": {
+     "file": null,
+     "line": 0,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        ret",
+    "source": {
+     "file": null,
+     "line": 4,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": ".LBB0_4:",
+    "source": null,
+    "labels": []
+   },
+   {
+    "text": "        mov     edx, ecx",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        and     edx, 2147483640",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        mov     eax, ecx",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        shr     eax, 3",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        and     eax, 268435455",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        shl     rax, 5",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        pxor    xmm0, xmm0",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        xor     esi, esi",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        pxor    xmm1, xmm1",
+    "source": {
+     "file": null,
+     "line": 0,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": ".LBB0_5:",
+    "source": null,
+    "labels": []
+   },
+   {
+    "text": "        movdqa  xmm2, xmm0",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 41
+    },
+    "labels": []
+   },
+   {
+    "text": "        movdqu  xmm0, xmmword ptr [rdi + rsi]",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 36
+    },
+    "labels": []
+   },
+   {
+    "text": "        movdqa  xmm3, xmm1",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 41
+    },
+    "labels": []
+   },
+   {
+    "text": "        movdqu  xmm1, xmmword ptr [rdi + rsi + 16]",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 36
+    },
+    "labels": []
+   },
+   {
+    "text": "        paddd   xmm2, xmm0",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 41
+    },
+    "labels": []
+   },
+   {
+    "text": "        paddd   xmm0, xmm0",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 41
+    },
+    "labels": []
+   },
+   {
+    "text": "        paddd   xmm0, xmm2",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 33
+    },
+    "labels": []
+   },
+   {
+    "text": "        paddd   xmm3, xmm1",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 41
+    },
+    "labels": []
+   },
+   {
+    "text": "        paddd   xmm1, xmm1",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 41
+    },
+    "labels": []
+   },
+   {
+    "text": "        paddd   xmm1, xmm3",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 33
+    },
+    "labels": []
+   },
+   {
+    "text": "        add     rsi, 32",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 27
+    },
+    "labels": []
+   },
+   {
+    "text": "        cmp     rax, rsi",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 27
+    },
+    "labels": []
+   },
+   {
+    "text": "        jne     .LBB0_5",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 27
+    },
+    "labels": [
+     {
+      "name": ".LBB0_5",
+      "range": {
+       "startCol": 17,
+       "endCol": 24
+      }
+     }
+    ]
+   },
+   {
+    "text": "        paddd   xmm1, xmm0",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        pshufd  xmm0, xmm1, 238",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        paddd   xmm0, xmm1",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        pshufd  xmm1, xmm0, 85",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        paddd   xmm1, xmm0",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        movd    eax, xmm1",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        cmp     rdx, rcx",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        je      .LBB0_8",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 3
+    },
+    "labels": [
+     {
+      "name": ".LBB0_8",
+      "range": {
+       "startCol": 17,
+       "endCol": 24
+      }
+     }
+    ]
+   },
+   {
+    "text": ".LBB0_7:",
+    "source": null,
+    "labels": []
+   },
+   {
+    "text": "        mov     esi, dword ptr [rdi + 4*rdx]",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 36
+    },
+    "labels": []
+   },
+   {
+    "text": "        lea     esi, [rsi + 2*rsi]",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 41
+    },
+    "labels": []
+   },
+   {
+    "text": "        add     eax, esi",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 33
+    },
+    "labels": []
+   },
+   {
+    "text": "        inc     rdx",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 27
+    },
+    "labels": []
+   },
+   {
+    "text": "        cmp     rcx, rdx",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 21
+    },
+    "labels": []
+   },
+   {
+    "text": "        jne     .LBB0_7",
+    "source": {
+     "file": null,
+     "line": 3,
+     "column": 3
+    },
+    "labels": [
+     {
+      "name": ".LBB0_7",
+      "range": {
+       "startCol": 17,
+       "endCol": 24
+      }
+     }
+    ]
+   },
+   {
+    "text": ".LBB0_8:",
+    "source": null,
+    "labels": []
+   },
+   {
+    "text": "        ret",
+    "source": {
+     "file": null,
+     "line": 4,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "",
+    "source": null,
+    "labels": []
+   },
+   {
+    "text": "scale(float*, int, float):",
+    "source": null,
+    "labels": []
+   },
+   {
+    "text": "        test    esi, esi",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 21
+    },
+    "labels": []
+   },
+   {
+    "text": "        jle     .LBB1_8",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 3
+    },
+    "labels": [
+     {
+      "name": ".LBB1_8",
+      "range": {
+       "startCol": 17,
+       "endCol": 24
+      }
+     }
+    ]
+   },
+   {
+    "text": "        mov     eax, esi",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 21
+    },
+    "labels": []
+   },
+   {
+    "text": "        cmp     esi, 4",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        jae     .LBB1_3",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 3
+    },
+    "labels": [
+     {
+      "name": ".LBB1_3",
+      "range": {
+       "startCol": 17,
+       "endCol": 24
+      }
+     }
+    ]
+   },
+   {
+    "text": "        xor     ecx, ecx",
+    "source": {
+     "file": null,
+     "line": 0,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        jmp     .LBB1_6",
+    "source": {
+     "file": null,
+     "line": 0,
+     "column": 3
+    },
+    "labels": [
+     {
+      "name": ".LBB1_6",
+      "range": {
+       "startCol": 17,
+       "endCol": 24
+      }
+     }
+    ]
+   },
+   {
+    "text": ".LBB1_3:",
+    "source": null,
+    "labels": []
+   },
+   {
+    "text": "        mov     ecx, eax",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        and     ecx, 2147483644",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        movaps  xmm1, xmm0",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        shufps  xmm1, xmm0, 0",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        mov     edx, eax",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        shr     edx, 2",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        and     edx, 536870911",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        shl     rdx, 6",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        xor     esi, esi",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": ".LBB1_4:",
+    "source": null,
+    "labels": []
+   },
+   {
+    "text": "        movups  xmm6, xmmword ptr [rdi + rsi]",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movups  xmm2, xmmword ptr [rdi + rsi + 16]",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movups  xmm7, xmmword ptr [rdi + rsi + 32]",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movups  xmm8, xmmword ptr [rdi + rsi + 48]",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movaps  xmm4, xmm8",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movlhps xmm4, xmm7",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movaps  xmm3, xmm6",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        unpcklps        xmm3, xmm2",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        shufps  xmm3, xmm4, 36",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movaps  xmm5, xmm7",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        unpcklps        xmm5, xmm8",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movaps  xmm4, xmm2",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        shufps  xmm4, xmm6, 17",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        shufps  xmm4, xmm5, 226",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movaps  xmm9, xmm8",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        unpckhpd        xmm9, xmm7",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movaps  xmm5, xmm6",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        unpckhps        xmm5, xmm2",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        shufps  xmm5, xmm9, 36",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        unpckhps        xmm7, xmm8",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        shufps  xmm2, xmm6, 51",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        shufps  xmm2, xmm7, 226",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        mulps   xmm3, xmm1",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        mulps   xmm4, xmm1",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        mulps   xmm5, xmm1",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        mulps   xmm2, xmm1",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movaps  xmm6, xmm5",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        unpcklps        xmm6, xmm2",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movaps  xmm7, xmm4",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        shufps  xmm7, xmm3, 17",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        shufps  xmm7, xmm6, 226",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movaps  xmm6, xmm2",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movlhps xmm6, xmm5",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movaps  xmm8, xmm3",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        unpcklps        xmm8, xmm4",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        shufps  xmm8, xmm6, 36",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movaps  xmm6, xmm5",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        unpckhps        xmm6, xmm2",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movaps  xmm9, xmm4",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        shufps  xmm9, xmm3, 51",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        shufps  xmm9, xmm6, 226",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        unpckhpd        xmm2, xmm5",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        unpckhps        xmm3, xmm4",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        shufps  xmm3, xmm2, 36",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movups  xmmword ptr [rdi + rsi + 32], xmm3",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movups  xmmword ptr [rdi + rsi + 48], xmm9",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movups  xmmword ptr [rdi + rsi], xmm8",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movups  xmmword ptr [rdi + rsi + 16], xmm7",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        add     rsi, 64",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 27
+    },
+    "labels": []
+   },
+   {
+    "text": "        cmp     rdx, rsi",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 27
+    },
+    "labels": []
+   },
+   {
+    "text": "        jne     .LBB1_4",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 27
+    },
+    "labels": [
+     {
+      "name": ".LBB1_4",
+      "range": {
+       "startCol": 17,
+       "endCol": 24
+      }
+     }
+    ]
+   },
+   {
+    "text": "        cmp     rcx, rax",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        je      .LBB1_8",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 3
+    },
+    "labels": [
+     {
+      "name": ".LBB1_8",
+      "range": {
+       "startCol": 17,
+       "endCol": 24
+      }
+     }
+    ]
+   },
+   {
+    "text": ".LBB1_6:",
+    "source": null,
+    "labels": []
+   },
+   {
+    "text": "        shufps  xmm0, xmm0, 0",
+    "source": {
+     "file": null,
+     "line": 0,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        sub     rax, rcx",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        shl     rcx, 4",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": "        add     rdi, rcx",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 3
+    },
+    "labels": []
+   },
+   {
+    "text": ".LBB1_7:",
+    "source": null,
+    "labels": []
+   },
+   {
+    "text": "        movups  xmm1, xmmword ptr [rdi]",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        mulps   xmm1, xmm0",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        movups  xmmword ptr [rdi], xmm1",
+    "source": {
+     "file": null,
+     "line": 9,
+     "column": 42
+    },
+    "labels": []
+   },
+   {
+    "text": "        add     rdi, 16",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 21
+    },
+    "labels": []
+   },
+   {
+    "text": "        dec     rax",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 21
+    },
+    "labels": []
+   },
+   {
+    "text": "        jne     .LBB1_7",
+    "source": {
+     "file": null,
+     "line": 8,
+     "column": 3
+    },
+    "labels": [
+     {
+      "name": ".LBB1_7",
+      "range": {
+       "startCol": 17,
+       "endCol": 24
+      }
+     }
+    ]
+   },
+   {
+    "text": ".LBB1_8:",
+    "source": null,
+    "labels": []
+   },
+   {
+    "text": "        ret",
+    "source": {
+     "file": null,
+     "line": 10,
+     "column": 1
+    },
+    "labels": []
+   },
+   {
+    "text": "",
+    "source": null,
+    "labels": []
+   }
+  ],
+  "optOutput": [],
+  "labelDefinitions": {
+   ".LBB0_1": 10,
+   ".LBB0_4": 13,
+   ".LBB0_5": 23,
+   ".LBB0_7": 45,
+   ".LBB0_8": 52,
+   ".LBB1_3": 63,
+   ".LBB1_4": 73,
+   ".LBB1_6": 127,
+   ".LBB1_7": 132,
+   ".LBB1_8": 139,
+   "scale(float*, int, float)": 55,
+   "sum(int const*, int)": 1
+  },
+  "parsingTime": 5,
+  "filteredCount": 621,
+  "popularArguments": {},
+  "retreivedFromCache": true,
+  "retreivedFromCacheTime": 29.000208005309105
+ }
+}

@@ -1,0 +1,86 @@
+{
+ "inputFilename": "example.cpp",
+ "code": 1,
+ "okToCache": true,
+ "timedOut": false,
+ "stdout": [],
+ "stderr": [
+  {
+   "text": "\u001b[01m\u001b[K<source>:1:9:\u001b[m\u001b[K \u001b[01;31m\u001b[Kerror: \u001b[m\u001b[Kexpected primary-expression at end of input",
+   "tag": {
+    "line": 1,
+    "column": 9,
+    "text": "error: expected primary-expression at end of input",
+    "severity": 3,
+    "file": "example.cpp"
+   }
+  },
+  {
+   "text": "    1 | int f( {"
+  },
+  {
+   "text": "      |         \u001b[01;31m\u001b[K^\u001b[m\u001b[K"
+  },
+  {
+   "text": "\u001b[01m\u001b[K<source>:1:9:\u001b[m\u001b[K \u001b[01;31m\u001b[Kerror: \u001b[m\u001b[Kexpected '\u001b[01m\u001b[K}\u001b[m\u001b[K' at end of input",
+   "tag": {
+    "line": 1,
+    "column": 9,
+    "text": "error: expected '}' at end of input",
+    "severity": 3,
+    "file": "example.cpp"
+   }
+  },
+  {
+   "text": "    1 | int f( \u001b[32m\u001b[K{\u001b[m\u001b[K"
+  },
+  {
+   "text": "      |        \u001b[32m\u001b[K~\u001b[m\u001b[K\u001b[01;31m\u001b[K^\u001b[m\u001b[K"
+  },
+  {
+   "text": "\u001b[01m\u001b[K<source>:1:9:\u001b[m\u001b[K \u001b[01;31m\u001b[Kerror: \u001b[m\u001b[Kexpected '\u001b[01m\u001b[K)\u001b[m\u001b[K' at end of input",
+   "tag": {
+    "line": 1,
+    "column": 9,
+    "text": "error: expected ')' at end of input",
+    "severity": 3,
+    "file": "example.cpp"
+   }
+  },
+  {
+   "text": "    1 | int f\u001b[34m\u001b[K(\u001b[m\u001b[K {"
+  },
+  {
+   "text": "      |      \u001b[34m\u001b[K~\u001b[m\u001b[K  \u001b[01;31m\u001b[K^\u001b[m\u001b[K"
+  },
+  {
+   "text": "      |         \u001b[32m\u001b[K)\u001b[m\u001b[K"
+  }
+ ],
+ "truncated": false,
+ "execTime": 37,
+ "processExecutionResultTime": 0.07073700008913875,
+ "instructionSet": "amd64",
+ "compilationOptions": [
+  "-g",
+  "-o",
+  "/app/output.s",
+  "-fno-verbose-asm",
+  "-c",
+  "-fdiagnostics-color=always",
+  "-O2",
+  "/app/example.cpp"
+ ],
+ "downloads": [],
+ "tools": [],
+ "asm": [
+  {
+   "text": "<Compilation failed>",
+   "source": null
+  }
+ ],
+ "optOutput": [],
+ "popularArguments": {},
+ "retreivedFromCache": true,
+ "retreivedFromCacheTime": 19.97688700258732
+}

@@ -1,0 +1,96 @@
+/* Import from Compiler Explorer (js/godbolt-ui.js). Colours come only from the theme's custom properties. */
+
+#ce-open { white-space: nowrap; }
+
+.ce-dialog {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 1rem 1.25rem;
+  width: min(64rem, calc(100vw - 1rem));
+  max-width: calc(100vw - 1rem);
+  max-height: calc(100vh - 1rem);
+  overflow: auto;
+}
+.ce-dialog::backdrop { background: color-mix(in srgb, var(--background) 78%, transparent); }
+.ce-top { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+.ce-top h2 { color: var(--heading); }
+.ce-privacy { color: var(--description); margin: 0.4rem 0 0.75rem; max-width: 82ch; }
+.ce-privacy b { font-weight: 400; color: var(--external); }
+
+.ce-url { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.ce-url label { color: var(--accent); }
+.ce-url input {
+  flex: 1 1 20rem;
+  min-width: 0;
+  background: var(--background);
+  color: var(--code);
+  border: 1px solid var(--subtle);
+  border-radius: 0;
+  padding: 0.25rem 0.5rem;
+}
+@media (max-width: 640px) { .ce-url input { font-size: 16px; } }
+
+.ce-status { margin: 0.5rem 0; min-height: 1.55em; color: var(--description); }
+.ce-status.error { color: var(--caveat); }
+.ce-status.busy::after { content: " …"; }
+
+.ce-sub { color: var(--accent); margin-right: 0.75rem; }
+.ce-panes { display: flex; flex-wrap: wrap; gap: 0.25rem 0; align-items: baseline; }
+.ce-pane-list { display: grid; gap: 0.15rem; min-width: 0; }
+.ce-pane-list label { cursor: pointer; }
+.ce-pane-list label:has(input:checked) .ce-name { color: var(--accent); }
+.ce-pane-list .ce-opts { color: var(--code); }
+.ce-pane-list .ce-bad { color: var(--subtle); }
+.ce-panes > .hint { flex-basis: 100%; }
+
+.ce-fnrow { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; align-items: center; margin-top: 0.75rem; }
+.ce-fnrow select { max-width: 100%; }
+.ce-quick { display: flex; flex-wrap: wrap; gap: 0.35rem 0.5rem; align-items: center; margin: 0.5rem 0 0.25rem; }
+.ce-chip { padding: 0 0.6rem; }
+.ce-chip.on { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+
+.ce-listing-wrap { max-height: min(45vh, 28rem); overflow: auto; border: 1px solid var(--border); background: var(--background); margin-top: 0.35rem; }
+.ce-listing { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+.ce-listing td { padding: 0.05rem 0.6ch; white-space: pre; }
+.ce-row { cursor: pointer; }
+.ce-row:hover > td { background: var(--accent-dim); }
+.ce-row.on > td, .ce-label.on > td { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.ce-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ce-mark { width: 2ch; color: var(--accent); text-align: center; border-left: 2px solid transparent; }
+.ce-row.loop > .ce-mark { border-left-color: var(--accent); }
+.ce-addr, .ce-line { color: var(--subtle); text-align: right; }
+.ce-bytes { color: var(--description); }
+.ce-text { color: var(--code); width: 100%; }
+.ce-label > td { color: var(--heading); padding-top: 0.3rem; }
+
+.ce-messages {
+  white-space: pre;
+  overflow: auto;
+  max-height: 14rem;
+  margin-top: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--background);
+  border: 1px solid var(--border);
+  color: var(--description);
+}
+.ce-messages.error { color: var(--caveat); }
+.ce-warn { margin-top: 0.5rem; }
+
+.ce-foot { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border); }
+.ce-sel { flex: 1 1 20rem; min-width: 0; }
+.ce-align { flex-basis: 100%; order: 2; color: var(--description); cursor: pointer; }
+.ce-buttons { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-left: auto; }
+
+/* the offer under an editor after a link was pasted */
+.ce-offer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  align-items: center;
+  margin-top: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--external);
+  background: var(--surface);
+  color: var(--text);
+}
