@@ -16,6 +16,9 @@ export interface AnalysisOptions {
   minCycles?: number;
   /** Include uiCA's cycle-by-cycle events (`trace`; large). Default false. */
   includeTrace?: boolean;
+  /** Include `details` (per instruction allowed ports, latencies, front-end facts; the port set behind the Ports limit;
+   *  issue slots per cause: docs/WASM-API.md). Default false. */
+  details?: boolean;
 }
 
 export type Syntax = 'intel' | 'att';
@@ -120,6 +123,13 @@ export interface AnalyzeSummary {
     ports?: Record<string, number>;
     notes?: string;
     uopsInfo?: string;
+    /** With options.details: */
+    allowedPorts?: string;
+    uops?: number;
+    fusedUops?: number;
+    msUops?: number;
+    latencies?: string[];
+    frontEnd?: { length: number; offset: number; crosses?: number[]; lcp?: true; microcoded?: true; complexDecoder?: true; macroFusedWithNext?: true; macroFusedWithPrev?: true };
   }>;
   /** A diagnosis derived from the analysis (the web page's bound view); absent if tp is 0. */
   insights?: Insights;
@@ -138,6 +148,10 @@ export interface Insights {
   chain?: { index: number; instr: string; operand: string; latency: number; carried: boolean }[];
   /** The instructions with the largest share of the binding resource (top 5). */
   hot?: { resource: string; ports?: string[]; instructions: { index: number; instr: string; share: number }[] };
+  /** With options.details: the ports behind the Ports limit (cycles = uops / ports) and the instructions that load them. */
+  portSet?: { ports: string[]; uops: number; cycles: number; instructions: { index: number; instr: string; uops: number }[] };
+  /** With options.details: issue slots per iteration, used and lost by cause. */
+  issueSlots?: { width: number; perIteration: { issued: number; frontEnd: number; rob: number; rs: number; other: number } };
 }
 
 export interface ArchInfo {
@@ -232,3 +246,21 @@ export const DEFAULT_ARCH: string;
 export const WARM_HEX: string;
 export const ARCH_ORDER: string[];
 export const ARCH_INFO: Record<string, { name: string; year: number }>;
+
+/** The derived diagnosis of an analysis (the web page's bound view; also `insights` in the MCP summary and the REST response). */
+export function insights(result: AnalyzeResult): Insights | null;
+
+export type WhatIfVariant = 'unroll2' | 'unroll4' | 'unroll8' | 'simpleFrontEnd' | 'noMacroFusion' | 'noMicroFusion' | 'nochain';
+export const WHAT_IF_VARIANTS: readonly WhatIfVariant[];
+export interface WhatIfResult {
+  code: 0;
+  arch: string;
+  tp: number;
+  mode: 'loop' | 'unroll';
+  bottlenecks: string[];
+  unit: 'cycles per original iteration';
+  /** tp per original iteration, delta = tp − base tp, speedup = base tp / tp; estimate: no analysis (nochain). */
+  variants: { id: WhatIfVariant; label?: string; tp?: number; delta?: number; speedup?: number | null; estimate?: boolean; bottlenecks?: string[]; error?: string }[];
+}
+/** The what-if experiments of the web page (the MCP tool `what_if`), with `analyze` (e.g. a Wuica's analyze, bound). */
+export function whatIf(analyze: (arch: string, request: AnalyzeRequest) => Promise<AnalyzeResult | Failure>, arch: string, request: AnalyzeRequest, variants?: readonly WhatIfVariant[]): Promise<WhatIfResult | Failure>;

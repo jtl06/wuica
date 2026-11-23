@@ -4,7 +4,7 @@
 import { WasmEngine, makeRequest } from './engine.js';
 import { WorkerEngine } from './engine-rpc.js';
 import { parseHexInput, toHex } from './hex-input.js';
-import { archGroups, archTitle, DEFAULT_ARCH, ARCH_INFO, PROTOTYPE } from './archs.js';
+import { archGroups, archTitle, DEFAULT_ARCH, ARCH_INFO, PROTOTYPE, accuracyNote } from './archs.js';
 import { DEFAULT_STATE, LIMITS, encodeState, decodeState, clampInt } from './url-state.js';
 import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES, MOCK_EXAMPLES } from './examples.js';
 import { fetchBytes, fetchManifest, PATHS, formatSize, whenIdle } from './loader.js';
@@ -118,7 +118,7 @@ const insight = createInsight({
   pool: () => getPool(),
   onToggle: () => { const o = insight.open(); state.cost = o.cost; state.costNop = o.cost && o.nop; syncUrl(true); },
 });
-const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o), onToggle: (open) => { Object.assign(state, open); syncUrl(true); } });
+const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o), onToggle: (open) => { Object.assign(state, open); syncUrl(true); }, getSel: () => state.sel, getSource: () => ceSource });
 // The trace (trace.js), below both panes; linked to the uop table (trace-link.js). Its open state and the selected row
 // are in the URL.
 const traceOpened = (open) => { if (state.trace === open) return; state.trace = open; syncUrl(true); };
@@ -511,7 +511,7 @@ function fillArchs() {
       const info = ARCH_INFO[it.key];
       const name = info ? `${info.name}${info.year ? ` (${info.year})` : ''}` : it.key;
       const box = h('input', { type: 'checkbox', value: it.key, 'aria-label': it.title });
-      cells.push(h('label', { class: 'cpu' + (it.experimental ? ' proto' : ''), title: `${name}${it.experimental ? ` · ${PROTOTYPE} model: less validated` : ''}` },
+      cells.push(h('label', { class: 'cpu' + (it.experimental ? ' proto' : ''), title: `${name}${it.experimental ? ` · ${PROTOTYPE} model: less validated${accuracyNote(it.key) ? ` · ${accuracyNote(it.key)}` : ''}` : ''}` },
         box, it.key, it.experimental ? h('span', { class: 'proto-mark', 'aria-hidden': 'true', text: 'p' }) : null));
     }
   }
@@ -894,6 +894,17 @@ async function switchMode(side, mode, other, apply) {
   if (c) keepResult(() => apply(c.same ? null : c)); else apply(null); // the result is kept only for the same machine code
 }
 // After an import of machine code, and its analysis: the box gets the assembly, if the box still has the import.
+// The source lines of the last Compiler Explorer import into A (srcmap.js), bound to the bytes of its first analysis.
+let ceSource = null;
+async function ceSourceOf(source, analysis) {
+  if (ceSource) { ceSource = null; views.refreshSource(); } // undo, or another import
+  if (!source || !analysis) return;
+  await analysis;
+  if (!lastView?.hex || lastRunKey !== runKey()) return; // another run or an edit meanwhile
+  ceSource = { ...source, hex: lastView.hex };
+  views.refreshSource();
+}
+
 async function importAsAsm(side, text, analysis) {
   const box = () => (side === 'B' ? ab.getB() : { mode: state.mode, text: el.code.value });
   const unchanged = () => box().mode === 'hex' && box().text === text;
@@ -909,10 +920,11 @@ function setupFeatures() {
   ce = createCeImport({
     sides: () => (state.ab ? ['A', 'B'] : ['A']),
     getCode: (side) => (side === 'B' ? ab.getB() : { mode: state.mode, syntax: state.syntax, text: el.code.value }),
-    importInto(side, code, { alignment = null, undo = false } = {}) {
+    importInto(side, code, { alignment = null, undo = false, source = null } = {}) {
       if (alignment !== null) state.alignmentOffset = alignment;
       let analysis = null;
       if (side === 'B') { ab.setB(code); writeControls(); if (ready && !undo) analysis = run(); } else analysis = importCode(code, { run: !undo });
+      if (side === 'A') ceSourceOf(source, analysis);
       if (!undo && code.mode === 'hex') importAsAsm(side, code.text, analysis);
     },
   });

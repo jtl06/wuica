@@ -92,11 +92,12 @@ Diagnostics go to stderr. The exit status is the result code: 0 ok, 1 bad reques
 
 ## MCP server
 
-`wuica mcp` (or the `wuica-mcp` binary) is a Model Context Protocol server on stdio. It has four tools:
+`wuica mcp` (or the `wuica-mcp` binary) is a Model Context Protocol server on stdio. It has five tools:
 
 | Tool | What it does |
 |---|---|
 | `analyze` | one block on one microarchitecture: `tp`, bottlenecks, limits, a compact per-instruction table (ports, uop sources, fusion notes) and uiCA's text report (`format`: `json`, `text`, `both`) |
+| `what_if` | one block re-analyzed with one change each (the web page's "try" row): `unroll2`/`unroll4`/`unroll8` (per original iteration), `simpleFrontEnd`, `noMacroFusion`, `noMicroFusion`, and `nochain` (an estimate without the loop-carried chain); per variant `tp`, `delta`, `speedup` |
 | `compare_archs` | one block on several or all microarchitectures: `tp` and bottlenecks per microarchitecture |
 | `list_archs` | ids, names, years, prototype flags |
 | `assemble` | assembly → hex bytes, or diagnostics with line/column |
@@ -137,6 +138,7 @@ text, and errors with structured stderr.
 | `GET /api/archs[?fields=id,name]` | `w.archs(fields?)` | `list_archs {fields?}` |
 | `POST /api/analyze/<arch>` | `w.analyze(arch, request)` | `analyze {arch, ...request, format?}` |
 | `POST /api/compare` | `w.compare(request)` | `compare_archs {...request}` |
+| — | `whatIf((a, r) => w.analyze(a, r), arch, request, variants?)` | `what_if {arch, ...request, variants?}` |
 | `POST /api/assemble` | `w.assemble(source, syntax)` | `assemble {source, syntax?}` |
 
 ### Microarchitectures: `GET /api/archs`
@@ -161,7 +163,7 @@ Request:
   "syntax": "intel",
   "options": {
     "alignmentOffset": 0, "initPolicy": "diff", "simpleFrontEnd": false, "noMicroFusion": false,
-    "noMacroFusion": false, "minIterations": 10, "minCycles": 500, "includeTrace": false
+    "noMacroFusion": false, "minIterations": 10, "minCycles": 500, "includeTrace": false, "details": false
   }
 }
 ```
@@ -207,14 +209,17 @@ Response (JSON), on success:
   "text": "Throughput (in cycles per iteration): 1.25\n...",
   "trace": null,
   "hex": "4801d8...",
-  "stderr": []
+  "stderr": [],
+  "insights": {"utilization": {"Issue": 0.6, "Dependencies": 0.8, "Port 0": 0.25}, "binding": ["Dependencies"], "...": "..."}
 }
 ```
 
 The fields from `arch` to `trace` are the analysis response of the WebAssembly module (`docs/WASM-API.md` in the wuica
 repository: `rows[].values[i]` belongs to `columns[i]`, and `notes` is `M` macro-fused, `J` JCC erratum or `X`
 unsupported). `hex` is present when `source` was given and holds the assembled bytes. `stderr` holds the assembler's
-warnings and the warning "N position(s) could not be decoded".
+warnings and the warning "N position(s) could not be decoded". `insights` (REST only; the library's `analyze()` result
+does not have it, `insights(r)` computes it) is the diagnosis described under the compact form below, with `portSet`
+and `issueSlots` when `options.details` is true.
 
 **Plain text** (CE's `Accept: text/plain`): the response is `text` (uiCA's report), or the `stderr` lines on failure.
 In the library this is `r.text`; the MCP tool takes `format: "text"`.
@@ -226,7 +231,11 @@ bottlenecks, limits, decodeErrors, hex?, stderr, instructions, insights}`. Each 
 page's "bound" view): `utilization` (each limit and port: cycles / tp), `binding`, `next` (`{limit, tp, maxSpeedup}`:
 the next limit, and the speedup at most if the binding one went away), `unexplained` (cycles no single limit explains),
 `chain` (the critical loop-carried chain: `{index, instr, operand, latency, carried}`) and `hot` (`{resource, ports?,
-instructions: [{index, instr, share}]}`: the largest shares of the binding resource).
+instructions: [{index, instr, share}]}`: the largest shares of the binding resource). With `options.details` (MCP:
+`details: true`), each instruction also has `allowedPorts` (`1*p0156+1*p23`), `uops`, `fusedUops`, `latencies`
+(`"RAX->RAX:1"`) and `frontEnd` (`length`, `offset`, `crosses`, `lcp`, `microcoded`, fusion), and `insights` has `portSet`
+(the ports behind the Ports limit, `cycles` = uops / ports, and the instructions that load them) and `issueSlots` (per
+iteration: issued, and lost to the front end, a full ROB or RS, or other).
 
 ### Failures
 

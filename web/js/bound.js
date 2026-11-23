@@ -7,12 +7,15 @@
 
 import { h, columnKind } from './render.js';
 import { jumpToRow, finishJump } from './rowjump.js';
+import { portSetBlame, setLine, markPorts } from './portset.js';
+import { slotsLine } from './slots.js';
 
 const EPS = 0.005; // values are shown with two decimals
 const GROUPS = Object.freeze([['front', 'front end'], ['issue', 'issue'], ['ports', 'ports'], ['deps', 'chain'], ['other', 'other']]);
 const LIMIT_GROUP = { Issue: 'issue', Ports: 'ports', Dependencies: 'deps' }; // the rest: front end
 const FE_COLUMN = { DSB: 'DSB', LSD: 'LSD', MS: 'MS' };
 const SATURATED = 0.95; // "Ports": the ports at least this busy relative to the busiest one
+const DETAILS_DELAY = 300; // ms after a result before its details are fetched (the port set, the issue slots)
 
 const sum = (a) => a.reduce((s, x) => s + x, 0);
 const pct = (u) => `${Math.round(u * 100)}%`;
@@ -147,13 +150,15 @@ export const defaultResource = (m) => m?.binding[0] ?? null;
 
 // ---- the view ----------------------------------------------------------------------------------------------------
 
-// env: { onToggle(open) } (the URL keeps whether the view is open)
+// env: { onToggle(open) (the URL keeps whether the view is open), details (details.js: "Ports" drills down to the port
+// set once they are there) }
 export function createBound(env = {}) {
   let open = false;
   let selected = null; // the resource the user picked (kept while the response has it)
   let row = null, details = null, body = null, hint = null;
   let root = null, view = null;
   let shaded = [];     // the cells that carry a shade
+  let detailsTimer = 0;
 
   function ensureRow() {
     if (row?.isConnected) return row;
@@ -183,6 +188,7 @@ export function createBound(env = {}) {
       th.parentElement?.classList.remove('bd-hot');
     }
     shaded = [];
+    markPorts(root, null);
   }
 
   function shade(b, name) {
@@ -227,7 +233,18 @@ export function createBound(env = {}) {
       if (!its.length) continue;
       groups.push(h('div', { class: 'bd-group', role: 'group', 'aria-label': label }, h('span', { class: 'bd-g', text: label }), h('span', { class: 'bd-items' }, its.map((x) => bar(x, x.id === selected)))));
     }
-    const b = selected ? blame(r, selected) : null;
+    // Ports: the port set behind the limit, from the details (fetched once, when Ports is selected)
+    // and the issue slots per cause (slots.js); the details are fetched once, while the view is open
+    const d = env.details?.peek(view);
+    // (after a pause: while results follow each other, e.g. typing in live mode, no analysis is added to each)
+    if (env.details && d === undefined && !r.mock) {
+      const v = view;
+      clearTimeout(detailsTimer);
+      const current = () => view === v && open && !document.body.classList.contains('ab-on'); // (not drawn in A–B mode)
+      detailsTimer = setTimeout(() => { if (current()) env.details.get(v).then((x) => { if (x && current()) paint(); }); }, DETAILS_DELAY);
+    }
+    const ps = selected === 'Ports' ? portSetBlame(r, d?.ports) : null;
+    const b = ps ?? (selected ? blame(r, selected) : null);
     const it = m.items.find((x) => x.id === selected);
     const name = it ? (b?.ports ? `${it.name} (${b.ports.join(' ')})` : it.name) : '';
     const top = topRows(b, 5);
@@ -237,9 +254,10 @@ export function createBound(env = {}) {
       btn.addEventListener('click', () => jumpToRow(root, k));
       return h('li', null, btn);
     });
-    body.replaceChildren(h('div', { class: 'bd-groups' }, groups),
-      top.length ? h('div', { class: 'bd-top' }, h('span', { class: 'bd-g', text: 'top', title: `the instructions with the largest share of ${name}; the uop table is shaded by the share` }), h('ol', { class: 'bd-list' }, list)) : null);
+    body.replaceChildren(...[h('div', { class: 'bd-groups' }, groups, ps ? setLine(ps) : null, d?.issue ? slotsLine(d.issue) : null),
+      top.length ? h('div', { class: 'bd-top' }, h('span', { class: 'bd-g', text: 'top', title: `the instructions with the largest share of ${name}; the uop table is shaded by the share` }), h('ol', { class: 'bd-list' }, list)) : null].filter(Boolean));
     shade(b, name);
+    if (ps) markPorts(root, d.ports.ports);
     if (root?.dataset) root.dataset.bound = selected ?? '';
   }
 

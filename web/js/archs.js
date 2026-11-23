@@ -26,6 +26,20 @@ export const DEFAULT_ARCH = 'SKL';
 export const GROUP_LABEL = 'by release date';
 export const PROTOTYPE = 'prototype';
 
+// The share of loops predicted within 10% of the measured throughput, for the prototype models: held-out random loops and
+// real-code blocks, the "after" rows of docs/ACCURACY.md (tests-js/web_details.mjs checks that they agree).
+export const ACCURACY_URL = 'https://github.com/jtl06/wuica/blob/main/docs/ACCURACY.md';
+export const ACCURACY = Object.freeze({
+  ZEN3: { random: 83.8, real: 88.7 },
+  'ADL-P': { random: 89.8, real: 92.3 },
+  ICX: { random: 84.7, real: 89.6 },
+});
+// "within 10%: 84% random · 89% real code", or '' for a model without numbers
+export function accuracyNote(key) {
+  const a = ACCURACY[key];
+  return a ? `within 10%: ${Math.round(a.random)}% random · ${Math.round(a.real)}% real code` : '';
+}
+
 // experimental: the model is a prototype of the fork (shown after the name)
 export function archTitle(key, experimental = false) {
   const i = ARCH_INFO[key];

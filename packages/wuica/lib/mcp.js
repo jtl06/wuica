@@ -1,4 +1,4 @@
-// The MCP server (stdio): tools analyze, compare_archs, list_archs, assemble. Start with `wuica mcp` or `wuica-mcp`.
+// The MCP server (stdio): tools analyze, what_if, compare_archs, list_archs, assemble. Start with `wuica mcp` or `wuica-mcp`.
 // stdout carries JSON-RPC: nothing else may be written to it.
 
 import fs from 'node:fs';
@@ -6,6 +6,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { createWuica } from './index.js';
+import { whatIf, VARIANTS } from './whatif.js';
 
 const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
@@ -57,6 +58,7 @@ export function createServer(w) {
       instructions:
         'wuica predicts the throughput of x86-64 basic blocks (loop bodies) with uiCA\'s cycle-level pipeline model, ' +
         'locally. Use `analyze` for one block on one microarchitecture (bottlenecks, per-port usage, full report), ' +
+        '`what_if` for the effect of unrolling, an ideal front end, fusion, or removing the dependency chain, ' +
         '`compare_archs` to see a block on several microarchitectures, `list_archs` for the ids, `assemble` to check ' +
         'that assembly text is accepted and see its encoding. ' + ASSUMPTIONS,
     },
@@ -101,23 +103,54 @@ export function createServer(w) {
         'bound of the speedup if the binding component were removed), `unexplained` (cycles no single limit explains), ' +
         '`chain` (the loop-carried critical dependency chain: `index` into `instructions`, operand, latency, carried ' +
         'into the next iteration), `hot` (the instructions with the largest share of the binding resource: fix these ' +
-        'first). Format "text" (or the second item of "both") is uiCA\'s complete text report. ' + ERRORS_NOTE,
+        'first). With `details: true`, each instruction also has `allowedPorts` (uops.info notation, e.g. 1*p0156+1*p23), ' +
+        '`uops`, `fusedUops`, `latencies` ("input->output:cycles"), `frontEnd` (length, offset = alignment offset + position in the block, crosses ' +
+        '16/32/64-byte boundaries, lcp = length-changing prefix, microcoded, macro-fusion), and `insights` has `portSet` (the ' +
+        'ports behind the Ports limit and the instructions whose uops can only use them) and `issueSlots` (issue slots per ' +
+        'iteration: issued, or lost to the front end, a full reorder buffer (rob) or scheduler (rs), other). ' +
+        'Format "text" (or the second item of "both") is uiCA\'s complete text report. ' + ERRORS_NOTE,
       inputSchema: z.object({
         arch: z.string().optional().describe('microarchitecture id (default "SKL"); see list_archs, e.g. SKL, ICL, TGL, RKL, ADL-P, ZEN3'),
         ...codeShape,
         options: optionsShape,
         format: z.enum(['json', 'text', 'both']).optional().describe('"json" (summary), "text" (uiCA\'s report) or "both" (default)'),
+        details: z.boolean().optional().describe('true: per instruction also its allowed ports, latencies and front-end facts, and in insights the port set behind the Ports limit and the issue slots per cause (a slower analysis; default false)'),
       }).strict(),
       annotations: readOnly,
     },
-    async ({ arch, format, ...request }) => {
-      const r = await w.analyze(arch ?? 'SKL', request);
+    async ({ arch, format, details, ...request }) => {
+      const r = await w.analyze(arch ?? 'SKL', details ? { ...request, options: { ...(request.options ?? {}), details: true } } : request);
       if (r.code) return result(r);
       const content = [];
       if (format !== 'text') content.push(json(w.summarize(r)));
       if (format !== 'json') content.push({ type: 'text', text: r.text });
       return { content };
     },
+  );
+
+  server.registerTool(
+    'what_if',
+    {
+      title: 'What-if experiments on a basic block',
+      description:
+        'Re-analyzes an x86-64 basic block with one change each and reports the predicted throughput per ORIGINAL ' +
+        'iteration, the change `delta` (cycles; negative = faster) and `speedup` (base tp / variant tp) against the base: ' +
+        'unroll2/unroll4/unroll8 (n copies of the loop body and its branch once; registers are not renamed, so the ' +
+        'dependencies stay and only the loop overhead goes; loops only), simpleFrontEnd (a front end limited only by the ' +
+        'issue width), noMacroFusion / noMicroFusion (switched; if the base already has the option set, the variant ' +
+        'switches it back), nochain (no analysis: the largest limit other than Dependencies, an estimate of the ' +
+        'throughput without the loop-carried chain; `estimate: true`). A variant that cannot be made or analyzed has ' +
+        '`error`. Use it to decide whether unrolling, breaking the chain or front-end work is worth it. ' + INPUT_NOTE + ' ' +
+        ASSUMPTIONS + ' ' + ERRORS_NOTE,
+      inputSchema: z.object({
+        arch: z.string().optional().describe('microarchitecture id (default "SKL"); see list_archs'),
+        ...codeShape,
+        options: optionsShape,
+        variants: z.array(z.enum(VARIANTS)).optional().describe(`the experiments (default: all of ${VARIANTS.join(', ')})`),
+      }).strict(),
+      annotations: readOnly,
+    },
+    async ({ arch, variants, ...request }) => result(await whatIf((a, req) => w.analyze(a, req), arch ?? 'SKL', request, variants ?? VARIANTS)),
   );
 
   server.registerTool(

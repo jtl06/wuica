@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createWuica } from 'wuica';
 import http from 'node:http';
-import { start, post, postHttp, get, HEX, ASM, TRAP, plain, fixtureSources } from './helpers.mjs';
+import { start, post, postHttp, get, HEX, ASM, TRAP, plain, fixtureSources, rest } from './helpers.mjs';
 
 const HEAVY = { hex: '4801d8'.repeat(3000), options: { minIterations: 1000 } }; // seconds and GBs of analyzer memory
 
@@ -40,7 +40,7 @@ test('a job over the time budget: code 3 timedOut, the worker is replaced, the s
     assert.equal(s.app.pool.stats.timeouts, 1);
     // queued behind the replacement worker's start-up, then answered
     const ok = await post(s.base, '/api/analyze/SKL', { hex: HEX });
-    assert.deepEqual(ok.json, plain(await w.analyze('SKL', { hex: HEX })));
+    assert.deepEqual(ok.json, rest(await w.analyze('SKL', { hex: HEX })));
     assert.equal((await get(s.base, '/healthz')).json.ready, 1);
   } finally { await s.close(); }
 });
@@ -55,7 +55,7 @@ test('the analyzer\'s memory limit turns a huge simulation into a trap; grown wo
     const mid = { hex: '4801d8'.repeat(300), options: { minIterations: 200 } };
     const m = await post(s.base, '/api/analyze/SKL', mid);
     assert.equal(m.json.code, 0);
-    assert.deepEqual(m.json, plain(await w.analyze('SKL', mid)));
+    assert.deepEqual(m.json, rest(await w.analyze('SKL', mid)));
     assert.ok(s.app.pool.stats.recycled >= 1, JSON.stringify(s.app.pool.stats));
     assert.equal((await post(s.base, '/api/analyze/SKL', { hex: HEX })).json.code, 0);
   } finally { await s.close(); }
@@ -98,7 +98,8 @@ test('200 parallel requests: all answered, equal to the library', async () => {
     agent.destroy();
     for (let i = 0; i < reqs.length; i++) {
       assert.equal(results[i].status, 200, `${i}: ${results[i].text.slice(0, 200)}`);
-      assert.deepEqual(results[i].json, plain(await reqs[i].lib()), `request ${i}`);
+      const lib = await reqs[i].lib();
+      assert.deepEqual(results[i].json, reqs[i].path.startsWith('/api/analyze/') ? rest(lib) : plain(lib), `request ${i}`);
     }
   } finally { await s.close(); }
 });

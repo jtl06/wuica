@@ -31,6 +31,7 @@ export const DEFAULT_STATE = Object.freeze({
   whatif: false,
   codemap: false,
   deps: false,
+  srcmap: false,          // cost per source line of a Compiler Explorer import (srcmap.js)
 });
 
 export const LIMITS = Object.freeze({
@@ -44,7 +45,7 @@ const MAX_TEXT = 200000; // characters accepted from a link
 
 const INTS = { al: 'alignmentOffset', mi: 'minIterations', mc: 'minCycles' };
 const FLAGS = { sfe: 'simpleFrontEnd', nmi: 'noMicroFusion', nma: 'noMacroFusion' };
-const VIEWS = { cmpsweep: 'cmpSweep', cost: 'cost', costnop: 'costNop', trace: 'trace', waits: 'waits', bound: 'bound', whatif: 'whatif', codemap: 'codemap', deps: 'deps' }; // open panels; not analysis options
+const VIEWS = { cmpsweep: 'cmpSweep', cost: 'cost', costnop: 'costNop', trace: 'trace', waits: 'waits', bound: 'bound', whatif: 'whatif', codemap: 'codemap', deps: 'deps', src: 'srcmap' }; // open panels; not analysis options
 const KEY = /^[A-Za-z0-9_-]{1,32}$/;
 const MAX_CPUS = 64;
 

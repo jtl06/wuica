@@ -30,7 +30,7 @@ test('initialize: server info and instructions', () => {
 
 test('tools/list', async () => {
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((t) => t.name).sort(), ['analyze', 'assemble', 'compare_archs', 'list_archs']);
+  assert.deepEqual(tools.map((t) => t.name).sort(), ['analyze', 'assemble', 'compare_archs', 'list_archs', 'what_if']);
   const analyze = tools.find((t) => t.name === 'analyze');
   assert.match(analyze.description, /cycles per iteration/);
   assert.match(analyze.description, /L1/);
@@ -57,6 +57,56 @@ test('analyze (source, SKL)', async () => {
   assert.ok(r.json.instructions[0].ports['Port 0'] > 0);
   assert.equal(r.json.instructions[3].notes, 'M');
   assert.match(r.content[1].text, /^Throughput \(in cycles per iteration\): 2\.00/);
+});
+
+test('what_if: every variant against analyses of the library', async () => {
+  const { createWuica } = await import('../lib/index.js');
+  const w = await createWuica({ threads: 1 });
+  const r = await call('what_if', { source: ASM, arch: 'SKL' });
+  assert.equal(r.isError, undefined);
+  assert.equal(r.json.code, 0);
+  assert.equal(r.json.tp, 2);
+  assert.deepEqual(r.json.variants.map((v) => v.id), ['unroll2', 'unroll4', 'unroll8', 'simpleFrontEnd', 'noMacroFusion', 'noMicroFusion', 'nochain']);
+  // the body (the two adds) n times, then dec r15; jnz once
+  const body = '4801d84801c3', tail = '49ffcf75f5';
+  for (const n of [2, 4, 8]) {
+    const a = await w.analyze('SKL', { hex: body.repeat(n) + tail });
+    const v = r.json.variants.find((x) => x.id === `unroll${n}`);
+    assert.equal(v.tp, Math.round((a.tp / n) * 100) / 100, `unroll${n}`);
+    assert.equal(v.speedup, Math.round((2 / (a.tp / n)) * 100) / 100);
+  }
+  const s = await w.analyze('SKL', { hex: HEX, options: { simpleFrontEnd: true } });
+  assert.equal(r.json.variants.find((x) => x.id === 'simpleFrontEnd').tp, s.tp);
+  const nochain = r.json.variants.find((x) => x.id === 'nochain');
+  assert.equal(nochain.estimate, true);
+  assert.ok(nochain.tp < 2 && nochain.delta < 0);
+  // a subset; a block that is not a loop; an unknown variant
+  const sub = await call('what_if', { hex: HEX, variants: ['nochain', 'unroll2'] });
+  assert.deepEqual(sub.json.variants.map((v) => v.id), ['unroll2', 'nochain']);
+  const flat = await call('what_if', { hex: '4801d8', variants: ['unroll2', 'noMacroFusion'] });
+  assert.equal(flat.json.variants[0].error, 'not a loop');
+  assert.equal(typeof flat.json.variants[1].tp, 'number');
+  // hex with 0x prefixes and commas, as the library accepts it: the same variants
+  const pre = await call('what_if', { hex: HEX.match(/../g).map((b) => '0x' + b).join(','), arch: 'SKL' });
+  assert.deepEqual(pre.json, r.json);
+    const bad = await call('what_if', { hex: HEX, variants: ['unroll3'] });
+  assert.equal(bad.isError, true);
+  await w.close();
+});
+
+test('analyze with details: allowed ports, latencies, front end; port set and issue slots', async () => {
+  const r = await call('analyze', { hex: '48030649ffcf75f9', format: 'json', details: true });
+  assert.equal(r.json.code, 0);
+  const add = r.json.instructions[0];
+  assert.equal(add.allowedPorts, '1*p0156+1*p23');
+  assert.ok(add.latencies.includes('RAX->RAX:1') && add.latencies.includes('[RSI]->RAX:6'), JSON.stringify(add.latencies));
+  assert.deepEqual(add.frontEnd, { length: 3, offset: 0 });
+  assert.deepEqual(r.json.insights.portSet, { ports: ['Port 6'], uops: 1, cycles: 1, instructions: [{ index: 1, instr: 'dec r15', uops: 1 }] });
+  assert.equal(r.json.insights.issueSlots.width, 4);
+  const plain = await call('analyze', { hex: '48030649ffcf75f9', format: 'json' });
+  assert.equal(plain.json.instructions[0].allowedPorts, undefined);
+  assert.equal(plain.json.insights.portSet, undefined);
+  assert.deepEqual({ ...plain.json, instructions: null, insights: null }, { ...r.json, instructions: null, insights: null });
 });
 
 test('analyze formats and options', async () => {

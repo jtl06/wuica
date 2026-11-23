@@ -7,6 +7,7 @@
 //! serialization of the response, "total" `Engine::analyze_json` (request JSON in, response JSON out), "total-sim" everything but
 //! the simulation (the phases of the analysis that are not the simulator; the standalone phases are a breakdown of it, while
 //! "assembly" is only meaningful as long as `analyze` calls the standalone functions). The last line is the mean over the files.
+//! With DETAILS=1, "analyze", "json" and "total" are of requests with `"details": true`.
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 use std::time::Instant;
@@ -119,7 +120,8 @@ fn main() {
         let code = wuica_xed::parse_hex(hex).unwrap();
         let mut request = Request::new(arch);
         request.hex = hex.to_string();
-        let request_json = serde_json::json!({ "hex": hex, "arch": arch }).to_string();
+        request.details = std::env::var("DETAILS").is_ok_and(|v| v == "1");
+        let request_json = serde_json::json!({ "hex": hex, "arch": arch, "details": request.details }).to_string();
 
         let decoded = wuica_xed::decode(&code, &config.xed_name).unwrap();
         let instrs = build_instructions(&decoded.instrs, config, &uarch, &data, 0, false, false);

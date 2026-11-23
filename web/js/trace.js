@@ -15,6 +15,8 @@
 // when they are issued and never enter the scheduler; the LSD issues without an IDQ entry; the last rounds are
 // cut off by the end of the simulation.
 
+import { ISSUE_H, issueLog, issueShare, drawIssueStrip, issueText } from './trace-issue.js'; // the issue strip (details)
+
 // ---- the model (no DOM) ----------------------------------------------------------------------------------------
 
 const lamKey = (r) => `${r.rnd}/${r.instrID}/${r.lamUopID}`;
@@ -446,7 +448,7 @@ function el(tag, attrs, ...children) {
   return e;
 }
 
-const COLOR_VARS = ['background', 'surface', 'text', 'subtle', 'description', 'accent', 'accent-dim', 'border', 'heading', 'code', 'external', 'caveat'];
+const COLOR_VARS = ['background', 'surface', 'text', 'subtle', 'description', 'accent', 'accent-dim', 'border', 'heading', 'code', 'external', 'caveat', 'date'];
 const ROW_H = 16, PORT_H = 9, AXIS_H = 18, HEAD_GAP = 6, PAD = 24;
 const MIN_SCALE = 0.25, MAX_SCALE = 48;
 let idSeq = 0;
@@ -686,7 +688,7 @@ export class Viewer {
   gutter() { return this.sync ? this.sync.gutter() : Math.round(Math.min(280, Math.max(130, this.viewW * 0.34))); }
   // the cycles that have data: c0..c1 can reach beyond the trace in an A–B view
   dataC(c) { return Math.max(0, Math.min(this.model.nCycles - 1, c)); }
-  headH() { return AXIS_H + this.ports.length * PORT_H + HEAD_GAP; }
+  headH() { return AXIS_H + this.ports.length * PORT_H + (this.model.issue ? ISSUE_H : 0) + HEAD_GAP; }
   x(c) { return this.G + (c - this.c0) * this.scale - this.sl; }
   cycleAt(px) { return Math.floor((px - this.G + this.sl) / this.scale) + this.c0; }
 
@@ -866,6 +868,7 @@ export class Viewer {
     }
     const dA = Math.max(cA, 0), dB = Math.min(cB, m.nCycles - 1);
     for (let p = 0; p < this.ports.length; p++) this.drawPortStrip(ctx, this.ports[p], AXIS_H + p * PORT_H, dA, dB);
+    if (m.issue) drawIssueStrip(this, ctx, m.issue, AXIS_H + this.ports.length * PORT_H, dA, dB);
     if (hoverCycle !== null && hoverCycle >= this.c0 && hoverCycle <= this.c1) {
       ctx.globalAlpha = 0.6; ctx.fillStyle = C['accent-dim']; ctx.fillRect(this.x(hoverCycle), 0, Math.max(1, s), H); ctx.globalAlpha = 1;
     }
@@ -894,6 +897,15 @@ export class Viewer {
       ctx.fillText(port.short, 6, y);
       ctx.textAlign = 'right';
       ctx.fillText(`${Math.round((100 * n) / span)}%`, G - 6, y);
+    }
+    if (m.issue) { // the issue strip: the share of the issue slots used in the shown cycles
+      const y = AXIS_H + this.ports.length * PORT_H + ISSUE_H / 2;
+      const f = issueShare(m.issue, pc0, pc1);
+      ctx.fillStyle = C.subtle;
+      ctx.textAlign = 'left';
+      ctx.fillText('issue', 6, y);
+      ctx.textAlign = 'right';
+      if (f !== null) ctx.fillText(`${Math.round(100 * f)}%`, G - 6, y);
     }
     ctx.textAlign = 'left';
     ctx.font = C.font;
@@ -1098,6 +1110,12 @@ export class Viewer {
         return;
       }
     }
+    const iy = AXIS_H + this.ports.length * PORT_H;
+    if (this.model.issue && y >= iy && y < iy + ISSUE_H && x > this.G) {
+      const c = this.cycleAt(x);
+      const text = issueText(this.model.issue, c);
+      if (text) { this.setActive(-1, { x, y, issueCycle: [c, text] }); this.paint(); return; }
+    }
     this.setActive(y >= H ? this.rowAt(y) : -1, { x, y });
     this.paint();
   }
@@ -1206,8 +1224,8 @@ export class Viewer {
     this.active = r;
     const hk = r >= 0 ? groupKey(this.model.uops[this.rows[r]]) : null;
     if (hk !== this.hoverKey) { this.hoverKey = hk; this.onHoverGroup?.(r >= 0 ? groupOfUop(this.model.uops[this.rows[r]]) : null); }
-    if (r < 0 && !(at && at.portCycle)) { this.tip.hidden = true; this.canvas.removeAttribute('aria-activedescendant'); return; }
-    if (changed || at?.portCycle || !this.tip.hidden || announce) this.showTip(r, at);
+    if (r < 0 && !(at && (at.portCycle || at.issueCycle))) { this.tip.hidden = true; this.canvas.removeAttribute('aria-activedescendant'); return; }
+    if (changed || at?.portCycle || at?.issueCycle || !this.tip.hidden || announce) this.showTip(r, at);
     if (announce && r >= 0) this.live.textContent = this.tipText(r);
   }
 
@@ -1215,6 +1233,10 @@ export class Viewer {
     const m = this.model;
     const tip = this.tip;
     tip.replaceChildren();
+    if (at?.issueCycle) {
+      tip.append(el('p', { class: 'tt-head', text: `issue, cycle ${at.issueCycle[0]}` }), el('p', { class: 'tt-sub', text: at.issueCycle[1] }));
+      tip.dataset.key = ''; this.placeTip(at); tip.hidden = false; return;
+    }
     if (at?.portCycle) {
       const [p, c, u] = at.portCycle;
       tip.append(el('p', { class: 'tt-head', text: `${p.name}, cycle ${c}` }));
@@ -1301,16 +1323,19 @@ export function traceGuard(side) {
 export async function loadTrace(side, { analyze, config = () => null }) {
   const r = side.response;
   let trace = r?.trace;
+  let details = r?.details ?? null;
   if (!trace) {
-    const res = await analyze({ ...side.request, includeTrace: true });
+    const res = await analyze({ ...side.request, includeTrace: true, details: true }); // details: the issue strip
     if (!res || res.error) throw new Error(`The trace could not be made: ${res?.error ?? 'no response'}`);
     if (!res.trace) throw new Error('The analyzer returned no trace.');
     trace = res.trace;
+    details = res.details ?? null;
   }
   const cfg = config(side);
   const t0 = performance.now();
   let model;
   try { model = buildModel(trace, { portNames: cfg?.portNames ?? null, retireWidth: cfg?.retireWidth ?? null, issueDispatchDelay: cfg?.issueDispatchDelay ?? null }); } catch (e) { throw new Error(`The trace could not be read: ${e?.message ?? e}`); }
+  model.issue = issueLog(details);
   return { model, buildMs: performance.now() - t0 };
 }
 

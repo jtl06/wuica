@@ -16,6 +16,7 @@ Options:
   -TPonly                print only the throughput
   -json                  print the response as JSON (docs/WASM-API.md)
   -trace                 with -json: include the cycle-by-cycle events
+  -details               with -json: include the details (allowed ports, latencies, port set, issue slots)
   -alignmentOffset N     alignment offset relative to a 64-byte cache line (default: 0)
   -initPolicy P          initial register state: diff (default), same, stack
   -simpleFrontEnd        simulate a front end that is only limited by the issue width
@@ -66,6 +67,7 @@ fn main() {
             "-TPonly" => tp_only = true,
             "-json" => json = true,
             "-trace" => request.include_trace = true,
+            "-details" => request.details = true,
             "-alignmentOffset" => request.alignment_offset = value(&mut args, "-alignmentOffset").parse().unwrap_or_else(|_| fail("-alignmentOffset: not a number")),
             "-initPolicy" => request.init_policy = value(&mut args, "-initPolicy"),
             "-simpleFrontEnd" => request.simple_front_end = true,

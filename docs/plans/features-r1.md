@@ -7,7 +7,8 @@ and the trace (uiCA's `-json`: per-uop IQ/IDQ/issue/ready/dispatch/execute/retir
 configuration's widths).
 
 Status: **done** = exists on main before this round; **r1** = built in this round (branch `features-r1`); **other** =
-another branch works on it tonight; **next** = not started.
+another branch works on it tonight; **next** = not started. Round 2 (branch `features-r2`): see [features-r2.md](features-r2.md)
+(ideas 5, 7, 8, 11, 13, 14 built there).
 
 ## What wuica already has (done)
 

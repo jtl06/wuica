@@ -469,7 +469,7 @@ export function parseListing(response) {
     const bytes = hasBytes ? l.opcodes.map((b) => parseInt(b, 16)) : null;
     if (bytes && bytes.some((b) => !(b >= 0 && b <= 255))) continue;
     fn.items.push({ kind: 'instr', text: t, mnemonic, operands, address: typeof l.address === 'number' ? l.address : null,
-      bytes, line: l?.source?.line ?? null, target: null });
+      bytes, line: l?.source?.line ?? null, file: l?.source?.file ?? null, target: null });
   }
   // direct jumps: resolve the target within the function
   for (const f of functions) {
@@ -490,6 +490,11 @@ export function parseListing(response) {
     });
   }
   return { binary, functions: functions.filter((f) => f.items.some((it) => it.kind === 'instr')) };
+}
+
+// The source line of each instruction of a range, in the main source file (a line of another file, or none: null).
+export function rangeLines(fn, start, end) {
+  return fn.items.slice(start, end + 1).filter((it) => it.kind === 'instr').map((it) => (it.file === null || it.file === undefined) && it.line > 0 ? it.line : null);
 }
 
 // The loops of a function: backward jumps, [{start, end, inner}] (item indices; the jump is `end`; inner: no other

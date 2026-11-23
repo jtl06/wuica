@@ -6,11 +6,13 @@
 //! is its `idx` in the reference (the order of creation), which the scheduler uses as the age of a uop.
 
 mod frontend;
+pub mod issue;
 mod output;
 mod prep;
 mod renamer;
 mod scheduler;
 
+pub use issue::IssueLog;
 pub use output::{canonicalize_instr_string, get_terminal_hyperlink, get_url, TableValue};
 
 use crate::config::{UArch, UArchConfig};
@@ -365,6 +367,8 @@ pub struct SimResult {
     pub(crate) ren_ops: Vec<RenamedOperand>,
     pub(crate) ren_lists: Vec<u32>,
     pub(crate) parameters: serde_json::Value,
+    /// the issue log; only from [`simulate_with_issue_log`]
+    pub issue_log: Option<IssueLog>,
 }
 
 /// A fast non-cryptographic hasher (FxHash) for the maps of the simulator that are never iterated (iteration order does not
@@ -452,6 +456,8 @@ pub(crate) struct Sim<'a> {
     pub fe: frontend::FrontEnd,
     pub rn: renamer::Renamer,
     pub sched: scheduler::Scheduler,
+    /// recorded only by [`simulate_with_issue_log`]
+    pub issue_log: Option<IssueLog>,
 }
 
 impl<'a> Sim<'a> {
@@ -591,6 +597,15 @@ impl<'a> Sim<'a> {
 /// Simulates the instructions (`runSimulation` without `getInstructions`, `adjustLatenciesAndAddMergeUops` and
 /// `computeUopProperties`, whose result is `list`).
 pub fn simulate(list: &InstrList, config: &UArchConfig, uarch: &UArch, options: &SimOptions) -> Result<SimResult, SimError> {
+    simulate_impl(list, config, uarch, options, false)
+}
+
+/// [`simulate`], also recording the issue log ([`SimResult::issue_log`]); the result is otherwise the same.
+pub fn simulate_with_issue_log(list: &InstrList, config: &UArchConfig, uarch: &UArch, options: &SimOptions) -> Result<SimResult, SimError> {
+    simulate_impl(list, config, uarch, options, true)
+}
+
+fn simulate_impl(list: &InstrList, config: &UArchConfig, uarch: &UArch, options: &SimOptions, log_issue: bool) -> Result<SimResult, SimError> {
     if config.simple_port_assignment {
         return Err(SimError::Unsupported("configurations with simplePortAssignment".to_string()));
     }
@@ -633,6 +648,7 @@ pub fn simulate(list: &InstrList, config: &UArchConfig, uarch: &UArch, options: 
         rn: renamer::Renamer::new(options.init_policy, config.load_value_numbering, prep.keys.info.len(), config.move_elimination_pipeline_length, prep.mem_addrs.len()),
         sched: scheduler::Scheduler::new(&prep, config),
         prep,
+        issue_log: log_issue.then(|| IssueLog { width: config.issue_width, ..IssueLog::default() }),
     };
     if options.init_policy == InitPolicy::Stack {
         let (rsp, rbp) = (sim.prep.keys.lookup("RSP"), sim.prep.keys.lookup("RBP"));
@@ -713,7 +729,22 @@ pub fn simulate(list: &InstrList, config: &UArchConfig, uarch: &UArch, options: 
         round2((retired(last_relevant_round)? - retired(first_relevant_round)?) as f64 / (last_relevant_round - first_relevant_round) as f64)
     };
 
-    Ok(output::build_result(sim, tp, first_relevant_round, last_relevant_round, clock - 1))
+    let issue_log = match sim.issue_log.take() {
+        Some(mut log) => {
+            // the steady state: from the cycle that issued the end of the first relevant round to the one that issued the end of
+            // the last one
+            let issued = |r: i64| fused_of(r).ok().and_then(|f| opt(f.issued));
+            log.first_round = first_relevant_round;
+            log.last_round = last_relevant_round;
+            log.first_cycle = issued(first_relevant_round).unwrap_or(0);
+            log.last_cycle = issued(last_relevant_round).unwrap_or(log.first_cycle);
+            Some(log)
+        }
+        None => None,
+    };
+    let mut result = output::build_result(sim, tp, first_relevant_round, last_relevant_round, clock - 1);
+    result.issue_log = issue_log;
+    Ok(result)
 }
 
 #[cfg(test)]

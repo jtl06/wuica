@@ -230,6 +230,65 @@ try {
     console.log(`bound: SHA-256: long tasks while opening ${JSON.stringify(r.long)} ms, switch ${r.switchMs.toFixed(1)} ms; chain top rows ${order.join(',')}`);
   }
 
+  // --- details: the instruction card, the badges, the port set and the issue slots (details.js, icard.js, portset.js) ------
+  {
+    // add rax, [rsi]; dec r15; jnz: a load on p23, the Ports limit on p6
+    const want = await engine.analyze({ ...makeRequest('48030649ffcf75f9', 'SKL'), details: true });
+    await page.goto(`${origin}/?nosw=1#v=1&m=hex&bound=1&c=${b64('48 03 06 49 ff cf 75 f9')}`);
+    await page.result();
+    const r = await page.eval(`${HELPERS}
+      await until(() => document.querySelector('.bd-slots'), 10000);
+      const out = { card0: !!$('icard') && !$('icard').hidden };
+      document.querySelector('.bd-item[data-id="Ports"]').click(); await wait(30);
+      out.set = document.querySelector('.bd-set')?.innerText.replace(/\\s+/g, ' ').trim();
+      out.cols = [...document.querySelectorAll('table.uops thead th.ps-on')].map((th) => th.textContent);
+      out.slots = document.querySelector('.bd-slots')?.innerText.replace(/\\s+/g, ' ').trim();
+      out.top = top();
+      // a click on a row: the card with the details
+      trs()[0].cells[2].click();
+      await until(() => $('result-body').dataset.icard === 'details', 10000);
+      const c = $('icard');
+      out.card = c.innerText.replace(/\\s+/g, ' ').trim();
+      out.link = c.querySelector('a.ic-link')?.href;
+      out.sel = /[#&]sel=0(&|$)/.test(location.hash);
+      // the keyboard: arrow down moves the focus and the card follows; Escape closes it
+      trs()[0].focus(); trs()[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })); await wait(30);
+      out.follow = $('icard').dataset.row;
+      document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await wait(30);
+      out.closed = $('icard').hidden;
+      out.notes = trs().map((tr) => tr.querySelector('td.note').textContent).join('');
+      return out;`);
+    const p = want.details.ports;
+    check(!r.card0 && r.set === `set p6 ${p.uops} uops / ${p.ports.length} = ${p.tp.toFixed(2)}` && r.top[0] === 'dec r15 100%' && r.cols.join() === 'Port 6', 'details: Ports drills down to the port set and its instructions', JSON.stringify(r));
+    check(/^slots issued \d+% front end \d+%/.test(r.slots), 'details: the issue slots', r.slots);
+    check(/^add rax, qword ptr \[rsi\] uops\.info ↗ × ports 1\*p0156\+1\*p23 tp 0\.50 uops 2 · 1 fused · MITE 1 · 1 load lat RAX→RAX 1 · mem→RAX 3 · \[RSI\]→RAX 6 chain rax ← add rax, qword ptr \[rsi\] 1 ↻ share 50% of DSB front 3 B @0$/.test(r.card)
+      && /^https:\/\/www\.uops\.info\//.test(r.link) && r.sel, 'details: a click on a row shows its card', JSON.stringify(r));
+    check(r.follow === '1' && r.closed && r.notes === 'M', 'details: the card follows the focus, Escape closes it; the notes keep their text', JSON.stringify(r));
+    // the accuracy link next to "limitations", and the numbers of the prototypes in their tooltips
+    const acc = await page.eval(`
+      const a = [...document.querySelectorAll('.top nav a')].find((x) => x.textContent === 'accuracy');
+      return { href: a?.href, prev: a?.previousElementSibling?.textContent, zen3: [...document.querySelectorAll('label.cpu')].find((l) => l.textContent.startsWith('ZEN3'))?.title };`);
+    const { ACCURACY_URL, accuracyNote } = await import('../web/js/archs.js');
+    check(acc.href === ACCURACY_URL && acc.prev === 'limitations' && acc.zen3.endsWith(accuracyNote('ZEN3')), 'accuracy: the link, and the numbers in the tooltip of a prototype', JSON.stringify(acc));
+    // SHA-256 with the bound view open: the details arrive without a long task
+    await page.goto(`${origin}/?nosw=1`);
+    await page.ready();
+    const s = await page.eval(`${HELPERS}
+      const long = []; new PerformanceObserver((l) => { for (const e of l.getEntries()) long.push(Math.round(e.duration)); }).observe({ type: 'longtask' });
+      await done(() => set($('examples'), 'sha256'));
+      await wait(200);
+      long.length = 0;
+      document.querySelector('#bound summary').click();
+      await until(() => document.querySelector('.bd-slots'), 20000);
+      trs()[5].cells[2].click();
+      await until(() => $('result-body').dataset.icard === 'details', 20000);
+      await wait(100);
+      return { long, hz: document.querySelectorAll('td.note[data-hz]').length, sticky: $('icard').classList.contains('stick') };`);
+    check(s.long.every((ms) => ms < 100) && s.sticky, 'details: SHA-256: bound view and card with details, no task of 100 ms or more', JSON.stringify(s));
+    console.log(`details: SHA-256: long tasks ${JSON.stringify(s.long)} ms`);
+    await page.goto(`${origin}/?nosw=1#v=1&m=hex`);
+  }
+
   // --- what if: the chain example, with and without the worker pool, against analyses made here ------------------------------
   {
     const chain = ex('chain');
@@ -391,11 +450,17 @@ try {
       await until(() => document.querySelector('.bd-item') && document.querySelector('.dp-map'), 20000);
       const shown = () => ['bound-row', 'whatif-row', 'codemap-row', 'deps-row'].map((id) => getComputedStyle($(id)).display !== 'none');
       const single = shown();
+      trs()[1].cells[2].click(); await wait(100); // a selected row (its card) in single mode
+      const cardSingle = !$('icard').hidden;
       await done(() => $('cmp-ab').click()); await wait(300);
       const ab = [shown(), getComputedStyle($('more')).display];
+      // a click on a row of A's table in A–B mode: no card (not the single result's)
+      document.querySelector('table.uops tbody tr')?.cells[2]?.click(); await wait(300);
+      const cards = [...document.querySelectorAll('.ic')].filter((c) => !c.hidden && c.offsetParent !== null).length;
       await done(() => $('cmp-single').click()); await wait(300);
-      return { single, ab, back: shown() };`);
+      return { single, ab, back: shown(), cardSingle, cards };`);
     check(r.single.every(Boolean) && r.ab[0].every((x) => !x) && r.back.every(Boolean), 'A–B mode: the views are hidden (also with the A–B traces open), back in single mode they are there', JSON.stringify(r));
+    check(r.cardSingle && r.cards === 0, 'A–B mode: no instruction card', JSON.stringify(r));
   }
 
   // --- copy: Markdown, CSV, JSON of the result -------------------------------------------------------------------------------
