@@ -17,7 +17,7 @@ const COND_BRANCH = /^(?:j(?!mp)[a-z]+|loop\w*)$/;
 
 // The memory operand of an instruction label (XED's Intel syntax): {first, size, base, index, disp, text} or null.
 export function memOperand(label) {
-  const t = String(label).trim().replace(/\s+/g, ' ');
+  const t = String(label).trim().replace(/\s+/g, ' ').replace(/^(?:lock|rep[a-z]*|notrack|bnd) /i, '');
   const sp = t.indexOf(' ');
   if (sp < 0) return null;
   const mnemonic = t.slice(0, sp).toLowerCase();
@@ -37,46 +37,48 @@ export function memOperand(label) {
   return { mnemonic, first: ops.indexOf('[') <= (ops.indexOf(',') < 0 ? ops.length : ops.indexOf(',')), size: SIZE[String(m[1] ?? '').toLowerCase()] ?? null, base, index, disp, text: m[0].replace(/^\w+ ptr /, '') };
 }
 
-// [{id, text, title, rows}] (rows: indices into response.rows), in the order rmw-index, exit, split; [] if none.
+// [{id, text, title, rows}] (rows: indices into response.rows), in the order rmw-index, exit, split; [] if none. Kept per
+// response (the result view is drawn again on every change of its own controls).
+const memo = new WeakMap();
+const some = (rows, ks) => `${ks.slice(0, 4).map((k) => rows[k].label).join('; ')}${ks.length > 4 ? '; …' : ''}`;
 export function caveats(response) {
+  if (response && typeof response === 'object' && memo.has(response)) return memo.get(response);
   const rows = Array.isArray(response?.rows) ? response.rows : [];
-  const instrs = rows.map((x, row) => ({ x, row })).filter(({ x }) => x?.kind === 'instr');
   const out = [];
-  // read-modify-write, or a load and a store, to the same indexed address
-  const rmw = [];
+  const rmw = [], split = [], early = [];
   const loads = new Map(), stores = new Map();
-  for (const { x, row } of instrs) {
+  let last = -1;
+  rows.forEach((x, row) => { if (x?.kind === 'instr') last = row; });
+  rows.forEach((x, row) => {
+    if (x?.kind !== 'instr') return;
+    if (row !== last && COND_BRANCH.test(String(x.label).trim().split(' ')[0].toLowerCase())) early.push(row);
     const m = memOperand(x.label);
-    if (!m || !m.index) continue;
-    if (m.first && RMW.test(m.mnemonic.replace(/^lock /, ''))) rmw.push(row);
-    else if (m.first && STORE_ONLY.test(m.mnemonic)) (stores.get(m.text) ?? stores.set(m.text, []).get(m.text)).push(row);
-    else if (!m.first) (loads.get(m.text) ?? loads.set(m.text, []).get(m.text)).push(row);
-  }
+    if (!m) return;
+    const storeOnly = m.first && STORE_ONLY.test(m.mnemonic);
+    // read-modify-write, or a load and a store, to the same indexed address
+    if (m.index) {
+      if (m.first && RMW.test(m.mnemonic)) rmw.push(row);
+      else if (storeOnly) (stores.get(m.text) ?? stores.set(m.text, []).get(m.text)).push(row);
+      else if (!m.first) (loads.get(m.text) ?? loads.set(m.text, []).get(m.text)).push(row);
+    }
+    // a load that may split a cache line
+    if (!storeOnly && m.size && m.size >= 2 && m.size <= 64 && ((m.disp % m.size) + m.size) % m.size !== 0) split.push(row);
+  });
   for (const [addr, st] of stores) if (loads.has(addr)) rmw.push(...loads.get(addr), ...st);
   if (rmw.length) {
     const r = [...new Set(rmw)].sort((a, b) => a - b);
     out.push({ id: 'rmw-index', text: 'store forwarding', rows: r,
-      title: `a read-modify-write to an indexed address (${r.map((k) => rows[k].label).join('; ')}): when iterations hit the same address (repeated data), each waits for the previous store; not modelled` });
+      title: `a read-modify-write to an indexed address (${some(rows, r)}): when iterations hit the same address (repeated data), each waits for the previous store; not modelled` });
   }
   // an exit before the loop's branch
-  if (response?.mode === 'loop' && instrs.length > 1) {
-    const early = instrs.slice(0, -1).filter(({ x }) => COND_BRANCH.test(String(x.label).trim().split(' ')[0].toLowerCase()));
-    if (early.length) {
-      out.push({ id: 'exit', text: 'exit mispredict', rows: early.map(({ row }) => row),
-        title: 'the loop has an exit before its branch: its mispredict when the loop ends (once per call) is not modelled; with short trip counts it can cost more than the loop' });
-    }
-  }
-  // loads that may split a cache line
-  const split = [];
-  for (const { x, row } of instrs) {
-    const m = memOperand(x.label);
-    if (!m || !m.size || m.size < 2 || m.size > 64) continue;
-    const isLoad = !m.first || !STORE_ONLY.test(m.mnemonic);
-    if (isLoad && ((m.disp % m.size) + m.size) % m.size !== 0) split.push(row);
+  if (response?.mode === 'loop' && early.length) {
+    out.push({ id: 'exit', text: 'exit mispredict', rows: early,
+      title: 'the loop has an exit before its branch: its mispredict when the loop ends (once per call) is not modelled; with short trip counts it can cost more than the loop' });
   }
   if (split.length) {
     out.push({ id: 'split', text: `split loads? (${split.length})`, rows: split,
-      title: `${split.length} load${split.length === 1 ? '' : 's'} at an offset that is not a multiple of the width (${split.map((k) => rows[k].label).slice(0, 4).join('; ')}${split.length > 4 ? '; …' : ''}): some cross a 64-byte line, which costs extra; not modelled` });
+      title: `${split.length} load${split.length === 1 ? '' : 's'} at an offset that is not a multiple of the width (${some(rows, split)}): some cross a 64-byte line, which costs extra; not modelled` });
   }
+  if (response && typeof response === 'object') memo.set(response, out);
   return out;
 }

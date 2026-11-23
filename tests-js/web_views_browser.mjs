@@ -230,7 +230,7 @@ try {
     const lat = new Map();
     for (const e of edges) lat.set(e.from, (lat.get(e.from) ?? 0) + e.latency);
     const order = [...lat].sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, 5).map((x) => x[0]);
-    check(r.tp === '744.25' && r.closed[0] === false && r.closed[1] === 0 && r.closed[2] === 'closed' && r.closed[3] === 0, 'bound: SHA-256: closed, nothing computed or shaded', JSON.stringify(r.closed));
+    check(r.tp === '744.25' && r.closed[0] === false && r.closed[1] === 0 && r.closed[2] === 'closed' && r.closed[3] === 0, 'bound: SHA-256: closed, nothing computed or shaded', JSON.stringify([r.tp, r.closed]));
     check(r.long.every((ms) => ms < 100) && r.switchMs < 100 && r.items > 5 && r.hot > 0 && r.rows === 200, 'bound: SHA-256: opening and switching: no task of 100 ms or more', JSON.stringify(r));
     check(r.top === Math.min(5, order.length) && order[0] >= 200 && r.afterJump[0] === 2949 && r.afterJump[1] === order[0], 'bound: SHA-256: a jump to a chain row beyond the drawn ones draws all rows and flashes it', JSON.stringify([r.top, r.afterJump, order]));
     console.log(`bound: SHA-256: long tasks while opening ${JSON.stringify(r.long)} ms, switch ${r.switchMs.toFixed(1)} ms; chain top rows ${order.join(',')}`);
