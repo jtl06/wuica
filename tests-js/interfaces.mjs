@@ -61,7 +61,7 @@ async function wasm(c) {
 const cliArgs = (c) => {
   const a = [c.hex, '-arch', c.arch, '-json'];
   for (const [k, v] of Object.entries(c.options)) {
-    if (v === true) a.push(`-${k}`);
+    if (v === true) a.push(k === 'includeTrace' ? '-trace' : `-${k}`);
     else if (v !== false) a.push(`-${k}`, String(v));
   }
   return a;
@@ -89,6 +89,7 @@ async function npmcli(c) {
 const server = spawn(process.execPath, [path.join(ROOT, 'server/bin/wuica-server.js')], {
   cwd: ROOT, env: { ...process.env, WUICA_PORT: '0', WUICA_WORKERS: '2', WUICA_RATE_BURST: '0', WUICA_LOG: '0' }, stdio: ['ignore', 'pipe', 'inherit'],
 });
+process.on('exit', () => { try { server.kill('SIGTERM'); } catch { /* gone */ } }); // also when a check throws
 const base = await new Promise((resolve, reject) => {
   let buf = '';
   server.stdout.on('data', (d) => { buf += d; const m = /"address":"([^"]+)"/.exec(buf); if (m) resolve(`http://${m[1]}`); });
@@ -103,7 +104,11 @@ async function rest(c) {
 const mcpHttp = new Client({ name: 'wuica-interfaces', version: '0' });
 await mcpHttp.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp')));
 const mcpStdio = new Client({ name: 'wuica-interfaces', version: '0' });
-await mcpStdio.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(PKG, 'bin/wuica.js'), 'mcp'], cwd: ROOT, stderr: 'ignore' }));
+const stdio = new StdioClientTransport({ command: process.execPath, args: [path.join(PKG, 'bin/wuica.js'), 'mcp'], cwd: ROOT, stderr: 'ignore' });
+await mcpStdio.connect(stdio);
+process.on('exit', () => { try { process.kill(stdio.pid, 'SIGTERM'); } catch { /* gone */ } });
+process.on('uncaughtException', (e) => { console.log(`FAIL the test ran to the end: ${e?.stack ?? e}`); process.exit(1); });
+process.on('unhandledRejection', (e) => { console.log(`FAIL the test ran to the end: ${e?.stack ?? e}`); process.exit(1); });
 async function mcp(client, c) {
   const r = await client.callTool({ name: 'analyze', arguments: { arch: c.arch, hex: c.hex, options: c.options, format: 'both' } });
   const first = JSON.parse(r.content[0].text);
@@ -146,6 +151,21 @@ for (const [i, c] of cases.entries()) {
     compared(name, c, d);
   }
   if ((i + 1) % 50 === 0) console.log(`  ${i + 1} cases, ${Math.round((Date.now() - t0) / 1000)} s`);
+}
+
+// uiCA's ablation variants (not listed, but accepted) and the trace, through the interfaces that take them
+for (const [i, c] of [
+  { arch: 'CLX_noLSD', hex: '4801d84801c349ffcf75f5', options: {} }, { arch: 'CLX_noLSDUnrolling', hex: '4801d84801c349ffcf75f5', options: { noMacroFusion: true } },
+  { arch: 'CLX_noMoveElim', hex: '4889c34889d84883c00149ffcf75f1', options: {} }, { arch: 'CLX_fullMoveElim', hex: '4889c34889d84883c00149ffcf75f1', options: {} },
+  { arch: 'SKL', hex: '4801d84801c349ffcf75f5', options: { includeTrace: true } }, { arch: 'ZEN3', hex: '4883c00149ffcf75f7', options: { includeTrace: true, minIterations: 3 } },
+].entries()) {
+  c.id = `extra:${i}`;
+  const ref = await lib.analyze(c.arch, { hex: c.hex, options: c.options });
+  check(ref.code === 0 && (!c.options.includeTrace || (ref.trace && Array.isArray(ref.trace.cycles))), `extra case ${c.id}: the library gives a result`, JSON.stringify(ref.error ?? ''));
+  const want = { ...essence(ref), trace: ref.trace ?? null };
+  for (const [name, got] of [['wasm', await wasm(c)], ['native', await native(c)], ['rest', await rest(c)]]) {
+    compared(name, c, firstDiff(want, { ...essence(got), trace: got.trace ?? null }));
+  }
 }
 
 // a few requests that must fail the same way everywhere (a bad request: code 1; REST status 400)

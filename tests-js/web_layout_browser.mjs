@@ -224,8 +224,9 @@ try {
       out.key = [focused(), document.activeElement?.getAttribute('data-focus')];
       // a click on another CPU's box focuses it: the detailed result and the status line follow (in live mode too)
       const box = (k) => document.querySelector('#cpu-grid input[value="' + k + '"]');
-      await done(() => box('HSW').click()); await until(() => tableDone() && rows().length === 4);
-      out.added = [focused(), checkedCpus(), rows().length, document.querySelector('#result-body .meta')?.textContent, $('status').textContent, tp() === rows().find((x) => x[0] === 'HSW')[1], $('live').checked];
+      await done(() => box('HSW').click()); const status = $('status').textContent; // (read at once: it shows for 6 s)
+      await until(() => tableDone() && rows().length === 4);
+      out.added = [focused(), checkedCpus(), rows().length, document.querySelector('#result-body .meta')?.textContent, status, tp() === rows().find((x) => x[0] === 'HSW')[1], $('live').checked];
       // unchecking the focused one moves the focus to the CPU focused before it (ADL-P), then to the one before that (ZEN3)
       await done(() => box('HSW').click());
       out.unchecked = [focused(), checkedCpus(), $('status').textContent];
@@ -267,8 +268,8 @@ try {
       const box = document.querySelector('#cpu-grid input[value=ZEN3]'); box.click(); await wait(50);
       out.last = [box.checked, checkedCpus()];
       // A–B: one CPU per side; side A is the focused one; no table
-      await done(() => cpus('SKL', 'ZEN3')); await until(() => tableDone() && rows().length === 2); // SKL, checked, gets the focus
-      out.two = [focused(), $('status').textContent];
+      await done(() => cpus('SKL', 'ZEN3')); out.two = [focused(), $('status').textContent]; // SKL, checked, gets the focus
+      await until(() => tableDone() && rows().length === 2);
       await done(() => $('cmp-ab').click());
       out.ab = [$('cmp-cpus').offsetParent === null, document.querySelector('.ab-a .ab-desc')?.textContent, document.querySelector('#result-body .meta')?.textContent];
       // in A–B mode (no table), a CPU that is checked becomes side A's

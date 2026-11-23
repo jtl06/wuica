@@ -45,20 +45,26 @@ try {
 
   // ---- the module in the browser
   const mcases = fuzzCases({ seed: SEED, count: MODULE_CASES });
-  const got = await page.eval(`
+  // in chunks: one evaluation returns every response by value, and a very large one never arrives
+  await page.eval(`
     const { WasmEngine, makeRequest } = await import('/js/engine.js');
     const bytes = async (p) => new Uint8Array(await (await fetch(p)).arrayBuffer());
     const e = await WasmEngine.create(await bytes('/wuica_wasm.wasm'));
     const uarchBytes = await bytes('/data/uarch.json');
     await e.loadUarch(uarchBytes);
     const configs = JSON.parse(new TextDecoder().decode(uarchBytes)).configs;
-    const out = [];
-    for (const c of ${JSON.stringify(mcases)}) {
-      const t = configs[c.arch].name;
-      if (!e.hasArch(t)) await e.loadArch(t, await bytes('/data/arch/' + t + '.json'));
-      out.push(await e.analyze(makeRequest(c.hex, c.arch, c.options)));
-    }
-    return out;`, { timeout: 600000 });
+    window.__qaRun = async (cases) => {
+      const out = [];
+      for (const c of cases) {
+        const t = configs[c.arch].name;
+        if (!e.hasArch(t)) await e.loadArch(t, await bytes('/data/arch/' + t + '.json'));
+        out.push(await e.analyze(makeRequest(c.hex, c.arch, c.options)));
+      }
+      return out;
+    };
+    return 1;`);
+  const got = [];
+  for (let i = 0; i < mcases.length; i += 50) got.push(...await page.eval(`return window.__qaRun(${JSON.stringify(mcases.slice(i, i + 50))});`, { timeout: 300000 }));
   let ok = 0;
   for (const [i, c] of mcases.entries()) {
     const want = await reference(c);
@@ -95,7 +101,7 @@ try {
     check(r.report === want.text, `${where}: the uiCA report`, JSON.stringify(firstDiff(want.text, r.report)));
     check(r.bn === want.bottlenecks.join(', ') || (want.bottlenecks.length === 0 && r.bn === ''), `${where}: the bottlenecks`, JSON.stringify([want.bottlenecks, r.bn]));
     check(JSON.stringify(r.limits) === JSON.stringify(want.limits.map((l) => `${l.name}=${Number(l.tp).toFixed(2)}`)), `${where}: the limits`, JSON.stringify([want.limits, r.limits]));
-    check((want.decodeErrors > 0) === /could not be decoded/.test(r.caveat), `${where}: the decode-error warning`, JSON.stringify([want.decodeErrors, r.caveat]));
+    check((want.decodeErrors > 0) === /undecodable position/.test(r.caveat), `${where}: the decode-error warning`, JSON.stringify([want.decodeErrors, r.caveat]));
   }
   console.log(`page: ${pcases.length} cases through the controls`);
   const problems = page.take();

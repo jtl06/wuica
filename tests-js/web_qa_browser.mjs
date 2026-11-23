@@ -171,13 +171,13 @@ try {
       && JSON.stringify(f2) === JSON.stringify(b2), 'back/forward: each link restores its input, CPU, options and result', JSON.stringify([b2, b1, f2]));
 
     // copy link: the copied URL opens the same state in a new tab
-    await browser.send('Browser.grantPermissions', { origin, permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] });
     const st = await page.eval(`${HELPERS}
       cpus('SKL', 'ZEN3', 'ICL'); await until(() => $('cmp-cpus').dataset.state === 'done');
       set($('opt-iter'), '17'); document.querySelector('input[name=init][value=same]').click(); if (!$('opt-nma').checked) $('opt-nma').click();
       await done(() => $('run').click());
-      $('copy-link').click(); await wait(300);
-      const url = await navigator.clipboard.readText();
+      // (the clipboard is stubbed: the real one is the machine's, shared with everything else)
+      let url = null; navigator.clipboard.writeText = async (t) => { url = t; };
+      $('copy-link').click(); await until(() => url !== null, 5000);
       return { url, state: [focused(), checkedCpus(), $('code').value, $('opt-iter').value, document.querySelector('input[name=init]:checked').value, $('opt-nma').checked, tp()] };`);
     const p2 = await Page.open(browser);
     await p2.goto(st.url);
