@@ -462,6 +462,7 @@ function ensureAssembler() {
 }
 
 function loadExample(ex) {
+  settleMode({ replacing: true }); // the example replaces the code
   if (ex.hexOnly && state.mode !== 'hex') setMode('hex'); // machine code only
   const key = state.mode === 'asm' ? state.syntax : 'hex';
   el.code.value = buffers[state.mode] = ex.text[key];
@@ -635,7 +636,7 @@ function cancelRun() {
 // messages until it has new ones, and it does not stop a running analysis unless that one takes long.
 async function run({ auto = false } = {}) {
   clearTimeout(rerunTimer);
-  if (!auto) { liveRunner.cancel(); cancelledKey = ''; }
+  if (!auto) { liveRunner.cancel(); cancelledKey = ''; settleMode(); }
   if (!ready || el.run.disabled) return;
   if (ce?.linkBox()) return; // a box that holds only a Compiler Explorer link is imported (analyze()), never analyzed
   const key = runKey();
@@ -779,6 +780,19 @@ function keepResult(apply) {
   if (current) { lastRunKey = runKey(); paintStale(); }
 }
 const switching = { A: 0, B: 0 };
+let switchingFrom = null; // side A: the box's text when asm / hex was clicked, while that conversion runs
+// A click on asm / hex (side A) whose conversion is still running, when an action needs the format now (Analyze, an
+// example): the clicked format is taken at once, without the conversion. Text put into the box after the click is in
+// the clicked format; otherwise (or when the action replaces the code) the format's own text is used.
+function settleMode({ replacing = false } = {}) {
+  const clicked = el.modeAsm.checked ? 'asm' : 'hex';
+  if (clicked === state.mode) return;
+  switching.A++;
+  el.code.readOnly = false;
+  const text = el.code.value;
+  setMode(clicked, !replacing && switchingFrom !== null && text !== switchingFrom ? { text } : null);
+  switchingFrom = null;
+}
 // side A or B, the new format, the box's text for it, apply(converted | null): the switch
 async function switchMode(side, mode, other, apply) {
   const box = side === 'B' ? $('code-b') : el.code;
@@ -789,11 +803,15 @@ async function switchMode(side, mode, other, apply) {
   box.readOnly = false;
   if (!ready || before.text.trim() === '' || ce?.isLink(before.text)) { apply(null); return; }
   box.readOnly = true;
+  if (side === 'A') switchingFrom = before.text;
   let c = null;
-  try { c = await converter.convert(before, mode, other); } catch { c = null; } finally { box.readOnly = false; }
+  try { c = await converter.convert(before, mode, other); } catch { c = null; } finally { if (seq === switching[side]) box.readOnly = false; }
   const now = get();
-  if (seq !== switching[side] || now.mode !== before.mode || radio.checked !== (mode === 'asm')) return; // clicked again, or an import
-  if (now.text !== before.text) { if (side === 'B') ab.paint(); else writeControls(); return; } // edited meanwhile: the format stays
+  if (seq !== switching[side] || now.mode !== before.mode || radio.checked !== (mode === 'asm')) return; // clicked again, settled, or an import
+  if (side === 'A') switchingFrom = null;
+  // The box was read-only, so new text came from the page (an example, a set value) after the click: it is in the
+  // clicked format, which wins
+  if (now.text !== before.text) { apply({ text: now.text }); return; }
   if (c) keepResult(() => apply(c.same ? null : c)); else apply(null); // the result is kept only for the same machine code
 }
 // After an import of machine code, and its analysis: the box gets the assembly, if the box still has the import.
