@@ -10,7 +10,8 @@
 //   tests-js/decode_fixtures.mjs, every tests-js/web_*.mjs (found by glob; those that start Chrome are "browser" suites, at
 //   most --chrome-jobs of them at a time) and the npm package's tests.
 // - quick: the simulation fixtures only for a few configurations, analyze_fixtures on every 7th case, web_trace on every 16th
-//   case, browser suites only if their last run took at most 10 s, no npm package, no doc tests. full: everything.
+//   case, browser suites only if their last run took at most 10 s, no npm package, no doc tests. full: everything, including the
+//   simulation fixtures of the set 'more' (fixtures/generated/more_sim_fixtures.jsonl.gz) if present.
 // - Each suite's output goes to target/check/<suite>.log; at the end one table, and the tail of the logs of failed suites.
 //   The exit status is 1 if anything failed.
 // --only PATTERN: only the suites whose name matches the regular expression (and the builds they need).
@@ -29,6 +30,7 @@ const STAMPS = path.join(OUT, 'stamps');
 // always in ./target: the suites and web/build.sh look for it there
 const WASM = path.join(TARGET, 'wasm32-unknown-unknown/release/wuica_wasm.wasm');
 const PROFILE = 'check-fast';
+const MORE_SIM = path.join(ROOT, 'fixtures/generated/more_sim_fixtures.jsonl.gz');
 
 // ---- options
 const argv = process.argv.slice(2);
@@ -54,7 +56,11 @@ const JOBS = opts.jobs > 0 ? opts.jobs : CPUS;
 // full: analyze_fixtures (every case, single-threaded, the longest suite) in 4 parallel shards (WUICA_SHARD)
 const VARIANTS = {
   quick: { 'wuica-core:sim_fixtures': ['SKL', 'ZEN3'].map((a) => ({ tag: a, env: { WUICA_ARCH: a } })) },
-  full: { analyze_fixtures: [0, 1, 2, 3].map((k) => ({ tag: `${k + 1}/4`, env: { WUICA_SHARD: `${k}/4` } })) },
+  full: {
+    analyze_fixtures: [0, 1, 2, 3].map((k) => ({ tag: `${k + 1}/4`, env: { WUICA_SHARD: `${k}/4` } })),
+    // the set 'more' (cases with options and the -json output), if present
+    ...(fs.existsSync(MORE_SIM) ? { 'wuica-core:sim_fixtures': [{ tag: 'main+extra', env: {} }, { tag: 'more', env: { WUICA_SET: 'more', WUICA_MORE_SIM_FIXTURES: MORE_SIM } }] } : {}),
+  },
 };
 const variants = (name) => VARIANTS[opts.mode][name] ?? [{ tag: null, env: {} }];
 const ARGS = {

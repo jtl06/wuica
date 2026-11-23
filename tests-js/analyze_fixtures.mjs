@@ -1,5 +1,7 @@
 // Runs the WebAssembly module end to end on simulation fixtures of the Python reference: for a sample of the cases, the
-// response's `tp` and `text` must equal the reference's throughput and text output (without terminal hyperlinks).
+// response's `tp` and `text` must equal the reference's throughput and text output (without terminal hyperlinks). The fixtures
+// come from the fixed reference (docs/DEVIATIONS.md): a case with an `error` fails, unless it is an input error
+// (`InputError: ...`), which the module must report with the same text.
 // Usage: node tests-js/analyze_fixtures.mjs [EVERY_NTH=7] [WASM]
 import fs from 'node:fs'; import zlib from 'node:zlib'; import readline from 'node:readline';
 const every = Number(process.argv[2] || 7);
@@ -34,11 +36,16 @@ for (const set of ['sim_fixtures', 'extra_sim_fixtures']) {
     try { r = call('wuica_analyze', JSON.stringify({ hex: c.hex, arch: c.arch, ...c.options })); }
     catch (err) { r = { error: 'trap: ' + err.message }; }
     tAnalyze += performance.now() - t;
-    if (c.error) { refErr++; continue; }
+    if (c.error) {
+      refErr++;
+      const expected = c.error.startsWith('InputError: ') ? c.error.slice('InputError: '.length) : null;
+      if (expected === null || r.error !== expected) { bad++; if (bad <= 5) console.log('differs:', c.file, c.arch, JSON.stringify(c.options), 'reference:', c.error, 'wuica:', r.error || r.tp); }
+      continue;
+    }
     n++;
     if (r.error || r.tp !== c.TP || r.text !== strip(c.stdout)) { bad++; if (bad <= 5) console.log('differs:', c.file, c.arch, JSON.stringify(c.options), r.error || r.tp); }
   }
 }
-console.log(`${n} cases compared (every ${every}th), ${bad} differ; ${refErr} reference-error cases skipped`);
+console.log(`${n} cases compared (every ${every}th), ${bad} differ; ${refErr} input errors of the reference checked`);
 console.log(`loading all tables: ${tLoad.toFixed(0)} ms; analysis: ${(tAnalyze / (n + refErr)).toFixed(2)} ms per case`);
 process.exit(bad ? 1 : 0);
