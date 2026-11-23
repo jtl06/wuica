@@ -65,9 +65,10 @@ problems"); **note** works as designed but worth knowing.
 | multi-CPU table | page: values equal single analyses; sorting, keyboard (existing suites) | ok |
 | a CPU that cannot decode part of the block in the table | page (saxpy on SNB + SKL) | **fixed** (c926f0a): the row was silently faster (instructions skipped) and could be marked fastest; now "N undecodable skipped" and not the fastest |
 | detailed result: limits, bottleneck, uop table, port pressure, notes | page vs Node: throughput, bottlenecks, limits, report text on 30 random cases | ok |
-| dependency chain, cost column | page (existing insight suites); cost column on the showcase: see below | ok |
+| dependency chain | page (existing insight suites) | ok |
+| cost column | showcase (2,949 instructions): waits for a click ("compute (2948 analyses)", estimate 29–40 s), then 2,948 analyses in about 20 s on the worker pool (12 threads) | ok |
 | objdump and uiCA report views | page: report text equals the module's `text` on 30 random cases | ok |
-| trace (cycle by cycle) | page on the showcase: see below | see below |
+| trace (cycle by cycle) | showcase: asks first ("would be very large · load it anyway"), then draws in about 2.5 s with at most 1.2 s without a frame | ok (the trace view is being reworked on another branch) |
 | alignment sweep | page: all 64 points equal single analyses at each offset | ok |
 | A–B comparison | page: demo pair, swap, B on its own CPU, scale ×4 | ok |
 
@@ -82,6 +83,21 @@ problems"); **note** works as designed but worth knowing.
 | widths 320–2560 | page: 11 widths × both themes with a result, the CPU table and the text views open: no horizontal scrolling | ok |
 | keyboard | page: Ctrl/⌘+Enter, space on a CPU box (focus moves, keyboard focus stays), Escape closes the options | ok |
 | errors leave the page usable | page: bad hex, bad asm, empty, undecodable, huge | ok |
+| Compiler Explorer import | mocked: existing `web_godbolt.mjs`, `web_browser_ab.mjs` (recorded responses); one real import on the local build (a full-state link, gcc 8.2: 3 requests to godbolt.org; plus one short-link paste that showed the function picker) | ok |
+| service worker: first visit, reloads, `/index.html`, offline, a new deploy | existing `web_host_browser.mjs`, `web_browser.mjs` | ok; **fixed** a race in `web_host_browser.mjs` (6288a0c) that failed `check.sh full` under load: the test clicked Analyze while the run restored from the fragment was going, which cancels it (reproduced with CPU throttling ×15) |
+| worker pool | existing `web_pool*.mjs`; the cost column and the CPU table above | ok |
+
+### npm package, CLIs, server
+
+| Feature | How tested | Result |
+|---|---|---|
+| library, npm CLI, stdio MCP, REST, remote MCP, native CLI | `interfaces.mjs` (4000 random requests, seed 20261123; 300 in `check.sh full`) | ok: identical results |
+| npm CLI odd inputs: empty/blank/comment/label files, non-UTF-8, BOM, CRLF, `-raw` empty/missing, two inputs, bad numbers | by hand | ok, except: BOM **fixed** (ac191fa); empty machine code said "expected an even number of hex digits", **fixed** (6f1fcdf) |
+| native CLI odd inputs: no input, empty, `zz`, odd digits, `0x`, unknown arch/option, missing value, missing data dir, overflowing numbers | by hand | ok: one clear line on stderr, exit 1 |
+| server odd requests: invalid JSON, non-object bodies, wrong content type, 300 KB body, 64 KB hex, 20,000 instructions, `.rept 1000000`, unknown paths and methods, OPTIONS, text/plain errors, compare with bad/too many archs, MCP schema errors, unknown tool, 40-message batch | local server, about 60 requests | ok: no 500, no hang; limits answered with 400/413 |
+| server's own tests | `npm:server` (46 tests) | ok; they were not part of `check.sh` before |
+| live API (api.wuica.jacen.li) | about 20 requests, one at a time: health, version, archs, 8 random analyses, asm, text/plain, compare, assemble, MCP list and analyze | ok: identical to the local library; the live server still has the two behaviors fixed here (bad option value: code 3; BOM: assembler error) |
+| live site (wuica.jacen.li) | 3 page loads: version 0.1.3, build 794c0e17030d, analysis, service worker controls the page after a reload, "works offline", no console errors; reproduced the reported focus problem (checking ZEN3 keeps SKL in details and status line) | ok |
 
 ## Interface differences (by design or minor)
 
