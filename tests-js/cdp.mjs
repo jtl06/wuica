@@ -102,7 +102,7 @@ export async function launch(chrome, { extraArgs = [] } = {}) {
       browser.close();
       await Promise.race([new Promise((r) => proc.once('exit', r)), sleep(3000)]);
       try { proc.kill('SIGKILL'); } catch { /* exited */ }
-      fs.rmSync(profile, { recursive: true, force: true });
+      fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
     },
   };
 }
