@@ -59,7 +59,7 @@ fn binary_records_equal_json() {
             .collect();
         check(&code, &chips[i % chips.len()]);
     }
-    // a long run of zero bytes, and code that needs a larger buffer than the first guess (many one-byte instructions)
+    // a long run of zero bytes, and long code of one-byte instructions
     check(&[0u8; 100], "SKYLAKE");
     check(&[0x90u8; 5000], "SKYLAKE");
     check(&[0x50u8; 3000], "");

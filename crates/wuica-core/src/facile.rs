@@ -463,18 +463,22 @@ impl<'a> AbstractValueGenerator<'a> {
 
     /// `getAbstractValueForReg(reg)`
     fn get_abstract_value_for_reg(&mut self, reg: Option<&'a str>) -> Option<AbstractValue> {
-        let key = canonical_reg_cow(reg?);
+        Some(self.get_abstract_value_for_canonical_reg(canonical_reg_cow(reg?)))
+    }
+
+    /// `getAbstractValueForReg(reg)`, for the canonical register of `reg`
+    fn get_abstract_value_for_canonical_reg(&mut self, key: Cow<'a, str>) -> AbstractValue {
         if let Some(&v) = self.abstract_value_dict.get(&*key) {
-            return Some(v);
+            return v;
         }
         let v = if self.diff { self.generate_fresh_abstract_value() } else { self.init_value };
         self.abstract_value_dict.insert(key, v);
-        Some(v)
+        v
     }
 
     /// `setAbstractValueForCurInstr(key, instr)`
-    fn set_abstract_value_for_cur_instr(&mut self, key: Cow<'a, str>, instr: &Instr, operands: &'a [Operand]) {
-        let v = self.compute_abstract_value(instr, operands);
+    fn set_abstract_value_for_cur_instr(&mut self, key: Cow<'a, str>, instr: &Instr, canon: &CanonicalRegs<'a>) {
+        let v = self.compute_abstract_value(instr, canon);
         match self.cur_instr_rnd_abstract_value_dict.iter_mut().find(|(k, _)| *k == key) {
             Some((_, value)) => *value = v,
             None => self.cur_instr_rnd_abstract_value_dict.push((key, v)),
@@ -489,9 +493,9 @@ impl<'a> AbstractValueGenerator<'a> {
     }
 
     /// `__computeAbstractValue(instr)`
-    fn compute_abstract_value(&mut self, instr: &Instr, operands: &'a [Operand]) -> AbstractValue {
+    fn compute_abstract_value(&mut self, instr: &Instr, canon: &CanonicalRegs<'a>) -> AbstractValue {
         if let Some(&first) = instr.input_reg_operands.first() {
-            let abs_val = self.get_abstract_value_for_reg(Some(reg_of(operands, first))).expect("a register");
+            let abs_val = self.get_abstract_value_for_canonical_reg(canon.get(first).clone());
             let s = instr.instr_str.as_str();
             if s.contains("MOV") && !s.contains("CMOV") {
                 abs_val
@@ -508,6 +512,36 @@ impl<'a> AbstractValueGenerator<'a> {
             }
         } else {
             self.generate_fresh_abstract_value()
+        }
+    }
+}
+
+/// The canonical register of each register operand (`getCanonicalReg(op.reg)`), computed once.
+struct CanonicalRegs<'a> {
+    operands: &'a [Operand],
+    canon: Vec<Option<Cow<'a, str>>>,
+}
+
+impl<'a> CanonicalRegs<'a> {
+    fn new(operands: &'a [Operand]) -> Self {
+        let canon = operands
+            .iter()
+            .map(|o| match o {
+                Operand::Reg { reg, .. } => Some(canonical_reg_cow(reg)),
+                _ => None,
+            })
+            .collect();
+        CanonicalRegs { operands, canon }
+    }
+
+    /// `getCanonicalReg(op.reg)`; Python raises an `AttributeError` for operands that are not registers (see [`reg_of`])
+    fn get(&self, op: OpId) -> &Cow<'a, str> {
+        match &self.canon[op as usize] {
+            Some(c) => c,
+            None => {
+                reg_of(self.operands, op);
+                unreachable!()
+            }
         }
     }
 }
@@ -669,13 +703,14 @@ struct LatencyGraphBuilder<'a> {
     prev_write_to_key: FastMap<OpKey<'a>, PrevWrite>,
     abs_val_gen: AbstractValueGenerator<'a>,
     rsp_implicitly_changed: bool,
+    canon: CanonicalRegs<'a>,
 }
 
 impl<'a> LatencyGraphBuilder<'a> {
     fn get_op_key(&mut self, op: OpId) -> OpKey<'a> {
         let instrs = self.instrs;
         match &instrs.operands[op as usize] {
-            Operand::Reg { reg, .. } => OpKey::Str(canonical_reg_cow(reg)),
+            Operand::Reg { .. } => OpKey::Str(self.canon.get(op).clone()),
             Operand::Flag { flags } => OpKey::Str(Cow::Borrowed(flags)),
             Operand::Mem { mem_addr } => {
                 let base = self.abs_val_gen.get_abstract_value_for_reg(mem_addr.base.as_deref());
@@ -727,7 +762,7 @@ impl<'a> LatencyGraphBuilder<'a> {
             .iter()
             .chain(&instr.mem_addr_operands)
             .chain(&instr.output_reg_operands)
-            .any(|&op| canonical_reg_cow(reg_of(&instrs.operands, op)) == "RSP")
+            .any(|&op| self.canon.get(op) == "RSP")
         {
             self.rsp_implicitly_changed = false;
         }
@@ -738,7 +773,7 @@ impl<'a> LatencyGraphBuilder<'a> {
             if let (Operand::Reg { .. }, OpKey::Str(reg)) = (&instrs.operands[out_op as usize], &key) {
                 let reg = reg.clone();
                 self.prev_write_to_key.insert(key, write);
-                self.abs_val_gen.set_abstract_value_for_cur_instr(reg, instr, &instrs.operands);
+                self.abs_val_gen.set_abstract_value_for_cur_instr(reg, instr, &self.canon);
             } else {
                 self.prev_write_to_key.insert(key, write);
             }
@@ -774,15 +809,16 @@ fn build_latency_graph(instrs: &InstrList, config: &UArchConfig, init_policy: &s
     let mut prev_non_eliminated_write_for_move: Vec<Option<usize>> = vec![None; n];
     let mut output_of_move_renamed_by_32bit_move = vec![false; n];
 
+    let canon = CanonicalRegs::new(ops);
     // only looked up
     let mut prev_write_to_reg: FastMap<Cow<str>, usize> = FastMap::default();
     for _ in 0..2 {
         for (idx, instr) in instrs.instrs.iter().enumerate() {
             if instr.may_be_eliminated {
-                prev_write_for_move[idx] = prev_write_to_reg.get(&*canonical_reg_cow(reg_of(ops, instr.input_reg_operands[0]))).copied();
+                prev_write_for_move[idx] = prev_write_to_reg.get(&**canon.get(instr.input_reg_operands[0])).copied();
             }
             for &out_op in &instr.output_reg_operands {
-                prev_write_to_reg.insert(canonical_reg_cow(reg_of(ops, out_op)), idx);
+                prev_write_to_reg.insert(canon.get(out_op).clone(), idx);
             }
         }
     }
@@ -817,6 +853,7 @@ fn build_latency_graph(instrs: &InstrList, config: &UArchConfig, init_policy: &s
         prev_write_to_key: FastMap::default(),
         abs_val_gen: AbstractValueGenerator::new(init_policy),
         rsp_implicitly_changed: false,
+        canon,
     };
 
     for _ in 0..2 {
@@ -849,7 +886,7 @@ fn build_latency_graph(instrs: &InstrList, config: &UArchConfig, init_policy: &s
                             l -= 1;
                         } else if b.rsp_implicitly_changed
                             && instr.input_reg_operands.iter().chain(&instr.mem_addr_operands).any(|&o| o == prev_in_op)
-                            && canonical_reg_cow(reg_of(ops, prev_in_op)) == "RSP"
+                            && b.canon.get(prev_in_op) == "RSP"
                             && !matches!(ops[prev_in_op as usize], Operand::Reg { is_implicit_stack_operand: true, .. })
                         {
                             l += 1;
@@ -974,9 +1011,13 @@ fn maximum_cycle_ratio(buf: &mut CycleRatioBuffers, nodes: &[OpId], edges: &[Lat
     let eps = 0.01;
     let mut r = SYS_MAXSIZE;
 
+    // The buffers have an element for each operand, but only those of the nodes are used: the sources and targets of `edges`
+    // are nodes, and so are the targets of the edges in `p`. Only these elements are reset.
     let CycleRatioBuffers { d, p_opt, p, visited } = buf;
-    d.fill(SYS_MAXSIZE);
-    p_opt.fill(None);
+    for &v in nodes {
+        d[v as usize] = SYS_MAXSIZE;
+        p_opt[v as usize] = None;
+    }
     for e in edges {
         if ((-e.cost) as f64) < d[e.source as usize] {
             d[e.source as usize] = (-e.cost) as f64;
@@ -984,13 +1025,14 @@ fn maximum_cycle_ratio(buf: &mut CycleRatioBuffers, nodes: &[OpId], edges: &[Lat
         }
     }
     // p[u] of a node without an edge is None in the reference, and `p[u].target` raises an AttributeError
-    p.fill(LatGraphEdge { source: 0, target: 0, cost: 0, time: 0 });
     for &v in nodes {
         p[v as usize] = p_opt[v as usize].expect("AttributeError: a node of a strongly connected component has no edge");
     }
 
     let find_ratio = |mut r: f64, p: &[LatGraphEdge], visited: &mut [Option<OpId>]| -> (f64, Option<OpId>) {
-        visited.fill(None);
+        for &v in nodes {
+            visited[v as usize] = None;
+        }
         let mut handle = None;
         for &v in nodes {
             if visited[v as usize].is_some() {
