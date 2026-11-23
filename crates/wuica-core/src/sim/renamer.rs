@@ -209,13 +209,13 @@ pub(crate) struct Renamer {
     // renamed operands written by the current instruction
     cur_instr_rnd_rename_dict: Vec<(Key, RenameDictEntry)>,
     cur_instr_pseudo_op_dict: Vec<(u32, u32)>,
-    n_gpr_move_elim_in_cycle: Vec<i64>,
+    n_gpr_move_elim_in_cycle: CycleCounter,
     /// renamed operand -> registers
     multi_use_gpr_dict: Vec<(u32, SmallKeys)>,
-    multi_use_gpr_dict_use_in_cycle: Vec<i64>,
-    n_simd_move_elim_in_cycle: Vec<i64>,
+    multi_use_gpr_dict_use_in_cycle: CycleCounter,
+    n_simd_move_elim_in_cycle: CycleCounter,
     multi_use_simd_dict: Vec<(u32, SmallKeys)>,
-    multi_use_simd_dict_use_in_cycle: Vec<i64>,
+    multi_use_simd_dict_use_in_cycle: CycleCounter,
     renamer_active_cycle: i64,
     cur_store_buffer_entry: u32,
     /// the abstract addresses, with `storeBufferEntryDict` and `memValueDict`
@@ -229,7 +229,8 @@ pub(crate) struct Renamer {
 }
 
 impl Renamer {
-    pub fn new(init_policy: InitPolicy, load_value_numbering: bool, n_keys: usize) -> Renamer {
+    /// `window`: `moveEliminationPipelineLength`
+    pub fn new(init_policy: InitPolicy, load_value_numbering: bool, n_keys: usize, window: i64) -> Renamer {
         let mut g = AbstractValueGenerator {
             init_policy,
             load_value_numbering,
@@ -244,12 +245,12 @@ impl Renamer {
             rename_dict: vec![None; n_keys],
             cur_instr_rnd_rename_dict: Vec::new(),
             cur_instr_pseudo_op_dict: Vec::new(),
-            n_gpr_move_elim_in_cycle: vec![0],
+            n_gpr_move_elim_in_cycle: CycleCounter::new(window),
             multi_use_gpr_dict: Vec::new(),
-            multi_use_gpr_dict_use_in_cycle: vec![0],
-            n_simd_move_elim_in_cycle: vec![0],
+            multi_use_gpr_dict_use_in_cycle: CycleCounter::new(window),
+            n_simd_move_elim_in_cycle: CycleCounter::new(window),
             multi_use_simd_dict: Vec::new(),
-            multi_use_simd_dict_use_in_cycle: vec![0],
+            multi_use_simd_dict_use_in_cycle: CycleCounter::new(window),
             renamer_active_cycle: 0,
             cur_store_buffer_entry: NONE,
             addrs: AddressTable::default(),
@@ -261,12 +262,45 @@ impl Renamer {
     }
 }
 
-/// `d.get(cycle, 0)` for the per-cycle counters
-fn get_or_0(v: &[i64], cycle: i64) -> i64 {
-    if cycle >= 0 {
-        v.get(cycle as usize).copied().unwrap_or(0)
-    } else {
-        0
+/// A per-cycle counter of the renamer (`nGPRMoveElimInCycle` etc.): one value for each of the cycles 0, 1, ... (cycle 0 is 0),
+/// of which only the last `window` are read (`moveEliminationPipelineLength`): they are kept in a ring (all of them if the
+/// window is large).
+struct CycleCounter {
+    ring: Vec<i64>,
+    /// the length of the ring; 0: no ring, `ring` holds all values
+    len: i64,
+    /// the number of values pushed (the cycle of the next value)
+    n: i64,
+}
+
+impl CycleCounter {
+    fn new(window: i64) -> CycleCounter {
+        let len = if window <= 4096 { window.max(1) } else { 0 };
+        let mut c = CycleCounter { ring: vec![0; len as usize], len, n: 0 };
+        c.push(0);
+        c
+    }
+
+    fn push(&mut self, v: i64) {
+        if self.len == 0 {
+            self.ring.push(v);
+        } else {
+            self.ring[self.n.rem_euclid(self.len) as usize] = v;
+        }
+        self.n += 1;
+    }
+
+    /// `d.get(cycle, 0)`, for cycles in the window `n - window .. n`; 0 for cycles that are not set yet or negative
+    #[inline]
+    fn get_or_0(&self, cycle: i64) -> i64 {
+        if cycle < 0 || cycle >= self.n {
+            0
+        } else if self.len == 0 {
+            self.ring[cycle as usize]
+        } else {
+            debug_assert!(cycle >= self.n - self.len);
+            self.ring[cycle.rem_euclid(self.len) as usize]
+        }
     }
 }
 
@@ -406,8 +440,8 @@ impl<'a> Sim<'a> {
                             Slots::Limited(slots) => {
                                 slots
                                     - n_gpr_move_elim
-                                    - (1..pipeline_length).map(|i| get_or_0(&self.rn.n_gpr_move_elim_in_cycle, active_cycle - i)).sum::<i64>()
-                                    - get_or_0(&self.rn.multi_use_gpr_dict_use_in_cycle, active_cycle - pipeline_length)
+                                    - (1..pipeline_length).map(|i| self.rn.n_gpr_move_elim_in_cycle.get_or_0(active_cycle - i)).sum::<i64>()
+                                    - self.rn.multi_use_gpr_dict_use_in_cycle.get_or_0(active_cycle - pipeline_length)
                             }
                         };
                         if n_possible > 0 {
@@ -420,8 +454,8 @@ impl<'a> Sim<'a> {
                             Slots::Limited(slots) => {
                                 slots
                                     - n_simd_move_elim
-                                    - (1..pipeline_length).map(|i| get_or_0(&self.rn.n_simd_move_elim_in_cycle, active_cycle - i)).sum::<i64>()
-                                    - get_or_0(&self.rn.multi_use_simd_dict_use_in_cycle, active_cycle - pipeline_length)
+                                    - (1..pipeline_length).map(|i| self.rn.n_simd_move_elim_in_cycle.get_or_0(active_cycle - i)).sum::<i64>()
+                                    - self.rn.multi_use_simd_dict_use_in_cycle.get_or_0(active_cycle - pipeline_length)
                             }
                         };
                         if n_possible > 0 {

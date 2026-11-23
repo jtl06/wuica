@@ -73,7 +73,6 @@ pub(crate) struct Scheduler {
     non_ready_uops_spare: Vec<u32>,
     pending_uops_spare: Vec<u32>,
     uops_dispatched_spare: Vec<u32>,
-    ready_bucket_spare: Vec<u32>,
     port_combinations_buf: Vec<(u32, usize)>,
     dispatched_sorted_buf: Vec<u32>,
     /// dispatched, but not finished uops (sorted)
@@ -84,6 +83,9 @@ pub(crate) struct Scheduler {
     load_uops_since_last_load_fence: Vec<u32>,
     /// for how many remaining cycles a resource will be blocked
     blocked_resources: Vec<f64>,
+    /// the resources that may be non-zero (each once): the others stay 0 in updateBlockedResources
+    blocked_active: Vec<u32>,
+    blocked_is_active: Vec<bool>,
     /// uops that have an operand that is written by a non-executed uop: producer uop -> uops (in insertion order), as linked
     /// lists in `dep_nodes`: (first node, last node) for each producer
     dep_lists: Vec<(u32, u32)>,
@@ -93,14 +95,20 @@ pub(crate) struct Scheduler {
 
 /// `uopsReadyInCycle`: cycle -> uops, for the cycles after the current one. A ring of buckets indexed by `cycle & mask`; it
 /// grows when a uop becomes ready further in the future than it covers. Every bucket holds the uops of exactly one cycle in
-/// `clock + 1 ..= clock + len`, because the scheduler takes the bucket of each cycle in that cycle.
+/// `clock + 1 ..= clock + len`, because the scheduler takes the bucket of each cycle in that cycle. A bucket is a linked list
+/// (in insertion order) of nodes in one arena, whose freed nodes are reused: no allocation per bucket.
 struct CycleBuckets {
-    slots: Vec<Vec<u32>>,
+    /// (first node, last node) of each bucket, NONE if empty
+    slots: Vec<(u32, u32)>,
+    /// (uop, next node)
+    nodes: Vec<(u32, u32)>,
+    /// list of free nodes
+    free: u32,
 }
 
 impl CycleBuckets {
     fn new() -> CycleBuckets {
-        CycleBuckets { slots: (0..64).map(|_| Vec::new()).collect() }
+        CycleBuckets { slots: vec![(NONE, NONE); 64], nodes: Vec::new(), free: NONE }
     }
 
     /// adds `u` to the bucket of `cycle` (`clock < cycle`)
@@ -112,11 +120,10 @@ impl CycleBuckets {
             while cycle - clock > len {
                 len *= 2;
             }
-            let old = std::mem::take(&mut self.slots);
+            let old = std::mem::replace(&mut self.slots, vec![(NONE, NONE); len as usize]);
             let old_mask = old.len() as i64 - 1;
-            self.slots = (0..len).map(|_| Vec::new()).collect();
             for (i, v) in old.into_iter().enumerate() {
-                if v.is_empty() {
+                if v.0 == NONE {
                     continue;
                 }
                 // the cycle of this bucket: the one in clock+1 ..= clock+old_len with (c & old_mask) == i
@@ -124,14 +131,39 @@ impl CycleBuckets {
                 self.slots[(c & (len - 1)) as usize] = v;
             }
         }
+        let node = if self.free != NONE {
+            let n = self.free;
+            self.free = self.nodes[n as usize].1;
+            self.nodes[n as usize] = (u, NONE);
+            n
+        } else {
+            self.nodes.push((u, NONE));
+            self.nodes.len() as u32 - 1
+        };
         let mask = self.slots.len() as i64 - 1;
-        self.slots[(cycle & mask) as usize].push(u);
+        let slot = &mut self.slots[(cycle & mask) as usize];
+        if slot.0 == NONE {
+            *slot = (node, node);
+        } else {
+            let last = slot.1;
+            slot.1 = node;
+            self.nodes[last as usize].1 = node;
+        }
     }
 
-    /// takes the bucket of `cycle` (leaves an empty bucket with the capacity of `spare`)
-    fn take(&mut self, cycle: i64, spare: Vec<u32>) -> Vec<u32> {
+    /// takes the bucket of `cycle`: returns its first node (walk it with `next`)
+    fn take(&mut self, cycle: i64) -> u32 {
         let mask = self.slots.len() as i64 - 1;
-        std::mem::replace(&mut self.slots[(cycle & mask) as usize], spare)
+        std::mem::replace(&mut self.slots[(cycle & mask) as usize], (NONE, NONE)).0
+    }
+
+    /// (uop, next node) of a node of a taken bucket, which is freed
+    #[inline]
+    fn next(&mut self, node: u32) -> (u32, u32) {
+        let (u, next) = self.nodes[node as usize];
+        self.nodes[node as usize].1 = self.free;
+        self.free = node;
+        (u, next)
     }
 }
 
@@ -195,7 +227,6 @@ impl Scheduler {
             non_ready_uops_spare: Vec::new(),
             pending_uops_spare: Vec::new(),
             uops_dispatched_spare: Vec::new(),
-            ready_bucket_spare: Vec::new(),
             port_combinations_buf: Vec::new(),
             dispatched_sorted_buf: Vec::new(),
             pending_uops: Vec::new(),
@@ -204,6 +235,8 @@ impl Scheduler {
             pending_load_fence_uops: VecDeque::new(),
             load_uops_since_last_load_fence: Vec::new(),
             blocked_resources: vec![0.0; n_resources],
+            blocked_active: Vec::new(),
+            blocked_is_active: vec![false; n_resources],
             dep_lists: Vec::new(),
             dep_nodes: Vec::new(),
         }
@@ -211,6 +244,15 @@ impl Scheduler {
 }
 
 impl Scheduler {
+    /// `blockedResources[r]` may now be non-zero
+    #[inline]
+    fn mark_blocked(&mut self, r: usize) {
+        if !self.blocked_is_active[r] {
+            self.blocked_is_active[r] = true;
+            self.blocked_active.push(r as u32);
+        }
+    }
+
     /// reserves space for about `n_uops` uops
     pub fn reserve(&mut self, n_uops: usize) {
         self.dep_lists.reserve(n_uops);
@@ -227,9 +269,10 @@ impl<'a> Sim<'a> {
     /// `Scheduler.cycle`
     pub(crate) fn scheduler_cycle(&mut self, clock: i64, new_uops: &[u32]) -> Result<(), SimError> {
         {
-            let spare = std::mem::take(&mut self.sched.ready_bucket_spare);
-            let mut ready = self.sched.uops_ready_in_cycle.take(clock, spare);
-            for &u in &ready {
+            let mut node = self.sched.uops_ready_in_cycle.take(clock);
+            while node != NONE {
+                let (u, next) = self.sched.uops_ready_in_cycle.next(node);
+                node = next;
                 let uop = &self.uops[u as usize];
                 if self.prep.props[uop.prop as usize].div_cycles != 0 {
                     self.sched.ready_div_uops.push(Reverse(u));
@@ -241,18 +284,26 @@ impl<'a> Sim<'a> {
                     self.sched.ready_queue[port as usize].push(Reverse(u));
                 }
             }
-            ready.clear();
-            self.sched.ready_bucket_spare = ready;
         }
         self.add_new_uops(clock, new_uops)?;
         self.dispatch_uops(clock)?;
         self.process_pending_uops()?;
         self.process_non_ready_uops(clock)?;
         self.process_pending_fences(clock);
-        // updateBlockedResources
-        for r in self.sched.blocked_resources.iter_mut() {
-            let v = *r - 1.0;
-            *r = if v > 0.0 { v } else { 0.0 };
+        // updateBlockedResources (max(0, r - 1) leaves the resources that are 0 unchanged)
+        let s = &mut self.sched;
+        let mut i = 0;
+        while i < s.blocked_active.len() {
+            let r = s.blocked_active[i] as usize;
+            let v = s.blocked_resources[r] - 1.0;
+            let v = if v > 0.0 { v } else { 0.0 };
+            s.blocked_resources[r] = v;
+            if v == 0.0 {
+                s.blocked_is_active[r] = false;
+                s.blocked_active.swap_remove(i);
+            } else {
+                i += 1;
+            }
         }
         Ok(())
     }
@@ -338,12 +389,17 @@ impl<'a> Sim<'a> {
             // also added to pendingUops (in processPendingUops)
             uops_dispatched.push(u);
 
-            s.blocked_resources[RES_DIV] += self.prep.props[self.uops[u as usize].prop as usize].div_cycles as f64;
+            let div_cycles = self.prep.props[self.uops[u as usize].prop as usize].div_cycles;
+            if div_cycles != 0 {
+                s.blocked_resources[RES_DIV] += div_cycles as f64;
+                s.mark_blocked(RES_DIV);
+            }
             if cfg.slow_256bit_mem_acc
                 && port == port4
                 && self.prep.props[self.uops[u as usize].prop as usize].has(pf::M256)
             {
                 s.blocked_resources[1 + port] = 2.0;
+                s.mark_blocked(1 + port);
             }
         }
 
@@ -539,6 +595,7 @@ impl<'a> Sim<'a> {
 
         if flags & pf::FIRST_TP != 0 {
             self.sched.blocked_resources[tp_res] += tp;
+            self.sched.mark_blocked(tp_res);
         }
         if is_load {
             self.sched.load_uops_since_last_load_fence.push(u);

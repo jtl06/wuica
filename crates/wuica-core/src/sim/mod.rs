@@ -602,13 +602,13 @@ pub fn simulate(list: &InstrList, config: &UArchConfig, uarch: &UArch, options: 
     let n_ports = prep.ports.len();
     let unroll = !instrs[instrs.len() - 1].is_branch_instr;
     // An estimate of the sizes of the entity arrays (only a capacity, to avoid reallocating large arrays): the simulation runs
-    // for at least minCycles cycles and minIterations rounds; at most issueWidth fused uops are issued per cycle.
+    // for at least minCycles cycles and minIterations rounds; at most issueWidth fused uops are issued per cycle; the front end
+    // creates instances ahead of the issue (a quarter and 16 rounds more).
     let (n_uops_per_round, n_ren_per_round) = prep.props_per_round();
     let n_fused_per_round = instrs.iter().map(|i| i.retire_slots.max(1) as usize).sum::<usize>().max(1);
     let est_rounds = ((options.min_cycles.clamp(0, 1 << 30) as u64 * config.issue_width.clamp(1, 1 << 10) as u64) / n_fused_per_round as u64)
-        .max(options.min_iterations.clamp(0, 1 << 30) as u64)
-        .saturating_add(4)
-        .min(1 << 20) as usize;
+        .max(options.min_iterations.clamp(0, 1 << 30) as u64);
+    let est_rounds = (est_rounds + est_rounds / 4).saturating_add(16).min(1 << 20) as usize;
     // (bounded, so that options like a large minCycles do not reserve much memory up front, e.g. in WebAssembly)
     let cap = |per_round: usize| per_round.saturating_mul(est_rounds).min(1 << 16);
     let mut sim = Sim {
@@ -627,7 +627,7 @@ pub fn simulate(list: &InstrList, config: &UArchConfig, uarch: &UArch, options: 
         rob: VecDeque::new(),
         retire_queue: VecDeque::new(),
         fe: frontend::FrontEnd::new(unroll, options.alignment_offset, prep.info.iter().map(|i| i.len).sum()),
-        rn: renamer::Renamer::new(options.init_policy, config.load_value_numbering, prep.keys.info.len()),
+        rn: renamer::Renamer::new(options.init_policy, config.load_value_numbering, prep.keys.info.len(), config.move_elimination_pipeline_length),
         sched: scheduler::Scheduler::new(&prep, config),
         prep,
     };
