@@ -49,15 +49,16 @@ false sharing (perf c2c), sampling confidence, call trees and flame graphs.
 
 ## Built in this round (branch `features-r1`)
 
-Every new view is opt-in (closed by default, computed only when opened, its open state in the URL); the default result
-is unchanged except for three small copy buttons next to the cost toggle. The views are rows of the "more" section below
+Every new view is opt-in (closed by default, its open state in the URL; analyses, traces and drawings only when opened;
+the one-line summaries of "bound" and "bytes" are derived from the response while closed, no analysis). The default
+result is unchanged except for three small copy buttons next to the cost toggle. The views are rows of the "more" section below
 the panes (hidden in A–B mode, like the sweep and the trace). Shared files touched: app.js (an import, one createViews()
 call, one line in writeControls, one in draw), url-state.js (four view flags: bound, whatif, codemap, deps), index.html (five stylesheet links).
 
 | View | Row | Module | URL | What |
 |---|---|---|---|---|
 | bound | `bound` | web/js/bound.js | `bound=1` | ideas 1, 2: utilization bars (front end, issue, each port, chain, unexplained), next limit and the speedup at most in the summary, the selected resource's share shaded on the uop table rows, top 5 rows jump to the table |
-| what if | `try` | web/js/whatif.js | `whatif=1` | idea 3: unroll ×2/×4/×8, ideal front end, macro-/micro-fusion switched, no-chain estimate; cycles per original iteration, Δ, speedup; ↗ opens the variant |
+| what if | `try` | web/js/whatif.js | `whatif=1` | idea 3: unroll ×2/×4/×8, simple front end, macro-/micro-fusion switched, no-chain bound (≥ cycles, ≤× speedup); cycles per original iteration, Δ, speedup; ↗ opens the variant |
 | code map | `bytes` | web/js/codemap.js | `codemap=1` | idea 6: cache lines, 16/32-byte boundaries, split and JCC-erratum instructions, ◂ ▸ alignment |
 | dependency arcs | `deps` | web/js/deps.js | `deps=1` | idea 12: arcs from the trace, critical chain highlighted |
 | copy | (tools above the uop table) | web/js/export.js | — | idea 4: Markdown, CSV, JSON |

@@ -211,11 +211,11 @@ try {
       out.switchMs = performance.now() - t1;
       await wait(100);
       out.long = [...long];
-      // the chain: rows beyond the first 200: jump to the last of the top rows
+      // the chain: its largest share is beyond the first 200 rows: the jump draws them all first
       document.querySelector('.bd-item[data-id="Dependencies"]')?.click();
       const btns = [...document.querySelectorAll('.bd-row')];
       out.top = btns.length;
-      btns.at(-1)?.click();
+      btns[0]?.click();
       await until(() => trs().some((tr) => tr.classList.contains('rj-flash')), 5000).catch(() => {});
       out.afterJump = [trs().length, trs().findIndex((tr) => tr.classList.contains('rj-flash'))];
       return out;`);
@@ -226,7 +226,7 @@ try {
     const order = [...lat].sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, 5).map((x) => x[0]);
     check(r.tp === '744.25' && r.closed[0] === false && r.closed[1] === 0 && r.closed[2] === 'closed' && r.closed[3] === 0, 'bound: SHA-256: closed, nothing computed or shaded', JSON.stringify(r.closed));
     check(r.long.every((ms) => ms < 100) && r.switchMs < 100 && r.items > 5 && r.hot > 0 && r.rows === 200, 'bound: SHA-256: opening and switching: no task of 100 ms or more', JSON.stringify(r));
-    check(r.top === Math.min(5, order.length) && r.afterJump[1] === order[r.top - 1] && (order[r.top - 1] < 200 || r.afterJump[0] === 2949), 'bound: SHA-256: a jump to a chain row (drawing all rows if needed)', JSON.stringify([r.top, r.afterJump, order]));
+    check(r.top === Math.min(5, order.length) && order[0] >= 200 && r.afterJump[0] === 2949 && r.afterJump[1] === order[0], 'bound: SHA-256: a jump to a chain row beyond the drawn ones draws all rows and flashes it', JSON.stringify([r.top, r.afterJump, order]));
     console.log(`bound: SHA-256: long tasks while opening ${JSON.stringify(r.long)} ms, switch ${r.switchMs.toFixed(1)} ms; chain top rows ${order.join(',')}`);
   }
 
@@ -243,7 +243,7 @@ try {
     for (const n of [2, 4, 8]) { const r = await analyze(body.repeat(n) + tail); want.push([`unroll${n}`, f(r.tp / n), d(r.tp / n - base.tp), `×${(base.tp / (r.tp / n)).toFixed(2)}`]); }
     for (const k of ['simpleFrontEnd', 'noMacroFusion', 'noMicroFusion']) { const r = await analyze(chain.hex, 'SKL', { [k]: true }); want.push([k, f(r.tp), d(r.tp - base.tp), `×${(base.tp / r.tp).toFixed(2)}`]); }
     const others = base.limits.filter((l) => l.name !== 'Dependencies').map((l) => l.tp);
-    want.push(['nochain', `≈${f(Math.max(...others))}`, d(Math.max(...others) - base.tp), `×${(base.tp / Math.max(...others)).toFixed(2)}`]);
+    want.push(['nochain', `≥${f(Math.max(...others))}`, d(Math.max(...others) - base.tp), `≤×${(base.tp / Math.max(...others)).toFixed(2)}`]);
     const read = `
       await until(() => document.querySelector('#whatif .wi-body')?.dataset.state === 'done', 20000);
       const rows = [...document.querySelectorAll('.wi-table tbody tr')].map((tr) => [tr.dataset.id, ...[...tr.querySelectorAll('td')].slice(0, 3).map((td) => td.textContent)]);`;

@@ -3,9 +3,9 @@
 // builds itself from the examples' objdump listings.
 // Usage: node tests-js/web_whatif.mjs
 import fs from 'node:fs';
-import { instrRanges, unrollHex, experiments, outcome, formatDelta, formatSpeedup, weight } from '../web/js/whatif.js';
+import { instrRanges, unrollHex, experiments, outcome, formatDelta, formatSpeedup, weight, variantFragment } from '../web/js/whatif.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
-import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
+import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES } from '../web/js/examples.js';
 import { encodeState, decodeState } from '../web/js/url-state.js';
 
 let failed = 0, count = 0;
@@ -37,9 +37,9 @@ const OPTS = { alignmentOffset: 0, initPolicy: 'diff', simpleFrontEnd: false, no
 
   const exps = experiments(CHAIN, CHAIN_HEX, OPTS);
   check(exps.map((x) => x.id).join() === 'unroll2,unroll4,unroll8,simpleFrontEnd,noMacroFusion,noMicroFusion,nochain', 'experiments: unroll, the model switches, no chain', exps.map((x) => x.id).join());
-  check(exps[3].label === 'ideal front end' && exps[3].options.simpleFrontEnd === true && exps[3].per === 1 && exps[3].hex === CHAIN_HEX, 'experiment: ideal front end');
+  check(exps[3].label === 'simple front end' && exps[3].options.simpleFrontEnd === true && exps[3].per === 1 && exps[3].hex === CHAIN_HEX, 'experiment: ideal front end');
   const on = experiments(CHAIN, CHAIN_HEX, { ...OPTS, simpleFrontEnd: true, noMacroFusion: true });
-  check(on[3].label === 'real front end' && on[3].options.simpleFrontEnd === false && on[4].label === 'macro-fusion' && on[4].options.noMacroFusion === false, 'experiments: a switch that is on is switched off');
+  check(on[3].label === 'detailed front end' && on[3].options.simpleFrontEnd === false && on[4].label === 'macro-fusion' && on[4].options.noMacroFusion === false, 'experiments: a switch that is on is switched off');
   const nc = exps.at(-1);
   check(nc.estimate === 1 && /DSB, Ports/.test(nc.title), 'no chain: the largest other limit (all of them named)', JSON.stringify(nc));
   check(!experiments({ ...CHAIN, limits: CHAIN.limits.slice(0, 3) }, CHAIN_HEX, OPTS).some((x) => x.id === 'nochain'), 'no chain: only if the chain is a limit');
@@ -54,8 +54,8 @@ const OPTS = { alignmentOffset: 0, initPolicy: 'diff', simpleFrontEnd: false, no
   check(formatDelta(-1) === '−1.00' && formatDelta(0.001) === '0.00' && formatDelta(0.5) === '+0.50' && formatSpeedup(2) === '×2.00', 'formatting');
   check(weight(exps[1], 13) === (u2.hex.length / 2 + 2 * 8) / 13 && weight(nc, 13) === 0, 'weight: relative size of the analysis');
   // the link of a variant: a hex fragment the page reads back
-  const s = decodeState(encodeState({ mode: 'hex', text: exps[0].hex.match(/../g).join(' '), arch: 'ZEN3', cpus: '', ...exps[3].options }));
-  check(s.mode === 'hex' && s.arch === 'ZEN3' && s.simpleFrontEnd === true && s.text.replace(/ /g, '') === exps[0].hex, 'link: the variant as a hex fragment', JSON.stringify(s));
+  const s = decodeState(variantFragment({ ...exps[0], options: exps[3].options }, 'ZEN3'));
+  check(s.mode === 'hex' && s.arch === 'ZEN3' && s.simpleFrontEnd === true && s.text === exps[0].hex, 'link: the variant as a hex fragment', JSON.stringify(s));
   const f = encodeState({ text: 'x', whatif: true });
   check(/(^|&)whatif=1(&|$)/.test(f) && decodeState(f).whatif === true && decodeState(encodeState({ text: 'x' })).whatif === false, 'url: whatif=1');
 }
@@ -68,6 +68,14 @@ if (!fs.existsSync(wasm) || !fs.existsSync(new URL('data/uarch.json', root))) {
   const e = await WasmEngine.create(fs.readFileSync(wasm));
   await e.loadUarch(fs.readFileSync(new URL('data/uarch.json', root)));
   for (const t of ['SKL', 'ZEN3']) await e.loadArch(t, fs.readFileSync(new URL(`data/arch/${t}.json`, root)));
+  // the largest variant: SHA-256 (11,602 bytes) unrolled ×8; its link must carry the whole code
+  {
+    const sha = SHOWCASE_EXAMPLES[0];
+    const r = await e.analyze(makeRequest(sha.hex, 'SKL'));
+    const x8 = experiments(r, sha.hex, OPTS).find((x) => x.id === 'unroll8');
+    const back = decodeState(variantFragment(x8, 'SKL'));
+    check(x8.hex.length > 180000 && back.text === x8.hex && back.mode === 'hex', 'link: SHA-256 unrolled ×8 decodes back to the variant', String(x8.hex.length));
+  }
   for (const ex of [...EXAMPLES, ...CLASSIC_EXAMPLES]) {
     for (const arch of ['SKL', 'ZEN3']) {
       const r = await e.analyze(makeRequest(ex.hex, arch));

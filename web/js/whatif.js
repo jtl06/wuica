@@ -47,7 +47,7 @@ export function unrollHex(response, hex, n) {
 }
 
 const FLAGS = [
-  ['simpleFrontEnd', 'ideal front end', 'real front end', 'a front end limited only by the issue width (uiCA -simpleFrontEnd)'],
+  ['simpleFrontEnd', 'simple front end', 'detailed front end', 'a front end limited only by the issue width (uiCA -simpleFrontEnd); not always faster'],
   ['noMacroFusion', 'no macro-fusion', 'macro-fusion', 'compare and branch not fused (uiCA -noMacroFusion)'],
   ['noMicroFusion', 'no micro-fusion', 'micro-fusion', 'load and operation not fused (uiCA -noMicroFusion)'],
 ];
@@ -72,7 +72,7 @@ export function experiments(response, hex, options) {
   if (dep && others.length) {
     const est = Math.max(...others);
     out.push({ id: 'nochain', label: 'no chain', estimate: est, per: 1,
-      title: `the largest other limit (${lims.filter((l) => l.name !== 'Dependencies' && Number(l.tp) === est).map((l) => l.name).join(', ')}): an estimate without the loop-carried dependencies, not a simulation` });
+      title: `at best the largest other limit (${lims.filter((l) => l.name !== 'Dependencies' && Number(l.tp) === est).map((l) => l.name).join(', ')}): an estimate without the loop-carried dependencies, not a simulation` });
   }
   return out;
 }
@@ -92,6 +92,10 @@ export function outcome(base, exp, r) {
 
 export const formatDelta = (d) => (Math.abs(d) < 0.005 ? '0.00' : `${d < 0 ? '−' : '+'}${Math.abs(d).toFixed(2)}`);
 export const formatSpeedup = (s) => (Number.isFinite(s) ? `×${s.toFixed(2)}` : '—');
+
+// The fragment of the page with a variant (machine code without spaces: the fragment takes up to 200,000 characters,
+// enough for 100 kB of code, e.g. SHA-256 unrolled ×8).
+export const variantFragment = (exp, arch) => encodeState({ mode: 'hex', text: exp.hex, arch, cpus: '', ...exp.options });
 
 // The size of an experiment relative to the block (the time of its analysis grows about linearly).
 export const weight = (exp, baseBytes) => (exp.estimate !== undefined ? 0 : (exp.hex.length / 2) / Math.max(1, baseBytes));
@@ -171,8 +175,7 @@ export function createWhatIf(env) {
   function variantLink(x) {
     const a = h('a', { class: 'wi-open', href: '#', target: '_blank', rel: 'noopener', 'aria-label': `open "${x.label}" in a new tab`, title: 'open this variant in a new tab (as machine code)', text: '↗' });
     const fill = () => {
-      const o = x.options;
-      a.href = `${location.pathname}#${encodeState({ mode: 'hex', text: x.hex.match(/../g).join(' '), arch: job.arch, cpus: '', ...o })}`;
+      a.href = `${location.pathname}#${variantFragment(x, job.arch)}`;
     };
     for (const ev of ['pointerenter', 'focus', 'pointerdown', 'click']) a.addEventListener(ev, fill);
     return a;
@@ -185,9 +188,9 @@ export function createWhatIf(env) {
       const o = outcome(base, x, results.get(x.id));
       const cells = !o ? [h('td', { class: 'wi-tp hint', text: '…' }), h('td'), h('td')]
         : o.error ? [h('td', { class: 'wi-tp hint', title: o.error, text: '—' }), h('td'), h('td')]
-          : [h('td', { class: 'wi-tp', text: `${o.estimate ? '≈' : ''}${f2(o.tp)}` }),
+          : [h('td', { class: 'wi-tp', text: `${o.estimate ? '≥' : ''}${f2(o.tp)}` }),
             h('td', { class: `wi-d ${o.delta < -0.005 ? 'neg' : o.delta > 0.005 ? 'pos' : ''}`, text: formatDelta(o.delta) }),
-            h('td', { class: `wi-x ${o.speedup > 1.005 ? 'neg' : o.speedup < 0.995 ? 'pos' : ''}`, text: formatSpeedup(o.speedup) })];
+            h('td', { class: `wi-x ${o.speedup > 1.005 ? 'neg' : o.speedup < 0.995 ? 'pos' : ''}`, text: `${o.estimate ? '≤' : ''}${formatSpeedup(o.speedup)}` })];
       return h('tr', { 'data-id': x.id }, h('th', { scope: 'row', title: x.title, text: x.label }), cells,
         h('td', { class: 'wi-link' }, x.estimate === undefined ? variantLink(x) : null));
     });
