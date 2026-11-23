@@ -274,6 +274,155 @@ export function toTSV(model, rows) {
   return [TABLE_HEAD, ...tableRows(model, rows)].map((r) => r.map(clean).join('\t')).join('\n') + '\n';
 }
 
+// ---- the uop table and the trace (no DOM) ----------------------------------------------------------------------
+// The rows of the uop table (response.rows) are in program order: the register-merge and stack-sync rows come before
+// the instruction they belong to (their uops carry that instruction's instrID and their own kind); the second
+// instruction of a macro-fused pair has a row but no uops of its own (they are the first one's).
+
+// Per table row: {instrID, kind, fused}; `fused`: the second of a macro-fused pair (its uops: the row before).
+export function rowGroups(rows) {
+  const out = [];
+  let k = 0; // the instruction's index among the rows of kind "instr" = its instrID in the trace
+  for (const x of Array.isArray(rows) ? rows : []) {
+    if (x?.kind === 'instr') {
+      out.push(x.notes === 'M' && k > 0 ? { instrID: k - 1, kind: 'instr', fused: true } : { instrID: k, kind: 'instr', fused: false });
+      k++;
+    } else {
+      out.push({ instrID: k, kind: x?.kind === 'regMerge' || x?.kind === 'stackSync' ? x.kind : 'instr', fused: false });
+    }
+  }
+  return out;
+}
+export const groupKey = (g) => (g ? `${g.instrID}/${g.kind}` : null);
+export const groupOfUop = (u) => ({ instrID: u.instrID, kind: u.kind, fused: false });
+// the table row of a group (not the fused second instruction), or -1
+export function rowOfGroup(groups, g) {
+  const k = groupKey(g);
+  if (k === null) return -1;
+  for (let i = 0; i < groups.length; i++) if (!groups[i].fused && groupKey(groups[i]) === k) return i;
+  return -1;
+}
+
+// Where the uops of each instruction spent their time, in cycles per uop, averaged over the uops of the rounds
+// from..to that have all their stages (issued and retired within the trace). The parts are the bars of the timeline
+// (drawUop), so they add up to retired − (IDQ or predecode):
+//   queue     in the IDQ until issued (front end → issue); unknown when the trace has neither event (the LSD)
+//   delay     the fixed issue → dispatch delay of the scheduler (issueDispatchDelay)
+//   operands  beyond that, not ready: waiting for operands
+//   port      ready, waiting for a port
+//   exec      dispatched → executed
+//   retire    executed, waiting to retire
+// Eliminated uops (and fused uops without unfused uops) only wait to retire.
+// Returns Map groupKey -> {n, nq, rounds, queue, delay, operands, port, exec, retire, total} (queue: over the nq uops
+// with a front-end event; null if none), plus .from, .to and .max (the largest total).
+export const WAIT_PARTS = Object.freeze([
+  ['queue', 'queue'], ['delay', 'delay'], ['operands', 'operands'], ['port', 'port'], ['exec', 'execute'], ['retire', 'retire'],
+]);
+export function uopWaits(u, delay) {
+  if (u.issued === null || u.retired === null) return null;
+  const fe = u.idq ?? u.iq;
+  const w = { queue: fe !== null && fe <= u.issued ? u.issued - fe : null, delay: 0, operands: 0, port: 0, exec: 0, retire: 0 };
+  if ((u.inRS || u.dispatched !== null) && u.dispatched !== null && u.executed !== null) {
+    const ready = u.ready ?? u.dispatched;
+    const sched = Math.min(ready, u.issued + delay);
+    w.delay = Math.max(0, sched - u.issued);
+    w.operands = Math.max(0, ready - sched);
+    w.port = Math.max(0, u.dispatched - ready);
+    w.exec = Math.max(0, u.executed - u.dispatched);
+    w.retire = Math.max(0, u.retired - u.executed);
+  } else if (u.inRS || u.dispatched !== null) {
+    return null; // in the scheduler but not executed: not complete
+  } else {
+    const done = u.executed ?? u.issued;
+    w.exec = Math.max(0, done - u.issued);
+    w.retire = Math.max(0, u.retired - done);
+  }
+  return w;
+}
+export function waitBreakdown(model, from = model.relevant.first, to = model.relevant.last) {
+  const acc = new Map();
+  for (const u of model.uops) {
+    if (u.rnd < from || u.rnd > to) continue;
+    const w = uopWaits(u, model.issueDispatchDelay);
+    if (!w) continue;
+    const k = groupKey(u);
+    let a = acc.get(k);
+    if (!a) { a = { n: 0, nq: 0, rounds: new Set(), queue: 0, delay: 0, operands: 0, port: 0, exec: 0, retire: 0 }; acc.set(k, a); }
+    a.n++;
+    a.rounds.add(u.rnd);
+    if (w.queue !== null) { a.nq++; a.queue += w.queue; }
+    for (const p of ['delay', 'operands', 'port', 'exec', 'retire']) a[p] += w[p];
+  }
+  const out = new Map();
+  let max = 0;
+  for (const [k, a] of acc) {
+    const r = { n: a.n, nq: a.nq, rounds: a.rounds.size, queue: a.nq ? a.queue / a.nq : null };
+    for (const p of ['delay', 'operands', 'port', 'exec', 'retire']) r[p] = a[p] / a.n;
+    r.total = (r.queue ?? 0) + r.delay + r.operands + r.port + r.exec + r.retire;
+    max = Math.max(max, r.total);
+    out.set(k, r);
+  }
+  out.from = from; out.to = to; out.max = max;
+  return out;
+}
+export function waitText(w) {
+  const f = (v) => (v === null ? '—' : v.toFixed(1));
+  return WAIT_PARTS.map(([p, name]) => `${name} ${f(w[p])}`).join(' · ');
+}
+
+// The cycle in which round rnd starts (its first issue; the first event if none was issued), or null.
+export function roundStart(model, rnd) {
+  let lo = Infinity, any = Infinity;
+  for (const u of model.uops) {
+    if (u.rnd !== rnd) continue;
+    if (u.issued !== null && u.issued < lo) lo = u.issued;
+    const e = u.issued ?? u.idq ?? u.iq;
+    if (e !== null && e < any) any = e;
+  }
+  return lo < Infinity ? lo : any < Infinity ? any : null;
+}
+// The cycle in which each of the rounds from..to retired its last uop (null if not within the trace).
+export function roundEnds(model, from, to) {
+  const out = new Map();
+  const open = new Set();
+  for (const u of model.uops) {
+    if (u.rnd < from || u.rnd > to) continue;
+    if (u.retired === null) open.add(u.rnd);
+    else out.set(u.rnd, Math.max(out.get(u.rnd) ?? -1, u.retired));
+  }
+  for (const r of open) out.delete(r);
+  return out;
+}
+
+// A–B: the rounds of both traces on one time axis. scale: one iteration of B does the work of `scale` iterations of
+// A (B unrolled), so B shows iteration floor(k / scale) on and ceil(n / scale) iterations. choice: 'steady' (n
+// iterations from the earlier of the two steady states) or 'all' (both from cycle 0). Returns {a: {from, to, origin},
+// b: {...}, lo, hi}: the cycle where each side's first shown round starts is cycle 0 of the axis; lo..hi (relative
+// cycles) covers the rows of both.
+export function abWindow(ma, mb, { choice = 'steady', scale = 1, n = 3 } = {}) {
+  const s = Math.max(1, Math.floor(scale) || 1);
+  let a, b;
+  if (choice === 'all') {
+    a = { from: 0, to: Math.max(0, ma.nRounds - 1), origin: 0 };
+    b = { from: 0, to: Math.max(0, mb.nRounds - 1), origin: 0 };
+  } else {
+    const kA = Math.max(0, Math.min(ma.relevant.first, mb.relevant.first * s, ma.nRounds - 1));
+    const kB = Math.max(0, Math.min(Math.floor(kA / s), mb.nRounds - 1));
+    a = { from: kA, to: Math.min(ma.nRounds - 1, kA + n - 1) };
+    b = { from: kB, to: Math.min(mb.nRounds - 1, kB + Math.max(1, Math.ceil(n / s)) - 1) };
+    a.origin = roundStart(ma, kA) ?? 0;
+    b.origin = roundStart(mb, kB) ?? 0;
+  }
+  let lo = Infinity, hi = -Infinity;
+  for (const [m, w] of [[ma, a], [mb, b]]) {
+    const [c0, c1] = cycleSpan(m, selectRows(m, w.from, w.to));
+    lo = Math.min(lo, c0 - w.origin);
+    hi = Math.max(hi, c1 - w.origin);
+  }
+  if (!(lo <= hi)) { lo = 0; hi = 0; }
+  return { a, b, lo, hi };
+}
+
 // A trace grows with instructions x iterations; above this many uops it is not requested without asking.
 export const TRACE_LIMIT = 20000;
 export function traceEstimate(instrCount, request) {
@@ -314,11 +463,56 @@ const LEGEND = [
   ['elim', 'eliminated (no port)'],
 ];
 
-class Viewer {
-  constructor(model, state, { onState }) {
+export function legendElement() {
+  return el('ul', { class: 'trace-legend', 'aria-label': 'legend' },
+    LEGEND.map(([k, t]) => el('li', null, el('span', { class: `sw sw-${k}`, 'aria-hidden': 'true' }), t)));
+}
+
+// The shared time axis of the two viewers of an A–B trace (createABTracePanel): one scale, one gutter width, one
+// horizontal scroll position; lo..hi: the cycles shown, relative to each viewer's origin.
+class TimeSync {
+  constructor(lo, hi) { this.lo = lo; this.hi = hi; this.scale = null; this.fit = true; this.viewW = 0; this.viewers = []; this.hover = null; this.busy = false; }
+  span() { return this.hi - this.lo + 1; }
+  gutter() { return Math.round(Math.min(280, Math.max(130, this.viewW * 0.34))); }
+  fitScale() {
+    const floor = this.viewW < 560 ? 2 : MIN_SCALE;
+    return Math.min(MAX_SCALE, Math.max(floor, (this.viewW - this.gutter() - PAD) / this.span()));
+  }
+  relayout() {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      const ws = this.viewers.map((v) => v.scroller.clientWidth).filter((w) => w > 0);
+      if (!ws.length) return;
+      this.viewW = Math.min(...ws);
+      if (this.scale === null || this.fit) { this.scale = this.fitScale(); this.fit = true; }
+      for (const v of this.viewers) v.layout();
+    } finally { this.busy = false; }
+  }
+  scrollTo(left, from = null) {
+    for (const v of this.viewers) if (v !== from && Math.abs(v.scroller.scrollLeft - left) >= 1) v.scroller.scrollLeft = left;
+  }
+  paintOthers(from) { for (const v of this.viewers) if (v !== from) v.paint(); }
+}
+
+export class Viewer {
+  // options: onState(); onHoverGroup(group | null), onPickGroup(group): a uop row under the pointer / clicked (or
+  // Enter), as its instruction's group (rowGroups); for an A–B trace: sync (a TimeSync), fixed {from, to, origin}
+  // (the rounds shown and the cycle that is 0 on the axis), tag ('A' / 'B')
+  constructor(model, state, { onState = () => {}, onHoverGroup = null, onPickGroup = null, sync = null, fixed = null, tag = null } = {}) {
     this.model = model;
     this.state = state; // {range, mode, scale, scrollLeft, scrollTop}: kept by the panel across re-renders
     this.onState = onState;
+    this.onHoverGroup = onHoverGroup;
+    this.onPickGroup = onPickGroup;
+    this.sync = sync;
+    this.fixed = fixed;
+    this.tag = tag;
+    this.origin = fixed ? fixed.origin : 0;
+    this.linkKey = null; // the instruction (groupKey) under the pointer in the uop table
+    this.selKey = null;  // the selected instruction
+    this.hoverKey = null;
+    this.ends = fixed ? roundEnds(model, fixed.from, fixed.to) : null;
     this.choices = rangeChoices(model);
     if (!this.choices.some((c) => c.id === state.range)) state.range = this.choices[0].id;
     this.ports = model.ports.map((p, i) => ({ ...p, i })).filter((p) => p.used > 0);
@@ -359,7 +553,7 @@ class Viewer {
 
     this.canvas = el('canvas', { class: 'trace-canvas', tabindex: '0', role: 'application',
       'aria-roledescription': 'trace timeline',
-      'aria-label': 'Timeline of the uops by cycle. Arrow keys move between uops and show their details; + and − zoom. The table view lists the same events.',
+      'aria-label': 'Timeline of the uops by cycle. Arrow keys move between uops and show their details; Enter selects the instruction in the uop table; + and − zoom. The table view lists the same events.',
       'aria-describedby': `${id}-live` });
     this.sizer = el('div', { class: 'trace-sizer' }, this.canvas);
     this.scroller = el('div', { class: 'trace-scroll' }, this.sizer);
@@ -367,20 +561,27 @@ class Viewer {
     this.live = el('p', { class: 'trace-live', id: `${id}-live`, 'aria-live': 'polite' });
     this.probe = el('span', { class: 'trace-probe', 'aria-hidden': 'true' });
     this.chart = el('div', { class: 'trace-chart' }, this.scroller, this.tip, this.probe);
-    this.legend = el('ul', { class: 'trace-legend', 'aria-label': 'legend' },
-      LEGEND.map(([k, t]) => el('li', null, el('span', { class: `sw sw-${k}`, 'aria-hidden': 'true' }), t)));
+    this.legend = legendElement();
     this.note = el('p', { class: 'trace-note hint' });
     this.tableBox = el('div', { class: 'trace-tablebox', hidden: true });
-    this.root = el('div', { class: 'trace-viewer' }, tools, this.chart, this.legend, this.note, this.tableBox, this.live);
+    this.root = this.fixed
+      ? el('div', { class: 'trace-viewer', 'data-tag': this.tag }, this.chart, this.tableBox, this.live) // A–B: the panel has the tools and the legend
+      : el('div', { class: 'trace-viewer' }, tools, this.chart, this.legend, this.note, this.tableBox, this.live);
+    if (this.tag) this.canvas.setAttribute('aria-label', `${this.tag}: timeline of the uops by cycle. Arrow keys move between uops; + and − zoom.`);
 
     this.scroller.addEventListener('scroll', () => {
       this.state.scrollLeft = this.scroller.scrollLeft;
       this.state.scrollTop = this.scroller.scrollTop;
+      if (this.sync) this.sync.scrollTo(this.scroller.scrollLeft, this);
       if (!this.pinned && this.active >= 0 && this.pointer) this.hoverAt(this.pointer.x, this.pointer.y);
       this.paint();
     }, { passive: true });
     this.canvas.addEventListener('pointermove', (e) => this.onPointerMove(e));
-    this.canvas.addEventListener('pointerleave', () => { this.pointer = null; if (!this.pinned) { this.setActive(-1); this.portHover = null; this.paint(); } });
+    this.canvas.addEventListener('pointerleave', () => {
+      this.pointer = null;
+      if (this.sync) { this.sync.hover = null; this.sync.paintOthers(this); }
+      if (!this.pinned) { this.setActive(-1); this.portHover = null; this.paint(); }
+    });
     this.canvas.addEventListener('pointerdown', (e) => this.onPointerDown(e));
     this.canvas.addEventListener('wheel', (e) => {
       if (!(e.ctrlKey || e.metaKey)) return; // a plain wheel scrolls
@@ -390,7 +591,7 @@ class Viewer {
     }, { passive: false });
     this.canvas.addEventListener('keydown', (e) => this.onKey(e));
     this.canvas.addEventListener('blur', () => { if (this.pinned) { this.pinned = false; this.setActive(-1); this.paint(); } });
-    this.resizer = new ResizeObserver(() => this.layout());
+    this.resizer = new ResizeObserver(() => (this.sync ? this.sync.relayout() : this.layout()));
     this.resizer.observe(this.scroller);
     const repaintColors = () => { this.colors = null; this.patterns = null; this.paint(); };
     this.themeObserver = new MutationObserver(repaintColors);
@@ -410,7 +611,7 @@ class Viewer {
 
   // called when the element is (again) in the document: the scroll position is lost when it is moved
   attached() {
-    this.layout();
+    if (this.sync) this.sync.relayout(); else this.layout();
     this.scroller.scrollLeft = this.state.scrollLeft ?? 0;
     this.scroller.scrollTop = this.state.scrollTop ?? 0;
     this.paint();
@@ -427,13 +628,13 @@ class Viewer {
   }
 
   setRange(id, { keepScale }) {
-    const c = this.choices.find((x) => x.id === id) ?? this.choices[0];
-    this.state.range = c.id;
-    this.rangeSel.value = c.id;
+    const c = this.fixed ? { id: 'fixed', ...this.fixed } : this.choices.find((x) => x.id === id) ?? this.choices[0];
+    if (!this.fixed) { this.state.range = c.id; this.rangeSel.value = c.id; }
     this.rows = selectRows(this.model, c.from, c.to);
     this.rowSet = new Set(this.rows);
     this.rowOf = new Map(Array.from(this.rows, (u, r) => [u, r]));
-    [this.c0, this.c1] = cycleSpan(this.model, this.rows);
+    if (this.fixed) [this.c0, this.c1] = [this.origin + this.sync.lo, this.origin + this.sync.hi];
+    else [this.c0, this.c1] = cycleSpan(this.model, this.rows);
     this.active = -1;
     this.pinned = false;
     this.tip.hidden = true;
@@ -482,7 +683,9 @@ class Viewer {
   }
 
   // ---- geometry ----
-  gutter() { return Math.round(Math.min(280, Math.max(130, this.viewW * 0.34))); }
+  gutter() { return this.sync ? this.sync.gutter() : Math.round(Math.min(280, Math.max(130, this.viewW * 0.34))); }
+  // the cycles that have data: c0..c1 can reach beyond the trace in an A–B view
+  dataC(c) { return Math.max(0, Math.min(this.model.nCycles - 1, c)); }
   headH() { return AXIS_H + this.ports.length * PORT_H + HEAD_GAP; }
   x(c) { return this.G + (c - this.c0) * this.scale - this.sl; }
   cycleAt(px) { return Math.floor((px - this.G + this.sl) / this.scale) + this.c0; }
@@ -494,8 +697,13 @@ class Viewer {
     this.viewW = w;
     this.G = this.gutter();
     const span = this.c1 - this.c0 + 1;
-    if (this.state.scale === null || this.state.fit !== false) { this.state.scale = this.fitScale(); this.state.fit = true; } // follows the width until zoomed
-    this.scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, this.state.scale));
+    if (this.sync) {
+      if (this.sync.scale === null) return; // laid out by sync.relayout()
+      this.scale = this.sync.scale;
+    } else {
+      if (this.state.scale === null || this.state.fit !== false) { this.state.scale = this.fitScale(); this.state.fit = true; } // follows the width until zoomed
+      this.scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, this.state.scale));
+    }
     const H = this.headH();
     this.sizer.style.width = `${Math.ceil(this.G + span * this.scale + PAD)}px`;
     const contentH = H + this.rows.length * ROW_H + 4;
@@ -526,14 +734,26 @@ class Viewer {
   zoomBy(f, anchorX = null) {
     const ax = anchorX ?? (this.G + (this.viewW - this.G) / 2);
     const c = (ax - this.G + this.scroller.scrollLeft) / this.scale; // cycles from c0 under the anchor
-    this.state.scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, this.scale * f));
+    const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, this.scale * f));
+    if (this.sync) {
+      this.sync.scale = scale; this.sync.fit = false;
+      this.sync.relayout();
+      const left = Math.max(0, c * this.scale - (ax - this.G));
+      this.scroller.scrollLeft = left;
+      this.sync.scrollTo(this.scroller.scrollLeft, this);
+      return;
+    }
+    this.state.scale = scale;
     this.state.fit = false;
     this.layout();
     this.scroller.scrollLeft = Math.max(0, c * this.scale - (ax - this.G));
     this.paint();
   }
 
-  fit() { this.state.fit = true; this.layout(); this.scroller.scrollLeft = 0; }
+  fit() {
+    if (this.sync) { this.sync.fit = true; this.sync.relayout(); this.sync.scrollTo(0); return; }
+    this.state.fit = true; this.layout(); this.scroller.scrollLeft = 0;
+  }
 
   // ---- colours ----
   readColors() {
@@ -586,24 +806,35 @@ class Viewer {
     const activeU = this.active >= 0 ? this.rows[this.active] : -1;
     const related = new Set();
     if (activeU >= 0) { for (const j of m.uops[activeU].deps) related.add(j); }
-    const hoverCycle = this.pointer && this.pointer.x > G ? this.cycleAt(this.pointer.x) : null;
+    // the cycle under the pointer (in an A–B view: also under the pointer in the other view, at the same place on the axis)
+    let hoverCycle = this.pointer && this.pointer.x > G ? this.cycleAt(this.pointer.x) : null;
+    if (hoverCycle === null && this.sync?.hover !== null && this.sync?.hover !== undefined) hoverCycle = this.sync.hover + this.origin;
+    const linked = this.linkKey ?? this.selKey; // the instruction of the uop table under the pointer, or the selected one
 
     // body
     ctx.save();
     ctx.beginPath(); ctx.rect(0, H, W, Hv - H); ctx.clip();
     for (let r = rA; r < rB; r++) {
       const u = this.rows[r];
-      if (u === activeU || related.has(u)) {
+      const mine = linked !== null && groupKey(m.uops[u]) === linked;
+      if (u === activeU || related.has(u) || mine) {
         ctx.fillStyle = C['accent-dim'];
         ctx.fillRect(0, rowY(r), W, ROW_H);
       }
+      if (mine) { ctx.fillStyle = C.accent; ctx.fillRect(0, rowY(r), 3, ROW_H); }
     }
     ctx.save();
     ctx.beginPath(); ctx.rect(G, H, W - G, Hv - H); ctx.clip();
     ctx.fillStyle = C.border;
-    for (let c = Math.ceil(cA / step) * step; c <= cB; c += step) ctx.fillRect(Math.round(this.x(c)), H, 1, Hv - H);
+    for (let c = this.origin + Math.ceil((cA - this.origin) / step) * step; c <= cB; c += step) ctx.fillRect(Math.round(this.x(c)), H, 1, Hv - H);
     if (hoverCycle !== null && hoverCycle >= this.c0 && hoverCycle <= this.c1) {
       ctx.globalAlpha = 0.6; ctx.fillStyle = C['accent-dim']; ctx.fillRect(this.x(hoverCycle), 0, Math.max(1, s), Hv); ctx.globalAlpha = 1;
+    }
+    if (this.ends) { // A–B: where each shown iteration retired its last uop
+      ctx.fillStyle = this.tag === 'B' ? C.code : C.accent;
+      ctx.globalAlpha = 0.7;
+      for (const c of this.ends.values()) if (c >= cA - 1 && c <= cB + 1) ctx.fillRect(Math.round(this.x(c + 1)) - 1, H, 2, Hv - H);
+      ctx.globalAlpha = 1;
     }
     for (let r = rA; r < rB; r++) this.drawUop(ctx, this.rows[r], rowY(r));
     if (activeU >= 0) this.drawDeps(ctx, activeU, rowY);
@@ -628,25 +859,36 @@ class Viewer {
     ctx.beginPath(); ctx.rect(G, 0, W - G, H); ctx.clip();
     ctx.fillStyle = C.subtle;
     ctx.textAlign = 'left';
-    for (let c = Math.ceil(cA / step) * step; c <= cB; c += step) {
+    for (let c = this.origin + Math.ceil((cA - this.origin) / step) * step; c <= cB; c += step) {
       const x = Math.round(this.x(c));
       ctx.fillStyle = C.border; ctx.fillRect(x, AXIS_H - 5, 1, 5);
-      ctx.fillStyle = C.subtle; ctx.fillText(String(c), x + 2, AXIS_H / 2 - 1);
+      ctx.fillStyle = C.subtle; ctx.fillText(String(c - this.origin), x + 2, AXIS_H / 2 - 1);
     }
-    for (let p = 0; p < this.ports.length; p++) this.drawPortStrip(ctx, this.ports[p], AXIS_H + p * PORT_H, cA, cB);
+    const dA = Math.max(cA, 0), dB = Math.min(cB, m.nCycles - 1);
+    for (let p = 0; p < this.ports.length; p++) this.drawPortStrip(ctx, this.ports[p], AXIS_H + p * PORT_H, dA, dB);
     if (hoverCycle !== null && hoverCycle >= this.c0 && hoverCycle <= this.c1) {
       ctx.globalAlpha = 0.6; ctx.fillStyle = C['accent-dim']; ctx.fillRect(this.x(hoverCycle), 0, Math.max(1, s), H); ctx.globalAlpha = 1;
     }
     ctx.restore();
     // port names and their use in the shown cycles
-    ctx.fillStyle = C.subtle;
-    ctx.fillText('cycle', 6, AXIS_H / 2 - 1);
+    if (this.tag) { // A–B: the side and its iterations
+      ctx.fillStyle = this.tag === 'B' ? C.code : C.accent;
+      ctx.fillRect(4, 2, 16, AXIS_H - 5);
+      ctx.fillStyle = C.background; ctx.textAlign = 'center'; ctx.fillText(this.tag, 12, AXIS_H / 2 - 1);
+      ctx.textAlign = 'left'; ctx.fillStyle = C.subtle;
+      const f = this.fixed;
+      ctx.fillText(this.fitText(ctx, f.from === f.to ? `it ${f.from}` : `it ${f.from}–${f.to}`, G - 32), 26, AXIS_H / 2 - 1);
+    } else {
+      ctx.fillStyle = C.subtle;
+      ctx.fillText('cycle', 6, AXIS_H / 2 - 1);
+    }
     ctx.font = `10px ${C.font.slice(5)}`;
     const span = this.c1 - this.c0 + 1;
+    const pc0 = this.dataC(this.c0), pc1 = this.dataC(this.c1);
     for (let p = 0; p < this.ports.length; p++) {
       const port = this.ports[p];
       const y = AXIS_H + p * PORT_H + PORT_H / 2;
-      const n = m.prefix[port.i][this.c1 + 1] - m.prefix[port.i][this.c0];
+      const n = m.prefix[port.i][pc1 + 1] - m.prefix[port.i][pc0];
       ctx.fillStyle = C.subtle;
       ctx.textAlign = 'left';
       ctx.fillText(port.short, 6, y);
@@ -685,8 +927,8 @@ class Viewer {
       // several cycles per pixel: the share of cycles with a dispatch
       const x0 = Math.max(this.G, Math.floor(this.x(cA))), x1 = Math.ceil(this.x(cB + 1));
       for (let x = x0; x < x1; x++) {
-        const a = Math.max(this.c0, Math.floor((x - this.G + this.sl) / s) + this.c0);
-        const b = Math.min(this.c1 + 1, Math.floor((x + 1 - this.G + this.sl) / s) + this.c0);
+        const a = Math.max(this.c0, 0, Math.floor((x - this.G + this.sl) / s) + this.c0);
+        const b = Math.min(this.c1 + 1, m.nCycles, Math.floor((x + 1 - this.G + this.sl) / s) + this.c0);
         if (b <= a) continue;
         const f = (pre[b] - pre[a]) / (b - a);
         if (f <= 0) continue;
@@ -830,6 +1072,7 @@ class Viewer {
     const r = this.canvas.getBoundingClientRect();
     const x = e.clientX - r.left, y = e.clientY - r.top;
     this.pointer = { x, y };
+    if (this.sync) { this.sync.hover = x > this.G ? this.cycleAt(x) - this.origin : null; this.sync.paintOthers(this); }
     if (this.drag) {
       this.scroller.scrollLeft = this.drag.sl - (e.clientX - this.drag.x);
       this.scroller.scrollTop = this.drag.st - (e.clientY - this.drag.y);
@@ -881,8 +1124,38 @@ class Viewer {
     const r = this.canvas.getBoundingClientRect();
     const x = e.clientX - r.left, y = e.clientY - r.top;
     const row = this.rowAt(y);
+    if (row >= 0) this.pick(row);
     if (row >= 0 && row === this.active && this.pinned) { this.pinned = false; return; }
     if (row >= 0) { this.pinned = true; this.setActive(row, { x, y }); this.paint(); }
+  }
+
+  // a row was clicked (or Enter): its instruction is selected; the page links it to the uop table
+  pick(r) {
+    const g = groupOfUop(this.model.uops[this.rows[r]]);
+    this.selKey = groupKey(g);
+    this.paint();
+    this.onPickGroup?.(g);
+  }
+
+  // the uop table's row under the pointer (key: groupKey, or null)
+  setLink(key) { if (key !== this.linkKey) { this.linkKey = key; this.paint(); } }
+  setSel(key) { if (key !== this.selKey) { this.selKey = key; this.paint(); } }
+  // scrolls to the first row of an instruction; false if it has none among the shown rows
+  revealGroup(key) {
+    for (let r = 0; r < this.rows.length; r++) {
+      if (groupKey(this.model.uops[this.rows[r]]) !== key) continue;
+      if (this.state.mode === 'table') { // the event table: its rows are this.rows
+        const trs = this.tableBox.querySelector('tbody')?.rows ?? [];
+        for (const t of this.tableBox.querySelectorAll('tr.tl-sel')) t.classList.remove('tl-sel');
+        for (let k = r; k < this.rows.length; k++) if (groupKey(this.model.uops[this.rows[k]]) === key) trs[k]?.classList.add('tl-sel');
+        trs[r]?.scrollIntoView({ block: 'nearest' });
+        return true;
+      }
+      this.reveal(r);
+      this.paint();
+      return true;
+    }
+    return false;
   }
 
   onKey(e) {
@@ -902,6 +1175,7 @@ class Viewer {
       case '-': case '_': this.zoomBy(1 / 1.6); e.preventDefault(); return;
       case '0': this.fit(); e.preventDefault(); return;
       case 'Escape': this.pinned = false; this.setActive(-1); this.paint(); return;
+      case 'Enter': if (r >= 0) { this.pick(r); e.preventDefault(); } return;
       default: return;
     }
     e.preventDefault();
@@ -930,6 +1204,8 @@ class Viewer {
   setActive(r, at = null, { announce = false } = {}) {
     const changed = r !== this.active;
     this.active = r;
+    const hk = r >= 0 ? groupKey(this.model.uops[this.rows[r]]) : null;
+    if (hk !== this.hoverKey) { this.hoverKey = hk; this.onHoverGroup?.(r >= 0 ? groupOfUop(this.model.uops[this.rows[r]]) : null); }
     if (r < 0 && !(at && at.portCycle)) { this.tip.hidden = true; this.canvas.removeAttribute('aria-activedescendant'); return; }
     if (changed || at?.portCycle || !this.tip.hidden || announce) this.showTip(r, at);
     if (announce && r >= 0) this.live.textContent = this.tipText(r);
@@ -1012,72 +1288,118 @@ class Viewer {
 
 function r0Rnd(v, rA) { return rA > 0 ? v.model.uops[v.rows[rA - 1]].rnd : -1; }
 
-// The panel in the result view: a <details> that loads the trace when it is opened.
-//   analyze(request) -> promise of a response (the engine's analyze)
+// Whether a run's trace is too large to request without asking: null, or {instrs, iterations}.
+export function traceGuard(side) {
+  const r = side?.response;
+  if (r?.trace) return null;
+  const instrs = (r?.rows ?? []).filter((x) => x.kind === 'instr').length;
+  return traceEstimate(instrs, side?.request) > TRACE_LIMIT ? { instrs, iterations: side?.request?.minIterations ?? 10 } : null;
+}
+
+// The model of a run's trace (side: {response, request, archKey}; the response has the trace if it was made with it,
+// otherwise the run is analyzed again with includeTrace). Resolves to {model, buildMs}; throws on failure.
+export async function loadTrace(side, { analyze, config = () => null }) {
+  const r = side.response;
+  let trace = r?.trace;
+  if (!trace) {
+    const res = await analyze({ ...side.request, includeTrace: true });
+    if (!res || res.error) throw new Error(`The trace could not be made: ${res?.error ?? 'no response'}`);
+    if (!res.trace) throw new Error('The analyzer returned no trace.');
+    trace = res.trace;
+  }
+  const cfg = config(side);
+  const t0 = performance.now();
+  let model;
+  try { model = buildModel(trace, { portNames: cfg?.portNames ?? null, retireWidth: cfg?.retireWidth ?? null, issueDispatchDelay: cfg?.issueDispatchDelay ?? null }); } catch (e) { throw new Error(`The trace could not be read: ${e?.message ?? e}`); }
+  return { model, buildMs: performance.now() - t0 };
+}
+
+const button = (text, f) => { const b = el('button', { type: 'button', class: 'plain', text }); b.addEventListener('click', f); return b; };
+
+// The panel in the result view: a <details> that shows the trace when it is opened. The trace of the shown run is
+// loaded once, when the panel is opened or something else asks for it (want(): the wait column), and shared.
+//   analyze(request) -> promise of a response (the engine's analyze); config(view) -> configs[arch] of uarch.json
+//   onToggle(open): the panel was opened or closed; onHoverGroup(group | null), onPickGroup(group): a uop row of the
+//   trace under the pointer / clicked, as its instruction (rowGroups); onTrace(): the state of the trace changed
 // update(view) is called on every redraw of the result with the shown view ({response, request, archKey, ...});
 // it returns the element to put into the result (always the same element).
-export function createTracePanel({ analyze, config = () => null }) {
+export function createTracePanel({ analyze, config = () => null, onToggle = null, onHoverGroup = null, onPickGroup = null, onTrace = null }) {
   const body = el('div', { class: 'trace-body' });
   const summary = el('summary', { title: 'every uop of a few iterations, by cycle' }, 'cycle by cycle');
   const details = el('details', { class: 'trace-panel' }, summary, body);
   const state = { range: 'steady', mode: 'chart', scale: null, fit: true, scrollLeft: 0, scrollTop: 0 };
-  let view = null, viewer = null, loading = null, force = false;
+  let view = null, viewer = null;
+  let tr = null;      // the trace of `view`: {view, state: 'idle' | 'loading' | 'ready' | 'error' | 'large' | 'mock', model, error, force}
+  let linkKey = null, selKey = null;
+  let pending = null; // {view, key}: scroll to this instruction once the trace is shown
+  let lastOpen = false;
 
-  const message = (text, ...extra) => { viewer?.destroy(); viewer = null; body.replaceChildren(el('p', { class: 'trace-msg', text }, ...extra)); };
-  const button = (text, f) => { const b = el('button', { type: 'button', class: 'plain', text }); b.addEventListener('click', f); return b; };
+  const message = (text, ...extra) => { viewer?.destroy(); viewer = null; details.wuicaTrace = null; body.replaceChildren(el('p', { class: 'trace-msg', text }, ...extra)); };
 
-  function show(v, trace) {
-    let model;
-    const t0 = performance.now();
-    const cfg = config(v);
-    try { model = buildModel(trace, { portNames: cfg?.portNames ?? null, retireWidth: cfg?.retireWidth ?? null, issueDispatchDelay: cfg?.issueDispatchDelay ?? null }); } catch (e) { message(`The trace could not be read: ${e?.message ?? e}`); return; }
-    const buildMs = performance.now() - t0;
-    viewer?.destroy();
-    viewer = new Viewer(model, state, { onState: () => {} });
-    viewer.root.dataset.buildMs = buildMs.toFixed(1);
-    body.replaceChildren(viewer.root);
-    details.wuicaTrace = viewer; // for tests
-    viewer.attached();
+  function want(force = false) {
+    const v = view;
+    if (!v) return;
+    if (!tr || tr.view !== v) tr = { view: v, state: 'idle', model: null, error: null, force: false };
+    if (force) tr.force = true;
+    if (tr.state === 'loading' || tr.state === 'ready') return;
+    if (v.response?.mock && !v.response?.trace) { tr.state = 'mock'; changed(); return; }
+    if (traceGuard(v) && !tr.force) { tr.state = 'large'; changed(); return; }
+    const t = tr;
+    t.state = 'loading';
+    changed();
+    loadTrace(v, { analyze, config }).then(({ model, buildMs }) => {
+      if (tr !== t) return;
+      t.state = 'ready'; t.model = model; t.buildMs = buildMs;
+      changed();
+    }, (e) => {
+      if (tr !== t) return;
+      t.state = 'error'; t.error = e;
+      changed();
+    });
   }
 
-  function load() {
-    const v = view;
-    if (!v || !details.open) return;
-    if (viewer && viewer.view === v) return;
-    if (loading && loading.view === v) return;
-    const r = v.response;
-    if (r?.trace) { show(v, r.trace); viewer.view = v; return; }
-    if (r?.mock) { message('The mock engine (?mock=1) has no traces.'); return; }
-    const instrs = (r?.rows ?? []).filter((x) => x.kind === 'instr').length;
-    const est = traceEstimate(instrs, v.request);
-    if (est > TRACE_LIMIT && !force) {
-      message(`The trace of ${instrs} instructions × ${v.request?.minIterations ?? 10} iterations would be very large. `,
-        button('load it anyway', () => { force = true; load(); }));
+  function changed() { render(); onTrace?.(); }
+
+  // (only while the panel is on the page: the panel of the other mode keeps its last view and loads nothing)
+  function render() {
+    if (!details.open || !details.isConnected) return;
+    if (!tr || tr.view !== view || tr.state === 'idle') { if (view) want(); return; }
+    if (tr.state === 'ready') {
+      if (viewer && viewer.model === tr.model) return;
+      viewer?.destroy();
+      viewer = new Viewer(tr.model, state, { onHoverGroup: (g) => onHoverGroup?.(g), onPickGroup: (g) => { selKey = groupKey(g); onPickGroup?.(g); } });
+      viewer.view = view;
+      viewer.linkKey = linkKey; viewer.selKey = selKey;
+      viewer.root.dataset.buildMs = tr.buildMs.toFixed(1);
+      body.replaceChildren(viewer.root);
+      details.wuicaTrace = viewer; // for tests
+      if (details.isConnected) viewer.attached();
+      applyPending();
       return;
     }
-    message('simulating again with the trace…');
-    body.firstChild.classList.add('loading');
-    const p = { view: v };
-    loading = p;
-    (async () => {
-      try {
-        const res = await analyze({ ...v.request, includeTrace: true });
-        if (view !== v || loading !== p) return;
-        loading = null;
-        if (!res || res.error) { message(`The trace could not be made: ${res?.error ?? 'no response'}`, ' ', button('try again', load)); return; }
-        if (!res.trace) { message('The analyzer returned no trace.'); return; }
-        show(v, res.trace);
-        viewer.view = v;
-      } catch (e) {
-        if (view !== v || loading !== p) return;
-        loading = null;
-        const cancelled = e?.name === 'CancelledError';
-        message(cancelled ? 'The trace was cancelled. ' : `The trace could not be made: ${e?.message ?? e}. `, button('try again', load));
-      }
-    })();
+    if (tr.state === 'mock') { message('The mock engine (?mock=1) has no traces.'); return; }
+    if (tr.state === 'large') {
+      const g = traceGuard(view);
+      message(`The trace of ${g.instrs} instructions × ${g.iterations} iterations would be very large. `, button('load it anyway', () => want(true)));
+      return;
+    }
+    if (tr.state === 'loading') { message('simulating again with the trace…'); body.firstChild.classList.add('loading'); return; }
+    const e = tr.error;
+    const retry = () => { if (tr) tr.state = 'idle'; want(); };
+    message(e?.name === 'CancelledError' ? 'The trace was cancelled. ' : `${String(e?.message ?? e).replace(/^(?!The trace)/, 'The trace could not be made: ')} `, button('try again', retry));
   }
 
-  details.addEventListener('toggle', () => { if (details.open) load(); });
+  function applyPending() {
+    if (!pending || !viewer || pending.view !== view) return;
+    const { key } = pending;
+    pending = null;
+    if (viewer.revealGroup(key) && details.isConnected) viewer.root.scrollIntoView({ block: 'nearest' });
+  }
+
+  details.addEventListener('toggle', () => {
+    if (details.open) render();
+    if (details.open !== lastOpen) { lastOpen = details.open; onToggle?.(details.open); }
+  });
 
   return {
     element: details,
@@ -1085,17 +1407,148 @@ export function createTracePanel({ analyze, config = () => null }) {
     update(v) {
       if (v !== view) {
         view = v;
-        force = false;
-        loading = null;
-        if (viewer) { viewer.destroy(); viewer = null; }
+        tr = null;
+        linkKey = null;
+        if (pending && pending.view !== v) pending = null;
+        if (viewer) { viewer.destroy(); viewer = null; details.wuicaTrace = null; }
         state.scale = null; state.fit = true; state.scrollLeft = 0; state.scrollTop = 0;
         body.replaceChildren();
-        if (details.open) load();
+        render();
       }
-      // after renderResult has put the element into the page: restore the scroll position
-      queueMicrotask(() => { if (viewer && details.isConnected) viewer.attached(); });
+      // after renderResult has put the element into the page: load (if open), restore the scroll position
+      queueMicrotask(() => { if (!details.isConnected) return; if (viewer) viewer.attached(); else render(); });
       return details;
     },
     get open() { return details.open; },
+    get view() { return view; },
+    setOpen(open) { lastOpen = !!open; if (details.open !== !!open) details.open = !!open; },
+    // the trace of the shown run: {state, model} (state 'none' before the first run); want(force) loads it
+    trace() { return tr && tr.view === view ? { state: tr.state, model: tr.model, error: tr.error } : { state: view ? 'idle' : 'none', model: null }; },
+    want,
+    // the uop table's row under the pointer (a group of rowGroups, or null)
+    highlight(g) { linkKey = groupKey(g); viewer?.setLink(linkKey); },
+    // the selected instruction (or null); reveal: open the panel and scroll the trace to it
+    select(g, { reveal = false } = {}) {
+      selKey = groupKey(g);
+      viewer?.setSel(selKey);
+      if (!reveal || selKey === null) return;
+      pending = { view, key: selKey };
+      if (!details.open) { details.open = true; return; } // the toggle shows the trace (when it is there), then scrolls
+      applyPending();
+    },
+  };
+}
+
+// A–B: the traces of both blocks stacked, on one time axis (same scale, cycle 0 = where the same iteration starts on
+// each side; abWindow), scrolled and zoomed together. A <details> like the single panel; both traces are loaded when it
+// is opened. view: the A–B view of ab.js ({a, b, scale}; each side {response, request, archKey}).
+export function createABTracePanel({ analyze, config = () => null, onToggle = null }) {
+  const body = el('div', { class: 'trace-body' });
+  const summary = el('summary', { title: 'A and B on one time axis' }, 'cycle by cycle');
+  const details = el('details', { class: 'trace-panel trace-ab' }, summary, body);
+  const ui = { range: 'steady' };
+  let view = null, job = null; // job: {view, state, models, error, force}
+  let viewers = [], sync = null, lastOpen = false;
+  const usable = (s) => !!s && !!s.request && !!s.response && typeof s.response === 'object' && !('error' in s.response) && Array.isArray(s.response.rows);
+
+  const message = (text, ...extra) => { destroy(); body.replaceChildren(el('p', { class: 'trace-msg', text }, ...extra)); };
+  function destroy() { for (const v of viewers) v.destroy(); viewers = []; sync = null; details.wuicaTraces = null; }
+
+  function want(force = false) {
+    const v = view;
+    if (!v) return;
+    if (!job || job.view !== v) job = { view: v, state: 'idle', models: null, error: null, force: false };
+    if (force) job.force = true;
+    if (job.state === 'loading' || job.state === 'ready') return;
+    if (!usable(v.a) || !usable(v.b)) { job.state = 'missing'; render(); return; }
+    if ((v.a.response.mock && !v.a.response.trace) || (v.b.response.mock && !v.b.response.trace)) { job.state = 'mock'; render(); return; }
+    if ((traceGuard(v.a) || traceGuard(v.b)) && !job.force) { job.state = 'large'; render(); return; }
+    const j = job;
+    j.state = 'loading';
+    render();
+    (async () => {
+      try {
+        const a = await loadTrace(v.a, { analyze, config });
+        if (job !== j) return;
+        const b = await loadTrace(v.b, { analyze, config });
+        if (job !== j) return;
+        j.state = 'ready'; j.models = { a: a.model, b: b.model };
+      } catch (e) {
+        if (job !== j) return;
+        j.state = 'error'; j.error = e;
+      }
+      render();
+    })();
+  }
+
+  function render() {
+    if (!details.open || !details.isConnected) return;
+    if (!job || job.view !== view || job.state === 'idle') { if (view) want(); return; }
+    if (job.state === 'ready') { if (!viewers.length) build(); return; }
+    if (job.state === 'missing') { message('Both sides need a result.'); return; }
+    if (job.state === 'mock') { message('The mock engine (?mock=1) has no traces.'); return; }
+    if (job.state === 'large') { message('The traces would be very large. ', button('load them anyway', () => want(true))); return; }
+    if (job.state === 'loading') { message('simulating both again with the trace…'); body.firstChild.classList.add('loading'); return; }
+    const e = job.error;
+    message(e?.name === 'CancelledError' ? 'The trace was cancelled. ' : `${String(e?.message ?? e).replace(/^(?!The trace)/, 'The trace could not be made: ')} `,
+      button('try again', () => { if (job) job.state = 'idle'; want(); }));
+  }
+
+  function build() {
+    destroy();
+    const { a: ma, b: mb } = job.models;
+    const w = abWindow(ma, mb, { choice: ui.range, scale: view.scale ?? 1 });
+    sync = new TimeSync(w.lo, w.hi);
+    const st = () => ({ range: 'fixed', mode: 'chart', scale: null, fit: true, scrollLeft: 0, scrollTop: 0 });
+    const va = new Viewer(ma, st(), { sync, fixed: w.a, tag: 'A' });
+    const vb = new Viewer(mb, st(), { sync, fixed: w.b, tag: 'B' });
+    viewers = [va, vb];
+    sync.viewers = viewers;
+
+    const sel = el('select', { class: 'trace-ab-range' }, el('option', { value: 'steady', text: 'steady state' }), el('option', { value: 'all', text: 'all iterations' }));
+    sel.value = ui.range;
+    sel.addEventListener('change', () => { ui.range = sel.value === 'all' ? 'all' : 'steady'; build(); });
+    const label = el('span', { class: 'trace-scale', 'aria-live': 'polite' });
+    const zoomBtn = (text, aria, f) => { const b = el('button', { type: 'button', class: 'trace-zoom', 'aria-label': aria, title: aria, text }); b.addEventListener('click', f); return b; };
+    const tools = el('div', { class: 'trace-tools' },
+      el('label', { class: 'inline' }, 'show ', sel),
+      el('span', { class: 'trace-zoomtools' },
+        zoomBtn('−', 'zoom out', () => va.zoomBy(1 / 1.6)), zoomBtn('+', 'zoom in', () => va.zoomBy(1.6)), zoomBtn('fit', 'fit the cycles to the width', () => va.fit()), label));
+    const relayout = sync.relayout.bind(sync);
+    sync.relayout = () => {
+      relayout();
+      if (sync?.scale) label.textContent = sync.scale >= 0.95 ? `${+sync.scale.toFixed(1)} px per cycle` : `${+(1 / sync.scale).toFixed(1)} cycles per px`;
+    };
+    body.replaceChildren(el('div', { class: 'trace-viewer trace-ab-view' }, tools, va.root, vb.root, legendElement()));
+    details.wuicaTraces = { a: va, b: vb, sync, window: w }; // for tests
+    if (details.isConnected) attached();
+  }
+
+  function attached() {
+    if (!sync) return;
+    sync.relayout();
+    for (const v of viewers) { v.scroller.scrollLeft = v.state.scrollLeft ?? 0; v.scroller.scrollTop = v.state.scrollTop ?? 0; v.paint(); }
+  }
+
+  details.addEventListener('toggle', () => {
+    if (details.open) render();
+    if (details.open !== lastOpen) { lastOpen = details.open; onToggle?.(details.open); }
+  });
+
+  return {
+    element: details,
+    update(v) {
+      if (v !== view) {
+        view = v;
+        job = null;
+        destroy();
+        body.replaceChildren();
+        render();
+      }
+      queueMicrotask(() => { if (!details.isConnected) return; if (sync) attached(); else render(); });
+      return details;
+    },
+    get open() { return details.open; },
+    setOpen(open) { lastOpen = !!open; if (details.open !== !!open) details.open = !!open; },
   };
 }

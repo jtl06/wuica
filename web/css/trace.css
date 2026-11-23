@@ -78,6 +78,39 @@
 .trace-table td:last-child, .trace-table th:last-child { text-align: left; color: var(--description); }
 .trace-copybuf { position: fixed; opacity: 0; }
 
+/* A–B (createABTracePanel): the two timelines stacked on one axis, each a little shorter */
+.trace-ab-view { gap: 0.5rem; }
+.trace-ab-view > .trace-viewer { gap: 0; }
+.trace-ab .trace-scroll { max-height: min(42vh, 22rem); scrollbar-gutter: stable; }
+
+/* the uop table linked to the trace (js/trace-link.js): a row is a control; the trace marks its instruction */
+table.uops.tl-linkable tbody tr { cursor: pointer; }
+table.uops.tl-linkable tbody tr:focus { outline: none; }
+table.uops.tl-linkable tbody tr:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.grid tbody tr.tl-linked > * { background-color: var(--accent-dim); }
+.grid tbody tr.tl-sel > * { background-color: rgb(var(--accent-rgb) / 0.16); box-shadow: inset 0 1px rgb(var(--accent-rgb) / 0.55), inset 0 -1px rgb(var(--accent-rgb) / 0.55); }
+.grid tbody tr.tl-linked > td.heat, .grid tbody tr.tl-sel > td.heat { background-color: transparent; } /* the shading alone: keeps its text AA */
+
+/* the wait column: where the uops of each instruction spent their time (cycles per uop) */
+.tl-waits-tools { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.75ch; }
+.tl-waits-tools label { cursor: pointer; }
+.tl-waits-tools label:has(input:checked) { color: var(--accent); }
+.tl-waits-tools label:has(input:disabled) { cursor: not-allowed; }
+.tl-legend { display: inline-flex; flex-wrap: wrap; gap: 0 1.5ch; font-size: 0.8667rem; }
+.tl-key { display: inline-flex; align-items: center; gap: 0.5ch; }
+.tl-sw { display: inline-block; width: 0.9rem; height: 0.6rem; }
+.grid th.tl-wait, .grid td.tl-wait { border-left: 1px solid var(--border); text-align: left; }
+.grid thead th.tl-wait { cursor: help; }
+.grid td.tl-wait { cursor: help; }
+.wbar { display: flex; width: 7rem; height: 0.7em; vertical-align: middle; }
+.wbar > span { display: block; height: 100%; min-width: 1px; }
+.w-queue { background: color-mix(in srgb, var(--subtle) 40%, transparent); }
+.w-delay { background: var(--subtle); }
+.w-operands { background: repeating-linear-gradient(135deg, var(--caveat) 0 1.5px, transparent 1.5px 4px); box-shadow: inset 0 -1px var(--caveat); }
+.w-port { background: var(--external); }
+.w-exec { background: var(--accent); }
+.w-retire { background: color-mix(in srgb, var(--cursor) 60%, transparent); }
+
 @media (max-width: 640px) {
   .trace-tools { gap: 0.4rem 1rem; }
   .trace-tip .tt-stages { grid-template-columns: max-content max-content; }

@@ -8,7 +8,8 @@
 import fs from 'node:fs';
 import zlib from 'node:zlib';
 import readline from 'node:readline';
-import { buildModel, relevantRounds, rangeChoices, selectRows, cycleSpan, uopDetails, tableRows, toTSV, TABLE_HEAD, STAGES, uopKey, traceEstimate, TRACE_LIMIT } from '../web/js/trace.js';
+import { buildModel, relevantRounds, rangeChoices, selectRows, cycleSpan, uopDetails, tableRows, toTSV, TABLE_HEAD, STAGES, uopKey, traceEstimate, TRACE_LIMIT,
+  rowGroups, rowOfGroup, groupKey, waitBreakdown, uopWaits, waitText, abWindow, roundStart, roundEnds } from '../web/js/trace.js';
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -66,6 +67,24 @@ const every = Number(process.argv[2] || 4);
   let threw = false; try { buildModel({}); } catch { threw = true; }
   check(threw, 'mini: not a trace');
   check(traceEstimate(50, { minIterations: 10, minCycles: 500 }) < TRACE_LIMIT && traceEstimate(3000, { minIterations: 20, minCycles: 500 }) > TRACE_LIMIT, 'size guard');
+
+  // the uop table's rows as groups of the trace: the stack-sync row is the push's; the macro-fused jnz is the dec's
+  const rows4 = [{ kind: 'stackSync' }, { kind: 'instr', label: 'push rax' }, { kind: 'instr', label: 'xor eax, eax' }, { kind: 'instr', label: 'dec r15' }, { kind: 'instr', label: 'jnz 0x0', notes: 'M' }];
+  const g = rowGroups(rows4);
+  check(g.map((x) => `${groupKey(x)}${x.fused ? '+' : ''}`).join() === '0/stackSync,0/instr,1/instr,2/instr,2/instr+', 'mini: table rows as instructions of the trace', JSON.stringify(g));
+  check(rowOfGroup(g, { instrID: 2, kind: 'instr' }) === 3 && rowOfGroup(g, { instrID: 0, kind: 'stackSync' }) === 0 && rowOfGroup(g, { instrID: 9, kind: 'instr' }) === -1 && rowOfGroup(g, null) === -1 && rowGroups(null).length === 0, 'mini: the row of an instruction');
+  check(m.uops.every((u) => g.some((x) => !x.fused && groupKey(x) === groupKey(u))), 'mini: every uop belongs to a row');
+
+  // the wait breakdown (cycles per uop): exact values
+  const wb = waitBreakdown(m, 0, 0);
+  const pick = (k) => { const w = wb.get(k); return w && ['queue', 'delay', 'operands', 'port', 'exec', 'retire', 'n'].map((p) => w[p]).join(); };
+  check(pick('0/stackSync') === '2,0,1,0,1,2,1' && pick('0/instr') === '2,0,1.5,0,2,1.5,2' && pick('1/instr') === '1,0,0,0,0,5,1' && !wb.has('2/instr') && wb.max === 7,
+    'mini: waits per instruction (queue, delay, operands, port, execute, retire; the eliminated xor only waits to retire; the unretired dec is left out)', JSON.stringify([...wb]));
+  const wb1 = waitBreakdown(buildModel(trace, { issueDispatchDelay: 1 }), 0, 0);
+  check(wb1.get('0/instr').delay === 1 && wb1.get('0/instr').operands === 0.5, 'mini: the issue → dispatch delay is its own part', JSON.stringify(wb1.get('0/instr')));
+  check(waitText(wb.get('1/instr')) === 'queue 1.0 · delay 0.0 · operands 0.0 · port 0.0 · execute 0.0 · retire 5.0', 'mini: the text', waitText(wb.get('1/instr')));
+  check(uopWaits({ ...m.uops[0], idq: null }, 0).queue === null && uopWaits(m.uops[4], 0) === null, 'mini: no front-end event: the queue is unknown; an unfinished uop has none');
+  check(roundStart(m, 0) === 2 && roundStart(m, 5) === null && roundEnds(m, 0, 0).size === 0, 'mini: the start of a round; a round that did not retire has no end');
 }
 
 // --- 2. the reference's traces ----------------------------------------------------------------------------------------
@@ -84,6 +103,8 @@ function rawEvents(trace) { // the number of distinct units per level, straight 
 
 const sets = ['sim_fixtures', 'extra_sim_fixtures'].filter((s) => fs.existsSync(new URL(`fixtures/generated/${s}.jsonl.gz`, root)));
 if (sets.length === 0) console.log('fixtures/generated is missing: the reference traces are skipped');
+let waitN = 0, waitBad = 0;
+const waitBadEx = [];
 let cases = 0, tpFar = 0, tpSame = 0, tpWide = 0, tpWideSame = 0, kinds = new Set(), order = 0, orderBad = [], maxMs = 0;
 const tpDiff = [];
 let ii = 0;
@@ -109,6 +130,14 @@ for (const set of sets) {
     const used = m.ports.reduce((a, p) => a + p.used, 0);
     if (used !== raw.dispatched) check(false, `${c.file}/${c.arch}: dispatches`, `${used} != ${raw.dispatched}`);
     for (const u of m.uops) {
+      // the waits of a finished uop add up to retired − (IDQ or predecode), or to retired − issued without those
+      const w = uopWaits(u, m.issueDispatchDelay);
+      if (w) {
+        const sum = w.delay + w.operands + w.port + w.exec + w.retire;
+        const fe = u.idq ?? u.iq;
+        if (sum !== u.retired - u.issued || (w.queue !== null && w.queue + sum !== u.retired - fe) || (fe === null) !== (w.queue === null)) { waitBad++; if (waitBadEx.length < 3) waitBadEx.push(`${c.file}/${c.arch} ${u.key} ${JSON.stringify(w)}`); }
+        waitN++;
+      }
       kinds.add(u.kind);
       if (u.deps.length !== u.depKeys.length) check(false, `${c.file}/${c.arch}: a dependency does not resolve`, u.key);
       // the stages are in order
@@ -131,6 +160,7 @@ for (const set of sets) {
 if (cases) {
   check(orderBad.length === 0, `reference traces: the stages of every uop are in order (${order} uops)`, orderBad.join('\n'));
   check(kinds.has('stackSync') && kinds.has('instr'), 'reference traces: stack-sync uops are recognized', [...kinds].join());
+  check(waitN > 1000 && waitBad === 0, `reference traces: the waits of every finished uop add up to its time from the IDQ to retirement (${waitN} uops)`, waitBadEx.join('\n'));
   // The trace ends one cycle before uiCA's simulation does, so the last round can be one short; nearly all agree.
   check(tpSame / cases >= 0.99 && tpFar === 0, `reference traces: the steady-state rounds give uiCA's throughput (${tpSame}/${cases} equal, ${tpFar} off by more than 0.02)`, tpDiff.join('\n'));
   console.log(`${cases} reference traces (every ${every}th): throughput from the steady-state rounds equals uiCA's in ${tpSame} (${tpWideSame}/${tpWide} with ≥5 rounds); slowest model ${maxMs.toFixed(1)} ms`);
@@ -152,6 +182,14 @@ if (fs.existsSync(wasmPath) && fs.existsSync(new URL('data/uarch.json', root))) 
   body += '49ffcf';
   const rel = (0x100000000 - (body.length / 2 + 6)).toString(16).padStart(8, '0').match(/../g).reverse().join('');
   const hex = body + '0f85' + rel;
+  // the LSD (Haswell): its uops have no IDQ (or predecode) event, so their queue time is unknown, not 0
+  {
+    await e.loadArch(configs.HSW.name, fs.readFileSync(new URL(`data/arch/${configs.HSW.name}.json`, root)));
+    const r = await e.analyze(makeRequest('f3480fb80cc74801ca48ffc04839f072ef', 'HSW', { includeTrace: true })); // popcnt loop
+    const m = buildModel(r.trace, { issueDispatchDelay: configs.HSW.issueDispatchDelay, retireWidth: configs.HSW.retireWidth });
+    const wb = waitBreakdown(m);
+    check(m.uops.every((u) => u.idq === null && u.iq === null) && wb.size > 0 && [...wb.values()].every((w) => w.queue === null && w.nq === 0 && w.total > 0), 'HSW (LSD): the queue wait is unknown; the other parts are there', JSON.stringify([...wb]));
+  }
   for (const arch of ['SKL', 'ZEN3']) {
     await e.loadArch(configs[arch].name, fs.readFileSync(new URL(`data/arch/${configs[arch].name}.json`, root)));
     const r = await e.analyze(makeRequest(hex, arch, { includeTrace: true }));
@@ -164,6 +202,16 @@ if (fs.existsSync(wasmPath) && fs.existsSync(new URL('data/uarch.json', root))) 
     const all = selectRows(m, 0, m.nRounds - 1);
     check(all.length > 500 && m.labels[48].startsWith('dec r15 + jnz 0x'), `${arch}: rows and labels`, `${all.length} ${m.labels[48]}`);
     if (arch === 'ZEN3') check(m.ports.some((p) => p.name === 'ALU0') && m.ports.every((p) => !p.name.startsWith('Port ')), 'ZEN3: port names from uarch.json');
+    // the rows of the response are the trace's instructions (same text), and every uop has its row
+    const groups = rowGroups(r.rows);
+    const labelOk = r.rows.every((x, i) => x.kind !== 'instr' || groups[i].fused || m.instructions[groups[i].instrID].asm === x.label);
+    check(labelOk && m.uops.every((u) => rowOfGroup(groups, u) >= 0) && groups.filter((x) => x.fused).length === 1, `${arch}: every row is its instruction in the trace; every uop has a row`);
+    const wb = waitBreakdown(m);
+    check(wb.size > 40 && [...wb.values()].every((w) => w.n > 0 && w.total > 0 && w.queue !== null) && wb.from === m.relevant.first, `${arch}: the waits of every instruction`);
+    const w2 = abWindow(m, m, { choice: 'steady' });
+    check(w2.a.from === m.relevant.first && w2.a.to === w2.a.from + 2 && w2.a.origin === w2.b.origin && w2.lo <= 0 && w2.hi > 0, `${arch}: an A–B window of a block with itself`, JSON.stringify(w2));
+    const w3 = abWindow(m, m, { choice: 'steady', scale: 2 });
+    check(w3.b.from === Math.floor(w3.a.from / 2) && w3.b.to === w3.b.from + 1, `${arch}: B unrolled ×2: half the iterations from half the index`, JSON.stringify(w3));
     console.log(`${arch} 50-instruction loop: trace ${(JSON.stringify(r.trace).length / 1024).toFixed(0)} KiB, ${r.trace.cycles.length} cycles, ${m.uops.length} uops; model ${ms.toFixed(1)} ms`);
   }
 } else {

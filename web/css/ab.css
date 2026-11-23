@@ -3,7 +3,7 @@
 body:not(.ab-on) .ab-only { display: none !important; }
 /* the table of the checked CPUs and the sweep belong to single mode; their state is kept for it */
 body.ab-on #cmp-cpus, body.ab-on #sweep-row { display: none !important; }
-body.ab-on .more { display: none; }
+body.ab-on .more:not(:has(> #trace-slot:not([hidden]))) { display: none; } /* except for the traces of A and B */
 
 /* the switch */
 .ab-switch .ab-tools { display: inline-flex; flex-wrap: wrap; gap: 0.5rem; }

@@ -178,13 +178,25 @@ try {
         document.querySelector('details.report-wrap summary').click(); await wait(50); // the wide text report, open
         const o = { w: ${w}, single: overflow(), side: rect('#results').left > rect('#code').right, gap: rect('#results').top - rect('#run').bottom };
         document.querySelector('#advanced summary').click(); await wait(50); o.pop = overflow(); document.querySelector('#advanced summary').click();
+        // the trace, open, with the wait column and a selected row
+        const tpanel = () => document.querySelector('#trace-slot details.trace-panel');
+        tpanel().querySelector('summary').click(); await until(() => tpanel().wuicaTrace); await wait(100);
+        document.querySelector('.tl-waits-box').click(); await until(() => document.querySelector('th.tl-wait'));
+        document.querySelector('table.uops tbody tr').click(); await wait(100);
+        o.trace = overflow(); o.traceWide = Math.abs(rect(tpanel()).right - rect('#more').right) < 4;
+        document.querySelector('.tl-waits-box').click(); await wait(50);
         await done(() => $('cmp-ab').click()); await wait(200);
         o.ab = overflow(); o.abSide = rect('#code-b').left > rect('#code').right; o.abBelow = rect('#results').top > rect('#run').bottom; o.abTable = $('cmp-cpus').offsetParent === null;
+        // the A–B traces (the trace stays open)
+        await until(() => tpanel()?.wuicaTraces); await wait(100);
+        o.abTrace = overflow(); o.abTraceBelow = rect(tpanel()).top > rect('#results').bottom;
+        tpanel().querySelector('summary').click(); await wait(50);
         await done(() => $('cmp-single').click());
         return o;`);
       out.push(m);
     }
     check(out.every((m) => m.single <= 0 && m.pop <= 0 && m.ab <= 0), 'layout: no sideways scrolling from 320 to 2560 px (single with three CPUs, the sweep and the report open; the options open; A–B)', JSON.stringify(out));
+    check(out.every((m) => m.trace <= 0 && m.traceWide && m.abTrace <= 0 && m.abTraceBelow), 'layout: the trace (with the wait column and a selected row) and the A–B traces: full width below, no sideways scrolling from 320 to 2560 px', JSON.stringify(out.map((m) => [m.w, m.trace, m.traceWide, m.abTrace, m.abTraceBelow])));
     check(out.every((m) => m.side === m.w >= 1200), 'layout: input and result side by side from 1200 px, stacked below', JSON.stringify(out.map((m) => [m.w, m.side])));
     check(out.every((m) => m.abBelow && m.abTable && m.abSide === m.w > 800), 'layout: A–B: A and B side by side (stacked on narrow screens), the result below, no CPU table', JSON.stringify(out.map((m) => [m.w, m.abSide, m.abBelow, m.abTable])));
     // the default toolbar (assembly: the syntax menu too) with the options open, around the phone breakpoint and the two panes
@@ -312,6 +324,7 @@ try {
     check(r.costWait[0] === 'waiting' && /compute \(\d{4} analyses\)/.test(r.costWait[1] ?? ''), 'showcase: the cost column waits for a click', JSON.stringify(r.costWait));
     check(r.all[0] === 2949 && r.all[2], 'showcase: "show all" draws every row', JSON.stringify(r.all));
     check(r.cpus.map((x) => x.join(':')).join() === 'SKL:744.25,ZEN3:620.75,ADL-P:587.00', 'showcase: the table of three CPUs (as uiCA: 744.25, 620.75, 587)', JSON.stringify([r.cpus, r.cpusInfo]));
+    check(r.long.every((ms) => ms <= 100), 'showcase: no long task over 100 ms while it loads', JSON.stringify(r.long));
     console.log(`showcase: example to result ${r.ms.toFixed(0)} ms (${r.status}); long tasks meanwhile ${JSON.stringify(r.long)} ms; all rows drawn in ${r.all[1]} ms; three CPUs: ${r.cpusInfo}`);
   }
 

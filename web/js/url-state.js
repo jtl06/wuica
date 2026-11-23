@@ -1,4 +1,4 @@
-// The state of the page in the URL fragment: input, mode, the checked CPUs, options, the open panels and side B of an A–B comparison. The fragment, never the query string:
+// The state of the page in the URL fragment: input, mode, the checked CPUs, options, the open panels, the selected row and side B of an A–B comparison. The fragment, never the query string:
 // a fragment is not sent to the server. No DOM; btoa/atob exist in browsers and in Node.
 
 export const DEFAULT_STATE = Object.freeze({
@@ -24,6 +24,9 @@ export const DEFAULT_STATE = Object.freeze({
   bScale: 1,              // 1..64: one iteration of B does the work of this many iterations of A (e.g. B is unrolled)
   cost: false,            // the cost column and its variant (insight-view.js)
   costNop: false,
+  trace: false,           // the trace is open (trace.js; in A–B mode the traces of both)
+  waits: false,           // the wait column of the uop table (trace-link.js)
+  sel: -1,                // the selected row of the uop table (linked to the trace); -1: none
 });
 
 export const LIMITS = Object.freeze({
@@ -31,12 +34,13 @@ export const LIMITS = Object.freeze({
   minIterations: [1, 10000],
   minCycles: [1, 100000],
   bScale: [1, 64],
+  sel: [0, 1000000],
 });
 const MAX_TEXT = 200000; // characters accepted from a link
 
 const INTS = { al: 'alignmentOffset', mi: 'minIterations', mc: 'minCycles' };
 const FLAGS = { sfe: 'simpleFrontEnd', nmi: 'noMicroFusion', nma: 'noMacroFusion' };
-const VIEWS = { cmpsweep: 'cmpSweep', cost: 'cost', costnop: 'costNop' }; // open panels; not analysis options
+const VIEWS = { cmpsweep: 'cmpSweep', cost: 'cost', costnop: 'costNop', trace: 'trace', waits: 'waits' }; // open panels; not analysis options
 const KEY = /^[A-Za-z0-9_-]{1,32}$/;
 const MAX_CPUS = 64;
 
@@ -80,6 +84,7 @@ export function encodeState(state) {
   if (s.initPolicy !== DEFAULT_STATE.initPolicy) p.push(`ip=${s.initPolicy}`);
   for (const [k, name] of Object.entries(FLAGS)) if (s[name]) p.push(`${k}=1`);
   for (const [k, name] of Object.entries(VIEWS)) if (s[name]) p.push(`${k}=1`);
+  if (Number.isInteger(s.sel) && s.sel >= 0) p.push(`sel=${s.sel}`);
   if (s.text !== '') p.push(`c=${toBase64Url(s.text)}`);
   if (s.ab) { // side B, only in A–B mode: a single-mode link stays as it was
     p.push('ab=1');
@@ -127,6 +132,7 @@ export function decodeState(fragment) {
   if (['same', 'stack'].includes(q.get('ip'))) s.initPolicy = q.get('ip');
   for (const [k, name] of Object.entries(FLAGS)) if (q.get(k) === '1') s[name] = true;
   for (const [k, name] of Object.entries(VIEWS)) if (q.get(k) === '1') s[name] = true;
+  if (q.has('sel')) s.sel = clampInt(q.get('sel'), LIMITS.sel, DEFAULT_STATE.sel);
   const text = (k) => {
     try {
       const t = fromBase64Url(q.get(k));

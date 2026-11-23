@@ -12,7 +12,8 @@ import { WasmAssembler, isWasm } from './assembler.js';
 import { renderResult, renderEmpty, renderFailure, copyText, h, row } from './render.js';
 import { latestWins } from './compare.js';
 import { createComparePanels } from './compare-view.js';
-import { createTracePanel } from './trace.js';
+import { createTracePanel, createABTracePanel } from './trace.js';
+import { createTraceLink } from './trace-link.js'; // the uop table <-> the trace; the wait column
 import { createAB } from './ab.js';                 // A–B comparison
 import { createCeImport } from './godbolt-ui.js';   // import from Compiler Explorer
 import { createInsight } from './insight-view.js';
@@ -112,8 +113,25 @@ const insight = createInsight({
   pool: () => getPool(),
   onToggle: () => { const o = insight.open(); state.cost = o.cost; state.costNop = o.cost && o.nop; syncUrl(true); },
 });
-const tracePanel = createTracePanel({ analyze: (request) => engine.analyze(request), config: (v) => uarch?.configs?.[v.archKey] });
-let ab = null; // the A–B comparison (ab.js); in A–B mode lastView is {ab: view} (no trace, no compare panels)
+// The trace (trace.js), below both panes; linked to the uop table (trace-link.js). Its open state and the selected row
+// are in the URL.
+const traceOpened = (open) => { if (state.trace === open) return; state.trace = open; syncUrl(true); };
+const tracePanel = createTracePanel({
+  analyze: (request) => engine.analyze(request), config: (v) => uarch?.configs?.[v.archKey],
+  onToggle: traceOpened,
+  onHoverGroup: (g) => traceLink.fromTraceHover(g),
+  onPickGroup: (g) => traceLink.fromTracePick(g),
+  onTrace: () => traceLink.refresh(),
+});
+const traceLink = createTraceLink({
+  panel: tracePanel,
+  getSel: () => state.sel,
+  setSel: (row) => { if (state.sel === row) return; state.sel = row; syncUrl(true); },
+  onWaits: (on) => { state.waits = on; syncUrl(true); },
+});
+// A–B: the traces of both sides on one time axis
+const abTracePanel = createABTracePanel({ analyze: (request) => engine.analyze(request), config: (side) => uarch?.configs?.[side.archKey], onToggle: traceOpened });
+let ab = null; // the A–B comparison (ab.js); in A–B mode lastView is {ab: view} (the A–B traces, no compare panels)
 let ce = null; // the Compiler Explorer import (godbolt-ui.js)
 
 // ---- status line and progress ----------------------------------------------------------------------------------
@@ -186,6 +204,9 @@ function writeControls() {
   el.cycles.value = state.minCycles;
   panels.setOpen({ sweep: state.cmpSweep });
   insight.setOpen({ cost: state.cost, nop: state.costNop });
+  tracePanel.setOpen(state.trace);
+  abTracePanel.setOpen(state.trace);
+  traceLink.setOpen({ waits: state.waits });
   paintDerived();
   ab?.paint();
 }
@@ -529,11 +550,14 @@ function showTrace(panel) {
 
 function draw() {
   if (!lastView) { showTrace(null); return; }
-  if (lastView.ab) { showTrace(null); ab.draw(lastView.ab); paintStale(); return; }
+  if (lastView.ab) { ab.draw(lastView.ab); abTracePanel.setOpen(state.trace); showTrace(abTracePanel.update(lastView.ab)); paintStale(); return; }
+  tracePanel.setOpen(state.trace); // (opened or closed in A–B mode meanwhile)
   const trace = lastView.response && !lastView.response.error && Array.isArray(lastView.response.rows) ? tracePanel.update(lastView) : null;
-  renderResult(el.body, { ...lastView, ui, onUi: (k, v) => { ui[k] = v; if (k === 'hideEmpty' || k === 'allRows') draw(); } });
+  const onUi = (k, v) => { ui[k] = v; if (k === 'hideEmpty' || k === 'allRows') draw(); };
+  renderResult(el.body, { ...lastView, ui, onUi });
   showTrace(trace);
   insight.decorate(el.body, lastView);
+  traceLink.decorate(el.body, lastView, { onUi });
   paintStale();
 }
 
@@ -684,6 +708,7 @@ async function runCompare(id, key, { auto = false } = {}) {
     if (!current()) return;
     const view = await ab.analyze(input, (hex, arch) => engine.analyze(makeRequest(hex, arch, opts)), current);
     if (!view || !current()) return;
+    for (const s of [view.a, view.b]) if (s) s.request = makeRequest(s.hex, s.archKey, opts); // for the traces
     lastView = { ab: view };
     lastRunKey = key;
     draw();

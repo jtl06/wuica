@@ -255,7 +255,7 @@ try {
       const out = {};
       await done(() => $('cmp-ab').click());
       await until(() => vals().length === 2);
-      out.demo = [vals(), verdict(), $('code').value.includes('vfmadd231ps ymm0, ymm7'), $('code-b').value.includes('vfmadd231ps ymm3, ymm7'), $('live').checked, getComputedStyle($('more')).display === 'none' && $('cmp-cpus').offsetParent === null, $('b-mode-asm').checked];
+      out.demo = [vals(), verdict(), $('code').value.includes('vfmadd231ps ymm0, ymm7'), $('code-b').value.includes('vfmadd231ps ymm3, ymm7'), $('live').checked, $('sweep-row').offsetParent === null && $('cmp-cpus').offsetParent === null && !$('trace-slot').hidden /* the sweep belongs to single mode; the trace row holds the A–B traces */, $('b-mode-asm').checked];
       const n = $('results').dataset.run;
       set($('code-b'), 'loop:\\n  add rax, 2\\n  dec r15\\n  jnz loop\\n'); // typing in B (assembly, as A): no click
       await until(() => $('results').dataset.run !== n);

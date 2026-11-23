@@ -105,6 +105,12 @@ const CHAIN = {
   check(f === 'v=1&cmpsweep=1&cost=1&costnop=1', 'url: the cost column is remembered', f);
   const s = decodeState(f);
   check(s.cost && s.costNop && !decodeState('v=1').cost, 'url: and restored');
+  // the trace (open), the wait column and the selected row of the uop table
+  const t = { ...DEFAULT_STATE, mode: 'hex', text: '90', trace: true, waits: true, sel: 12 };
+  const tf = encodeState(t);
+  check(tf === 'v=1&trace=1&waits=1&sel=12&c=OTA' && JSON.stringify(decodeState(tf)) === JSON.stringify(t), 'url: the open trace, the wait column and the selected row', tf);
+  check(decodeState('v=1&c=OTA').sel === -1 && !decodeState('v=1&c=OTA').trace && decodeState('v=1&sel=-3').sel === -1 && decodeState('v=1&sel=x').sel === -1 && decodeState('v=1&sel=9999999').sel === 1000000
+    && encodeState({ ...DEFAULT_STATE, mode: 'hex', sel: -1 }) === 'v=1&m=hex', 'url: old links select nothing; bad selections are ignored');
 }
 
 // --- with the real analyzer ------------------------------------------------------------------------------------------
