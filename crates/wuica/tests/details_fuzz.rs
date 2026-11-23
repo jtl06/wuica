@@ -173,28 +173,20 @@ pub fn invariants(r: &Response, d: &Details, simple_front_end: bool, notes: &mut
             }
         }
         // the table's issued uops per iteration (rounded to two decimals per row): the window can start and end inside a cycle
-        // Open (docs/plans/qa-r2.md, finding D1): the window is that of the cycles that issued the relevant rounds; issue runs
-        // ahead of retirement until the reorder buffer or the scheduler is full, and a simulation of minCycles often ends before
-        // (about a quarter of random blocks): the window's cycles per iteration are then below the throughput. Notes by default,
-        // errors with WUICA_DETAILS_STRICT=1.
-        let strict = std::env::var("WUICA_DETAILS_STRICT").is_ok_and(|v| v == "1");
         // (not with the simple front end: it issues the unfused uops one by one, the table counts the fused ones, as uiCA)
         let table: f64 = r.rows.iter().map(|row| row.values[issued]).sum();
         let tol = 2.0 * issue.width as f64 / it + 0.01 * r.rows.len() as f64 + 0.01;
         if !simple_front_end && (table - s.issued).abs() > tol {
-            if strict {
-                return Err(format!("issued per iteration: log {} but the table {table} (tolerance {tol:.3})", s.issued));
-            }
-            notes.push("issued per iteration: the log's differs from the table's".into());
+            return Err(format!("issued per iteration: log {} but the table {table} (tolerance {tol:.3})", s.issued));
         }
+        // the window is in the steady state: its cycles per iteration are the throughput (finding D1 of docs/plans/qa-r2.md: issue
+        // runs ahead of retirement until the reorder buffer or the scheduler is full, and a simulation of minCycles often ends
+        // before; without a trace, a longer simulation gives the log). A note, counted by the caller: with a trace (the log is
+        // that of the trace's cycles), or a block whose longer simulation would be too large or is not steady either.
         let cpi = issue.cycles as f64 / it;
-        let tol = 2.0 / it + 0.011;
-        if (cpi - r.tp).abs() > tol {
-            if strict {
-                return Err(format!("the issue window has {} cycles / {} iterations = {cpi:.3}, the throughput is {}", issue.cycles, issue.iterations, r.tp));
-            }
-            let far = (cpi - r.tp).abs() > 0.1 * r.tp;
-            notes.push(format!("issue window cycles/iteration {} tp{}", if cpi < r.tp { "<" } else { ">" }, if far { " by > 10 %" } else { "" }));
+        if !wuica_core::details::window_is_steady(issue.cycles, issue.iterations, r.tp) {
+            let trace = if r.trace.is_some() { " (with a trace)" } else { "" };
+            notes.push(format!("not steady: issue window cycles/iteration {} tp{trace}", if cpi < r.tp { "<" } else { ">" }));
         }
     }
     Ok(())
@@ -206,6 +198,43 @@ fn sha256_hex() -> String {
     let start = js.find("SHA256_BLOCK_HEX = [").unwrap();
     let end = start + js[start..].find("\n]").unwrap();
     js[start..end].split('\'').skip(1).step_by(2).collect()
+}
+
+/// Finding D1 (docs/plans/qa-r2.md): the page's pointer-chasing example (mov rax, [rax]; dec rcx; jnz) is latency-bound, but
+/// the simulation of 500 cycles ends while issue still runs ahead of retirement (on ADL-P: 48 iterations issued in 16 cycles,
+/// "100 % issued"). The issue slots must be those of the steady state: cycles per iteration = the throughput, slots lost.
+#[test]
+fn issue_slots_are_of_the_steady_state() {
+    let engine = fuzz::engine();
+    for arch in fuzz::CPUS {
+        for hex in ["488b0048ffc975f8", "c4e27da9c2c4e27da9cac4e27da9d2c4e27da9da48ffc975ec"] {
+            let mut req = Request::new(arch);
+            req.hex = hex.into();
+            req.details = true;
+            let r = engine.analyze(&req).unwrap();
+            let issue = r.details.as_ref().unwrap().issue.as_ref().unwrap();
+            let cpi = issue.cycles as f64 / issue.iterations as f64;
+            assert!(wuica_core::details::window_is_steady(issue.cycles, issue.iterations, r.tp), "{arch} {hex}: {} cycles / {} iterations = {cpi}, throughput {}", issue.cycles, issue.iterations, r.tp);
+            let s = &issue.slots;
+            let lost = s.front_end + s.rob + s.rs + s.other;
+            assert!((s.issued + lost - issue.width as f64 * r.tp).abs() <= 0.05 * issue.width as f64 * r.tp, "{arch} {hex}: slots {s:?}, tp {}", r.tp);
+            // with the trace, the log is that of the trace's cycles (the simulation of the response), and the rest is the same
+            req.include_trace = true;
+            let t = engine.analyze(&req).unwrap();
+            assert_eq!((t.tp, &t.rows), (r.tp, &r.rows), "{arch} {hex}");
+            let tl = t.details.as_ref().unwrap().issue.as_ref().unwrap();
+            let max_cycle = t.trace.as_ref().unwrap()["cycles"].as_array().unwrap().len() as i64;
+            assert!(tl.first + tl.issued.len() as i64 <= max_cycle + 1, "{arch} {hex}: the trace's issue log is beyond its cycles");
+        }
+    }
+    // ADL-P, pointer chasing: 2 fused uops per iteration of 5 cycles × 6 slots: 28 slots lost per iteration
+    let mut req = Request::new("ADL-P");
+    req.hex = "488b0048ffc975f8".into();
+    req.details = true;
+    let r = engine.analyze(&req).unwrap();
+    let s = &r.details.as_ref().unwrap().issue.as_ref().unwrap().slots;
+    let lost = s.front_end + s.rob + s.rs + s.other;
+    assert!((s.issued - 2.0).abs() <= 0.05 && (lost - 28.0).abs() <= 0.5, "{s:?}");
 }
 
 #[test]
@@ -308,6 +337,9 @@ fn details_agree_with_the_response_on_random_blocks() {
     for (note, k) in &counts {
         println!("note: {k} × {note}");
     }
+    // the issue slots are of the steady state but in at most 1 % of the cases without a trace (before qa-r2: about 25 %)
+    let unsteady: usize = counts.iter().filter(|(k, _)| k.starts_with("not steady") && !k.contains("trace")).map(|(_, v)| v).sum();
+    assert!(unsteady * 100 <= n, "{unsteady} of {n} cases without a trace have issue slots that are not of the steady state");
     for f in failures.iter().take(std::env::var("WUICA_DETAILS_FUZZ_SHOW").ok().map_or(40, |s| s.parse().unwrap())) {
         println!("{f}");
     }
