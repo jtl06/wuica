@@ -153,6 +153,8 @@ const bad = [
   { what: 'unknown arch', arch: 'K8', hex: '4801d8', options: {}, code: 1, status: 404 },
   { what: 'odd hex', arch: 'SKL', hex: '48d', options: {}, code: 1, status: 400 },
   { what: 'unknown option', arch: 'SKL', hex: '4801d8', options: { minIteration: 5 }, code: 1, status: 400 },
+  { what: 'bad option value', arch: 'SKL', hex: '4801d8', options: { initPolicy: 'bogus' }, code: 1, status: 400 },
+  { what: 'option of the wrong type', arch: 'SKL', hex: '4801d8', options: { alignmentOffset: '3' }, code: 1, status: 400 },
 ];
 for (const b of bad) {
   const l = await lib.analyze(b.arch, { hex: b.hex, options: b.options });
