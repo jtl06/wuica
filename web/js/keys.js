@@ -182,7 +182,10 @@ export function createKeys(env = {}) {
     names.replaceChildren(...tabs().slice(0, 9).flatMap((t, i) => {
       const kbd = document.createElement('kbd');
       kbd.textContent = String(i + 1);
-      return [i ? ' ' : '', kbd, ` ${t.dataset.tab ?? t.textContent}`];
+      const item = document.createElement('span');
+      item.className = 'kt';
+      item.append(kbd, ` ${t.dataset.tab ?? t.textContent}`);
+      return i ? [' ', item] : [item];
     }));
     names.hidden = !names.firstChild;
     back = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
