@@ -10,7 +10,8 @@ uiCA's predictions, bit for bit, from a Rust core that runs natively and as WebA
 
 The reference ("oracle") is the Python uiCA of the fork [jtl06/uiCA](https://github.com/jtl06/uiCA), branch `perf`, commit
 `8f24bd3` (improve-r4 `a5ef6c2` plus the determinism fix `9b69d9d`, which the port depends on: before it, the scheduler iterated
-over a set of objects and results could differ between runs). All fixtures are exported from this commit.
+over a set of objects and results could differ between runs), with the fixes of the inputs on which it raised an exception: branch
+`crash-fixes` (`docs/DEVIATIONS.md`, `docs/PORTING.md`). All fixtures are exported from that branch.
 
 Not ported:
 
@@ -54,9 +55,9 @@ basic blocks, all microbench microbenchmarks, blocks of 10/100/1000 instructions
 | simulation result | `fixtures/generated/sim_fixtures.jsonl.gz` (9899 cases: file × configuration, and 8 option variants for 24 files): throughput and the detailed text output; the `-json` output for 1119 cases | `tools/export_fixtures.py` | simulator test |
 
 The fixtures in `fixtures/generated/` and the tables in `data/` are generated (they are large): run `tools/export_data.py` and
-`tools/export_fixtures.py` against a uiCA installation. Four simulation cases have an `error` field: the reference itself raises
-an exception there (two in the `-json` output for ADL-P/ICX, where a fractional throughput limit makes a cycle number a float; two
-in stock uiCA for SNB/IVB).
+`tools/export_fixtures.py` against a uiCA installation. No case has an `error` field: the four cases on which the unfixed
+reference raised an exception (two in the `-json` output for ADL-P/ICX, where a fractional throughput limit makes a cycle number a
+float; two in stock uiCA for SNB/IVB) have results since the fixes of `docs/DEVIATIONS.md`.
 
 Both sides always get the same raw bytes (the hex string in the fixture).
 

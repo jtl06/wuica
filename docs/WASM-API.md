@@ -45,11 +45,21 @@ instruction table that the configuration needs (`configs[arch].name`) and `uarch
 
 ## Failures and traps
 
-wuica reproduces the reference, including the inputs for which the Python uiCA fails. Such an input either gives
-`{"error": ...}` or makes the call **trap** (the module throws a `WebAssembly.RuntimeError`, e.g. `unreachable`): a Rust panic
-cannot be caught inside a `wasm32-unknown-unknown` module. After a trap, the instance must not be used again: create a new
-instance, call `wuica_load_uarch` and `wuica_load_arch` again, and continue. (The web page keeps the bytes of the loaded
-tables for this.) Making these cases return errors instead is planned.
+wuica reproduces the fork of uiCA with its crash fixes (`docs/DEVIATIONS.md`): every input on which upstream uiCA raises an
+exception either gets a result or an error that says what is wrong with the input (the same text as the fork's `InputError`, e.g.
+"no iteration was completed (minIterations must be at least 1, or minCycles larger)"). No error says "the reference
+implementation fails" for any known input; the checks that would give it remain in the simulator, each with the reason why no
+input reaches it.
+
+No known input makes the module panic: a fuzzer (`crates/wuica/examples/fuzz.rs`, and the suite `wuica:fuzz_short` of
+`scripts/check.sh`) analyzes random blocks of real encodings with random options on all 15 CPUs and checks this.
+
+A call can still **trap** (the module throws a `WebAssembly.RuntimeError`) when it runs out of memory: e.g. 200 × `div rcx` with
+`minIterations` 10000 and `minCycles` 100000, or a 5,000-instruction block at the server's limits (about 2 GB). After a trap, the
+instance must not be used again: create a new instance, call `wuica_load_uarch` and `wuica_load_arch` again, and continue. (The
+web page keeps the bytes of the loaded tables for this.) `wbinvd` has about 10^6 uops in the tables: with it, a block is
+rejected ("invalid input: too many operands", e.g. on IVB and ADL-P, where one of its uops has more than 65,535 input operands),
+takes 40 s to several minutes (seen on SKL, SKX, KBL, CFL), or runs out of memory (seen on CLX); the reference takes hours.
 
 ## Analysis response
 

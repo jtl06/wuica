@@ -47,6 +47,11 @@ impl Keys {
         k
     }
 
+    /// the key of a name, if it has one
+    pub fn lookup(&self, s: &str) -> Option<Key> {
+        self.map.get(s).copied()
+    }
+
     /// the key of `getCanonicalReg(reg)`
     fn reg(&mut self, reg: &str) -> Key {
         if let Some(&k) = self.reg_map.get(reg) {
@@ -557,8 +562,9 @@ impl Prep {
                     None => Err(invalid("operand index out of range")),
                 }
             };
-            // (the numbers of renamed operands of a uop are stored as u8)
-            if p.input_operands.len() > u8::MAX as usize || p.output_operands.len() > u8::MAX as usize {
+            // (the numbers of renamed operands of a uop are stored as u16; a uop of an instruction with many load uops, e.g. WBINVD,
+            // has one input operand per load uop, more than 255 on some CPUs; no instruction in the tables has 65535 uops)
+            if p.input_operands.len() > u16::MAX as usize || p.output_operands.len() > u16::MAX as usize {
                 return Err(invalid("too many operands"));
             }
             let in_start = in_key_list.len() as u32;

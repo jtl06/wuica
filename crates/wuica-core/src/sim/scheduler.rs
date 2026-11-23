@@ -279,6 +279,7 @@ impl<'a> Sim<'a> {
                 } else {
                     let port = uop.actual_port;
                     if port == NO_PORT {
+                        // unreachable: only uops that addNewUops assigned a port reach the ready queues
                         return Err(crash("KeyError: None (readyQueue)"));
                     }
                     self.sched.ready_queue[port as usize].push(Reverse(u));
@@ -322,6 +323,8 @@ impl<'a> Sim<'a> {
                 let sbe4 = self.uops[uop4 as usize].store_buffer_entry;
                 let sbe9 = self.uops[uop9 as usize].store_buffer_entry;
                 if sbe4 == NONE || sbe9 == NONE {
+                    // unreachable: only store-data uops can use ports 4 and 9 (tables), and every store-data uop has a store
+                    // buffer entry
                     return Err(crash("AttributeError: 'NoneType' object has no attribute 'abstractAddress'"));
                 }
                 let addrs = &self.rn.addrs.values;
@@ -331,10 +334,9 @@ impl<'a> Sim<'a> {
                     let different = if addr4.0 != addr9.0 || addr4.1 != addr9.1 || addr4.2 != addr9.2 {
                         true
                     } else {
-                        match (addr4.3, addr9.3) {
-                            (Some(d4), Some(d9)) => (d4 - d9).abs() >= 64,
-                            _ => return Err(crash("TypeError: unsupported operand type(s) for -: 'NoneType'")),
-                        }
+                        // an address without a displacement (e.g. the stack slot of PUSH m) has displacement 0 (fork fix; upstream:
+                        // TypeError for None - None)
+                        (addr4.3.unwrap_or(0) - addr9.3.unwrap_or(0)).abs() >= 64
                     };
                     if different {
                         if uop4 <= uop9 {
@@ -349,6 +351,7 @@ impl<'a> Sim<'a> {
 
         if cfg.slow_256bit_mem_acc {
             if p2 == NO_PORT || p3 == NO_PORT {
+                // unreachable: slow256BitMemAcc is only set for SNB and IVB, which have ports 2 and 3
                 return Err(crash("KeyError: '2'"));
             }
             let (p2, p3) = (p2 as usize, p3 as usize);
@@ -408,6 +411,7 @@ impl<'a> Sim<'a> {
             let u = self.sched.uops_dispatched_in_prev_cycle[i];
             let port = self.uops[u as usize].actual_port;
             if port == NO_PORT {
+                // unreachable: dispatched uops come from the ready queues, which only hold uops with a port
                 return Err(crash("KeyError: None (portUsage)"));
             }
             self.sched.port_usage[port as usize] -= 1;
@@ -478,6 +482,8 @@ impl<'a> Sim<'a> {
             if is_store_addr || is_store_data {
                 let sbe = self.uops[u as usize].store_buffer_entry;
                 if sbe == NONE {
+                    // unreachable: store uops get a store buffer entry in the renamer (instructions with ports have uops != 0
+                    // in the tables)
                     return Err(crash("AttributeError: 'NoneType' object has no attribute 'addressReadyCycle'"));
                 }
                 if is_store_addr {
@@ -560,6 +566,8 @@ impl<'a> Sim<'a> {
         if flags & pf::LOAD_SERIALIZING != 0 {
             if is_first {
                 let Some(&front) = self.sched.pending_load_fence_uops.front() else {
+                    // unreachable: addNewUops queues the first uop of a fence before checkUopReady sees it, and it leaves the
+                    // queue only after it has executed
                     return Err(crash("IndexError: deque index out of range (pendingLoadFenceUops)"));
                 };
                 if front != u || not_executed(self, &self.sched.load_uops_since_last_load_fence) {
@@ -569,6 +577,8 @@ impl<'a> Sim<'a> {
         } else if flags & pf::STORE_SERIALIZING != 0 {
             if is_first {
                 let Some(&front) = self.sched.pending_store_fence_uops.front() else {
+                    // unreachable: addNewUops queues the first uop of a fence before checkUopReady sees it, and it leaves the
+                    // queue only after it has executed
                     return Err(crash("IndexError: deque index out of range (pendingStoreFenceUops)"));
                 };
                 if front != u || not_executed(self, &self.sched.store_uops_since_last_store_fence) {
@@ -766,6 +776,8 @@ impl<'a> Sim<'a> {
                 } else {
                     // port with second smallest usage so far
                     let Some(min2_port) = min_excluding(min_port) else {
+                        // unreachable: no port combination in the tables repeats a port, so a uop with several ports has at
+                        // least two distinct ones
                         return Err(crash("ValueError: min() arg is an empty sequence"));
                     };
                     Ok(if s.port_usage_cur_cycle[min2_port] >= s.port_usage_cur_cycle[min_port] + 3 { min_port } else { min2_port })
@@ -800,6 +812,8 @@ impl<'a> Sim<'a> {
                     } else {
                         [p5, p1, p0, p5]
                     };
+                    // unreachable: only SNB and IVB (issue width 4) use this rule, and only register-merge uops (ports 1, 5)
+                    // are issued beyond the issue width
                     let Some(&p) = order.get(issue_slot) else { return Err(crash("IndexError: list index out of range (issueSlot)")) };
                     Ok(p as usize)
                 } else if issue_slot % 2 == 0 {
@@ -854,6 +868,7 @@ impl<'a> Sim<'a> {
                 }
             }
         }
+        // unreachable: uops reach checkUopReady only after addNewUops, which gets the uops issued in this cycle
         let issued = opt(self.fused[self.uops[u as usize].fused_uop as usize].issued).ok_or_else(|| crash("TypeError: issued is None"))?;
         let d = issued + self.cfg.issue_dispatch_delay;
         let mut ready_cycle = op_ready_cycle;

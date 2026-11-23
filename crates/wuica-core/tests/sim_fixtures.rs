@@ -186,24 +186,15 @@ fn simulator_reproduces_the_simulation_fixtures() {
                 let sim_time = t.elapsed();
 
                 if let Some(error) = &h.error {
-                    // The reference raised an exception. For exceptions in the simulation, the simulator returns an error; the
-                    // exception for a fractional cycle number is raised when the JSON output is written, after the simulation.
+                    // The fixtures come from the fixed reference (docs/DEVIATIONS.md), which raises no exception on them, except for
+                    // an input error (InputError: ...), which the simulator must report with the same text.
                     let mut s = stats.lock().unwrap();
                     s.reference_errors += 1;
-                    let in_json_output = error.starts_with("TypeError: list indices must be integers");
-                    match &result {
-                        Ok(r) if in_json_output => {
-                            let json = r.to_json();
-                            let n_cycles = json["cycles"].as_array().map_or(0, |c| c.len());
-                            // a cycle number can only be a float if an instruction has a throughput limit
-                            let possible = list.instrs.iter().any(|i| i.tp.is_some());
-                            if n_cycles as i64 != r.max_cycle + 1 || !possible {
-                                s.fail(set, "reference error", &h.arch, show, format!("{name}: no throughput limit ({error})"));
-                            }
-                        }
-                        Err(SimError::ReferenceCrash(_)) if !in_json_output => {}
-                        Ok(_) => s.fail(set, "reference error", &h.arch, show, format!("{name}: no error, expected: {error}")),
-                        Err(e) => s.fail(set, "reference error", &h.arch, show, format!("{name}: {e}, expected: {error}")),
+                    match (error.strip_prefix("InputError: "), &result) {
+                        (Some(expected), Err(e)) if e.to_string() == expected => {}
+                        (Some(expected), Err(e)) => s.fail(set, "reference error", &h.arch, show, format!("{name}: {e}, expected: {expected}")),
+                        (Some(expected), Ok(_)) => s.fail(set, "reference error", &h.arch, show, format!("{name}: no error, expected: {expected}")),
+                        (None, _) => s.fail(set, "reference error", &h.arch, show, format!("{name}: the reference fails: {error}")),
                     }
                     continue;
                 }
@@ -267,7 +258,7 @@ fn simulator_reproduces_the_simulation_fixtures() {
 
     let s = stats.lock().unwrap();
     println!(
-        "{} cases simulated and compared, {} cases where the reference fails checked, {} cases without instruction fixture skipped ({:.1} s)",
+        "{} cases simulated and compared, {} input errors of the reference checked, {} cases without instruction fixture skipped ({:.1} s)",
         s.cases,
         s.reference_errors,
         s.no_instr_fixture,

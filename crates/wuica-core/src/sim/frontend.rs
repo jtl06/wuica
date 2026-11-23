@@ -194,6 +194,9 @@ pub(crate) struct FrontEnd {
     // DSB
     dsb_block_queue: DsbBlockQueue,
     dsb_delay_in_prev_cycle: bool,
+    /// `DSB.lastEntry`: the instance of the last entry read in the current cycle (NONE: none), and whether that entry completes
+    /// its instruction (no uop of its own, uops for the MS, or the last uop of the instruction)
+    dsb_last_entry: (u32, bool),
     // PreDecoder
     /// `B16BlockQueue`: the instances of all blocks, and the number of instances of each block
     b16_entries: VecDeque<u32>,
@@ -238,6 +241,7 @@ impl FrontEnd {
             ms_post_stall: 0,
             dsb_block_queue: DsbBlockQueue::default(),
             dsb_delay_in_prev_cycle: false,
+            dsb_last_entry: (NONE, false),
             b16_entries: VecDeque::new(),
             b16_block_lens: VecDeque::new(),
             cur_block: VecDeque::new(),
@@ -630,19 +634,21 @@ impl<'a> Sim<'a> {
                 new_instr_i_uops.clear();
                 self.dsb_cycle(&mut new_instr_i_uops)?;
                 new_uops.extend(new_instr_i_uops.iter().filter(|x| x.1 != NONE).map(|x| x.1));
-                if let Some(&last_lam) = new_uops.last() {
-                    let l = &self.lams[last_lam as usize];
-                    let last_uop = l.first_uop + l.n_uops - 1;
-                    if self.prep.props[self.uops[last_uop as usize].prop as usize].has(pf::LAST) {
-                        let cur_inst = new_instr_i_uops.last().unwrap().0;
-                        let next_addr = if self.prep.info[self.inst_instr(cur_inst)].has(inf::LAST_DECODED) {
-                            self.fe.alignment_offset
-                        } else {
-                            self.inst_addr(cur_inst) + self.inst_len(cur_inst)
-                        };
-                        if !self.fe.addresses_in_dsb.contains(next_addr) {
-                            self.fe.uop_source = Some(UopSource::Mite);
-                        }
+                // the check uses the last entry read from the DSB in this cycle, not the last uop (fork fix: an entry of a microcoded
+                // instruction or of one without uops has no uop of its own, and a branch macro-fused with the previous instruction has
+                // no entry; upstream stays on the DSB, delivers a later block too early and fails once the DSB queue is empty)
+                let (cur_inst, complete) = self.fe.dsb_last_entry;
+                if cur_inst != NONE && complete {
+                    let ii = self.inst_instr(cur_inst);
+                    let next_addr = if self.prep.info[ii].has(inf::LAST_DECODED) {
+                        self.fe.alignment_offset
+                    } else if self.prep.info[ii].has(inf::MACRO_FUSED_NEXT) {
+                        self.inst_addr(cur_inst) + self.inst_len(cur_inst) + self.prep.info[ii + 1].len
+                    } else {
+                        self.inst_addr(cur_inst) + self.inst_len(cur_inst)
+                    };
+                    if !self.fe.addresses_in_dsb.contains(next_addr) {
+                        self.fe.uop_source = Some(UopSource::Mite);
                     }
                 }
                 self.fe.instr_i_uops = new_instr_i_uops;
@@ -810,9 +816,13 @@ impl<'a> Sim<'a> {
     /// `DSB.cycle`: writes the result to `ret_list` (which must be empty)
     fn dsb_cycle(&mut self, ret_list: &mut Vec<(u32, u32)>) -> Result<(), SimError> {
         debug_assert!(ret_list.is_empty());
+        self.fe.dsb_last_entry = (NONE, false);
         let dsb_width = self.cfg.dsb_width;
         let bs = self.cfg.dsb_block_size;
         let Some(first_entry) = self.fe.dsb_block_queue.first_entry() else {
+            // unreachable: the DSB queue is used up only at the end of a round's DSB blocks, where the source switches to MITE
+            // (the check uses the last entry, fork fix); it switches back after the round's last instruction is decoded, when
+            // the loop that adds cache blocks has queued the next round, whose first block is in the DSB
             return Err(crash("IndexError: deque index out of range (DSBBlockQueue)"));
         };
         let new_dsb_block_started = first_entry.slot == 0;
@@ -833,9 +843,13 @@ impl<'a> Sim<'a> {
                     second_dsb_block_loaded = true;
                     dsb_block_is_empty = false;
                     let Some(&(prev_inst, _)) = ret_list.last() else {
+                        // unreachable: every entry has a uop (added to ret_list) or MS uops (which end the cycle); no
+                        // instruction in the tables has uopsMITE == uopsMS == 0
                         return Err(crash("IndexError: list index out of range (DSB.cycle)"));
                     };
                     let Some(next) = self.fe.dsb_block_queue.first_entry() else {
+                        // unreachable: a DSB block is created with an entry and removed when it becomes empty, so the first
+                        // block of a non-empty queue has an entry
                         return Err(crash("IndexError: deque index out of range (DSBBlock)"));
                     };
                     let next_inst = next.inst;
@@ -852,6 +866,8 @@ impl<'a> Sim<'a> {
 
             {
                 let Some(entry) = self.fe.dsb_block_queue.first_entry() else {
+                    // unreachable: a DSB block is created with an entry and removed when it becomes empty, so the first block
+                    // of a non-empty queue has an entry
                     return Err(crash("IndexError: deque index out of range (DSBBlock)"));
                 };
                 if entry.requires_extra_entry && remaining_slots < 2 {
@@ -859,6 +875,11 @@ impl<'a> Sim<'a> {
                 }
             }
             let entry = self.fe.dsb_block_queue.pop_first_entry().unwrap();
+            let complete = entry.uop == NONE || entry.ms_uops.1 != 0 || {
+                let l = &self.lams[entry.uop as usize];
+                self.prep.props[self.uops[(l.first_uop + l.n_uops - 1) as usize].prop as usize].has(pf::LAST)
+            };
+            self.fe.dsb_last_entry = (entry.inst, complete);
             if entry.uop != NONE {
                 ret_list.push((entry.inst, entry.uop));
                 self.lams[entry.uop as usize].uop_source = Some(UopSource::Dsb);
@@ -879,6 +900,8 @@ impl<'a> Sim<'a> {
                 dsb_block_is_empty = true;
                 if remaining_slots != 0 && !self.fe.dsb_block_queue.is_empty() && dsb_width == 6 {
                     let Some(next) = self.fe.dsb_block_queue.first_entry() else {
+                        // unreachable: a DSB block is created with an entry and removed when it becomes empty, so the first
+                        // block of a non-empty queue has an entry
                         return Err(crash("IndexError: deque index out of range (DSBBlock)"));
                     };
                     let next_instr_addr = self.inst_addr(next.inst);
@@ -955,6 +978,7 @@ impl<'a> Sim<'a> {
         debug_assert!(uops_list.is_empty());
         let mut n_decoded_instrs = 0;
         let mut remaining_decoder_slots = cfg.n_decoders;
+        // unreachable: the predecoder sets predecoded before it adds an instance to the instruction queue
         let predecoded = |sim: &Sim, inst: u32| super::opt(sim.insts[inst as usize].predecoded).ok_or_else(|| crash("TypeError: predecoded is None"));
         while let Some(&inst) = self.fe.instruction_queue.front() {
             let info = &self.prep.info[self.inst_instr(inst)];
@@ -999,6 +1023,8 @@ impl<'a> Sim<'a> {
 
             if flags & inf::COMPLEX_DECODER != 0 {
                 let Some(n) = n_available_simple_decoders else {
+                    // unreachable: only instructions from the tables can need the complex decoder, and they always have
+                    // nAvailableSimpleDecoders
                     return Err(crash("TypeError: nAvailableSimpleDecoders is None"));
                 };
                 remaining_decoder_slots = (remaining_decoder_slots - 1).min(n);

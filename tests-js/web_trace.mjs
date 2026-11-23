@@ -148,7 +148,9 @@ for (const set of sets) {
       if (u.retired !== null && u.executed !== null && u.retired <= u.executed) check(false, `${c.file}/${c.arch}: retired after executed`, u.key);
     }
     const rr = relevantRounds(m);
-    if (rr.tp === null || Math.abs(rr.tp - c.TP) > 0.0201) tpFar++;
+    // (relative for very slow loops: e.g. x_zmm_mask on ADL-P, about 14,500 cycles per iteration in 10 rounds, where the
+    // steady-state rounds of the trace give 14531.67 and uiCA 14531.5)
+    if (rr.tp === null || Math.abs(rr.tp - c.TP) > Math.max(0.0201, 1e-4 * c.TP)) tpFar++;
     if (rr.tp === c.TP) tpSame++; else if (tpDiff.length < 5) tpDiff.push(`${c.file}/${c.arch} ${rr.tp} vs ${c.TP} (rounds ${rr.first}-${rr.last} of ${rr.n})`);
     if (rr.last - rr.first >= 5) { tpWide++; if (rr.tp === c.TP) tpWideSame++; }
     const ch = rangeChoices(m);
@@ -162,7 +164,7 @@ if (cases) {
   check(kinds.has('stackSync') && kinds.has('instr'), 'reference traces: stack-sync uops are recognized', [...kinds].join());
   check(waitN > 1000 && waitBad === 0, `reference traces: the waits of every finished uop add up to its time from the IDQ to retirement (${waitN} uops)`, waitBadEx.join('\n'));
   // The trace ends one cycle before uiCA's simulation does, so the last round can be one short; nearly all agree.
-  check(tpSame / cases >= 0.99 && tpFar === 0, `reference traces: the steady-state rounds give uiCA's throughput (${tpSame}/${cases} equal, ${tpFar} off by more than 0.02)`, tpDiff.join('\n'));
+  check(tpSame / cases >= 0.99 && tpFar === 0, `reference traces: the steady-state rounds give uiCA's throughput (${tpSame}/${cases} equal, ${tpFar} off by more than 0.02 or 0.01 %)`, tpDiff.join('\n'));
   console.log(`${cases} reference traces (every ${every}th): throughput from the steady-state rounds equals uiCA's in ${tpSame} (${tpWideSame}/${tpWide} with ≥5 rounds); slowest model ${maxMs.toFixed(1)} ms`);
   if (tpDiff.length) console.log('  differ, e.g.: ' + tpDiff.slice(0, 3).join('; '));
 }

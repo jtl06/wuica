@@ -54,6 +54,8 @@ pub enum SimError {
     ReferenceCrash(String),
     /// the input is not what the instruction builder produces
     InvalidInput(String),
+    /// an input (code or options) that cannot be analyzed; the reference raises `InputError` with the same message
+    InputError(String),
 }
 
 impl std::fmt::Display for SimError {
@@ -63,6 +65,7 @@ impl std::fmt::Display for SimError {
             SimError::NoInstructions => write!(f, "no instructions found"),
             SimError::ReferenceCrash(s) => write!(f, "the reference implementation fails for this input: {s}"),
             SimError::InvalidInput(s) => write!(f, "invalid input: {s}"),
+            SimError::InputError(s) => write!(f, "{s}"),
         }
     }
 }
@@ -211,8 +214,8 @@ pub(crate) struct SUop {
     /// the renamed input operands are `ren_lists[ren .. ren + n_in]`, the renamed output operands follow them
     pub ren: u32,
     pub store_buffer_entry: u32,
-    pub n_in: u8,
-    pub n_out: u8,
+    pub n_in: u16,
+    pub n_out: u16,
     /// index into the ports of the microarchitecture, or NO_PORT
     pub actual_port: u8,
     pub eliminated: bool,
@@ -631,10 +634,15 @@ pub fn simulate(list: &InstrList, config: &UArchConfig, uarch: &UArch, options: 
         sched: scheduler::Scheduler::new(&prep, config),
         prep,
     };
+    if options.init_policy == InitPolicy::Stack {
+        let (rsp, rbp) = (sim.prep.keys.lookup("RSP"), sim.prep.keys.lookup("RBP"));
+        sim.rn.seed_stack_registers(rsp, rbp);
+    }
     sim.fe.all_generated_instr_instances.reserve(cap(instrs.len()));
     sim.sched.reserve(cap(n_uops_per_round));
     sim.front_end_init(simple_front_end)?;
 
+    // unreachable: the list is not empty (checked above) and getInstructions marks its last instruction isLastInstr
     let last_applicable_instr = instrs.iter().position(|i| i.is_last_decoded_instr()).ok_or_else(|| crash("StopIteration: no last instruction"))?;
 
     let mut clock: i64 = 0;
@@ -653,6 +661,8 @@ pub fn simulate(list: &InstrList, config: &UArchConfig, uarch: &UArch, options: 
                     last_uop_for_round.push(NONE);
                 }
                 if rnd < 0 || rnd >= last_uop_for_round.len() as i64 {
+                    // unreachable: uops retire in program order and every round delivers uops, so a round is at most one more
+                    // than the last; a round that is read is complete (an incomplete first round is the InputError below)
                     return Err(crash("IndexError: list index out of range (uopsForRound)"));
                 }
                 if instr == last_applicable_instr {
@@ -672,9 +682,16 @@ pub fn simulate(list: &InstrList, config: &UArchConfig, uarch: &UArch, options: 
     let n_rounds = last_uop_for_round.len() as i64;
     let mut last_relevant_round = (n_rounds - 2).max(0); // the last round may be incomplete
     let first_relevant_round = last_relevant_round.min(n_rounds / 2);
+    if last_uop_for_round.get(first_relevant_round as usize).is_none_or(|&f| f == NONE) {
+        // only possible with minIterations < 1: the simulation stopped before the first iteration was complete (fork: InputError;
+        // upstream: IndexError)
+        return Err(SimError::InputError("no iteration was completed (minIterations must be at least 1, or minCycles larger)".to_string()));
+    }
     let fused_of = |r: i64| -> Result<&SFused, SimError> {
         match last_uop_for_round.get(r as usize) {
             Some(&f) if f != NONE => Ok(&sim.fused[f as usize]),
+            // unreachable: uops retire in program order, so a round that is read is complete (an incomplete first round is the
+            // InputError above)
             _ => Err(crash("IndexError: list index out of range (uopsForRound)")),
         }
     };
@@ -688,6 +705,7 @@ pub fn simulate(list: &InstrList, config: &UArchConfig, uarch: &UArch, options: 
             r -= 1;
         }
     }
+    // unreachable: only retired fused uops are recorded (the ROB sets retired before it queues them)
     let retired = |r: i64| -> Result<i64, SimError> { opt(fused_of(r)?.retired).ok_or_else(|| crash("uop not retired")) };
     let tp = if first_relevant_round == last_relevant_round {
         retired(first_relevant_round)? as f64
