@@ -9,7 +9,94 @@ uiCA with its own instruction data, used as a reference.
 Percentages are the share of loops whose predicted throughput is within 5, 10 or 20% of the measured one; MAPE is the mean absolute
 percentage error. All tools are compared on the same loops (those for which every tool gives a prediction).
 
-## Round 8 (current model)
+## Round 9 (current model)
+
+"Before" is the fork's `improve-r8` at `c899be7` (the model of the previous wuica data, branch `model-r8`), "after" is `improve-r9`
+at `640e40e` (the model of the branch `model-r9`). This round fixed bugs that two dogfood runs of wuica found by measuring real loops
+on the Ryzen; the held-out sets measure that nothing else got worse, the dogfood loops and new loop benchmarks measure the fixes.
+
+### ZEN3 — measured on a Ryzen 7 7735U (Zen 3+)
+
+| Set | Loops | Tool | ≤5% | ≤10% | ≤20% | MAPE |
+|---|---:|---|---:|---:|---:|---:|
+| random loops (holdout7) | 1960 | uiCA ZEN3, before | 74.8% | 84.4% | 93.7% | 4.2% |
+|  |  | uiCA ZEN3, after | 74.8% | 84.4% | 93.7% | 4.2% |
+|  |  | llvm-mca `znver3` | 42.9% | 55.2% | 75.3% | 18.0% |
+| real-code blocks (bhive5) | 1941 | uiCA ZEN3, before | 85.0% | 87.7% | 93.4% | 3.9% |
+|  |  | uiCA ZEN3, after | 85.0% | 87.7% | 93.4% | 3.9% |
+|  |  | llvm-mca `znver3` | 68.4% | 71.8% | 80.8% | 12.1% |
+| dogfood loops (gcc -O3, measured in the dogfood runs) | 21 | uiCA ZEN3, before |  | 47.6% |  |  |
+|  |  | uiCA ZEN3, after |  | 57.1% |  |  |
+
+### ADL-P — measured on a Core i7-12650H (P-core)
+
+| Set | Loops | Tool | ≤5% | ≤10% | ≤20% | MAPE |
+|---|---:|---|---:|---:|---:|---:|
+| random loops (holdout7) | 1933 | uiCA ADL-P, before | 83.2% | 90.9% | 96.8% | 2.8% |
+|  |  | uiCA ADL-P, after | 83.2% | 90.9% | 96.8% | 2.8% |
+|  |  | uiCA RKL (original uiCA) | 42.7% | 47.1% | 66.3% | 16.8% |
+|  |  | llvm-mca `alderlake` | 27.8% | 32.3% | 42.9% | 35.9% |
+| real-code blocks (bhive5) | 1896 | uiCA ADL-P, before | 89.1% | 92.6% | 95.3% | 3.2% |
+|  |  | uiCA ADL-P, after | 89.1% | 92.6% | 95.3% | 3.2% |
+|  |  | uiCA RKL (original uiCA) | 68.6% | 71.3% | 77.1% | 13.6% |
+|  |  | llvm-mca `alderlake` | 66.1% | 68.8% | 75.1% | 18.4% |
+
+### ICX — measured on a Xeon Gold 6314U (Ice Lake-SP)
+
+| Set | Loops | Tool | ≤5% | ≤10% | ≤20% | MAPE |
+|---|---:|---|---:|---:|---:|---:|
+| random loops (holdout7) | 1879 | uiCA ICX, before | 70.5% | 85.8% | 97.8% | 3.9% |
+|  |  | uiCA ICX, after | 70.5% | 85.8% | 97.8% | 3.9% |
+|  |  | uiCA ICL (original uiCA) | 63.3% | 78.4% | 92.5% | 6.3% |
+|  |  | llvm-mca `icelake-server` | 41.0% | 53.0% | 71.4% | 22.5% |
+| real-code blocks (bhive5) | 1928 | uiCA ICX, before | 82.7% | 89.7% | 96.9% | 3.0% |
+|  |  | uiCA ICX, after | 82.7% | 89.7% | 96.9% | 3.0% |
+|  |  | uiCA ICL (original uiCA) | 79.5% | 85.6% | 93.4% | 4.8% |
+|  |  | llvm-mca `icelake-server` | 65.5% | 69.5% | 77.7% | 11.9% |
+
+On the held-out sets nothing changed: no prediction of holdout7 changed, 20 ZEN3 predictions of bhive5 changed without moving a block
+across the 10% line. The random loops load size-aligned addresses, store through registers that are not rewritten between the stores
+and have no long FP dependency chains, so this round's rules do not apply to them.
+
+### Changes in round 9
+
+- ZEN3: the store-line rule (two stores per cycle only to the same cache line) compares the values of the address registers within an
+  iteration (a version per register and an offset from added immediates), not their names. A byte histogram with 8
+  `inc dword ptr [rsp+rdx*4+D]` and `movzx edx, ...` between them (dogfood `hist_c`): 8.00 cycles per iteration measured, predicted
+  6.08 before (both store-data ports), 8.00 now.
+- ZEN3, ADL-P, ICX: loads that cross a 64-byte line block their load port for 2, 3 and 2 cycles (`splitLoadCycles`), where the
+  loop's addresses make the crossing knowable: for loads whose address registers only change by adding immediates, the offsets and
+  the stride are known, and the start address is assumed to have the alignment with the fewest crossings. gcc's 8-tap FIR (8 unaligned
+  ymm loads, 3.7 crossing per iteration by `ls_misal_loads.ma64`): 5.85 measured, 4.10 -> 5.71; the same loads from a 64-byte aligned
+  pointer: ZEN3 6.00 (4.00 -> 5.78), ADL-P 5.07 (2.67 -> 5.02), ICX 6.00 (4.00 -> 6.00). The three FIR variants are now ranked
+  with the right winner (the 2-aligned-loads + shuffle variant). Loads at constant addresses are not modeled, and neither is the
+  longer latency of crossing loads (+1 cycle on the Ryzen, +6 to +7 on the Intel CPUs). The original Intel models are unchanged.
+- ZEN3: at most 56 uops for the FP pipes wait in the FP scheduler; younger ones wait in order in the non-scheduling queue and cannot be
+  dispatched before they enter it (`fpSchedulerSize`). A chain of 16 / 24 FMAs per iteration: 10.09 / 18.86 cycles measured,
+  8.33 / 12.00 -> 9.12 / 18.27. Dogfood: AVX2 prefix sum 4.22 measured, 3.04 -> 3.35; vectorized division 7.31, 5.02 -> 5.20.
+
+Not fixed (measured, see the fork's `microbench/lb/` and `microbench/measurements/lb/`):
+
+- The scalar prefix sum (`add edx, [rdi+rax*4]; mov [rsi+rax*4], edx; inc rax; cmp rcx, rax; jne`): 1.00 measured, 1.36 predicted;
+  a sum reduction without the store: 1.07, 1.55. In the model, the index chain (`inc rax`) loses ALU ports to the older accumulator
+  chain, which falls behind by the load latency, so the loads come late. Measured: a fused CMP/TEST + Jcc takes no ALU slot (3 adds +
+  `inc` + `cmp; jne`: 1.00 cycles, predicted 1.50), but all branches share two branch units, fused DEC + Jcc included. Moving fused
+  CMP/TEST pairs to two branch ports fixed the first and broke loops with several branches (reverted); dispatching ALU uops to any free
+  ALU (not bound at issue) fixed the prefix sums but lowered the random loops by 1.4 to 2.4 points; steering a uop to the port of its
+  producer lowered them by 20 points.
+- Shuffle-heavy vector loops are still 13–29% optimistic (dogfood `fir8_s`, `fir8_s2`, `udiv_v`, `udiv_v2`, `psum_v2`). Measured:
+  8 `vmulps` + 6 `vpalignr` take 5.58 cycles (the model balances them over FP0-FP2 perfectly: 4.67); `vpermd` costs 1.33 cycles when
+  two or more are in a loop, 1.00 alone, and less next to `vpaddd` (a throughput limit fit the first and broke the others, not kept).
+
+### Method of round 9
+
+- **Held out**: random loops `holdout7` (`microbench/fuzz/fuzz_gen.py`, profile `mem`, seed 14, 2000 loops) and BHive blocks `bhive5`
+  (seed 5, 250 per program, none in `bhive1`-`bhive4`), generated and measured on all three machines before any model change, scored
+  once at the end.
+- **Development**: the 21 dogfood loops (`microbench/dogfood/`, measured by the dogfood runs) and three sets of small loop benchmarks
+  measured for this round (`microbench/lb/r9a.txt`, `r9b.txt`, `r9c.txt`: loops called from C on buffers, the slope per iteration from
+  perf cycles); every change was checked against the earlier development and check sets (`dev13`, `dev11`, `holdout5`, the
+  development half of `bhive1`, `bhive3`) and the hand-written sets, and kept only if none got worse.
 
 "Before" is the fork's `improve-r7` at `f4a7868` (the model of the previous wuica data, branch `model-r7`), "after" is `improve-r8`
 at `c899be7` (the model of the branch `model-r8`).
