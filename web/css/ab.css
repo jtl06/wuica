@@ -24,6 +24,7 @@ body.ab-on .toolbar .code-hint { display: none; } /* A's row has the elements pe
 #b-arch { max-width: 16ch; }
 body.ab-on #examples { width: 10ch; }
 body.ab-on .toolbar .choice, .ab-head .choice { gap: 0.25rem 0.8rem; }
+.dense body.ab-on .toolbar, .dense .ab-b-head { column-gap: 0.6rem; }
 @media (max-width: 1199px) {
   body.ab-on #code, body.ab-on #code-b { height: 11rem; min-height: 6rem; }
 }
@@ -32,7 +33,7 @@ body.ab-on .toolbar .choice, .ab-head .choice { gap: 0.25rem 0.8rem; }
 }
 /* wide: the input pane a little wider than in single mode (two rows of controls) */
 @media (min-width: 1200px) {
-  body.ab-on .panes { grid-template-columns: minmax(0, clamp(24rem, 36vw, 42rem)) minmax(0, 1fr); }
+  body.ab-on .panes { grid-template-columns: minmax(0, clamp(24rem, 35vw, 42rem)) minmax(0, 1fr); }
 }
 
 .ab-tag {

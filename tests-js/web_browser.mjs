@@ -598,11 +598,15 @@ try {
     await page.goto(`${origin}/`);
     await page.ready();
     const first = await page.eval(`${HELPERS} return $('build-id').textContent;`);
-    await page.waitFor(`!document.getElementById('update-note').hidden`, 'the update note', 30000);
-    await sleep(1500); // requests of the page that the old worker was still answering
-    const upd = await page.eval(`${HELPERS} return { keys: await caches.keys(), note: $('update-note').innerText };`);
+    // The page shows the note, then reloads itself once it is idle (app.js updated(): at most once per build, marked in
+    // session storage before the reload). Wait for that state, not for the note: under load it can be gone again
+    // before a look at it (the new worker first caches the whole new build).
+    await page.waitFor(`!document.getElementById('update-note').hidden || sessionStorage.getItem('wuica-update-reload') === ${JSON.stringify(versionB)}`, 'the update note (or the reload after it)', 120000);
+    await page.waitFor(`(await caches.keys()).join() === ${JSON.stringify(`wuica-${versionB}`)}`, 'the new build\'s cache, alone', 60000);
+    const upd = await page.eval(`${HELPERS} return { keys: await caches.keys(), note: $('update-note').hidden ? null : $('update-note').innerText, build: $('build-id').textContent, mark: sessionStorage.getItem('wuica-update-reload') };`);
     check(first === manifest.version, 'deploy: the open page is still the cached build', first);
-    check(JSON.stringify(upd.keys) === JSON.stringify([`wuica-${versionB}`]) && /new version/.test(upd.note), 'deploy: the new worker replaces the cache and the page says so', JSON.stringify(upd));
+    check(JSON.stringify(upd.keys) === JSON.stringify([`wuica-${versionB}`]) && (/new version/.test(upd.note ?? '') || (upd.mark === versionB && [manifest.version, versionB].includes(upd.build))),
+      'deploy: the new worker replaces the cache and the page says so (or, idle, reloads itself)', JSON.stringify(upd));
     await page.reload();
     await page.ready();
     check(await page.eval(`return document.getElementById('build-id').textContent;`) === versionB, 'deploy: after a reload the page is the new build');

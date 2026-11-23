@@ -51,7 +51,8 @@ html.dense { font-size: 13px; line-height: 1.4; }
 /* ---- the uop table: tight port columns, the instruction column stays in view while the ports scroll sideways ---- */
 .dense .grid.uops th, .dense .grid.uops td { padding-left: 0.45ch; padding-right: 0.45ch; }
 .dense .grid.uops .first { padding-left: 0.6rem; }
-.dense .grid.uops th.first { position: sticky; left: 0; z-index: 1; background-color: var(--surface); box-shadow: inset -1px 0 var(--border); }
+.dense .grid.uops th.first { position: sticky; left: 0; z-index: 1; background-color: var(--surface); box-shadow: inset -1px 0 var(--border);
+  max-width: 45vw; overflow: hidden; text-overflow: ellipsis; } /* (narrow screens: the ports still have room beside it) */
 .dense .grid.uops thead th.first { z-index: 2; }
 /* (opaque tints: the cells scroll under it) */
 .dense .grid.uops tbody tr:hover > th.first, .dense .grid.uops tbody tr.tl-linked > th.first { background-color: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
