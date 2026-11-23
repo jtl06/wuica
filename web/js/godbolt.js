@@ -505,7 +505,10 @@ export function rangeLines(fn, start, end) {
 export function findLoops(fn) {
   const loops = [];
   fn.items.forEach((it, k) => {
-    if (it.kind === 'instr' && it.target !== null && it.target <= k) loops.push({ start: it.target, end: k });
+    if (it.kind !== 'instr' || it.target === null || it.target > k) return;
+    // several jumps back to one instruction are one loop, to the last of them
+    const same = loops.find((l) => l.start === it.target);
+    if (same) same.end = Math.max(same.end, k); else loops.push({ start: it.target, end: k });
   });
   for (const l of loops) l.inner = !loops.some((o) => o !== l && o.start >= l.start && o.end <= l.end);
   return loops.sort((a, b) => Number(b.inner) - Number(a.inner) || a.start - b.start || a.end - b.end);

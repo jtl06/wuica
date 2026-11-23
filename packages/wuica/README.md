@@ -251,7 +251,11 @@ nearest bound, which alone does not reach tp; the web page shows "unknown · nea
 maxSpeedup}`: the next limit, and the speedup at most if the binding one went away), `unexplained` (cycles no single
 limit explains),
 `chain` (the critical loop-carried chain: `{index, instr, operand, latency, carried}`) and `hot` (`{resource, ports?,
-instructions: [{index, instr, share}]}`: the largest shares of the binding resource, or of the largest limit). With `options.details` (MCP:
+instructions: [{index, instr, share}]}`: the largest shares of the binding resource, or of the largest limit), and
+`caveats` (only if any: `[{id, text, title, instructions}]`, known blind spots of the model that the block meets:
+`rmw-index` a read-modify-write to an indexed address, whose store forwarding between iterations depends on the data;
+`exit` an exit before the loop's branch, whose mispredict is not modelled; `split` loads at an offset that is not a
+multiple of their width, which may cross a cache line; the web page shows them in one line under the throughput). With `options.details` (MCP:
 `details: true`), each instruction also has `allowedPorts` (`1*p0156+1*p23`), `uops`, `fusedUops`, `latencies`
 (`"RAX->RAX:1"`) and `frontEnd` (`length`, `offset`, `crosses`, `lcp`, `microcoded`, fusion), and `insights` has `portSet`
 (the ports behind the Ports limit, `cycles` = uops / ports, and the instructions that load them) and `issueSlots` (per

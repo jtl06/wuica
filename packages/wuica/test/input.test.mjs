@@ -120,3 +120,14 @@ test('insights.binding is the response\'s bottlenecks; with none, `largest` is t
   assert.equal(d.insights.hot.instructions[0].instr, 'div ecx');
   assert.equal(d.insights.next.limit, 'Ports');
 });
+
+test('insights.caveats: the known blind spots the block meets', async () => {
+  const hist = w.summarize(await w.analyze('ZEN3', { source: '.L:\n movzx edx, byte ptr [rdi]\n inc dword ptr [rsp+rdx*4]\n inc rdi\n cmp rdi, rsi\n jne .L\n' }));
+  assert.deepEqual(hist.insights.caveats.map((c) => [c.id, c.instructions]), [['rmw-index', [1]]]);
+  assert.match(hist.insights.caveats[0].title, /not modelled/);
+  const fir = w.summarize(await w.analyze('ZEN3', { source: fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/caveats/fir8.s'), 'utf8') }));
+  assert.equal(fir.insights.caveats[0].id, 'split');
+  assert.equal(fir.insights.caveats[0].instructions.length, 7);
+  const plain = w.summarize(await w.analyze('SKL', { source: CRC_LOOP }));
+  assert.equal(plain.insights.caveats, undefined);
+});

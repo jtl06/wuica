@@ -175,6 +175,8 @@ export interface Insights {
   chain?: { index: number; instr: string; operand: string; latency: number; carried: boolean }[];
   /** The instructions with the largest share of the binding resource, or of the largest limit (top 5). */
   hot?: { resource: string; ports?: string[]; instructions: { index: number; instr: string; share: number }[] };
+  /** Known blind spots of the model the block meets (absent if none): rmw-index, exit, split; instructions: indexes. */
+  caveats?: { id: 'rmw-index' | 'exit' | 'split'; text: string; title: string; instructions: number[] }[];
   /** With options.details: the ports behind the Ports limit (cycles = uops / ports) and the instructions that load them. */
   portSet?: { ports: string[]; uops: number; cycles: number; instructions: { index: number; instr: string; uops: number }[] };
   /** With options.details: issue slots per iteration, used and lost by cause. */

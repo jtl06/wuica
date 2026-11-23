@@ -4,7 +4,7 @@
 // end limited only by the issue width, macro- or micro-fusion switched; and the estimate without the loop-carried chain
 // (the largest other limit, no analysis). tests-js/web_whatif.mjs checks that the variants agree with the page's.
 
-import { ACCUMULATORS, accumulatorText, bestAccumulators } from '../dist/web/accum.js';
+import { ACCUMULATORS, accumulatorText, bestAccumulators } from './web/accum.js';
 
 export const VARIANTS = Object.freeze(['unroll2', 'unroll4', 'unroll8', 'acc2', 'acc3', 'acc4', 'acc8', 'simpleFrontEnd', 'noMacroFusion', 'noMicroFusion', 'nochain']);
 const UNROLL = [2, 4, 8];

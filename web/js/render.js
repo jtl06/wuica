@@ -1,5 +1,6 @@
 // Builds the result view. All text goes in through textContent: responses, fragments and diagnostics are data.
 
+import { caveats } from './caveats.js';
 import { formatListing } from './listing.js';
 import { accuracyNote } from './archs.js';
 
@@ -180,6 +181,14 @@ function mockLine(m, archKey) {
 //   elapsedMs,                (the cycle-by-cycle trace is drawn by app.js below the result, full width)
 //   ui: { hideEmpty, reportOpen, listingOpen: {asm, hex} (null: closed), allRows }, onUi(name, value)
 // }
+// Known blind spots of the model that the block meets (caveats.js): one small line, the details in the tooltips.
+function caveatLine(r) {
+  const cv = caveats(r);
+  if (!cv.length) return null;
+  return h('div', { class: 'cv-line' }, h('span', { class: 'k', text: 'not modelled' }), ' ',
+    cv.flatMap((c, k) => [k ? ' · ' : '', h('span', { class: 'cv', 'data-cv': c.id, title: c.title, text: c.text })]));
+}
+
 // When uiCA names no bottleneck: the largest limit(s) and their value ("Ports 4.00"), the nearest bound (the npm
 // package's insights.largest), or '' if there are no limits.
 export function nearestLimit(r) {
@@ -225,6 +234,7 @@ export function renderResult(root, view) {
             : h('span', { class: 'hint', title: `no single limit explains the throughput${nearestLimit(r) ? `; the nearest is ${nearestLimit(r)} (the API's insights.largest)` : ''}`,
               text: nearestLimit(r) ? `unknown · nearest ${nearestLimit(r)}` : 'unknown' }))),
       mock ? h('div', { class: 'mock-tag', text: mockLine(mock, view.archKey) }) : null,
+      caveatLine(r),
       r.decodeErrors > 0 ? h('div', { class: 'caveat', role: 'alert',
         text: `${r.decodeErrors} undecodable position${r.decodeErrors === 1 ? '' : 's'} skipped` }) : null));
 

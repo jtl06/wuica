@@ -30,6 +30,8 @@ const j = JSON.stringify;
   check(pre.choice === 0 && pre.pick.begin === 2 && pre.pick.end === 5, 'code before the loop: the loop is picked', j(pre.pick));
   const nest = findLoops(scan('.L1:\n  mov rcx, 4\n.L2:\n  add rax, 1\n  dec rcx\n  jnz .L2\n  dec rdx\n  jnz .L1\n'));
   check(nest.length === 2 && nest[0].label === '.L2' && nest[0].inner && !nest[1].inner, 'nested loops: the inner one first', j(nest));
+  const twice = findLoops(scan('.L:\n  add rdx, 32\n  cmp rdx, rsi\n  jae .L\n  vpcmpeqb ymm0, ymm1, [rdi+rdx]\n  test ecx, ecx\n  je .L\n'));
+  check(twice.length === 1 && twice[0].begin === 1 && twice[0].end === 7, 'two branches back to one label (an exit retargeted to the top): one loop, to the last', j(twice));
   const marked = preparePaste('  mov ecx, 9\n# LLVM-MCA-BEGIN\n.L1:\n  dec rcx\n  jnz .L1\n# LLVM-MCA-END\n');
   check(marked.choice === null && !marked.choosable && marked.loops.length === 0, 'region markers win: no pick');
   const numeric = preparePaste('1: add rax, 1\n2: dec rcx\n3: jnz 1b\n');

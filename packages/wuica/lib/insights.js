@@ -3,6 +3,8 @@
 // and the instructions with the largest share of the binding resource. Derived from the response only (no analysis).
 // tests-js/web_bound.mjs checks that it agrees with the page on the built-in examples.
 
+import { caveats } from './web/caveats.js';
+
 const FRONT = new Set(['MITE', 'MS', 'DSB', 'LSD']);
 const COUNTS = new Set(['Issued', 'Exec.']);
 const isPort = (c) => !FRONT.has(c) && !COUNTS.has(c);
@@ -51,6 +53,9 @@ function weights(r, id) {
 //   unexplained: cycles per iteration that no single limit explains
 //   chain: the critical loop-carried chain: [{index, instr, operand, latency, carried}] (index into `instructions`)
 //   hot: {resource, ports?, instructions: [{index, instr, share}]}: the largest shares of the binding resource (top 5)
+//   caveats: [{id, text, title, instructions: [index]}]: known blind spots the block meets (web/js/caveats.js):
+//            rmw-index (store forwarding between iterations through an indexed address), exit (an exit's mispredict),
+//            split (loads that may cross a cache line); absent if none
 export function insights(r) {
   const tp = Number(r?.tp);
   if (!(tp > 0) || !Array.isArray(r.limits) || !Array.isArray(r.rows) || !Array.isArray(r.columns)) return null;
@@ -86,5 +91,7 @@ export function insights(r) {
       out.hot = { resource: top[0], ...(b.ports ? { ports: b.ports } : {}), instructions: shares };
     }
   }
+  const cv = caveats(r);
+  if (cv.length) out.caveats = cv.map((c) => ({ id: c.id, text: c.text, title: c.title, instructions: c.rows }));
   return out;
 }

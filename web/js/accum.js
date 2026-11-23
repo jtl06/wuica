@@ -3,7 +3,7 @@
 // the critical chain (the response's criticalPath); each copy after the first gets a free register of the same kind,
 // and the loop's branch (with its macro-fused compare) stays once at the end, as in the unrolled variants (whatif.js).
 // No DOM and no assembling here: the variant is assembly text (.byte lines for what is not renamed, so it keeps its
-// exact encoding) that the caller assembles. The npm package ships a copy (packages/wuica/build.sh) for MCP what_if.
+// exact encoding) that the caller assembles. The npm package has a copy (packages/wuica/lib/web) for MCP what_if.
 
 export const ACCUMULATORS = Object.freeze([2, 3, 4, 8]);
 

@@ -1,7 +1,7 @@
 // Find the loop in pasted assembly: a whole function (gcc -S, clang -S, objdump -d with or without the byte column, a
 // Compiler Explorer import) is analyzed at its innermost loop, or at its body if it has none. No DOM and no assembling
 // here (asm-regions.js assembles the plan; tests-js/web_loop_find.mjs runs this under Node; the npm package ships a
-// copy, packages/wuica/build.sh).
+// copy, packages/wuica/lib/web).
 //
 // preparePaste(text, {loop}) reads the text once and returns what the assembly of an analysis needs:
 //   - objdump lines ("  40:\tcrc32 rax, ...", "  1c: jne 10 <psum+0x10>", with or without the bytes) become plain
@@ -236,7 +236,7 @@ function targetLine(s, target, line) {
   return l && l.inText ? l.line : null;
 }
 
-// The loops: [{begin, end, label, inner}] (begin: the label's line, end: the branch's line; 1-based), innermost first,
+// The loops: [{begin, end, label, inner}] (begin: the label's line, end: the last branch back to it; 1-based), innermost first,
 // in the order of the code (a compiler puts the main loop before its remainder loop), then the outer ones.
 export function findLoops(s) {
   const loops = [];
@@ -244,7 +244,10 @@ export function findLoops(s) {
     if ((ins.kind !== 'jcc' && ins.kind !== 'jmp') || !ins.target) continue;
     const t = targetLine(s, ins.target, ins.line);
     if (t === null || t > ins.line) continue;
-    loops.push({ begin: t, end: ins.line, label: ins.target });
+    // several branches back to one label are one loop (to the last of them): an exit retargeted to the top is not a loop
+    const same = loops.find((l) => l.begin === t);
+    if (same) same.end = Math.max(same.end, ins.line);
+    else loops.push({ begin: t, end: ins.line, label: ins.target });
   }
   for (const l of loops) l.inner = !loops.some((o) => o !== l && o.begin >= l.begin && o.end <= l.end && (o.begin !== l.begin || o.end !== l.end));
   return loops.sort((a, b) => Number(b.inner) - Number(a.inner) || a.begin - b.begin || a.end - b.end);

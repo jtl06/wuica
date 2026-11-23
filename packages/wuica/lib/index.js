@@ -18,9 +18,9 @@ export { detailInsights };
 import { readMaybeCompressed } from './files.js';
 import { CODES, WARM_HEX, failure, tableFailure, analysisResult, compareFields } from './core.js';
 import { ThreadPool, threadLimit, threadOption, threadsFor } from './threads.js';
-// the web page's reading of pasted assembly (web/js, copied by build.sh): the loop of a whole function, objdump lines,
+// the web page's reading of pasted assembly (copies of web/js in lib/web: tests-js/web_pkg_copies.mjs): the loop of a whole function, objdump lines,
 // exits as not taken, ';' comments, region markers
-import { assembleMarked, commentFixes } from '../dist/web/asm-regions.js';
+import { assembleMarked, commentFixes } from './web/asm-regions.js';
 
 export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, CODES, WARM_HEX, parseDiagnostics, insights };
 export { whatIf, VARIANTS as WHAT_IF_VARIANTS } from './whatif.js';

@@ -4,8 +4,6 @@
 #   dist/wuica_asm.wasm.br          the assembler (assembler/dist), brotli-compressed
 #   dist/data/uarch.json.br         the configurations (data/uarch.json)
 #   dist/data/arch/<NAME>.json.br   the instruction tables (data/arch/*.json)
-#   dist/web/*.js                   the web page's modules for pasted assembly (web/js: loop-find.js, asm-regions.js,
-#                                   assembler.js; caveats.js, accum.js), so the API reads assembly as the page does
 #   LICENSE, licenses/              the license texts (AGPL-3.0, Intel XED, LLVM)
 # Then `npm pack` in this directory makes the tarball (`./build.sh --pack` does both).
 #
@@ -17,8 +15,6 @@ ROOT="$(cd "$PKG/../.." && pwd)"
 WASM="${WUICA_WASM:-$ROOT/target/wasm32-unknown-unknown/release/wuica_wasm.wasm}"
 ASM_WASM="${WUICA_ASM_WASM:-$ROOT/assembler/dist/wuica_asm.wasm}"
 DATA="${WUICA_DATA:-$ROOT/data}"
-# the web page's DOM-free modules the library uses (scripts/check.mjs hashes them for the package's stamp)
-WEB_MODULES="loop-find.js asm-regions.js assembler.js accum.js"
 
 if [ ! -f "$WASM" ]; then
   echo "building the analyzer module (./build-wasm.sh)"
@@ -55,9 +51,6 @@ for (const { name, bytes } of inputs) {
 fs.writeFileSync(path.join(out, 'manifest.json'), JSON.stringify(manifest, null, 1) + '\n');
 console.log(`${files.length} files: ${(raw / 1e6).toFixed(1)} MB -> ${(packed / 1e6).toFixed(2)} MB (brotli)`);
 EOF
-
-mkdir -p "$PKG/dist/web"
-for f in $WEB_MODULES; do cp "$ROOT/web/js/$f" "$PKG/dist/web/$f"; done
 
 cp "$ROOT/LICENSE" "$PKG/LICENSE"
 cp "$ROOT/third_party/xed/LICENSE" "$PKG/licenses/LICENSE-XED.txt"
