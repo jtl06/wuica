@@ -48,10 +48,15 @@ What makes it fast:
 
 ## The reference
 
-- Read: `reference/uiCA/*.py` (the exact commit the fixtures come from). The decoder's C code that produces the decoded records
-  is mirrored in `crates/wuica-xed/shim/wuica_xed.c`.
-- Run: on the host `aethia` (`ssh aethia`), the reference is installed in `~/uica-zen/uiCA-perf` (never modify it), with the Python
-  interpreter `~/uica-zen/venv/bin/python`. To add debug output, copy the directory (e.g. to `~/uicaspeed/<name>/uiCA`, 60 MB) and
+The reference is [jtl06/uiCA](https://github.com/jtl06/uiCA), branch `crash-fixes`, commit `f85fcbd`: branch `perf` (`adf62ae`,
+whose output is identical to that of `8f24bd3`) plus the fixes of the inputs on which uiCA raised an exception
+(`docs/DEVIATIONS.md`). All fixtures in `fixtures/generated` are exported from it.
+
+- Read: `reference/uiCA/*.py` is still `8f24bd3`; the fixed code differs from it by the commits listed in `docs/DEVIATIONS.md`
+  (`git diff adf62ae f85fcbd -- uiCA.py` in the fork). The decoder's C code that produces the decoded records is mirrored in
+  `crates/wuica-xed/shim/wuica_xed.c`.
+- Run: on the host `aethia` (`ssh aethia`), the fixed reference is installed in `~/uica-zen/uiCA-crashfix` (branch `crash-fixes`;
+  the unfixed one in `~/uica-zen/uiCA-perf`; never modify either), with the Python interpreter `~/uica-zen/venv/bin/python`. To add debug output, copy the directory (e.g. to `~/uicaspeed/<name>/uiCA`, 60 MB) and
   edit the copy. Example: `cd ~/uica-zen/uiCA-perf && ~/uica-zen/venv/bin/python -c "import xed, uiCA; ..."`; the functions take
   the list returned by `xed.disasHex(hexString, chip=config.XEDName)`.
 - aethia is also a measurement machine. A single short Python run is fine. Anything CPU-heavy (more than a few seconds, or
@@ -60,7 +65,11 @@ What makes it fast:
 
 ## Fixtures
 
-One JSON object per line, gzip. A case with an `error` field is one where the reference raised an exception: skip it.
+One JSON object per line, gzip. A case with an `error` field is one where the reference raised an exception. The fixed reference
+raises none on the fixtures; the only exception it raises on purpose is `InputError` (an input that cannot be analyzed), and a case
+with `"error": "InputError: <message>"` must give an error with the text `<message>` (the tests check this, and treat any other
+`error` as a failure). The sets were exported with `tools/export_fixtures.py` (the extra set with `FRESH=1`; the set `more` with
+`REPLAY=`); with the fixed reference, every case that did not fail before is byte-identical to the export from `adf62ae`.
 
 - `fixtures/decode_fixtures.jsonl.gz`: `{file, chip, hex, instrs}`: decoder output (`instrs` deserializes into
   `wuica_core::decoded::DecodedInstr`; the extra `ast` field is ignored) for each file and each XED chip name.
@@ -74,12 +83,21 @@ One JSON object per line, gzip. A case with an `error` field is one where the re
   but no instruction-object cases.
 
 **Extra set** (same formats; files `fixtures/decode_fixtures_extra.jsonl.gz`, `fixtures/generated/extra_instr_fixtures.jsonl.gz`,
-`fixtures/generated/extra_sim_fixtures.jsonl.gz`; sources in `fixtures/extra-src/x_*.s`): 32 hand-written blocks for paths that
-the main corpus does not reach (ZMM registers, stack operations, high-8 registers, LCP, lock, rep, fences, microcode, x87, ...),
-each with all option variants and the `-json` output. Every case was run in a new process (`FRESH=1`), like a run of the
-command-line tool: the reference modifies its instruction tables in place for code that uses ZMM registers, so within one
-process earlier cases can change later ones (the main set has no ZMM code). 108 of its 5472 simulation cases are reference
-crashes (`error`), which are skipped.
+`fixtures/generated/extra_sim_fixtures.jsonl.gz`; sources in `fixtures/extra-src/x_*.s`): 36 hand-written blocks for paths that
+the main corpus does not reach (ZMM registers, stack operations, high-8 registers, LCP, lock, rep, fences, microcode, x87, ...,
+and four blocks for the crash fixes: `x_dsb_fused_mid*.s`, `x_push_mem_pair.s`, `x_stack_init.s`), each with all option variants
+and the `-json` output (6156 simulation cases, 3420 instruction-object cases). Every case was run in a new process (`FRESH=1`),
+like a run of the command-line tool: the reference modifies its instruction tables in place for code that uses ZMM registers, so
+within one process earlier cases can change later ones (the main set has no ZMM code).
+
+**Set `more`** (`fixtures/generated/more_sim_fixtures.jsonl.gz`, optional): 3419 simulation cases of main and extra blocks with
+options, each with the `-json` output; made with `REPLAY=<the previous file> tools/export_fixtures.py UICA_DIR OUT_FILE`. The
+simulation fixture test reads it with `WUICA_SET=more WUICA_MORE_SIM_FIXTURES=<path>`; `scripts/check.sh full` runs it if the file
+is present.
+
+Current sets: exported from the fork's `crash-fixes` (`f85fcbd`) on aethia into `~/uicaspeed/wuica-fix-crash/final` (the sources
+of the extra blocks, with their `.o` files, in `~/uicaspeed/wuica-fix-crash/extra-src`). The CI data asset `ci-data-v1` still has
+the sets exported from `8f24bd3`; the tests now fail on its 202 cases with an `error`, so CI needs a new asset with these sets.
 
 The decoded records of a case are found in the decode fixtures by `file` and the chip `configs[arch].XEDName`.
 Compare JSON with `wuica_core::jsoncmp::diff` (numbers by value, object key order ignored).
