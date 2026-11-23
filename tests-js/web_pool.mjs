@@ -3,7 +3,7 @@
 // that run in this thread, against the same analyses made one at a time (all CPUs, sweep and cost of every example).
 // Usage: node tests-js/web_pool.mjs
 import fs from 'node:fs';
-import { createPool, poolSize, POOL_MAX } from '../web/js/pool.js';
+import { createPool, poolSize, tableCap, POOL_MAX, TABLE_SPARE } from '../web/js/pool.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { WorkerEngine, createHandler, CancelledError } from '../web/js/engine-rpc.js';
 import { archGroups } from '../web/js/archs.js';
@@ -18,11 +18,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // ---- pool size -----------------------------------------------------------------------------------------------------
 check(poolSize(1) === 1 && poolSize(2) === 1 && poolSize(4) === 3 && poolSize(12) === POOL_MAX && poolSize(64, 4) === 4, 'size: cores - 1, at least 1, capped');
 check(poolSize(null) === 1 && poolSize(0) === 1 && poolSize(NaN) === 1, 'size: unknown core count: 1');
+check(tableCap(15, 6) === 3 + TABLE_SPARE && tableCap(15, 3) === 5 + TABLE_SPARE && tableCap(15, 1) === 15 + TABLE_SPARE && tableCap(0, 0) === 1 + TABLE_SPARE, 'cap: an even share of the tables plus the spare');
 
 // ---- fake engines ----------------------------------------------------------------------------------------------------
 // An engine like WorkerEngine: loadArch takes `loadMs`, analyze `ms(request)`; cancel() rejects what is pending with
-// CancelledError and "restarts" (the tables stay loaded, as in WorkerEngine, which loads them into the new worker).
-function world({ loadMs = 5, ms = () => 3, failSpawn = 0 } = {}) {
+// CancelledError and "restarts" (the tables stay loaded, as in WorkerEngine, which loads them into the new worker);
+// recycle(keep) does the same but keeps only the tables in `keep`.
+function world({ loadMs = 5, ms = () => 3, failSpawn = 0, recycle = true } = {}) {
   const w = { engines: [], loads: [], running: 0, maxRunning: 0, analyses: [], spawnFails: failSpawn, bytesAsked: [] };
   w.spawn = async () => {
     await sleep(1);
@@ -47,6 +49,8 @@ function world({ loadMs = 5, ms = () => 3, failSpawn = 0 } = {}) {
       }, ms(request));
     });
     e.cancel = () => { e.restarts++; for (const p of [...e.pending]) { e.pending.delete(p); p.reject(new CancelledError()); } };
+    e.recycles = 0;
+    if (recycle) e.recycle = (keep) => { e.recycles++; for (const t of [...e.tables]) if (!keep.includes(t)) e.tables.delete(t); e.cancel(); };
     e.memory = async () => 1048576 * (1 + e.tables.size);
     w.engines.push(e);
     return e;
@@ -216,6 +220,17 @@ const collect = () => { const got = []; return { got, onResult: (item, response,
   check(c2.got.length === 1 && /no worker/.test(c2.got[0].error?.message), 'spawn: always failing: an error result');
 }
 
+// a worker that cannot start while the others are full: one of them evicts and takes the job
+{
+  const w = world();
+  const pool = w.pool({ size: 3, maxTables: 3 });
+  await pool.run([req('SNB')], collect()); // one worker
+  w.spawnFails = 99;
+  const c = collect();
+  await pool.run(['SKL', 'KBL', 'CFL', 'SKX', 'CLX', 'ICL', 'TGL'].map((a) => req(a)), c);
+  check(c.got.length === 7 && c.got.every((g) => !g.error) && (await pool.stats()).every((s) => s.tables.length <= 3), 'spawn fails, workers full: the jobs still run, within the cap', JSON.stringify(c.got.filter((g) => g.error).map((g) => [g.item.arch, g.error.message])));
+}
+
 // two batches at once (e.g. the sweep and the cost column): both complete, results go to their own callbacks
 {
   const w = world();
@@ -226,6 +241,72 @@ const collect = () => { const got = []; return { got, onResult: (item, response,
     pool.run(Array.from({ length: 20 }, (_, k) => req('SKL', k)), b),
   ]);
   check(ra && rb && a.got.length === 15 && b.got.length === 20 && b.got.every((g) => g.item.arch === 'SKL'), 'two batches: both complete');
+}
+
+// the cap on tables per worker: the table of all CPUs fits (each table once, no worker over the cap), and the next input
+// loads nothing, for any pool size
+for (const size of [1, 3, 4, 6]) {
+  const w = world();
+  const cap = tableCap(ARCHS.length, size);
+  const pool = w.pool({ size, maxTables: cap });
+  const c = collect();
+  await pool.run(ARCHS.map((a) => req(a)), c);
+  const per = w.engines.map((e) => e.tables.size);
+  check(c.got.length === 15 && c.got.every((g) => !g.error) && w.loads.length === 15 && Math.max(...per) <= cap, `cap ${cap} (size ${size}): all CPUs: each table once, at most the cap per worker`, JSON.stringify([w.loads.length, per]));
+  const loads = w.loads.length;
+  await pool.run(ARCHS.map((a) => req(a, 1)), collect());
+  await pool.run(Array.from({ length: 64 }, (_, k) => req('SKL', k)), collect()); // and a sweep: the spare room
+  const loads2 = w.loads.length;
+  await pool.run(ARCHS.map((a) => req(a, 2)), collect());
+  await pool.run(Array.from({ length: 64 }, (_, k) => req('SKL', k)), collect());
+  check(w.loads.length === loads2 && loads2 - loads <= size && pool.counts.recycles === 0, `cap ${cap} (size ${size}): all CPUs and a sweep again: nothing loaded, nothing evicted`, JSON.stringify([loads, loads2, w.loads.length, pool.counts.recycles]));
+}
+
+// sweeps on one CPU after another: without a cap every table ends up in every worker; with it no worker holds more than
+// the cap, evicted workers are recycled, the results are complete, and the last sweep's table stays
+{
+  const sweeps = async (opts) => {
+    const w = world(opts.world);
+    const pool = w.pool({ size: 4, ...opts.pool });
+    let complete = true, peak = 0;
+    for (const a of ARCHS) {
+      const c = collect();
+      await pool.run(Array.from({ length: 64 }, (_, k) => req(a, k)), c);
+      complete &&= c.got.length === 64 && c.got.every((g) => !g.error && g.response.arch === a);
+      peak = Math.max(peak, ...w.engines.map((e) => e.tables.size));
+    }
+    return { w, pool, complete, peak };
+  };
+  const free = await sweeps({ pool: {} });
+  check(free.complete && free.peak === 15, 'no cap: 15 sweeps put every table in a worker', String(free.peak));
+  const cap = tableCap(15, 4);
+  const capped = await sweeps({ pool: { maxTables: cap } });
+  const st = await capped.pool.stats();
+  check(capped.complete && capped.peak <= cap && st.every((s) => s.tables.length <= cap), `cap ${cap}: 15 sweeps: complete, at most ${cap} tables per worker`, JSON.stringify([capped.peak, st.map((s) => s.tables)]));
+  check(capped.pool.counts.recycles > 0 && capped.w.engines.reduce((n, e) => n + e.recycles, 0) === capped.pool.counts.recycles, 'cap: evicting recycles the worker', JSON.stringify(capped.pool.counts));
+  check(st.every((s) => s.tables.includes('ADL-P')), 'cap: the table of the last sweep is in every worker', JSON.stringify(st.map((s) => s.tables)));
+  const loads = capped.w.loads.length;
+  await capped.pool.run(Array.from({ length: 64 }, (_, k) => req('ADL-P', k)), collect());
+  check(capped.w.loads.length === loads, 'cap: the same sweep again loads nothing', String(capped.w.loads.length - loads));
+  // an engine without recycle(): the cap still steers the jobs, nothing breaks
+  const old = await sweeps({ world: { recycle: false }, pool: { maxTables: cap } });
+  check(old.complete && old.pool.counts.recycles === 0, 'cap: an engine without recycle() still gets every result');
+}
+
+// what is evicted: copies that another worker also has go before the only copy of a table; about half the cap stays
+{
+  const w = world();
+  const pool = w.pool({ size: 2, maxTables: 6 });
+  await pool.run(['SNB', 'IVB', 'HSW', 'BDW'].map((a) => req(a)), collect()); // 2 per worker
+  for (const a of ['SKL', 'KBL', 'CFL', 'SKX']) await pool.run(Array.from({ length: 64 }, (_, k) => req(a, k)), collect()); // in both: full
+  const before = (await pool.stats()).map((s) => s.tables);
+  await pool.run([req('ZEN3')], collect()); // one job: one worker makes room
+  const after = (await pool.stats()).map((s) => s.tables);
+  const i = after.findIndex((t) => t.includes('ZEN3'));
+  const own = before[i].filter((t) => !before[1 - i].includes(t));
+  check(before.every((t) => t.length === 6) && i >= 0 && pool.counts.recycles === 1, 'evict: the full worker made room (recycled)', JSON.stringify({ before, after }));
+  check(after[i].length === 3 && own.length === 2 && own.every((t) => after[i].includes(t)), 'evict: its only copies stay, the copies go, half the cap is kept', JSON.stringify({ before, after }));
+  check(JSON.stringify(after[1 - i]) === JSON.stringify(before[1 - i]), 'evict: the other worker is untouched');
 }
 
 // ---- the real analyzer, in workers in this thread ------------------------------------------------------------------
@@ -271,6 +352,26 @@ if (!fs.existsSync(wasmPath) || !fs.existsSync(new URL('data/uarch.json', root))
   console.log(`real: one engine with every table: wasm memory ${((await single.memory()) / 1048576).toFixed(0)} MiB`);
   console.log(`real: ${st.length} workers; tables per worker ${JSON.stringify(st.map((s) => s.tables.length))}; wasm memory ${st.map((s) => (s.wasmBytes / 1048576).toFixed(0)).join(' + ')} MiB`);
   check(st.length === 4 && new Set(loaded).size === items.length, 'real: every table is in the pool');
+
+  // the memory of sweeps on every CPU, one after another (each copies its table into every worker), without and with the cap
+  const tables = [...new Set(items.map((it) => it.table))];
+  const MiB = (b) => (b / 1048576).toFixed(1);
+  for (const maxTables of [Infinity, tableCap(tables.length, 4)]) {
+    const p = createPool({
+      size: 4, tableOf, tableBytes, maxTables,
+      async spawn() { const e = await WorkerEngine.create(module, () => new FakeWorker()); await e.loadUarch(uarchBytes); return e; },
+    });
+    const ex = CLASSIC_EXAMPLES[0];
+    let ok = true;
+    for (const t of tables) {
+      const arch = items.find((it) => it.table === t).key;
+      ok = (await p.run(Array.from({ length: SWEEP_OFFSETS }, (_, k) => ({ request: makeRequest(ex.hex, arch, { alignmentOffset: k }) })), { onResult: (_, r, e) => { if (e || r?.error) ok = false; } })) && ok;
+    }
+    const s = await p.stats();
+    const wasm = s.reduce((n, x) => n + x.wasmBytes, 0), kept = s.reduce((n, x) => n + x.tableBytes, 0);
+    console.log(`real: sweeps on all ${tables.length} tables, cap ${maxTables}: tables per worker ${JSON.stringify(s.map((x) => x.tables.length))}; wasm memory ${s.map((x) => MiB(x.wasmBytes)).join(' + ')} = ${MiB(wasm)} MiB; table bytes kept ${MiB(kept)} MiB; recycles ${p.counts.recycles}`);
+    check(ok && s.every((x) => x.tables.length <= maxTables), `real: sweeps on every table, cap ${maxTables}: every result, at most the cap per worker`);
+  }
 }
 
 console.log(`${count} pool checks, ${failed} failed`);

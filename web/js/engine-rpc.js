@@ -126,6 +126,15 @@ export class WorkerEngine {
     if (this.#worker || this.#pending.size) this.#fail(new CancelledError());
   }
 
+  // Keeps only the tables named in `keep` and stops the worker (as cancel() does: pending calls reject): the next call
+  // starts a new worker with uarch.json and those tables. The module cannot unload a table, and a WebAssembly memory
+  // never shrinks, so a new worker is the way to give the memory of the other tables back.
+  recycle(keep) {
+    const k = new Set(keep);
+    for (const name of [...this.#tables.keys()]) if (!k.has(name)) this.#tables.delete(name);
+    this.cancel();
+  }
+
   async loadUarch(json) {
     const bytes = typeof json === 'string' ? new TextEncoder().encode(json) : json;
     await this.#live();

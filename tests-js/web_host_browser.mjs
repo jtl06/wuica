@@ -2,6 +2,10 @@
 // /404.html -> /404, a 404.html page), in headless Chrome with a fresh profile: the service worker takes control, and the page
 // keeps working on reloads, after a visit to /index.html (the redirect) and offline. Regression test for a service worker
 // that cached the redirected page and so made every second visit fail (ERR_FAILED).
+// Then deploys: the host switches to other builds (the same files with another version stamp in manifest.json and sw.js).
+// A visit after a deploy gets the old page from the cache; the page must end up on the new build by itself, with its
+// state (the URL fragment), with one reload only, not while the user is typing, and not twice for one build (then the
+// note in the footer stays).
 //    web/build.sh && node tests-js/web_host_browser.mjs [--chrome PATH] [--dist DIR]
 // Skips (exit 0) if Chrome is not found.
 import { spawn } from 'node:child_process';
@@ -12,6 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findChrome } from './chrome.mjs';
 import { hostHandler } from './static-host.mjs';
+import { DEFAULT_STATE, encodeState, decodeState } from '../web/js/url-state.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -25,9 +30,24 @@ let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ---- other builds: links to the files of dist, with the version replaced in manifest.json and sw.js
+const tmpBuilds = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-host-builds-'));
+const versionA = JSON.parse(fs.readFileSync(path.join(dist, 'manifest.json'), 'utf8')).version;
+function build(tag) {
+  const version = (tag.repeat(12) + versionA).slice(0, versionA.length);
+  const dir = path.join(tmpBuilds, tag);
+  fs.mkdirSync(dir);
+  for (const f of fs.readdirSync(dist)) {
+    if (f === 'manifest.json' || f === 'sw.js') fs.writeFileSync(path.join(dir, f), fs.readFileSync(path.join(dist, f), 'utf8').replaceAll(versionA, version));
+    else fs.symlinkSync(path.join(dist, f), path.join(dir, f));
+  }
+  return { dir, version };
+}
+
 // ---- the server (stoppable, for the offline part)
 const sockets = new Set();
-const server = http.createServer(hostHandler(dist));
+let root = dist;
+const server = http.createServer(hostHandler(() => root));
 server.on('connection', (s) => { sockets.add(s); s.on('close', () => sockets.delete(s)); });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const origin = `http://127.0.0.1:${server.address().port}`;
@@ -63,7 +83,7 @@ const stop = () => new Promise((r) => { for (const s of sockets) s.destroy(); se
 // ---- 2. the page in Chrome
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-host-test-'));
 const proc = spawn(chrome, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${path.join(tmp, 'profile')}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
-const cleanup = () => { try { proc.kill(); } catch {} try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} };
+const cleanup = () => { try { proc.kill(); } catch {} for (const d of [tmp, tmpBuilds]) try { fs.rmSync(d, { recursive: true, force: true }); } catch {} };
 try {
   const wsUrl = await new Promise((resolve, reject) => {
     let err = '';
@@ -76,10 +96,12 @@ try {
   let seq = 0;
   const pending = new Map(), problems = [];
   let sessionId;
+  let navigations = 0; // of the main frame
   ws.onmessage = (m) => {
     const msg = JSON.parse(m.data);
     if (msg.id) { const p = pending.get(msg.id); pending.delete(msg.id); if (msg.error) p.reject(new Error(`${p.method}: ${msg.error.message}`)); else p.resolve(msg.result); return; }
     if (msg.sessionId !== sessionId) return;
+    if (msg.method === 'Page.frameNavigated' && !msg.params.frame.parentId) navigations++;
     if (msg.method === 'Runtime.exceptionThrown') problems.push('exception: ' + (msg.params.exceptionDetails.exception?.description ?? msg.params.exceptionDetails.text));
     if (msg.method === 'Runtime.consoleAPICalled' && ['error', 'assert'].includes(msg.params.type)) problems.push(`console.${msg.params.type}: ` + msg.params.args.map((a) => a.value ?? a.description).join(' '));
     if (msg.method === 'Log.entryAdded' && msg.params.entry.level === 'error') problems.push(`log: ${msg.params.entry.text} ${msg.params.entry.url ?? ''}`);
@@ -145,6 +167,77 @@ try {
   await goto('about:blank');
   await goto(`${origin}/`);
   await works('a new visit after /index.html');
+
+  // ---- deploys
+  const shown = () => evaluate(`return { build: document.getElementById('build-id').textContent, hash: location.hash, note: !document.getElementById('update-note').hidden,
+    text: document.getElementById('code').value, controller: navigator.serviceWorker.controller?.scriptURL ?? null };`);
+  const settled = async (version, what) => {
+    const ok = await waitFor(`document.getElementById('build-id').textContent === ${JSON.stringify(version)} && document.readyState === 'complete'`, 60000);
+    check(ok, `${what}: the page is the new build`, JSON.stringify(ok ? null : await shown().catch((e) => e.message)));
+    return ok;
+  };
+  const stateOf = (hash) => { const s = decodeState(hash.replace(/^#/, '')); return s && JSON.stringify({ text: s.text, arch: s.arch, cpus: s.cpus, mode: s.mode, al: s.alignmentOffset }); };
+  // a page with state of its own: hex input, another CPU, two CPUs checked, an alignment offset
+  const frag = encodeState({ ...DEFAULT_STATE, mode: 'hex', text: '48 01 d8\n48 01 c3\n49 ff cf\n75 f5\n', arch: 'ZEN3', cpus: 'ZEN3,SKL', alignmentOffset: 5 });
+  await goto(`${origin}/#${frag}`);
+  await works('build A with state');
+  check(await waitFor(`/works offline/.test(document.getElementById('status').textContent)`, 60000), 'build A: works offline');
+  const before = await shown();
+
+  // deploy B, then a new visit: the old page from the cache, which reloads itself into B
+  const B = build('b');
+  root = B.dir;
+  await goto('about:blank');
+  let n0 = navigations;
+  await goto(`${origin}/#${frag}`);
+  if (await settled(B.version, 'deploy B, a visit')) {
+    await sleep(3000); // no second reload
+    const r = await shown();
+    check(navigations - n0 === 2, 'deploy B: one reload, then no more', `${navigations - n0 - 1} reloads`);
+    check(r.hash === before.hash && stateOf(r.hash) === stateOf(before.hash) && stateOf(r.hash) !== null && r.text === before.text && !r.note, 'deploy B: the state is the same, no note', JSON.stringify({ before, r }));
+    await works('deploy B: after the reload');
+  }
+  check(await waitFor(`/works offline/.test(document.getElementById('status').textContent)`, 60000), 'build B: works offline');
+
+  // deploy C while the page is open and the user types: no reload until typing stops; the typed text survives
+  const C = build('c');
+  root = C.dir;
+  n0 = navigations;
+  await evaluate(`navigator.serviceWorker.getRegistration().then((r) => r.update()); return true;`);
+  // type every 200 ms until the new worker has taken over (the note shows), and for 2 s after that
+  let typed = 0, reloadedWhileTyping = false, why = '', noteAt = 0;
+  for (const t0 = Date.now(); Date.now() - t0 < 30000 && !(noteAt && Date.now() - noteAt > 2000); typed++) {
+    try {
+      const note = await evaluate(`const c = document.getElementById('code'); c.value += '90\\n'; c.dispatchEvent(new Event('input', { bubbles: true })); return !document.getElementById('update-note').hidden;`);
+      if (note && !noteAt) noteAt = Date.now();
+    } catch (e) { reloadedWhileTyping = true; why = e.message; break; }
+    if (navigations !== n0) { reloadedWhileTyping = true; why = 'navigated'; break; }
+    await sleep(200);
+  }
+  check(!reloadedWhileTyping && noteAt > 0, 'deploy C: no reload while typing (the note shows meanwhile)', JSON.stringify({ reloadedWhileTyping, why, typed, noteAt }));
+  if (await settled(C.version, 'deploy C, typing stopped')) {
+    await sleep(3000);
+    const r = await shown();
+    check(navigations - n0 === 1, 'deploy C: one reload', `${navigations - n0} reloads`);
+    check(r.text === before.text + '90\n'.repeat(typed) && decodeState(r.hash.slice(1))?.text === r.text && !r.note, 'deploy C: the typed text survives the reload', JSON.stringify({ r, typed }));
+    await works('deploy C: after the reload');
+  }
+
+  // deploy D after an automatic reload for D in this tab: no reload, the note stays; its button reloads
+  const D = build('d');
+  await evaluate(`sessionStorage.setItem('wuica-update-reload', ${JSON.stringify(D.version)}); return true;`);
+  root = D.dir;
+  n0 = navigations;
+  await evaluate(`navigator.serviceWorker.getRegistration().then((r) => r.update()); return true;`);
+  const noted = await waitFor(`!document.getElementById('update-note').hidden`, 30000);
+  await sleep(3000);
+  const r = await shown();
+  check(noted && navigations === n0 && r.build === C.version && r.note, 'deploy D, already reloaded for D: the note, no reload', JSON.stringify({ noted, reloads: navigations - n0, r }));
+  await evaluate(`document.getElementById('reload').click(); return true;`);
+  await sleep(300);
+  if (await settled(D.version, 'deploy D, the note\'s button')) await works('deploy D: after the reload by hand');
+  check(await waitFor(`/works offline/.test(document.getElementById('status').textContent)`, 60000), 'build D: works offline');
+
   // offline
   await stop();
   await goto('about:blank');
