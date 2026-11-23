@@ -29,9 +29,10 @@ export const STAGES = Object.freeze([
 
 function list(v) { return Array.isArray(v) ? v : []; }
 
-// trace: the `trace` of a response; portNames, retireWidth: from configs[arch] of uarch.json (Zen 3 names its
-// ports by letters), or null.
-export function buildModel(trace, { portNames = null, retireWidth = null } = {}) {
+// trace: the `trace` of a response; portNames, retireWidth, issueDispatchDelay: from configs[arch] of uarch.json
+// (Zen 3 names its ports by letters), or null. A uop is ready issueDispatchDelay cycles after its issue at the
+// earliest (uiCA's Scheduler); only what goes beyond that is waiting.
+export function buildModel(trace, { portNames = null, retireWidth = null, issueDispatchDelay = null } = {}) {
   if (!trace || !Array.isArray(trace.cycles) || !Array.isArray(trace.instructions)) throw new Error('not a trace');
   const params = trace.parameters ?? {};
   const instructions = trace.instructions;
@@ -137,7 +138,7 @@ export function buildModel(trace, { portNames = null, retireWidth = null } = {})
   let nRounds = 0;
   for (const u of uops) nRounds = Math.max(nRounds, u.rnd + 1);
   const model = { params, instructions, labels, uops, index, ports, dispatchedAt, prefix, nCycles, nRounds, nInstr,
-    retireWidth: retireWidth ?? ((params.issueWidth ?? 4) > 4 ? 8 : 4) };
+    retireWidth: retireWidth ?? ((params.issueWidth ?? 4) > 4 ? 8 : 4), issueDispatchDelay: issueDispatchDelay ?? 0 };
   model.relevant = relevantRounds(model);
   return model;
 }
@@ -247,7 +248,8 @@ export function uopDetails(model, i, shown = null) {
   return {
     key: u.key, label: uopLabel(model, i), instruction: model.labels[u.instrID], kind: u.kind, rnd: u.rnd,
     port: u.port, portName: portName(model, u.port), source: u.source, stages, deps, eliminated,
-    waitOperands: u.ready !== null && u.issued !== null ? u.ready - u.issued : null,
+    waitOperands: u.ready !== null && u.issued !== null ? Math.max(0, u.ready - u.issued - model.issueDispatchDelay) : null,
+    issueDispatchDelay: model.issueDispatchDelay,
     waitPort: u.dispatched !== null && u.ready !== null ? u.dispatched - u.ready : null,
     users: u.users.length,
   };
@@ -303,7 +305,8 @@ let idSeq = 0;
 // The legend: [class of the swatch, text]. The swatches are drawn by trace.css with the same colours.
 const LEGEND = [
   ['q', 'in the IDQ (front end → issue)'],
-  ['dep', 'issued, waiting for operands'],
+  ['sched', 'issued: the issue → dispatch delay'],
+  ['dep', 'not ready: waiting for operands'],
   ['port', 'ready, waiting for a port'],
   ['exec', 'dispatched → executed (port number on the bar)'],
   ['rob', 'executed, waiting to retire'],
@@ -391,8 +394,8 @@ class Viewer {
     this.resizer.observe(this.scroller);
     const repaintColors = () => { this.colors = null; this.patterns = null; this.paint(); };
     this.themeObserver = new MutationObserver(repaintColors);
-    this.themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme', 'style'] });
-    if (document.body) this.themeObserver.observe(document.body, { attributes: true, attributeFilter: ['class', 'data-theme'] });
+    this.themeObserver.observe(document.documentElement, { attributes: true });
+    if (document.body) this.themeObserver.observe(document.body, { attributes: true });
     this.mq = matchMedia('(prefers-color-scheme: dark)');
     this.mq.addEventListener?.('change', repaintColors);
     this.repaintColors = repaintColors;
@@ -562,6 +565,8 @@ class Viewer {
   draw() {
     if (!this.viewW || this.chart.hidden || !this.canvas.isConnected) return;
     const t0 = performance.now();
+    // the theme can change in ways no observer sees (e.g. a stylesheet): one property is checked on every draw
+    if (this.colors) { this.probe.style.color = 'var(--surface)'; if (getComputedStyle(this.probe).color !== this.colors.surface) this.colors = null; }
     if (!this.colors) this.readColors();
     const C = this.colors, m = this.model, ctx = this.canvas.getContext('2d');
     const dpr = this.dpr, W = this.viewW, Hv = this.viewH, G = this.G, H = this.headH(), s = this.scale;
@@ -711,11 +716,17 @@ class Viewer {
     if (u.inRS || u.dispatched !== null) {
       const ready = u.ready ?? (u.dispatched !== null ? u.dispatched : end);
       const disp = u.dispatched ?? end;
-      if (u.issued !== null && ready > u.issued) {
+      const sched = u.issued === null ? null : Math.min(ready, u.issued + this.model.issueDispatchDelay);
+      if (sched !== null && sched > u.issued) { // the fixed delay between issue and the earliest dispatch
+        ctx.fillStyle = C.subtle; ctx.globalAlpha = 0.55;
+        ctx.fillRect(X(u.issued), y + 6, (sched - u.issued) * s, ROW_H - 12);
+        ctx.globalAlpha = 1;
+      }
+      if (sched !== null && ready > sched) { // not ready: waiting for operands
         ctx.fillStyle = this.patterns.dep;
-        ctx.fillRect(X(u.issued), y + 4, (ready - u.issued) * s, ROW_H - 8);
+        ctx.fillRect(X(sched), y + 4, (ready - sched) * s, ROW_H - 8);
         ctx.globalAlpha = 0.9; ctx.fillStyle = C.caveat;
-        ctx.fillRect(X(u.issued), y + ROW_H - 5, (ready - u.issued) * s, 1);
+        ctx.fillRect(X(sched), y + ROW_H - 5, (ready - sched) * s, 1);
         ctx.globalAlpha = 1;
       }
       if (u.ready !== null && disp > u.ready) {
@@ -954,8 +965,10 @@ class Viewer {
     }
     tip.append(dl);
     const notes = [];
-    if (d.waitOperands !== null) notes.push(`waited ${d.waitOperands} cycle${d.waitOperands === 1 ? '' : 's'} for operands`);
-    if (d.waitPort !== null) notes.push(`${d.waitPort} for a port`);
+    const cyc = (n) => `${n} cycle${n === 1 ? '' : 's'}`;
+    if (d.waitOperands) notes.push(d.deps.length ? `waited ${cyc(d.waitOperands)} for operands` : `not ready for ${cyc(d.waitOperands)}`);
+    if (d.waitPort) notes.push(`${notes.length ? '' : 'waited '}${cyc(d.waitPort)} for a port`);
+    if (d.waitOperands !== null && d.issueDispatchDelay) notes.push(notes.length ? `beyond the ${d.issueDispatchDelay}-cycle issue → dispatch delay` : `dispatched as early as possible (${d.issueDispatchDelay} cycles after issue)`);
     if (notes.length) tip.append(el('p', { class: 'tt-wait', text: notes.join(', ') }));
     if (d.deps.length) {
       tip.append(el('p', { class: 'tt-sub', text: 'depends on:' }));
@@ -1017,7 +1030,7 @@ export function createTracePanel({ analyze, config = () => null }) {
     let model;
     const t0 = performance.now();
     const cfg = config(v);
-    try { model = buildModel(trace, { portNames: cfg?.portNames ?? null, retireWidth: cfg?.retireWidth ?? null }); } catch (e) { message(`The trace could not be read: ${e?.message ?? e}`); return; }
+    try { model = buildModel(trace, { portNames: cfg?.portNames ?? null, retireWidth: cfg?.retireWidth ?? null, issueDispatchDelay: cfg?.issueDispatchDelay ?? null }); } catch (e) { message(`The trace could not be read: ${e?.message ?? e}`); return; }
     const buildMs = performance.now() - t0;
     viewer?.destroy();
     viewer = new Viewer(model, state, { onState: () => {} });

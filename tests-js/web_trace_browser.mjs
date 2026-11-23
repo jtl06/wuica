@@ -197,7 +197,7 @@ try {
     check(r.closed && r.label === 'trace', 'the trace panel is in the result, closed, and nothing is loaded until it is opened', JSON.stringify([r.closed, r.label]));
     check(r.range === 'steady' && r.rowRounds.length === 3 && r.rowRounds[0] === r.relevant.first && /uops in cycles/.test(r.note), 'it opens on three steady-state iterations', JSON.stringify([r.range, r.rowRounds, r.relevant, r.note]));
     check(r.canvas[0] > 600 && r.canvas[1] > 200 && r.colours >= 5, 'the timeline is drawn', JSON.stringify([r.canvas, r.colours]));
-    check(r.legend.length === 7, 'the legend', JSON.stringify(r.legend));
+    check(r.legend.length === 8, 'the legend', JSON.stringify(r.legend));
     check(!r.k1.hidden && r.k1.key === r.k1key, 'arrow down focuses the first uop and shows its tooltip', JSON.stringify(r.k1));
     compare('first uop', r.k1, r.k1key);
     check(r.live.includes('issued') && r.live.includes(r.k1.stages.issued), 'the keyboard focus is announced', r.live);
@@ -283,6 +283,17 @@ try {
       await until(() => viewer() && viewer() !== v);
       return { rows: viewer().rows.length, tp: document.querySelector('.tp .value').textContent, labels: viewer().model.labels };`);
     check(n.tp === '2.00' && n.rows === 9 && n.labels[2] === 'dec r15 + jnz 0xfffffffffffffff5', 'a new analysis brings its own trace into the open panel', JSON.stringify(n));
+    // Zen 3 names its ports (uarch.json portNames); the trace has letters
+    const zen = await page.eval(`${HELPERS}
+      const v = viewer(); const run = $('results').dataset.run;
+      $('arch').value = 'ZEN3'; $('arch').dispatchEvent(new Event('change'));
+      await until(() => $('results').dataset.run !== run, 30000);
+      await until(() => viewer() && viewer() !== v);
+      const w = viewer(); w.canvas.focus();
+      const r = Array.from(w.rows).findIndex((i) => w.model.uops[i].dispatched !== null);
+      key('Home'); for (let i = 0; i < r; i++) key('ArrowDown'); await wait(50);
+      return { port: tip().stages.port, strips: w.ports.map((p) => p.short) };`);
+    check(/^ALU\d$/.test(zen.port) && zen.strips.includes('ALU0') && !zen.strips.includes('a'), 'ZEN3: ports are shown by their names', JSON.stringify(zen));
     const problems = page.problems.filter((p) => !/willReadFrequently/.test(p)); // from this test's own readbacks
     check(problems.length === 0, 'no console errors (desktop)', problems.join('\n'));
     await page.cmd('Page.close');

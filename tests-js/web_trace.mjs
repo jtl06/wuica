@@ -56,7 +56,7 @@ const every = Number(process.argv[2] || 4);
   check(m.ports.map((p) => `${p.id}:${p.name}:${p.used}`).join(',') === '0:Port 0:1,1:Port 1:1,5:Port 5:0,a:ALU0:1', 'mini: ports in allPorts order, named, with their use', JSON.stringify(m.ports));
   check(m.dispatchedAt[3][3] === 1 && m.dispatchedAt[0][3] === 0 && m.dispatchedAt[1][4] === 2 && m.dispatchedAt[2].every((x) => x === -1), 'mini: dispatches per port and cycle');
   const d = uopDetails(m, 2);
-  check(d.portName === 'Port 1' && d.stages.find((s) => s.field === 'dispatched').cycle === 4 && d.waitOperands === 2 && d.waitPort === 0 && d.deps[0].label === 'stack sync uop', 'mini: details of a uop', JSON.stringify(d));
+  check(d.portName === 'Port 1' && d.stages.find((s) => s.field === 'dispatched').cycle === 4 && d.waitOperands === 2 && d.waitPort === 0 && uopDetails(buildModel(trace, { issueDispatchDelay: 1 }), 2).waitOperands === 1 && d.deps[0].label === 'stack sync uop', 'mini: details of a uop', JSON.stringify(d));
   const rows = selectRows(m, 0, 0);
   const t = tableRows(m, rows);
   check(t.length === 5 && t.every((r) => r.length === TABLE_HEAD.length) && t[3][2] === 'none (eliminated)' && t[1][2] === 'ALU0' && t[2][TABLE_HEAD.length - 1] === 'stack sync uop [it 0]', 'mini: table rows', JSON.stringify(t));

@@ -59,6 +59,7 @@
 .trace-legend li { display: inline-flex; align-items: center; gap: 0.6ch; }
 .trace-legend .sw { display: inline-block; width: 1.6rem; height: 0.7rem; flex: none; position: relative; }
 .trace-legend .sw-q { height: 1px; background: var(--subtle); }
+.trace-legend .sw-sched { background: var(--subtle); opacity: 0.55; height: 0.25rem; }
 .trace-legend .sw-dep { background: repeating-linear-gradient(135deg, var(--caveat) 0 1.5px, transparent 1.5px 5px); border-bottom: 1px solid var(--caveat); height: 0.5rem; }
 .trace-legend .sw-port { background: var(--external); height: 0.4rem; }
 .trace-legend .sw-exec { background: var(--accent); }
