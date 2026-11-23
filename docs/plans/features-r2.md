@@ -25,9 +25,9 @@ against the fused uops the trace issues.
 
 ### Speed
 
-Native (`crates/wuica/examples/phases.rs`, `total`, the four basic examples; SHA-256 showcase, 2,949 instructions):
-main 202 µs / 19.9–22.0 ms, this branch without details 202 µs / 20.9–22.2 ms (the same within noise), with `DETAILS=1`
-211 µs / 25.5–28.4 ms. WebAssembly (`tests-js/analyze_fixtures.mjs 5`, 3,211 fixture cases, min of 4 runs): main 0.37 ms per
+Native (`crates/wuica/examples/phases.rs`, `total`, minimum of several runs on a quiet Mac; the four basic examples / the
+SHA-256 showcase, 2,949 instructions): main 194 µs / 18.5 ms, this branch without details 195 µs / 18.4 ms (the same within
+noise), with `DETAILS=1` 210 µs (+8 %) / 23.5 ms (+27 %; on a busy machine the measurements ranged up to +60 %). WebAssembly (`tests-js/analyze_fixtures.mjs 5`, 3,211 fixture cases, min of 4 runs): main 0.37 ms per
 case, this branch 0.37 ms, with `WUICA_DETAILS=1` 0.41 ms. The page asks for details only when a card is shown, the bound view
 is open (300 ms after a result), or a trace is loaded; SHA-256 with the bound view and a card: no long task (the browser
 suite measures it).

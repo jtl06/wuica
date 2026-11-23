@@ -190,9 +190,9 @@ as without it, byte for byte (`crates/wuica/tests/details.rs` checks this on eve
   cycle `first`): `"."` for a cycle that issued the full width, else `F`, `R`, `S` or `O`. `null` if the simulation has no
   steady-state window (one round).
 
-Speed (`crates/wuica/examples/phases.rs`, `DETAILS=1`; `tests-js/analyze_fixtures.mjs`, `WUICA_DETAILS=1`): about 10 % more time
-per analysis for small blocks, about 25 % for the 2,949-instruction SHA-256 example (most of it the larger JSON); the default
-request is as fast as before.
+Speed (`crates/wuica/examples/phases.rs` with `DETAILS=1`; `tests-js/analyze_fixtures.mjs` with `WUICA_DETAILS=1`): about 8 %
+more time per analysis natively and 11 % in WebAssembly for small blocks, about 27 % for the 2,949-instruction SHA-256
+example (18.5 → 23.5 ms natively: building the details, and their JSON); a request without the flag is as fast as before.
 
 ## Assembler
 

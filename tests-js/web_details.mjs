@@ -38,7 +38,7 @@ const near = (a, b, eps = 1e-9) => Math.abs(a - b) < eps;
 
   const COLS = ['MITE', 'MS', 'DSB', 'LSD', 'Issued', 'Exec.', 'Port 0'];
   const r = {
-    tp: 1, columns: COLS,
+    tp: 1, mode: 'loop', columns: COLS,
     rows: [
       { kind: 'instr', label: 'a', opcode: '00'.repeat(14), notes: '', values: [0, 0, 1, 0, 1, 1, 1] },
       { kind: 'regMerge', label: '<Register Merge Uop>', notes: '', values: [0, 0, 0, 0, 1, 1, 1] },
@@ -51,6 +51,7 @@ const near = (a, b, eps = 1e-9) => Math.abs(a - b) < eps;
   const hz = hazards(r, 52);
   check(hz.length === 2 && hz[0].row === 0 && hz[0].hz === '64' && hz[1].row === 2 && hz[1].hz === 'µ', 'badges: a line split, a microcoded instruction', JSON.stringify(hz));
   check(hazards(r, 0).map((x) => x.hz).join() === 'µ', 'badges: no split at offset 0');
+  check(hazards({ ...r, mode: 'unroll' }, 52).map((x) => x.hz).join() === 'µ', 'badges: no line split for an unrolled block (its copies sit elsewhere)');
   check(cardModel(r, 1, null) === null && cardModel(r, 9, null) === null, 'card: none for the extra uops');
   const basic = cardModel(r, 0, null, 52);
   check(basic.length === 14 && basic.crosses.join() === '16,32,64' && !basic.details && basic.issued === 1, 'card: without details, from the response', JSON.stringify(basic));

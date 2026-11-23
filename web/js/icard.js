@@ -42,7 +42,8 @@ export function hazards(response, alignmentOffset = 0) {
     const ms = val(response, row, 'MS');
     const marks = [], titles = [];
     if (ms > 0) { marks.push('µ'); titles.push(`microcoded: ${fmt(ms)} uops/iteration from the microcode sequencer`); }
-    if (crosses(offset, length).includes(64)) { marks.push('64'); titles.push(`crosses a 64-byte line (bytes ${offset}–${offset + length - 1} at alignment ${Number(alignmentOffset) || 0})`); }
+    // (a block that is not a loop is unrolled: its copies sit at other offsets, so only a loop's lines are marked)
+    if (response.mode === 'loop' && crosses(offset, length).includes(64)) { marks.push('64'); titles.push(`crosses a 64-byte line (bytes ${offset}–${offset + length - 1} at alignment ${Number(alignmentOffset) || 0})`); }
     if (marks.length) out.push({ row, hz: marks.join(' '), title: titles.join('\n') });
   }
   return out;
@@ -59,6 +60,7 @@ export function cardModel(response, row, det, alignmentOffset = 0) {
     label: x.label, url: typeof x.url === 'string' && x.url.startsWith('https://www.uops.info/') ? x.url : null, instrStr: x.instrStr ?? null,
     issued: val(response, row, 'Issued'), executed: val(response, row, 'Exec.'), ms: val(response, row, 'MS'),
     offset, length, crosses: det?.crosses ?? crosses(offset, length), fused: x.notes === 'M', unsupported: x.notes === 'X',
+    firstCopy: response.mode === 'unroll', // unrolled: the offset and the boundaries are those of the first copy
     details: !!det,
   };
   if (det) {
@@ -89,8 +91,9 @@ export function bottleneckShare(response, row, details = null) {
 
 // the front-end facts as short tags: [{text, title}]
 export function frontTags(m) {
-  const t = [{ text: `${m.length} B`, title: `${m.length} bytes` }, { text: `@${m.offset}`, title: `at byte ${m.offset} of its 64-byte line (alignment offset + position)` }];
-  for (const b of m.crosses) t.push({ text: `✂${b}`, title: `crosses a ${b}-byte boundary` });
+  const first = m.firstCopy ? ' (in the first copy of the unrolled block)' : '';
+  const t = [{ text: `${m.length} B`, title: `${m.length} bytes` }, { text: `@${m.offset}`, title: `at byte ${m.offset} of its 64-byte line (alignment offset + position)${first}` }];
+  for (const b of m.crosses) t.push({ text: `✂${b}`, title: `crosses a ${b}-byte boundary${first}` });
   if (m.lcp) t.push({ text: 'LCP', title: 'length-changing prefix: the predecoder stalls' });
   if (m.microcoded) t.push({ text: 'µcode', title: 'uops from the microcode sequencer (MS)' });
   if (m.complex) t.push({ text: 'complex', title: 'needs the complex decoder' });
@@ -172,11 +175,11 @@ export function createICard(env) {
       }
     } else {
       lines.push(line('uops', 'per iteration: issued · executed', `${fmt(m.issued) || 0}`, h('span', { class: 'ic-d', text: ` · ${fmt(m.executed) || 0} exec` })));
-      if (env.details && !r.mock) lines.push(h('div', { class: 'ic-l hint', text: '…' }));
+      if (env.details && !r.mock && det === undefined) lines.push(h('div', { class: 'ic-l hint', text: '…' })); // (not when there are none)
     }
     const on = chainInfo(r)?.onChain.get(row);
     if (on?.length) lines.push(line('chain', 'on the critical loop-carried chain: reads … from …, cycles (↻: from the previous iteration)',
-      ...on.map((x, k) => h('span', { class: 'ic-lat' }, k ? ' · ' : '', h('span', { class: 'code', text: `${x.operand} ← ${x.fromLabel}` }), ` ${x.latency}${x.carried ? ' ↻' : ''}`))));
+      ...on.map((x, k) => h('span', { class: 'ic-ch' }, k ? ' · ' : '', h('span', { class: 'code', text: `${x.operand} ← ${x.fromLabel}` }), ` ${x.latency}${x.carried ? ' ↻' : ''}`))));
     const sh = bottleneckShare(r, row, det);
     if (sh) lines.push(line('share', `its share of the bottleneck (${sh.resource}, by ${sh.unit})`, `${Math.round(sh.share * 100)}%`, h('span', { class: 'ic-d', text: ` of ${sh.resource}` })));
     lines.push(line('front', 'front end', ...frontTags(m).map((t, k) => h('span', { class: 'ic-t', title: t.title }, k ? ' ' : '', t.text))));

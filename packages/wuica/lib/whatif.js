@@ -75,13 +75,16 @@ export async function whatIf(analyze, arch, request, variants = VARIANTS) {
   if (unknown.length) return { code: 1, error: `unknown variant(s): ${unknown.join(', ')} (known: ${VARIANTS.join(', ')})`, stderr: [] };
   const base = await analyze(arch, request);
   if (base.code !== 0) return base;
-  const hex = base.hex ?? String(request.hex ?? '').replace(/[^0-9a-f]/gi, '').toLowerCase();
+  // the code as the rows have it (the analyzed bytes, if every byte was decoded), for the unrolled copies; the other
+  // variants analyze the caller's code as given (hex in any form the library accepts, or the assembled bytes)
+  const rowsHex = base.decodeErrors ? '' : base.rows.filter((x) => x.kind === 'instr').map((x) => String(x.opcode ?? '').toLowerCase()).join('');
+  const code = base.hex !== undefined ? { hex: base.hex } : { hex: request.hex };
   const options = { ...(request.options ?? {}) };
   const want = new Set(variants ?? VARIANTS);
   const out = [];
-  for (const exp of experiments(base, hex, options)) {
+  for (const exp of experiments(base, rowsHex, options)) {
     if (!want.has(exp.id)) continue;
-    const r = exp.estimate !== undefined ? null : await analyze(base.arch, { hex: exp.hex, options: exp.options });
+    const r = exp.estimate !== undefined ? null : await analyze(base.arch, exp.per > 1 ? { hex: exp.hex, options: exp.options } : { ...code, options: exp.options });
     out.push(outcome(base, exp, r));
   }
   for (const id of want) {
