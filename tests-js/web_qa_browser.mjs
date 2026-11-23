@@ -204,7 +204,8 @@ try {
         await wait(50);
         return [document.documentElement.getAttribute('data-theme'), getComputedStyle(document.documentElement).backgroundColor, getComputedStyle(document.body).color, $('theme-toggle').textContent, localStorage.getItem('wuica-theme')];`));
     }
-    check(themes[0][0] === 'light' && themes[1][0] === 'dark' && themes[0][1] !== themes[1][1] && themes[0][2] !== themes[1][2] && themes[0][3] === 'light' && themes[1][4] === 'dark',
+    // the first step may show the system's light theme without a choice (no data-theme, nothing stored); the second is a choice
+    check(themes[0][3] === 'light' && themes[1][0] === 'dark' && themes[1][3] === 'dark' && themes[1][4] === 'dark' && themes[0][1] !== themes[1][1] && themes[0][2] !== themes[1][2],
       'theme: the toggle switches the colors and remembers the choice', JSON.stringify(themes));
     await page.reload();
     await page.ready();
@@ -261,6 +262,6 @@ try {
 } finally {
   await close();
   await srv.stop();
-  fs.rmSync(dir, { recursive: true, force: true });
+  try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch { /* Chrome may still be writing its profile */ }
 }
 process.exit(check.summary() ? 1 : 0);

@@ -111,7 +111,7 @@ try {
 } finally {
   await close();
   await srv.stop();
-  fs.rmSync(dir, { recursive: true, force: true });
+  try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch { /* Chrome may still be writing its profile */ }
 }
 exitCode = check.summary() ? 1 : 0;
 process.exit(exitCode);

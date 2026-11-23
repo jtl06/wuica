@@ -328,7 +328,7 @@ try {
   proc.kill();
   server.close();
   await sleep(300);
-  fs.rmSync(tmp, { recursive: true, force: true });
+  try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch { /* Chrome may still be writing its profile */ }
 }
 
 console.log(`${count} trace browser checks, ${failed} failed`);

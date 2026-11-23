@@ -618,7 +618,7 @@ try {
   proc.kill();
   await stop().catch(() => {});
   await Promise.race([exited, sleep(5000)]); // Chrome may still write to its profile in tmp (ENOTEMPTY under load)
-  if (!args.includes('--keep')) fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  if (!args.includes('--keep')) try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch { /* Chrome may still be writing its profile */ }
 }
 
 console.log(`${count} browser checks, ${failed} failed`);
