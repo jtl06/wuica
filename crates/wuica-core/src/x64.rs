@@ -66,16 +66,22 @@ pub fn reg_to_64(reg: &str) -> Option<&'static str> {
 /// `getCanonicalReg`: for a general-purpose register the 64-bit register that contains it, for a (X|Y|Z)MM register the XMM
 /// register, and the register itself otherwise.
 pub fn canonical_reg(reg: &str) -> String {
+    canonical_reg_cow(reg).into_owned()
+}
+
+/// [`canonical_reg`] without an allocation where the result is a constant or the register itself.
+pub fn canonical_reg_cow(reg: &str) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
     if is_gp_reg(reg) {
-        reg_to_64(reg).expect("general-purpose register").to_string()
+        Cow::Borrowed(reg_to_64(reg).expect("general-purpose register"))
     } else if reg.contains("MM") {
         // re.sub('^[YZ]', 'X', reg)
         match reg.as_bytes().first() {
-            Some(b'Y') | Some(b'Z') => format!("X{}", &reg[1..]),
-            _ => reg.to_string(),
+            Some(b'Y') | Some(b'Z') => Cow::Owned(format!("X{}", &reg[1..])),
+            _ => Cow::Borrowed(reg),
         }
     } else {
-        reg.to_string()
+        Cow::Borrowed(reg)
     }
 }
 

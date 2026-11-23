@@ -15,10 +15,10 @@ use crate::config::{UArch, UArchConfig};
 use crate::data::{ArchData, AttrData, InstrEntry, LatData, LatKind, PerfData, PortData};
 use crate::decoded::{DecodedInstr, MemAddr};
 use crate::model::{Instr, InstrList, OpId, Operand, TpKey, UopProperties};
-use crate::x64::{canonical_reg, is_gp_reg, is_high8_reg, mem_width, reg_size};
-use indexmap::IndexMap;
+use crate::fasthash::FastMap;
+use crate::x64::{canonical_reg, canonical_reg_cow, is_gp_reg, is_high8_reg, mem_width, reg_size};
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 
 /// Builds the instruction objects for decoded code: `getInstructions`, `adjustLatenciesAndAddMergeUops` and
 /// `computeUopProperties`. `data` must be the instruction table of `config` (`config.name`).
@@ -90,13 +90,39 @@ fn iclass_of_iform(iform: &str) -> &str {
     iform.split('_').next().unwrap_or("")
 }
 
+/// A `portData` dict of one call: (ports, number of uops) in the order of the Python dict. The operations of the dict are
+/// [`dict_shift_remove`], [`dict_insert`] and [`port_add`].
+type Dict = Vec<(String, i64)>;
+
+/// `del d[key]` (`IndexMap::shift_remove`: the other items keep their order)
+fn dict_shift_remove(dict: &mut Dict, key: &str) {
+    if let Some(i) = dict.iter().position(|(k, _)| k == key) {
+        dict.remove(i);
+    }
+}
+
+/// `d[key] = value`: an existing key keeps its position
+fn dict_insert(dict: &mut Dict, key: String, value: i64) {
+    match dict.iter_mut().find(|(k, _)| *k == key) {
+        Some((_, v)) => *v = value,
+        None => dict.push((key, value)),
+    }
+}
+
+/// A dict object: one of the instruction table (as long as it is not changed: it is copied when it is first changed, so that
+/// changes stay within this call), or one of this call.
+enum Slot<'a> {
+    Table(&'a PortData),
+    Own(Dict),
+}
+
 /// The dict objects that the `portData` attributes refer to during the main loop of `getInstructions`: those of the instruction
-/// table (copied from it when they are first used, so that changes stay within this call) and those created by the code.
+/// table and those created by the code.
 struct PortDicts<'a> {
     data: &'a ArchData,
-    dicts: Vec<PortData>,
+    dicts: Vec<Slot<'a>>,
     /// (index of the perfData element, variant) -> index in `dicts`
-    table: HashMap<(usize, PortVariant), usize>,
+    table: FastMap<(usize, PortVariant), usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -112,32 +138,72 @@ impl<'a> PortDicts<'a> {
         if let Some(&id) = self.table.get(&(perf_idx, variant)) {
             return Some(id);
         }
-        let perf = &self.data.perf_data[perf_idx];
+        let data = self.data;
+        let perf = &data.perf_data[perf_idx];
         let dict = match variant {
             PortVariant::Base => perf.ports.as_ref(),
             PortVariant::SameReg => perf.ports_sr.as_ref(),
             PortVariant::Indexed => perf.ports_i.as_ref(),
         }?;
-        let id = self.new_dict(dict.clone());
+        self.dicts.push(Slot::Table(dict));
+        let id = self.dicts.len() - 1;
         self.table.insert((perf_idx, variant), id);
         Some(id)
     }
 
-    fn new_dict(&mut self, dict: PortData) -> usize {
-        self.dicts.push(dict);
+    fn new_dict(&mut self, dict: Dict) -> usize {
+        self.dicts.push(Slot::Own(dict));
         self.dicts.len() - 1
+    }
+
+    /// a copy of the items of a dict object
+    fn items(&self, id: usize) -> Dict {
+        match &self.dicts[id] {
+            Slot::Table(d) => d.iter().map(|(p, n)| (p.clone(), *n)).collect(),
+            Slot::Own(d) => d.clone(),
+        }
     }
 
     /// `dict(d)`
     fn copy(&mut self, id: usize) -> usize {
-        let dict = self.dicts[id].clone();
+        let dict = self.items(id);
         self.new_dict(dict)
+    }
+
+    /// the first key of a dict object
+    fn first_key(&self, id: usize) -> Option<&str> {
+        match &self.dicts[id] {
+            Slot::Table(d) => d.keys().next().map(|k| k.as_str()),
+            Slot::Own(d) => d.first().map(|(k, _)| k.as_str()),
+        }
+    }
+
+    fn is_empty(&self, id: usize) -> bool {
+        match &self.dicts[id] {
+            Slot::Table(d) => d.is_empty(),
+            Slot::Own(d) => d.is_empty(),
+        }
+    }
+
+    /// the dict object, to be changed
+    fn get_mut(&mut self, id: usize) -> &mut Dict {
+        if let Slot::Table(_) = self.dicts[id] {
+            let items = self.items(id);
+            self.dicts[id] = Slot::Own(items);
+        }
+        match &mut self.dicts[id] {
+            Slot::Own(d) => d,
+            Slot::Table(_) => unreachable!(),
+        }
     }
 }
 
 /// `d[key] = d.get(key, 0) + n`
-fn port_add(dict: &mut PortData, key: &str, n: i64) {
-    *dict.entry(key.to_string()).or_insert(0) += n;
+fn port_add(dict: &mut Dict, key: &str, n: i64) {
+    match dict.iter_mut().find(|(k, _)| k == key) {
+        Some((_, v)) => *v += n,
+        None => dict.push((key.to_string(), n)),
+    }
 }
 
 /// (base, index, scale, disp // 64): the cache line of an address expression, as far as it can be told from the code
@@ -268,16 +334,27 @@ fn get_instructions(
     let mut instructions: Vec<Instr> = Vec::with_capacity(disas.len());
     // port_refs[i]: the dict object that instructions[i].portData refers to
     let mut port_refs: Vec<usize> = Vec::with_capacity(disas.len());
-    let mut dicts = PortDicts { data, dicts: Vec::new(), table: HashMap::new() };
+    let mut dicts = PortDicts { data, dicts: Vec::new(), table: FastMap::default() };
 
     let zmm_registers_in_use = disas.iter().any(|d| d.reg_operands.values().any(|reg| reg.contains("ZMM")));
     let mut next_addr = alignment_offset;
     for d in disas {
         let addr = next_addr;
         next_addr += (d.opcode.len() / 2) as i64;
-        let used_regs: Vec<String> =
-            d.reg_operands.values().filter(|r| is_gp_reg(r) || r.contains("MM")).map(|r| canonical_reg(r)).collect();
-        let same_reg = used_regs.len() > 1 && used_regs.iter().all(|r| *r == used_regs[0]);
+        // usedRegs = [getCanonicalReg(r) for r in regOperands.values() if r in GPRegs or 'MM' in r]
+        // sameReg = len(usedRegs) > 1 and all(r == usedRegs[0] for r in usedRegs)
+        let mut used_regs = d.reg_operands.values().filter(|r| is_gp_reg(r) || r.contains("MM")).map(|r| canonical_reg_cow(r));
+        let same_reg = match used_regs.next() {
+            Some(first) => {
+                let (mut n, mut all_same) = (1, true);
+                for r in used_regs {
+                    n += 1;
+                    all_same &= r == first;
+                }
+                n > 1 && all_same
+            }
+            None => false,
+        };
         let uses_indexed_addr = d.mem_operands.values().any(|m| m.index.is_some());
         let immediate_width = d.imm_width.unwrap_or(0);
         let lcp_stall = py_int(&d.prefix66) != 0 && immediate_width == 16;
@@ -310,7 +387,7 @@ fn get_instructions(
         }
         let (mut instruction, port_ref) = match built {
             Some(b) => b,
-            None => (unknown_instr(d), dicts.new_dict(PortData::new())),
+            None => (unknown_instr(d), dicts.new_dict(Dict::new())),
         };
 
         // Macro-fusion
@@ -320,40 +397,35 @@ fn get_instructions(
                 instruction.macro_fused_with_prev_instr = true;
                 let prev_instr = &mut instructions[prev];
                 prev_instr.macro_fused_with_next_instr = true;
-                let instr_ports = dicts.dicts[port_ref]
-                    .keys()
-                    .next()
+                let instr_ports = dicts
+                    .first_key(port_ref)
                     .unwrap_or_else(|| panic!("IndexError: macro-fused instruction {:?} has no port data", instruction.asm))
-                    .clone();
+                    .to_string();
                 if prev_instr.uops == 0 {
                     prev_instr.uops = instruction.uops;
                     port_refs[prev] = port_ref;
                 } else if config.is_amd {
                     // the fused uop is executed by a branch unit
                     port_refs[prev] = dicts.copy(port_refs[prev]);
-                    let dict = &mut dicts.dicts[port_refs[prev]];
-                    let items: Vec<(String, i64)> = dict.iter().map(|(p, u)| (p.clone(), *u)).collect();
-                    for (p, u) in items {
-                        if !p.chars().any(|port| config.load_ports.contains(port) || config.store_data_ports.contains(port)) {
-                            dict.shift_remove(&p);
-                            if u > 1 {
-                                dict.insert(p, u - 1);
-                            }
-                            port_add(dict, &instr_ports, 1);
-                            break;
+                    let dict = dicts.get_mut(port_refs[prev]);
+                    // the loop ends at the first item that is changed: the items before it are unchanged
+                    let found = dict
+                        .iter()
+                        .position(|(p, _)| !p.chars().any(|port| config.load_ports.contains(port) || config.store_data_ports.contains(port)));
+                    if let Some(i) = found {
+                        let (p, u) = dict.remove(i);
+                        if u > 1 {
+                            dict_insert(dict, p, u - 1);
                         }
+                        port_add(dict, &instr_ports, 1);
                     }
                 } else {
                     // a copy, so that the port usage of other instructions of the same type is not modified
                     port_refs[prev] = dicts.copy(port_refs[prev]);
-                    let dict = &mut dicts.dicts[port_refs[prev]];
-                    let items: Vec<(String, i64)> = dict.iter().map(|(p, u)| (p.clone(), *u)).collect();
-                    for (p, u) in items {
-                        if instr_ports.chars().all(|c| p.contains(c)) {
-                            dict.shift_remove(&p);
-                            dict.insert(instr_ports.clone(), u);
-                            break;
-                        }
+                    let dict = dicts.get_mut(port_refs[prev]);
+                    if let Some(i) = dict.iter().position(|(p, _)| instr_ports.chars().all(|c| p.contains(c))) {
+                        let (_, u) = dict.remove(i);
+                        dict_insert(dict, instr_ports, u);
                     }
                 }
             }
@@ -384,7 +456,7 @@ fn get_instructions(
     }
 
     // From here on, every change of a portData dict is made on a copy: each instruction gets its own dict.
-    let mut port_data: Vec<PortData> = port_refs.iter().map(|&r| dicts.dicts[r].clone()).collect();
+    let mut port_data: Vec<Dict> = port_refs.iter().map(|&r| dicts.items(r)).collect();
 
     if let Some(load_line_slots) = config.load_line_slots.filter(|&n| n != 0) {
         // (instruction, line, displacement) for each load
@@ -403,10 +475,14 @@ fn get_instructions(
                 continue;
             }
             let dict = &mut port_data[*i];
-            let items: Vec<(String, i64)> = dict.iter().map(|(p, u)| (p.clone(), *u)).collect();
+            let applies = |pc: &str| config.load_ports.chars().all(|p| pc.contains(p));
+            if !dict.iter().any(|(pc, _)| applies(pc)) {
+                continue;
+            }
+            let items: Dict = dict.clone();
             for (pc, n) in items {
-                if config.load_ports.chars().all(|p| pc.contains(p)) {
-                    dict.shift_remove(&pc);
+                if applies(&pc) {
+                    dict_shift_remove(dict, &pc);
                     let new_pc: String = pc.chars().filter(|&p| !restricted_ports.contains(p)).collect();
                     port_add(dict, &new_pc, n);
                 }
@@ -426,11 +502,15 @@ fn get_instructions(
                 continue;
             }
             let dict = &mut port_data[*i];
-            let items: Vec<(String, i64)> = dict.iter().map(|(p, u)| (p.clone(), *u)).collect();
+            let applies = |pc: &str| pc.chars().all(|p| config.store_data_ports.contains(p));
+            if !dict.iter().any(|(pc, _)| applies(pc)) {
+                continue;
+            }
+            let items: Dict = dict.clone();
             for (pc, n) in items {
-                if pc.chars().all(|p| config.store_data_ports.contains(p)) {
+                if applies(&pc) {
                     // also vector stores
-                    dict.shift_remove(&pc);
+                    dict_shift_remove(dict, &pc);
                     let new_pc: String = config
                         .store_data_ports
                         .chars()
@@ -470,18 +550,17 @@ fn get_instructions(
                 // the uop of a macro-fused branch belongs to the previous instruction
                 let branch_uop_instr = if instructions[last].macro_fused_with_prev_instr && instructions.len() > 1 { last - 1 } else { last };
                 // ''.join(list(instructions[-1].portData.keys())[:1])
-                let first_ports_of_last = port_data[last].keys().next().cloned().unwrap_or_default();
+                let first_ports_of_last = port_data[last].first().map(|(p, _)| p.clone()).unwrap_or_default();
                 let dict = &mut port_data[branch_uop_instr];
-                let items: Vec<(String, i64)> = dict.iter().map(|(p, u)| (p.clone(), *u)).collect();
-                for (p, u) in items {
-                    if p.contains(taken_branch_port) && (p == first_ports_of_last || branch_uop_instr == last) {
-                        dict.shift_remove(&p);
-                        if u > 1 {
-                            dict.insert(p, u - 1);
-                        }
-                        port_add(dict, taken_branch_port, 1);
-                        break;
+                // the loop ends at the first item that is changed: the items before it are unchanged
+                let found =
+                    dict.iter().position(|(p, _)| p.contains(taken_branch_port) && (*p == first_ports_of_last || branch_uop_instr == last));
+                if let Some(i) = found {
+                    let (p, u) = dict.remove(i);
+                    if u > 1 {
+                        dict_insert(dict, p, u - 1);
                     }
+                    port_add(dict, taken_branch_port, 1);
                 }
             }
         }
@@ -492,7 +571,7 @@ fn get_instructions(
     }
 
     for (instr, dict) in instructions.iter_mut().zip(port_data) {
-        instr.port_data = dict.into_iter().collect();
+        instr.port_data = dict;
     }
     instructions
 }
@@ -513,7 +592,7 @@ fn known_instr(
     /// `portData`: a dict object of the table, or a new one
     enum Ports {
         Dict(usize),
-        New(PortData),
+        New(Dict),
     }
 
     let d = dec.d;
@@ -530,7 +609,7 @@ fn known_instr(
     let mut lat_data: Cow<LatData> = Cow::Borrowed(perf.lat.as_ref().unwrap_or(&empty_lat));
     let mut port_data = match dicts.table_dict(perf_idx, PortVariant::Base) {
         Some(id) => Ports::Dict(id),
-        None => Ports::New(PortData::new()),
+        None => Ports::New(Dict::new()),
     };
     let mut div_cycles = perf.div_c.unwrap_or(0);
     let mut complex_decoder = perf.compl_dec.unwrap_or(0) != 0;
@@ -642,7 +721,7 @@ fn known_instr(
         // e.g., 'mov eax, eax' on Zen 3
         may_be_eliminated = true;
         uops = 0;
-        port_data = Ports::New(PortData::new());
+        port_data = Ports::New(Dict::new());
         lat_data = Cow::Owned(LatData::default());
     } else if config.experimental && is_reg_move && same_reg {
         // A move whose source and destination are the same register (e.g., 'mov eax, eax', 'movzx ebx, bl') is not eliminated;
@@ -650,12 +729,12 @@ fn known_instr(
         may_be_eliminated = false;
         uops = uops.max(1);
         let is_empty = match &port_data {
-            Ports::Dict(id) => dicts.dicts[*id].is_empty(),
+            Ports::Dict(id) => dicts.is_empty(*id),
             Ports::New(dict) => dict.is_empty(),
         };
         if is_empty {
             let alu_ports: String = uarch.alu_ports[&config.name].concat();
-            port_data = Ports::New(PortData::from_iter([(alu_ports, 1)]));
+            port_data = Ports::New(vec![(alu_ports, 1)]);
         }
         let (inp, out) = (instr_input_reg_operands[0].0, instr_output_reg_operands[0].0);
         let lat = lat_data.get(inp, out, None).unwrap_or(1).max(1);
@@ -672,11 +751,19 @@ fn known_instr(
     let mut mem_addr_operands = Vec::new();
     let mut agen_operands = Vec::new();
 
-    let mut output_operands_dict: IndexMap<&str, Vec<OpId>> = IndexMap::new();
+    // outputOperandsDict: operand name -> its operands (the register or memory operand, or the flag operands), in the order of
+    // the Python dict; `None` stands for the flag operands (output_flag_operands)
+    let mut output_operands_dict: Vec<(&str, Option<OpId>)> = Vec::new();
+    fn dict_set<'n>(dict: &mut Vec<(&'n str, Option<OpId>)>, name: &'n str, ops: Option<OpId>) {
+        match dict.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, v)) => *v = ops,
+            None => dict.push((name, ops)),
+        }
+    }
     for &(n, r) in &instr_output_reg_operands {
         let reg_op = new_reg(operands, r);
         output_reg_operands.push(reg_op);
-        output_operands_dict.insert(n, vec![reg_op]);
+        dict_set(&mut output_operands_dict, n, Some(reg_op));
     }
     if let Some(flag_operand) = instr_flag_operand {
         let flags_w: &[String] = entry.flags_w.as_deref().unwrap_or(&[]);
@@ -687,30 +774,41 @@ fn known_instr(
             output_flag_operands.push(new_operand(operands, Operand::Flag { flags: "SPAZO".to_string() }));
         }
         if !output_flag_operands.is_empty() {
-            output_operands_dict.insert(flag_operand, output_flag_operands.clone());
+            dict_set(&mut output_operands_dict, flag_operand, None);
         }
     }
     for &(n, m) in &instr_output_mem_operands {
         let mem_op = new_operand(operands, Operand::Mem { mem_addr: m.clone() });
         output_mem_operands.push(mem_op);
-        output_operands_dict.insert(n, vec![mem_op]);
+        dict_set(&mut output_operands_dict, n, Some(mem_op));
     }
+    let output_operands_dict: Vec<(&str, &[OpId])> = output_operands_dict
+        .iter()
+        .map(|(n, op)| (*n, op.as_ref().map_or(output_flag_operands.as_slice(), std::slice::from_ref)))
+        .collect();
 
-    let mut latencies: IndexMap<(OpId, OpId), i64> = IndexMap::new();
+    // latencies: (input operand, output operand) -> latency, in the order of the Python dict
+    let mut latencies: Vec<(OpId, OpId, i64)> = Vec::new();
+    fn lat_set(latencies: &mut Vec<(OpId, OpId, i64)>, key: (OpId, OpId), lat: i64) {
+        match latencies.iter_mut().find(|(i, o, _)| (*i, *o) == key) {
+            Some((_, _, l)) => *l = lat,
+            None => latencies.push((key.0, key.1, lat)),
+        }
+    }
     for &(inp_n, inp_r) in &instr_input_reg_operands {
         // e.g., zero idioms; for the experimental configurations, only for instructions whose operands are the same register
         // (with different registers, a latency of 0 means that the output is available as soon as the input is)
         if !may_be_eliminated
             && (same_reg || !config.experimental)
-            && output_operands_dict.keys().all(|o| lat_data.get(inp_n, o, None).unwrap_or(1) == 0)
+            && output_operands_dict.iter().all(|&(o, _)| lat_data.get(inp_n, o, None).unwrap_or(1) == 0)
         {
             continue;
         }
         let reg_op = new_reg(operands, inp_r);
         input_reg_operands.push(reg_op);
-        for (out_n, out_ops) in &output_operands_dict {
+        for &(out_n, out_ops) in &output_operands_dict {
             for &out_op in out_ops {
-                latencies.insert((reg_op, out_op), lat_data.get(inp_n, out_n, None).unwrap_or(1));
+                lat_set(&mut latencies, (reg_op, out_op), lat_data.get(inp_n, out_n, None).unwrap_or(1));
             }
         }
     }
@@ -734,9 +832,9 @@ fn known_instr(
             input_flag_operands.push(new_operand(operands, Operand::Flag { flags: "SPAZO".to_string() }));
         }
         for &flag_op in &input_flag_operands {
-            for (out_n, out_ops) in &output_operands_dict {
+            for &(out_n, out_ops) in &output_operands_dict {
                 for &out_op in out_ops {
-                    latencies.insert((flag_op, out_op), lat_data.get(flag_operand, out_n, None).unwrap_or(1));
+                    lat_set(&mut latencies, (flag_op, out_op), lat_data.get(flag_operand, out_n, None).unwrap_or(1));
                 }
             }
         }
@@ -748,9 +846,9 @@ fn known_instr(
             agen_operands.push(mem_op);
         } else {
             input_mem_operands.push(mem_op);
-            for (out_n, out_ops) in &output_operands_dict {
+            for &(out_n, out_ops) in &output_operands_dict {
                 for &out_op in out_ops {
-                    latencies.insert((mem_op, out_op), lat_data.get(inp_n, out_n, Some(LatKind::Mem)).unwrap_or(1));
+                    lat_set(&mut latencies, (mem_op, out_op), lat_data.get(inp_n, out_n, Some(LatKind::Mem)).unwrap_or(1));
                 }
             }
         }
@@ -768,9 +866,9 @@ fn known_instr(
             } else {
                 mem_addr_operands.push(reg_op);
             }
-            for (out_n, out_ops) in &output_operands_dict {
+            for &(out_n, out_ops) in &output_operands_dict {
                 for &out_op in out_ops {
-                    latencies.insert((reg_op, out_op), lat_data.get(inp_n, out_n, Some(addr_type)).unwrap_or(1));
+                    lat_set(&mut latencies, (reg_op, out_op), lat_data.get(inp_n, out_n, Some(addr_type)).unwrap_or(1));
                 }
             }
         }
@@ -794,12 +892,19 @@ fn known_instr(
     if dec.zmm_rule_applies {
         // if an instruction uses zmm registers, port 1 is not available for other vector instructions
         // (this changes the dict object in place: if it is the table's, for all instructions that use it)
-        let dict = &mut dicts.dicts[port_ref];
-        let items: Vec<(String, i64)> = dict.iter().map(|(p, u)| (p.clone(), *u)).collect();
-        for (p, u) in items {
-            if p.contains('1') && p != "1" {
-                dict.shift_remove(&p);
-                port_add(dict, &p.replace('1', ""), u);
+        let applies = |p: &str| p.contains('1') && p != "1";
+        let any = match &dicts.dicts[port_ref] {
+            Slot::Table(d) => d.keys().any(|p| applies(p)),
+            Slot::Own(d) => d.iter().any(|(p, _)| applies(p)),
+        };
+        if any {
+            let dict = dicts.get_mut(port_ref);
+            let items: Dict = dict.clone();
+            for (p, u) in items {
+                if applies(&p) {
+                    dict_shift_remove(dict, &p);
+                    port_add(dict, &p.replace('1', ""), u);
+                }
             }
         }
     }
@@ -839,7 +944,7 @@ fn known_instr(
         output_mem_operands,
         mem_addr_operands,
         agen_operands,
-        latencies: latencies.into_iter().map(|((i, o), l)| (i, o, l)).collect(),
+        latencies,
         tp,
         immediate: d.imm0,
         lcp_stall: dec.lcp_stall,
@@ -998,12 +1103,11 @@ fn compute_uop_properties(instructions: &mut [Instr], operands: &mut Vec<Operand
             continue;
         }
 
-        let mut load_pcs: Vec<Vec<String>> = Vec::new();
-        let mut store_address_pcs: Vec<Vec<String>> = Vec::new();
-        let mut store_data_pcs: Vec<Vec<String>> = Vec::new();
-        let mut non_mem_pcs: Vec<Vec<String>> = Vec::new();
+        let mut load_pcs: Vec<&str> = Vec::new();
+        let mut store_address_pcs: Vec<&str> = Vec::new();
+        let mut store_data_pcs: Vec<&str> = Vec::new();
+        let mut non_mem_pcs: Vec<&str> = Vec::new();
         for (pc, n) in &instr.port_data {
-            let ports: Vec<String> = pc.chars().map(String::from).collect();
             let uses_any = |config_ports: &str| config_ports.chars().any(|p| pc.contains(p));
             let list = if uses_any(&config.store_addr_ports) {
                 &mut store_address_pcs
@@ -1015,9 +1119,11 @@ fn compute_uop_properties(instructions: &mut [Instr], operands: &mut Vec<Operand
                 &mut non_mem_pcs
             };
             for _ in 0..*n {
-                list.push(ports.clone());
+                list.push(pc.as_str());
             }
         }
+        // the possible ports of a uop: the ports of `pc`, one character each
+        let ports = |pc: &str| -> Option<Vec<String>> { Some(pc.chars().map(String::from).collect()) };
 
         while store_data_pcs.len() > store_address_pcs.len() {
             if let Some(pc) = load_pcs.pop() {
@@ -1027,8 +1133,8 @@ fn compute_uop_properties(instructions: &mut [Instr], operands: &mut Vec<Operand
             }
         }
 
-        let latencies: HashMap<(OpId, OpId), i64> = instr.latencies.iter().map(|&(i, o, l)| ((i, o), l)).collect();
-        let lat = |i: OpId, o: OpId| latencies.get(&(i, o)).copied();
+        // latencies.get((i, o)); the keys of instr.latencies are unique
+        let lat = |i: OpId, o: OpId| instr.latencies.iter().find(|&&(a, b, _)| a == i && b == o).map(|&(_, _, l)| l);
         let reg_and_flag = |regs: &[OpId], flags: &[OpId]| -> Vec<OpId> { regs.iter().chain(flags).copied().collect() };
 
         let mut load_uop_props: Vec<UopProperties> = Vec::new();
@@ -1057,7 +1163,7 @@ fn compute_uop_properties(instructions: &mut [Instr], operands: &mut Vec<Operand
                     *l = instr.mem_addr_operands.iter().filter_map(|&a| lat(a, *out_op)).max().unwrap_or(config.load_latency);
                 }
             }
-            let mut props = uop_properties(Some(pc.clone()), instr.mem_addr_operands.clone(), output_operands);
+            let mut props = uop_properties(ports(pc), instr.mem_addr_operands.clone(), output_operands);
             props.latencies = uop_latencies;
             props.is_load_uop = true;
             props.mem_addr = mem_addr;
@@ -1078,7 +1184,7 @@ fn compute_uop_properties(instructions: &mut [Instr], operands: &mut Vec<Operand
                 mem_addr_of(operands, op).clone()
             });
             // storeAddress uop needs to be added before storeData uop (the order is important for the renamer)
-            let mut props = uop_properties(Some(st_a_pc.clone()), instr.mem_addr_operands.clone(), Vec::new());
+            let mut props = uop_properties(ports(st_a_pc), instr.mem_addr_operands.clone(), Vec::new());
             props.is_store_address_uop = true;
             props.mem_addr = mem_addr;
             store_uop_props.push(props);
@@ -1090,7 +1196,7 @@ fn compute_uop_properties(instructions: &mut [Instr], operands: &mut Vec<Operand
             } else {
                 reg_and_flag(&instr.input_reg_operands, &instr.input_flag_operands)
             };
-            let mut props = uop_properties(Some(st_d_pc.clone()), st_d_input_operands, Vec::new());
+            let mut props = uop_properties(ports(st_d_pc), st_d_input_operands, Vec::new());
             props.is_store_data_uop = true;
             store_uop_props.push(props);
         }
@@ -1112,15 +1218,15 @@ fn compute_uop_properties(instructions: &mut [Instr], operands: &mut Vec<Operand
                 let r_pseudo_op = new_operand(operands, Operand::Pseudo);
                 let mut r_output_operands = instr.output_reg_operands.clone();
                 r_output_operands.push(r_pseudo_op);
-                let mut props = uop_properties(Some(non_mem_pcs[0].clone()), instr.input_reg_operands.clone(), r_output_operands.clone());
+                let mut props = uop_properties(ports(non_mem_pcs[0]), instr.input_reg_operands.clone(), r_output_operands.clone());
                 props.latencies = r_output_operands.iter().map(|&op| (op, 1)).collect();
                 non_mem_uop_props.push_back(props);
                 let f_pseudo_op = new_operand(operands, Operand::Pseudo);
-                let mut props = uop_properties(Some(non_mem_pcs[1].clone()), instr.input_flag_operands.clone(), vec![f_pseudo_op]);
+                let mut props = uop_properties(ports(non_mem_pcs[1]), instr.input_flag_operands.clone(), vec![f_pseudo_op]);
                 props.latencies = vec![(f_pseudo_op, 1)];
                 non_mem_uop_props.push_back(props);
                 let mut props =
-                    uop_properties(Some(non_mem_pcs[2].clone()), vec![r_pseudo_op, f_pseudo_op], instr.output_flag_operands.clone());
+                    uop_properties(ports(non_mem_pcs[2]), vec![r_pseudo_op, f_pseudo_op], instr.output_flag_operands.clone());
                 props.latencies = instr.output_flag_operands.iter().map(|&op| (op, 1)).collect();
                 non_mem_uop_props.push_back(props);
             } else {
@@ -1137,17 +1243,21 @@ fn compute_uop_properties(instructions: &mut [Instr], operands: &mut Vec<Operand
                 non_mem_output_operands.extend(&store_pseudo_ops);
 
                 // latencies between nonMemInputOperands and nonMemOutputOperands
-                let mut adjusted_latencies: HashMap<(OpId, OpId), i64> = HashMap::new();
+                let mut adjusted_latencies: Vec<((OpId, OpId), i64)> = Vec::new();
+                let set = |adjusted_latencies: &mut Vec<((OpId, OpId), i64)>, key: (OpId, OpId), l: i64| match adjusted_latencies.iter_mut().find(|(k, _)| *k == key) {
+                    Some((_, v)) => *v = l,
+                    None => adjusted_latencies.push((key, l)),
+                };
                 // max([max(1, latencies.get((inOp, outMemOp), 1) - x) for outMemOp in outputMemOperands] or [1])
                 let lat_to_mem = |in_op: OpId, x: i64| -> i64 {
                     instr.output_mem_operands.iter().map(|&m| (lat(in_op, m).unwrap_or(1) - x).max(1)).max().unwrap_or(1)
                 };
                 for &in_op in &arch_input_operands {
                     for &out_op in &arch_output_operands {
-                        adjusted_latencies.insert((in_op, out_op), lat(in_op, out_op).unwrap_or(1));
+                        set(&mut adjusted_latencies, (in_op, out_op), lat(in_op, out_op).unwrap_or(1));
                     }
                     for &store_pseudo_op in &store_pseudo_ops {
-                        adjusted_latencies.insert((in_op, store_pseudo_op), lat_to_mem(in_op, 4)); // ToDo
+                        set(&mut adjusted_latencies, (in_op, store_pseudo_op), lat_to_mem(in_op, 4)); // ToDo
                     }
                 }
                 if !has_agen {
@@ -1155,7 +1265,7 @@ fn compute_uop_properties(instructions: &mut [Instr], operands: &mut Vec<Operand
                         for &load_pseudo_op in &load_pseudo_ops {
                             for &out_op in &arch_output_operands {
                                 let l = (lat(in_mem_addr_op, out_op).unwrap_or(1) - config.load_latency).max(1); // ToDo
-                                adjusted_latencies.insert((load_pseudo_op, out_op), l);
+                                set(&mut adjusted_latencies, (load_pseudo_op, out_op), l);
                             }
                         }
                     }
@@ -1165,11 +1275,11 @@ fn compute_uop_properties(instructions: &mut [Instr], operands: &mut Vec<Operand
                         for &store_pseudo_op in &store_pseudo_ops {
                             // with memory renaming, only the latency of the operation itself remains on the path through memory
                             let l = if instr.mem_renaming { 1 } else { lat_to_mem(in_mem_op, config.load_latency) }; // ToDo
-                            adjusted_latencies.insert((load_pseudo_op, store_pseudo_op), l);
+                            set(&mut adjusted_latencies, (load_pseudo_op, store_pseudo_op), l);
                         }
                     }
                 }
-                let adjusted = |i: OpId, o: OpId| adjusted_latencies.get(&(i, o)).copied().unwrap_or(1);
+                let adjusted = |i: OpId, o: OpId| adjusted_latencies.iter().find(|(k, _)| *k == (i, o)).map_or(1, |(_, l)| *l);
 
                 // maps latencies to inputs with these latencies
                 let mut lat_classes: BTreeMap<i64, Vec<OpId>> = BTreeMap::new();
@@ -1194,11 +1304,11 @@ fn compute_uop_properties(instructions: &mut [Instr], operands: &mut Vec<Operand
                     if let Some(lat_level) = remaining_lat_class_levels.pop_front() {
                         let pseudo_op = new_operand(operands, Operand::Pseudo);
                         base_input_operands.push(pseudo_op);
-                        let mut props = uop_properties(Some(pc.clone()), lat_classes[&lat_level].clone(), vec![pseudo_op]);
+                        let mut props = uop_properties(ports(pc), lat_classes[&lat_level].clone(), vec![pseudo_op]);
                         props.latencies = vec![(pseudo_op, lat_level - min_lat_level)];
                         before.push(props);
                     } else {
-                        after.push(uop_properties(Some(pc.clone()), non_mem_input_operands.clone(), Vec::new()));
+                        after.push(uop_properties(ports(pc), non_mem_input_operands.clone(), Vec::new()));
                     }
                 }
 
@@ -1213,7 +1323,7 @@ fn compute_uop_properties(instructions: &mut [Instr], operands: &mut Vec<Operand
                     }
                 }
 
-                let mut base_uop_prop = uop_properties(Some(non_mem_pcs[0].clone()), base_input_operands, non_mem_output_operands);
+                let mut base_uop_prop = uop_properties(ports(non_mem_pcs[0]), base_input_operands, non_mem_output_operands);
                 base_uop_prop.latencies = base_uop_latencies;
                 base_uop_prop.div_cycles = instr.div_cycles;
                 non_mem_uop_props.extend(before.into_iter().rev());

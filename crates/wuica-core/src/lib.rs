@@ -8,6 +8,7 @@ pub mod config;
 pub mod data;
 pub mod decoded;
 pub mod facile;
+mod fasthash;
 pub mod instr_builder;
 pub mod jsoncmp;
 pub mod model;
