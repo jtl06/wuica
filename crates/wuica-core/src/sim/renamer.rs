@@ -14,9 +14,36 @@ pub(crate) struct AbstractValue {
 /// (base, index, scale, disp)
 pub(crate) type AbstractAddress = (Option<AbstractValue>, Option<AbstractValue>, Option<i64>, Option<i64>);
 
+/// The abstract addresses (the keys of `storeBufferEntryDict` and `memValueDict`), interned: each distinct key (including
+/// `None`) gets a number, and the two dicts become arrays indexed by it. They are only looked up, never iterated.
+#[derive(Default)]
+pub(crate) struct AddressTable {
+    ids: FxHashMap<Option<AbstractAddress>, u32>,
+    /// id -> abstract address
+    pub values: Vec<Option<AbstractAddress>>,
+    /// id -> `storeBufferEntryDict[key]` (NONE if not in the dict)
+    sbe: Vec<u32>,
+    /// id -> `memValueDict[key]`: (width, abstract value)
+    mem_value: Vec<Option<(i64, AbstractValue)>>,
+}
+
+impl AddressTable {
+    fn intern(&mut self, key: Option<AbstractAddress>) -> u32 {
+        let next = self.values.len() as u32;
+        let id = *self.ids.entry(key).or_insert(next);
+        if id == next {
+            self.values.push(key);
+            self.sbe.push(NONE);
+            self.mem_value.push(None);
+        }
+        id
+    }
+}
+
 /// `StoreBufferEntry`
 pub(crate) struct StoreBufferEntry {
-    pub abstract_address: Option<AbstractAddress>,
+    /// the abstract address: an id of `Renamer::addrs`
+    pub abstract_address: u32,
     /// uops that write to this entry
     pub uops: SmallU32List,
     pub address_ready_cycle: Option<i64>,
@@ -137,8 +164,7 @@ struct RenameDictEntry {
 struct AbstractValueGenerator {
     init_policy: InitPolicy,
     load_value_numbering: bool,
-    /// abstract address -> (width, abstract value)
-    mem_value_dict: FxHashMap<Option<AbstractAddress>, (i64, AbstractValue)>,
+    // (memValueDict is in Renamer::addrs)
     next_base: u32,
     init_value: AbstractValue,
     abstract_value_dict: Vec<Option<AbstractValue>>,
@@ -192,7 +218,8 @@ pub(crate) struct Renamer {
     multi_use_simd_dict_use_in_cycle: Vec<i64>,
     renamer_active_cycle: i64,
     cur_store_buffer_entry: u32,
-    store_buffer_entry_dict: FxHashMap<Option<AbstractAddress>, u32>,
+    /// the abstract addresses, with `storeBufferEntryDict` and `memValueDict`
+    pub addrs: AddressTable,
     /// register -> width of the operation if its value was computed by the renamer
     folded_width: Vec<Option<i64>>,
     cur_instr_folded_width: Vec<(Key, i64)>,
@@ -206,7 +233,6 @@ impl Renamer {
         let mut g = AbstractValueGenerator {
             init_policy,
             load_value_numbering,
-            mem_value_dict: FxHashMap::default(),
             next_base: 0,
             init_value: AbstractValue { base: 0, offset: 0 },
             abstract_value_dict: vec![None; n_keys],
@@ -226,7 +252,7 @@ impl Renamer {
             multi_use_simd_dict_use_in_cycle: vec![0],
             renamer_active_cycle: 0,
             cur_store_buffer_entry: NONE,
-            store_buffer_entry_dict: FxHashMap::default(),
+            addrs: AddressTable::default(),
             folded_width: vec![None; n_keys],
             cur_instr_folded_width: Vec::new(),
             last_reg_merge_issued: NONE,
@@ -275,12 +301,12 @@ impl<'a> Sim<'a> {
         let g = &mut self.rn.abs_val_gen;
         if g.load_value_numbering && info.has(inf::HAS_INPUT_MEM) && !info.has(inf::HAS_OUTPUT_MEM) {
             if let (Some(width), Some(mem)) = (info.mov_load_width, self.prep.mem_addr(info.in_mem0)) {
-                let key = Some(g.get_address_key(mem));
-                if g.mem_value_dict.get(&key).map(|v| v.0) != Some(width) {
+                let id = self.rn.addrs.intern(Some(g.get_address_key(mem)));
+                if self.rn.addrs.mem_value[id as usize].map(|v| v.0) != Some(width) {
                     let fresh = g.generate_fresh_abstract_value();
-                    g.mem_value_dict.insert(key, (width, fresh));
+                    self.rn.addrs.mem_value[id as usize] = Some((width, fresh));
                 }
-                return g.mem_value_dict[&key].1;
+                return self.rn.addrs.mem_value[id as usize].unwrap().1;
             }
         }
         if let Some(in_reg0) = info.in_reg0 {
@@ -304,9 +330,10 @@ impl<'a> Sim<'a> {
         dict_set(&mut self.rn.abs_val_gen.cur_instr_rnd_abstract_value_dict, key, v);
     }
 
-    /// `Renamer.getStoreBufferKey`
-    fn get_store_buffer_key(&mut self, mem_addr: Option<&MemAddrInfo>) -> Option<AbstractAddress> {
-        mem_addr.map(|m| self.rn.abs_val_gen.get_address_key(m))
+    /// `Renamer.getStoreBufferKey`, interned
+    fn get_store_buffer_key(&mut self, mem_addr: Option<&MemAddrInfo>) -> u32 {
+        let key = mem_addr.map(|m| self.rn.abs_val_gen.get_address_key(m));
+        self.rn.addrs.intern(key)
     }
 
     /// `Renamer.cycle`: writes the fused uops that are issued in this cycle to `renamer_uops` (which must be empty)
@@ -490,17 +517,17 @@ impl<'a> Sim<'a> {
                     renamable: true,
                 };
                 self.rn.cur_store_buffer_entry = sbe_id;
-                self.rn.store_buffer_entry_dict.insert(key, sbe_id);
+                self.rn.addrs.sbe[key as usize] = sbe_id;
                 // recordStore
                 if self.rn.abs_val_gen.load_value_numbering {
                     let info = &self.prep.info[ii];
                     match (info.mov_store_width, info.in_reg0) {
                         (Some(width), Some(in_reg0)) => {
                             let v = self.rn.abs_val_gen.get_abstract_value_for_reg(in_reg0);
-                            self.rn.abs_val_gen.mem_value_dict.insert(key, (width, v));
+                            self.rn.addrs.mem_value[key as usize] = Some((width, v));
                         }
                         _ => {
-                            self.rn.abs_val_gen.mem_value_dict.remove(&key);
+                            self.rn.addrs.mem_value[key as usize] = None;
                         }
                     }
                 }
@@ -550,7 +577,7 @@ impl<'a> Sim<'a> {
                     && !base_entry.is_some_and(|e| e.renamed_by_elim_32bit_move)
                     && base_instr.is_some_and(|i| self.prep.info[i].has(inf::FAST_PTR_CHASING_SOURCE))
                     && (mem_addr.index.is_none() || index_instr.is_some_and(|i| self.prep.info[i].has(inf::NO_UOPS)));
-                let sbe = self.rn.store_buffer_entry_dict.get(&key).copied().unwrap_or(NONE);
+                let sbe = self.rn.addrs.sbe[key as usize];
                 let uop = &mut self.uops[u as usize];
                 uop.lat_reduced_due_to_fast_ptr_chasing = lat_reduced;
                 uop.store_buffer_entry = sbe;

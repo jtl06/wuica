@@ -626,7 +626,7 @@ pub fn simulate(list: &InstrList, config: &UArchConfig, uarch: &UArch, options: 
         idq: VecDeque::new(),
         rob: VecDeque::new(),
         retire_queue: VecDeque::new(),
-        fe: frontend::FrontEnd::new(unroll, options.alignment_offset),
+        fe: frontend::FrontEnd::new(unroll, options.alignment_offset, prep.info.iter().map(|i| i.len).sum()),
         rn: renamer::Renamer::new(options.init_policy, config.load_value_numbering, prep.keys.info.len()),
         sched: scheduler::Scheduler::new(&prep, config),
         prep,

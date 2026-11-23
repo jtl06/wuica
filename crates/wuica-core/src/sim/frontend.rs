@@ -101,6 +101,47 @@ impl DsbBlockQueue {
 
 }
 
+/// `addressesInDSB`: a set of addresses. The addresses that are added are those of the instances of the first round, which lie in
+/// `base .. base + len` (the length of the code); they are stored as bits. Other addresses (there are none) would be in `other`.
+pub(crate) struct AddressSet {
+    base: i64,
+    len: i64,
+    bits: Vec<u64>,
+    other: FxHashSet<i64>,
+}
+
+impl AddressSet {
+    fn new(base: i64, len: i64) -> AddressSet {
+        AddressSet { base, len, bits: vec![0; (len.max(0) as usize).div_ceil(64)], other: FxHashSet::default() }
+    }
+
+    /// the offset of `a` in the bits
+    #[inline]
+    fn offset(&self, a: i64) -> Option<usize> {
+        match a.checked_sub(self.base) {
+            Some(off) if off >= 0 && off < self.len => Some(off as usize),
+            _ => None,
+        }
+    }
+
+    fn insert(&mut self, a: i64) {
+        match self.offset(a) {
+            Some(off) => self.bits[off / 64] |= 1 << (off % 64),
+            None => {
+                self.other.insert(a);
+            }
+        }
+    }
+
+    #[inline]
+    fn contains(&self, a: i64) -> bool {
+        match self.offset(a) {
+            Some(off) => self.bits[off / 64] & (1 << (off % 64)) != 0,
+            None => !self.other.is_empty() && self.other.contains(&a),
+        }
+    }
+}
+
 /// the state of `CacheBlockGenerator`
 struct CacheBlockGenerator {
     unroll: bool,
@@ -118,7 +159,7 @@ pub(crate) struct FrontEnd {
     op_cache_rnd: i64,
     rsp_offset: i64,
     pub all_generated_instr_instances: Vec<u32>,
-    addresses_in_dsb: FxHashSet<i64>,
+    addresses_in_dsb: AddressSet,
     pub lsd_unroll_count: i64,
     /// None, MITE, DSB or LSD
     pub uop_source: Option<UopSource>,
@@ -156,7 +197,8 @@ pub(crate) struct FrontEnd {
 }
 
 impl FrontEnd {
-    pub fn new(unroll: bool, alignment_offset: i64) -> FrontEnd {
+    /// `code_len`: the length of the code in bytes
+    pub fn new(unroll: bool, alignment_offset: i64, code_len: i64) -> FrontEnd {
         FrontEnd {
             unroll,
             alignment_offset,
@@ -165,7 +207,7 @@ impl FrontEnd {
             op_cache_rnd: 0,
             rsp_offset: 0,
             all_generated_instr_instances: Vec::new(),
-            addresses_in_dsb: FxHashSet::default(),
+            addresses_in_dsb: AddressSet::new(alignment_offset, code_len),
             lsd_unroll_count: 1,
             uop_source: None,
             cbg: CacheBlockGenerator { unroll: true, rnd: 0, pos: 0, next_addr: alignment_offset },
@@ -426,7 +468,7 @@ impl<'a> Sim<'a> {
             for &cache_block in &cache_blocks_for_first_round {
                 self.add_new_cache_block(cache_block);
             }
-            if self.fe.addresses_in_dsb.contains(&self.fe.alignment_offset) {
+            if self.fe.addresses_in_dsb.contains(self.fe.alignment_offset) {
                 self.fe.uop_source = Some(UopSource::Dsb);
             }
         }
@@ -556,7 +598,7 @@ impl<'a> Sim<'a> {
                         let info = &self.prep.info[self.inst_instr(cur_inst)];
                         if info.has(inf::LAST_DECODED)
                             && info.has(inf::BRANCH | inf::MACRO_FUSED_NEXT)
-                            && self.fe.addresses_in_dsb.contains(&self.fe.alignment_offset)
+                            && self.fe.addresses_in_dsb.contains(self.fe.alignment_offset)
                         {
                             self.fe.uop_source = Some(UopSource::Dsb);
                         }
@@ -578,7 +620,7 @@ impl<'a> Sim<'a> {
                         } else {
                             self.inst_addr(cur_inst) + self.inst_len(cur_inst)
                         };
-                        if !self.fe.addresses_in_dsb.contains(&next_addr) {
+                        if !self.fe.addresses_in_dsb.contains(next_addr) {
                             self.fe.uop_source = Some(UopSource::Mite);
                         }
                     }
@@ -674,7 +716,7 @@ impl<'a> Sim<'a> {
             if block.is_empty() {
                 continue;
             }
-            if self.fe.addresses_in_dsb.contains(&self.inst_addr(block[0])) {
+            if self.fe.addresses_in_dsb.contains(self.inst_addr(block[0])) {
                 for &inst in &block {
                     self.insts[inst as usize].source = Some(UopSource::Dsb);
                 }

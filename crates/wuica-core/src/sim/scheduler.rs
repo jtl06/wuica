@@ -273,7 +273,10 @@ impl<'a> Sim<'a> {
                 if sbe4 == NONE || sbe9 == NONE {
                     return Err(crash("AttributeError: 'NoneType' object has no attribute 'abstractAddress'"));
                 }
-                if let (Some(addr4), Some(addr9)) = (self.rn.sbes[sbe4 as usize].abstract_address, self.rn.sbes[sbe9 as usize].abstract_address) {
+                let addrs = &self.rn.addrs.values;
+                if let (Some(addr4), Some(addr9)) =
+                    (addrs[self.rn.sbes[sbe4 as usize].abstract_address as usize], addrs[self.rn.sbes[sbe9 as usize].abstract_address as usize])
+                {
                     let different = if addr4.0 != addr9.0 || addr4.1 != addr9.1 || addr4.2 != addr9.2 {
                         true
                     } else {
