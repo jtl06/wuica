@@ -828,10 +828,13 @@ fn build_latency_graph(instrs: &InstrList, config: &UArchConfig, init_policy: &s
         }
     }
 
-    let mut moves_on_path = Vec::new();
+    let mut moves_on_path = vec![false; n];
+    // the elements of moves_on_path that are set (reset before the next move: not all n of them)
+    let mut on_path: Vec<usize> = Vec::new();
     for mv in (0..n).filter(|&i| instrs.instrs[i].may_be_eliminated) {
-        moves_on_path.clear();
-        moves_on_path.resize(n, false);
+        for i in on_path.drain(..) {
+            moves_on_path[i] = false;
+        }
         let mut cur_instr = Some(mv);
         while let Some(cur) = cur_instr {
             if moves_on_path[cur] {
@@ -846,6 +849,7 @@ fn build_latency_graph(instrs: &InstrList, config: &UArchConfig, init_policy: &s
                 break;
             }
             moves_on_path[cur] = true;
+            on_path.push(cur);
             cur_instr = prev_write_for_move[cur];
         }
     }
@@ -989,21 +993,36 @@ fn find_strongly_connected_components<'g>(
     }
 }
 
-/// Buffers of [`maximum_cycle_ratio`] (one element per operand), reused for the components of a graph.
+/// Buffers of [`maximum_cycle_ratio`], reused for the components of a graph: `local` has an element per operand, the others an
+/// element per node or edge of the current component.
 struct CycleRatioBuffers {
+    /// operand -> its index in the component (the position in `nodes`); only set for the nodes of the component
+    local: Vec<u32>,
     d: Vec<f64>,
-    p_opt: Vec<Option<LatGraphEdge>>,
-    p: Vec<LatGraphEdge>,
-    visited: Vec<Option<OpId>>,
+    /// the edge (index into `edges`) of each node: `p[u]` of the reference; NONE: None
+    p: Vec<u32>,
+    /// NONE or the node at which the walk that visited the node started
+    visited: Vec<u32>,
+    /// for each edge: local source, local target, cost and time (as in `edges`)
+    e_source: Vec<u32>,
+    e_target: Vec<u32>,
+    e_cost: Vec<i64>,
+    e_time: Vec<i64>,
 }
+
+const NO_EDGE: u32 = u32::MAX;
 
 impl CycleRatioBuffers {
     fn new(n_operands: usize) -> Self {
         CycleRatioBuffers {
-            d: vec![0.0; n_operands],
-            p_opt: vec![None; n_operands],
-            p: vec![LatGraphEdge { source: 0, target: 0, cost: 0, time: 0 }; n_operands],
-            visited: vec![None; n_operands],
+            local: vec![0; n_operands],
+            d: Vec::new(),
+            p: Vec::new(),
+            visited: Vec::new(),
+            e_source: Vec::new(),
+            e_target: Vec::new(),
+            e_cost: Vec::new(),
+            e_time: Vec::new(),
         }
     }
 }
@@ -1011,56 +1030,74 @@ impl CycleRatioBuffers {
 /// `maximumCycleRatio(nodes, edges)` (in `computeMaximumLatencyForGraph`), based on the "VAL" algorithm described in
 /// <https://doi.org/10.1145/1027084.1027085>. Every node must have an edge that leaves it (in the reference, the code fails
 /// otherwise); `d` then never keeps its initial value `sys.maxsize`, and all its values are floats or small integers.
+///
+/// The nodes are numbered by their position in `nodes` (the sources and targets of `edges` are nodes), so that the arrays of
+/// the iterations are small and dense; every loop visits the nodes and the edges in the order of the reference and computes
+/// the same floating-point expressions.
 fn maximum_cycle_ratio(buf: &mut CycleRatioBuffers, nodes: &[OpId], edges: &[LatGraphEdge]) -> (f64, Vec<LatGraphEdge>) {
     const SYS_MAXSIZE: f64 = i64::MAX as f64;
     let eps = 0.01;
     let mut r = SYS_MAXSIZE;
 
-    // The buffers have an element for each operand, but only those of the nodes are used: the sources and targets of `edges`
-    // are nodes, and so are the targets of the edges in `p`. Only these elements are reset.
-    let CycleRatioBuffers { d, p_opt, p, visited } = buf;
-    for &v in nodes {
-        d[v as usize] = SYS_MAXSIZE;
-        p_opt[v as usize] = None;
+    let CycleRatioBuffers { local, d, p, visited, e_source, e_target, e_cost, e_time } = buf;
+    for (i, &v) in nodes.iter().enumerate() {
+        local[v as usize] = i as u32;
     }
+    let n = nodes.len();
+    d.clear();
+    d.resize(n, SYS_MAXSIZE);
+    p.clear();
+    p.resize(n, NO_EDGE);
+    visited.clear();
+    visited.resize(n, NO_EDGE);
+    e_source.clear();
+    e_target.clear();
+    e_cost.clear();
+    e_time.clear();
     for e in edges {
-        if ((-e.cost) as f64) < d[e.source as usize] {
-            d[e.source as usize] = (-e.cost) as f64;
-            p_opt[e.source as usize] = Some(*e);
+        e_source.push(local[e.source as usize]);
+        e_target.push(local[e.target as usize]);
+        e_cost.push(e.cost);
+        e_time.push(e.time);
+    }
+    for (k, e) in edges.iter().enumerate() {
+        let s = e_source[k] as usize;
+        if ((-e.cost) as f64) < d[s] {
+            d[s] = (-e.cost) as f64;
+            p[s] = k as u32;
         }
     }
     // p[u] of a node without an edge is None in the reference, and `p[u].target` raises an AttributeError
-    for &v in nodes {
-        p[v as usize] = p_opt[v as usize].expect("AttributeError: a node of a strongly connected component has no edge");
-    }
+    assert!(!p.contains(&NO_EDGE), "AttributeError: a node of a strongly connected component has no edge");
 
-    let find_ratio = |mut r: f64, p: &[LatGraphEdge], visited: &mut [Option<OpId>]| -> (f64, Option<OpId>) {
-        for &v in nodes {
-            visited[v as usize] = None;
-        }
-        let mut handle = None;
-        for &v in nodes {
-            if visited[v as usize].is_some() {
+    let mut edges_on_max_cycle = Vec::new();
+    loop {
+        // findRatio: the walks from each node along p
+        visited.fill(NO_EDGE);
+        let mut handle = NO_EDGE;
+        for v in 0..n as u32 {
+            if visited[v as usize] != NO_EDGE {
                 continue;
             }
             let mut u = v;
             loop {
-                visited[u as usize] = Some(v);
-                u = p[u as usize].target;
-                if visited[u as usize].is_some() {
+                visited[u as usize] = v;
+                u = e_target[p[u as usize] as usize];
+                if visited[u as usize] != NO_EDGE {
                     break;
                 }
             }
-            if visited[u as usize] != Some(v) {
+            if visited[u as usize] != v {
                 continue;
             }
             let x = u;
             let mut sum: i64 = 0;
             let mut len: i64 = 0;
             loop {
-                sum -= p[u as usize].cost;
-                len += p[u as usize].time;
-                u = p[u as usize].target;
+                let pe = p[u as usize] as usize;
+                sum -= e_cost[pe];
+                len += e_time[pe];
+                u = e_target[pe];
                 if x == u {
                     break;
                 }
@@ -1069,22 +1106,16 @@ fn maximum_cycle_ratio(buf: &mut CycleRatioBuffers, nodes: &[OpId], edges: &[Lat
             let ratio = sum as f64 / len as f64;
             if r > ratio {
                 r = ratio;
-                handle = Some(u);
+                handle = u;
             }
         }
-        (r, handle)
-    };
-
-    let mut edges_on_max_cycle = Vec::new();
-    loop {
-        let (new_r, handle) = find_ratio(r, p, visited);
-        r = new_r;
-        if let Some(handle) = handle {
+        if handle != NO_EDGE {
             edges_on_max_cycle.clear();
             let mut u = handle;
             loop {
-                edges_on_max_cycle.push(p[u as usize]);
-                u = p[u as usize].target;
+                let pe = p[u as usize] as usize;
+                edges_on_max_cycle.push(edges[pe]);
+                u = e_target[pe];
                 if u == handle {
                     break;
                 }
@@ -1092,11 +1123,12 @@ fn maximum_cycle_ratio(buf: &mut CycleRatioBuffers, nodes: &[OpId], edges: &[Lat
         }
 
         let mut changed = false;
-        for e in edges {
-            let (source, target) = (e.source as usize, e.target as usize);
-            if d[source] > d[target] - e.cost as f64 - r * e.time as f64 + eps {
-                d[source] = d[target] - e.cost as f64 - r * e.time as f64;
-                p[source] = *e;
+        for k in 0..edges.len() {
+            let (source, target) = (e_source[k] as usize, e_target[k] as usize);
+            let (cost, time) = (e_cost[k], e_time[k]);
+            if d[source] > d[target] - cost as f64 - r * time as f64 + eps {
+                d[source] = d[target] - cost as f64 - r * time as f64;
+                p[source] = k as u32;
                 changed = true;
             }
         }
