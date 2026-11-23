@@ -1,12 +1,50 @@
 //! `Scheduler`: port assignment, dispatch, and the tracking of when uops become ready and finish.
 
-use super::prep::{pf, PortList, NONE};
+use super::prep::{pf, PortList, Prep, NONE};
 use super::{crash, Sim, SimError};
+use crate::config::UArchConfig;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
 
 /// index of 'div' in `blockedResources`; 'port' + p is at 1 + (index of p)
 const RES_DIV: usize = 0;
+
+/// the rule of `addNewUops` for uops with more than one port
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PortAssignment {
+    /// `isAMD`: the least-loaded port, ties broken by `portLastAssigned`
+    Amd,
+    /// `portAssignment == 'ICL'` (or 10 ports)
+    Icl,
+    /// 8 ports
+    Eight,
+    /// the other microarchitectures
+    Other,
+}
+
+/// The ports that the rules of the scheduler refer to by name, as indices (`NO_PORT` if there is no such port), and the
+/// orders of the tie-break rules.
+struct PortNames {
+    p2: u8,
+    p3: u8,
+    p4: u8,
+    p7: u8,
+    p8: u8,
+    p9: u8,
+    /// `dividerPort`
+    divider: u8,
+    /// '0', '1', '5'
+    p0: u8,
+    p1: u8,
+    p5: u8,
+    /// rank of each port in the order of the key `-int(port, 16)` (then the port order); `(usage, rank)` sorts like
+    /// `(usage, -int(port, 16))`
+    rank_neg_hex: [u8; 32],
+    /// rank of each port in the order of `int(port, 16)`
+    rank_hex: [u8; 32],
+}
+
+const NO_PORT: u8 = u8::MAX;
 
 pub(crate) struct Scheduler {
     /// `len(self.uops)`
@@ -15,9 +53,12 @@ pub(crate) struct Scheduler {
     /// `portUsageAtStartOfCycle` of the previous and of the current cycle
     port_usage_prev_cycle: Vec<i64>,
     port_usage_cur_cycle: Vec<i64>,
+    /// (indices of the ports)
     next_p23_port: u8,
     next_p49_port: u8,
     next_p78_port: u8,
+    assignment: PortAssignment,
+    names: PortNames,
     /// the port usage counter is decreased one cycle after uops are dispatched
     uops_dispatched_in_prev_cycle: Vec<u32>,
     /// heaps of uop indices
@@ -36,8 +77,6 @@ pub(crate) struct Scheduler {
     ready_bucket_spare: Vec<u32>,
     port_combinations_buf: Vec<(u32, usize)>,
     dispatched_sorted_buf: Vec<u32>,
-    sorted_port_usages_buf: Vec<(i64, i64, usize)>,
-    sorted_ports_buf: Vec<usize>,
     /// dispatched, but not finished uops (sorted)
     pending_uops: Vec<u32>,
     pending_store_fence_uops: VecDeque<u32>,
@@ -98,15 +137,55 @@ impl CycleBuckets {
 }
 
 impl Scheduler {
-    pub fn new(n_ports: usize, n_resources: usize) -> Scheduler {
+    pub fn new(prep: &Prep, cfg: &UArchConfig) -> Scheduler {
+        let n_ports = prep.ports.len();
+        let n_resources = prep.n_resources;
+        let idx = |c: u8| prep.port_idx[c as usize];
+        let mut rank_neg_hex = [0u8; 32];
+        let mut rank_hex = [0u8; 32];
+        let mut order: Vec<usize> = (0..n_ports).collect();
+        order.sort_by_key(|&p| (-prep.port_hex[p], p));
+        for (r, &p) in order.iter().enumerate() {
+            rank_neg_hex[p] = r as u8;
+        }
+        order.sort_by_key(|&p| (prep.port_hex[p], p));
+        for (r, &p) in order.iter().enumerate() {
+            rank_hex[p] = r as u8;
+        }
+        let names = PortNames {
+            p2: idx(b'2'),
+            p3: idx(b'3'),
+            p4: idx(b'4'),
+            p7: idx(b'7'),
+            p8: idx(b'8'),
+            p9: idx(b'9'),
+            divider: if cfg.divider_port.len() == 1 { idx(cfg.divider_port.as_bytes()[0]) } else { NO_PORT },
+            p0: idx(b'0'),
+            p1: idx(b'1'),
+            p5: idx(b'5'),
+            rank_neg_hex,
+            rank_hex,
+        };
+        let assignment = if cfg.is_amd {
+            PortAssignment::Amd
+        } else if cfg.port_assignment.as_deref() == Some("ICL") || (cfg.port_assignment.is_none() && n_ports == 10) {
+            PortAssignment::Icl
+        } else if n_ports == 8 {
+            PortAssignment::Eight
+        } else {
+            PortAssignment::Other
+        };
         Scheduler {
             n_uops: 0,
             port_usage: vec![0; n_ports],
             port_usage_prev_cycle: vec![0; n_ports],
             port_usage_cur_cycle: vec![0; n_ports],
-            next_p23_port: b'2',
-            next_p49_port: b'4',
-            next_p78_port: b'7',
+            // (only used for uops whose ports are these two, which then exist)
+            next_p23_port: names.p2,
+            next_p49_port: names.p4,
+            next_p78_port: names.p7,
+            assignment,
+            names,
             uops_dispatched_in_prev_cycle: Vec::new(),
             ready_queue: (0..n_ports).map(|_| BinaryHeap::new()).collect(),
             ready_div_uops: BinaryHeap::new(),
@@ -120,8 +199,6 @@ impl Scheduler {
             ready_bucket_spare: Vec::new(),
             port_combinations_buf: Vec::new(),
             dispatched_sorted_buf: Vec::new(),
-            sorted_port_usages_buf: Vec::new(),
-            sorted_ports_buf: Vec::new(),
             pending_uops: Vec::new(),
             pending_store_fence_uops: VecDeque::new(),
             store_uops_since_last_store_fence: Vec::new(),
@@ -143,11 +220,6 @@ impl Scheduler {
 }
 
 impl<'a> Sim<'a> {
-    fn port(&self, c: u8) -> Option<usize> {
-        let i = self.prep.port_idx[c as usize];
-        (i != u8::MAX).then_some(i as usize)
-    }
-
     /// `Scheduler.isFull`
     pub(crate) fn scheduler_is_full(&self) -> bool {
         self.sched.n_uops + self.cfg.issue_width > self.cfg.rs_width
@@ -186,9 +258,12 @@ impl<'a> Sim<'a> {
     /// `Scheduler.dispatchUops`
     fn dispatch_uops(&mut self, clock: i64) -> Result<(), SimError> {
         let cfg = self.cfg;
-        let mut applicable = [true; 32];
+        // the applicable ports (a mask of port indices)
+        let mut applicable = u32::MAX;
+        let (p2, p3, p4, p9) = (self.sched.names.p2, self.sched.names.p3, self.sched.names.p4, self.sched.names.p9);
 
-        if let (Some(p4), Some(p9)) = (self.port(b'4'), self.port(b'9')) {
+        if p4 != NO_PORT && p9 != NO_PORT {
+            let (p4, p9) = (p4 as usize, p9 as usize);
             if let (Some(&Reverse(uop4)), Some(&Reverse(uop9))) = (self.sched.ready_queue[p4].peek(), self.sched.ready_queue[p9].peek()) {
                 // two stores can be executed in the same cycle if they access the same cache line
                 let sbe4 = self.uops[uop4 as usize].store_buffer_entry;
@@ -207,9 +282,9 @@ impl<'a> Sim<'a> {
                     };
                     if different {
                         if uop4 <= uop9 {
-                            applicable[p9] = false;
+                            applicable &= !(1 << p9);
                         } else {
-                            applicable[p4] = false;
+                            applicable &= !(1 << p4);
                         }
                     }
                 }
@@ -217,27 +292,30 @@ impl<'a> Sim<'a> {
         }
 
         if cfg.slow_256bit_mem_acc {
-            let (Some(p2), Some(p3)) = (self.port(b'2'), self.port(b'3')) else { return Err(crash("KeyError: '2'")) };
+            if p2 == NO_PORT || p3 == NO_PORT {
+                return Err(crash("KeyError: '2'"));
+            }
+            let (p2, p3) = (p2 as usize, p3 as usize);
             if let (Some(&Reverse(uop2)), Some(&Reverse(uop3))) = (self.sched.ready_queue[p2].peek(), self.sched.ready_queue[p3].peek()) {
                 let is_load = |u: u32| self.prep.props[self.uops[u as usize].prop as usize].has(pf::LOAD);
                 let m256 = |u: u32| self.prep.props[self.uops[u as usize].prop as usize].has(pf::M256);
                 if is_load(uop2) && is_load(uop3) && (m256(uop2) || m256(uop3)) {
-                    applicable[if uop2 < uop3 { p3 } else { p2 }] = false;
+                    applicable &= !(1 << if uop2 < uop3 { p3 } else { p2 });
                 }
             }
         }
 
-        let divider_port = if cfg.divider_port.len() == 1 { self.port(cfg.divider_port.as_bytes()[0]) } else { None };
-        let port4 = self.port(b'4');
+        let divider_port = self.sched.names.divider as usize;
+        let port4 = p4 as usize;
         let mut uops_dispatched = std::mem::take(&mut self.sched.uops_dispatched_spare);
         uops_dispatched.clear();
         for port in 0..self.n_ports {
-            if !applicable[port] {
+            if applicable & (1 << port) == 0 {
                 continue;
             }
             let s = &mut self.sched;
             let mut use_div_queue = false;
-            if Some(port) == divider_port && s.blocked_resources[RES_DIV] == 0.0 {
+            if port == divider_port && s.blocked_resources[RES_DIV] == 0.0 {
                 if let Some(&Reverse(div)) = s.ready_div_uops.peek() {
                     if s.ready_queue[port].peek().map_or(true, |&Reverse(u)| div < u) {
                         use_div_queue = true;
@@ -257,7 +335,7 @@ impl<'a> Sim<'a> {
 
             s.blocked_resources[RES_DIV] += self.uops[u as usize].div_cycles as f64;
             if cfg.slow_256bit_mem_acc
-                && Some(port) == port4
+                && port == port4
                 && self.prep.props[self.uops[u as usize].prop as usize].has(pf::M256)
             {
                 s.blocked_resources[1 + port] = 2.0;
@@ -466,7 +544,6 @@ impl<'a> Sim<'a> {
 
     /// `Scheduler.addNewUops`
     fn add_new_uops(&mut self, clock: i64, new_uops: &[u32]) -> Result<(), SimError> {
-        let cfg = self.cfg;
         // portUsageAtStartOfCycle[clock] = dict(self.portUsage)
         if clock > 0 {
             std::mem::swap(&mut self.sched.port_usage_prev_cycle, &mut self.sched.port_usage_cur_cycle);
@@ -478,10 +555,6 @@ impl<'a> Sim<'a> {
         // frozenset(possiblePorts) -> count
         let mut port_combinations_in_cur_cycle = std::mem::take(&mut self.sched.port_combinations_buf);
         port_combinations_in_cur_cycle.clear();
-        let mut sorted_port_usages = std::mem::take(&mut self.sched.sorted_port_usages_buf);
-        let mut sorted_ports = std::mem::take(&mut self.sched.sorted_ports_buf);
-        let n_ports = self.n_ports;
-        let icl_assignment = cfg.port_assignment.as_deref() == Some("ICL") || (cfg.port_assignment.is_none() && n_ports == 10);
 
         for (issue_slot, &fused) in new_uops.iter().enumerate() {
             for u in self.fused[fused as usize].unfused_uops() {
@@ -489,144 +562,12 @@ impl<'a> Sim<'a> {
                 if !prop.has(pf::HAS_PORTS) || self.uops[u as usize].eliminated {
                     continue;
                 }
-                let s = &mut self.sched;
-                let hex = &self.prep.port_hex;
-                let alternate = |next: &mut u8, a: u8, b: u8| -> u8 {
-                    let p = *next;
-                    *next = if p == a { b } else { a };
-                    p
-                };
-                let port: usize;
-                if prop.n_ports == 1 {
-                    port = prop.port0 as usize;
-                } else if cfg.is_amd {
-                    // least-loaded applicable port; ties are broken in favor of the port that was not used for the longest time
-                    let mut best = prop.port0 as usize;
-                    let (start, n) = (prop.ports_start, prop.n_ports as u32);
-                    for &p in &self.prep.port_lists[start as usize + 1..(start + n) as usize] {
-                        let p = p as usize;
-                        if (s.port_usage[p], s.port_last_assigned[p]) < (s.port_usage[best], s.port_last_assigned[best]) {
-                            best = p;
-                        }
-                    }
-                    port = best;
-                    s.n_ports_assigned += 1;
-                    s.port_last_assigned[port] = s.n_ports_assigned;
-                } else if icl_assignment {
-                    // (usage, -int(port, 16), port)
-                    sorted_port_usages.clear();
-                    for p in 0..n_ports {
-                        if prop.port_mask & (1 << p) != 0 {
-                            sorted_port_usages.push((s.port_usage_prev_cycle[p], -hex[p], p));
-                        }
-                    }
-                    sorted_port_usages.sort();
-                    let min_port_usage = sorted_port_usages[0].0;
-                    sorted_ports.clear();
-                    for x in sorted_port_usages.iter() {
-                        if x.0 < min_port_usage + 5 {
-                            sorted_ports.push(x.2);
-                        }
-                    }
-
-                    let n_pc = match port_combinations_in_cur_cycle.iter_mut().find(|e| e.0 == prop.port_mask) {
-                        Some(e) => {
-                            e.1 += 1;
-                            e.1 - 1
-                        }
-                        None => {
-                            port_combinations_in_cur_cycle.push((prop.port_mask, 1));
-                            0
-                        }
-                    };
-
-                    let by_char = |c: u8| -> Result<usize, SimError> {
-                        let i = self.prep.port_idx[c as usize];
-                        if i == u8::MAX {
-                            Err(crash("KeyError: port"))
-                        } else {
-                            Ok(i as usize)
-                        }
-                    };
-                    port = match prop.port_list {
-                        PortList::P23 => by_char(alternate(&mut s.next_p23_port, b'2', b'3'))?,
-                        PortList::P49 => by_char(alternate(&mut s.next_p49_port, b'4', b'9'))?,
-                        PortList::P78 => by_char(alternate(&mut s.next_p78_port, b'7', b'8'))?,
-                        _ => {
-                            if issue_slot == 4 {
-                                sorted_ports[0]
-                            } else if issue_slot == 3 && n_pc == 0 && sorted_ports.len() > 1 {
-                                sorted_ports[1]
-                            } else {
-                                sorted_ports[n_pc % sorted_ports.len()]
-                            }
-                        }
-                    };
-                } else if n_ports == 8 {
-                    // the applicable ports as (usage, -int(port, 16), port); the keys are unique
-                    let key = |p: usize| (s.port_usage_cur_cycle[p], -hex[p], p);
-                    let min_excluding = |excluded: usize| -> Option<(i64, i64, usize)> {
-                        let mut m: Option<(i64, i64, usize)> = None;
-                        for p in 0..n_ports {
-                            if prop.port_mask & (1 << p) != 0 && p != excluded {
-                                let k = key(p);
-                                if m.map_or(true, |m| k < m) {
-                                    m = Some(k);
-                                }
-                            }
-                        }
-                        m
-                    };
-                    // port with minimum usage so far
-                    let (min_port_usage, _, min_port) = min_excluding(usize::MAX).unwrap();
-                    if prop.port_list == PortList::P23 {
-                        let c = alternate(&mut s.next_p23_port, b'2', b'3');
-                        port = self.prep.port_idx[c as usize] as usize;
-                    } else if issue_slot % 2 == 0 {
-                        port = min_port;
-                    } else {
-                        // port with second smallest usage so far
-                        let Some((min2_port_usage, _, min2_port)) = min_excluding(min_port) else {
-                            return Err(crash("ValueError: min() arg is an empty sequence"));
-                        };
-                        port = if min2_port_usage >= min_port_usage + 3 { min_port } else { min2_port };
-                    }
+                let port = if prop.n_ports == 1 {
+                    prop.port0 as usize
                 } else {
-                    // the applicable ports as (usage, int(port, 16), port); the keys are unique
-                    let mut min_key = (i64::MAX, i64::MAX, usize::MAX);
-                    let mut max_key = (i64::MIN, i64::MIN, 0usize);
-                    for p in 0..n_ports {
-                        if prop.port_mask & (1 << p) != 0 {
-                            let k = (s.port_usage_cur_cycle[p], hex[p], p);
-                            if k < min_key {
-                                min_key = k;
-                            }
-                            if k > max_key {
-                                max_key = k;
-                            }
-                        }
-                    }
-                    let min_port = min_key.2;
-                    let (max_usage, min_usage) = (max_key.0, min_key.0);
-                    if prop.port_list == PortList::P23 {
-                        let c = alternate(&mut s.next_p23_port, b'2', b'3');
-                        port = self.prep.port_idx[c as usize] as usize;
-                    } else if max_usage - min_usage >= 3 {
-                        port = min_port;
-                    } else if prop.port_list == PortList::P015 {
-                        let order: [u8; 4] = match self.prep.ports[min_port] {
-                            b'0' => *b"0510",
-                            b'1' => *b"1501",
-                            _ => *b"5105",
-                        };
-                        let Some(&c) = order.get(issue_slot) else { return Err(crash("IndexError: list index out of range (issueSlot)")) };
-                        port = self.prep.port_idx[c as usize] as usize;
-                    } else if issue_slot % 2 == 0 {
-                        port = min_port;
-                    } else {
-                        port = max_key.2;
-                    }
-                }
+                    let (mask, port_list, ports_start, n) = (prop.port_mask, prop.port_list, prop.ports_start as usize, prop.n_ports as usize);
+                    self.assign_port(issue_slot, mask, port_list, ports_start, n, &mut port_combinations_in_cur_cycle)?
+                };
 
                 self.uops[u as usize].actual_port = Some(port as u8);
                 self.sched.port_usage[port] += 1;
@@ -646,9 +587,163 @@ impl<'a> Sim<'a> {
             }
         }
         self.sched.port_combinations_buf = port_combinations_in_cur_cycle;
-        self.sched.sorted_port_usages_buf = sorted_port_usages;
-        self.sched.sorted_ports_buf = sorted_ports;
         Ok(())
+    }
+
+    /// the port of a uop with more than one possible port (`mask`; in the order of `possiblePorts`:
+    /// `port_lists[ports_start .. ports_start + n]`)
+    fn assign_port(
+        &mut self,
+        issue_slot: usize,
+        mask: u32,
+        port_list: PortList,
+        ports_start: usize,
+        n: usize,
+        port_combinations_in_cur_cycle: &mut Vec<(u32, usize)>,
+    ) -> Result<usize, SimError> {
+        let s = &mut self.sched;
+        // alternates between two ports (which exist: they are the possible ports of the uop)
+        let alternate = |next: &mut u8, a: u8, b: u8| -> usize {
+            let p = *next;
+            *next = if p == a { b } else { a };
+            p as usize
+        };
+        // the set bits of `mask` in increasing order (the order of `portUsageAtStartOfCycle`)
+        let bits = |mut m: u32| {
+            std::iter::from_fn(move || {
+                if m == 0 {
+                    return None;
+                }
+                let p = m.trailing_zeros() as usize;
+                m &= m - 1;
+                Some(p)
+            })
+        };
+        match s.assignment {
+            PortAssignment::Amd => {
+                // least-loaded applicable port; ties are broken in favor of the port that was not used for the longest time
+                // (min returns the first of equal keys, in the order of possiblePorts)
+                let list = &self.prep.port_lists[ports_start..ports_start + n];
+                let mut best = list[0] as usize;
+                for &p in &list[1..] {
+                    let p = p as usize;
+                    if (s.port_usage[p], s.port_last_assigned[p]) < (s.port_usage[best], s.port_last_assigned[best]) {
+                        best = p;
+                    }
+                }
+                s.n_ports_assigned += 1;
+                s.port_last_assigned[best] = s.n_ports_assigned;
+                Ok(best)
+            }
+            PortAssignment::Icl => {
+                let n_pc = match port_combinations_in_cur_cycle.iter_mut().find(|e| e.0 == mask) {
+                    Some(e) => {
+                        e.1 += 1;
+                        e.1 - 1
+                    }
+                    None => {
+                        port_combinations_in_cur_cycle.push((mask, 1));
+                        0
+                    }
+                };
+                let names = &s.names;
+                match port_list {
+                    PortList::P23 => return Ok(alternate(&mut s.next_p23_port, names.p2, names.p3)),
+                    PortList::P49 => return Ok(alternate(&mut s.next_p49_port, names.p4, names.p9)),
+                    PortList::P78 => return Ok(alternate(&mut s.next_p78_port, names.p7, names.p8)),
+                    _ => {}
+                }
+                // sorted((usage, -int(port, 16))): (usage, rank) are unique keys; insertion sort of the (few) ports
+                let mut sorted = [(0i64, 0u8, 0u8); 32];
+                let mut len = 0;
+                for p in bits(mask) {
+                    let k = (s.port_usage_prev_cycle[p], names.rank_neg_hex[p], p as u8);
+                    let mut i = len;
+                    while i > 0 && (sorted[i - 1].0, sorted[i - 1].1) > (k.0, k.1) {
+                        sorted[i] = sorted[i - 1];
+                        i -= 1;
+                    }
+                    sorted[i] = k;
+                    len += 1;
+                }
+                let min_port_usage = sorted[0].0;
+                // sortedPorts: the prefix with usage < min + 5
+                let n_sorted = sorted[..len].iter().take_while(|x| x.0 < min_port_usage + 5).count();
+                let i = if issue_slot == 4 {
+                    0
+                } else if issue_slot == 3 && n_pc == 0 && n_sorted > 1 {
+                    1
+                } else {
+                    n_pc % n_sorted
+                };
+                Ok(sorted[i].2 as usize)
+            }
+            PortAssignment::Eight => {
+                let names = &s.names;
+                // the applicable ports by (usage, -int(port, 16)); the keys are unique
+                let key = |p: usize| (s.port_usage_cur_cycle[p], names.rank_neg_hex[p]);
+                let min_excluding = |excluded: usize| -> Option<usize> {
+                    let mut m: Option<usize> = None;
+                    for p in bits(mask) {
+                        if p != excluded && m.map_or(true, |m| key(p) < key(m)) {
+                            m = Some(p);
+                        }
+                    }
+                    m
+                };
+                // port with minimum usage so far
+                let min_port = min_excluding(usize::MAX).unwrap();
+                if port_list == PortList::P23 {
+                    let (p2, p3) = (names.p2, names.p3);
+                    Ok(alternate(&mut s.next_p23_port, p2, p3))
+                } else if issue_slot % 2 == 0 {
+                    Ok(min_port)
+                } else {
+                    // port with second smallest usage so far
+                    let Some(min2_port) = min_excluding(min_port) else {
+                        return Err(crash("ValueError: min() arg is an empty sequence"));
+                    };
+                    Ok(if s.port_usage_cur_cycle[min2_port] >= s.port_usage_cur_cycle[min_port] + 3 { min_port } else { min2_port })
+                }
+            }
+            PortAssignment::Other => {
+                let names = &s.names;
+                // the applicable ports by (usage, int(port, 16)); the keys are unique
+                let key = |p: usize| (s.port_usage_cur_cycle[p], names.rank_hex[p]);
+                let mut min_port = usize::MAX;
+                let mut max_port = usize::MAX;
+                for p in bits(mask) {
+                    if min_port == usize::MAX || key(p) < key(min_port) {
+                        min_port = p;
+                    }
+                    if max_port == usize::MAX || key(p) > key(max_port) {
+                        max_port = p;
+                    }
+                }
+                let (max_usage, min_usage) = (s.port_usage_cur_cycle[max_port], s.port_usage_cur_cycle[min_port]);
+                if port_list == PortList::P23 {
+                    let (p2, p3) = (names.p2, names.p3);
+                    Ok(alternate(&mut s.next_p23_port, p2, p3))
+                } else if max_usage - min_usage >= 3 {
+                    Ok(min_port)
+                } else if port_list == PortList::P015 {
+                    let (p0, p1, p5) = (names.p0, names.p1, names.p5);
+                    let order: [u8; 4] = if min_port == p0 as usize {
+                        [p0, p5, p1, p0]
+                    } else if min_port == p1 as usize {
+                        [p1, p5, p0, p1]
+                    } else {
+                        [p5, p1, p0, p5]
+                    };
+                    let Some(&p) = order.get(issue_slot) else { return Err(crash("IndexError: list index out of range (issueSlot)")) };
+                    Ok(p as usize)
+                } else if issue_slot % 2 == 0 {
+                    Ok(min_port)
+                } else {
+                    Ok(max_port)
+                }
+            }
+        }
     }
 
     /// `Scheduler.checkDependingUopsExecuted`: checks if the uop depends on a uop for which the finish time has not been determined

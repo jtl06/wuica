@@ -505,7 +505,7 @@ pub fn simulate(list: &InstrList, config: &UArchConfig, uarch: &UArch, options: 
         retire_queue: VecDeque::new(),
         fe: frontend::FrontEnd::new(unroll, options.alignment_offset),
         rn: renamer::Renamer::new(options.init_policy, config.load_value_numbering, prep.keys.info.len()),
-        sched: scheduler::Scheduler::new(n_ports, prep.n_resources),
+        sched: scheduler::Scheduler::new(&prep, config),
         prep,
     };
     sim.fe.all_generated_instr_instances.reserve(cap(instrs.len()));
