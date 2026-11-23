@@ -71,7 +71,7 @@ export function outcome(base, exp, r) {
   else if (!r || r.code !== 0) {
     const error = r?.error ?? 'not analyzed';
     // a limit or failure of the unrolled code, not of the caller's block: say so
-    return { ...row, error: exp.per > 1 && exp.hex ? `the block unrolled ×${exp.per} (${exp.hex.length / 2} bytes) could not be analyzed: ${error}` : error };
+    return { ...row, error: exp.per > 1 && exp.hex ? `the block unrolled ×${exp.per} (${exp.hex.length} hex characters) could not be analyzed: ${error}` : error };
   }
   else if (r.mode !== base.mode) return { ...row, error: `analyzed ${r.mode === 'loop' ? 'as a loop' : 'unrolled'}: not comparable` };
   else { tp = r.tp / exp.per; row.bottlenecks = r.bottlenecks; }

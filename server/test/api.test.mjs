@@ -98,6 +98,8 @@ test('analyze failures: status codes and the contract\'s {code, error, stderr}',
   assert.equal(u.json.code, 1);
   assert.match(u.json.error, /^unknown microarchitecture: K8/);
   assert.equal((await post(s.base, '/api/analyze/', { hex: HEX })).status, 404);
+  assert.equal((await post(s.base, '/api/analyze/%20', { hex: HEX })).status, 404); // blank: as empty
+  assert.equal((await post(s.base, '/api/analyze/skl%20', { hex: HEX })).json.arch, 'SKL'); // whitespace around: ignored
   // not JSON
   const j = await post(s.base, '/api/analyze/SKL', '{"hex": ');
   assert.equal(j.status, 400);

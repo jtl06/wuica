@@ -112,7 +112,7 @@ test('what_if: an unrolled variant over the server\'s limits is that variant\'s 
     for (const n of [4, 8]) {
       const v = j.variants.find((x) => x.id === `unroll${n}`);
       assert.equal(v.label, `unroll ×${n}`);
-      assert.match(v.error, new RegExp(`^the block unrolled ×${n} \\(\\d+ bytes\\) could not be analyzed: `), v.error);
+      assert.match(v.error, new RegExp(`^the block unrolled ×${n} \\(\\d+ hex characters\\) could not be analyzed: `), v.error);
     }
     assert.ok(j.variants.every((v) => typeof v.label === 'string'));
   } finally {

@@ -101,7 +101,7 @@ then unused), and the 1 % assertion and `issue_slots_are_of_the_steady_state` in
   say it before the run.
 - **N2 (fixed, 0dfa684; tests: server/test/mcp.test.mjs "an unrolled variant over the server's limits", the label
   assertion in packages/wuica/test/mcp.test.mjs).** An unrolled variant that cannot be analyzed now says so itself:
-  "the block unrolled ×4 (N bytes) could not be analyzed: <the reason>", and every variant row, error or not, has its
+  "the block unrolled ×4 (N hex characters) could not be analyzed: <the reason>", and every variant row, error or not, has its
   `label` (packages/wuica/lib/whatif.js, shared by the stdio and the remote server). Was: The remote MCP `what_if` on a large block: the unrolled variants go through the server's request limits,
   so for SHA-256 `unroll4`/`unroll8` give "`hex` is longer than 65536 characters, the limit of this server" (the user sent
   no such hex; the stdio server analyzes them). Error rows of variants have no `label` (`{"id":"unroll2","error":"not a
@@ -109,7 +109,7 @@ then unused), and the 1 % assertion and `issue_slots_are_of_the_steady_state` in
 - **N3 (fixed, fea4047; tests: the arch-name assertions of packages/wuica/test/library.test.mjs and cli.test.mjs,
   server/test/compare-split.test.mjs (split and not), `arch_names_like_the_other_interfaces` of wuica-cli).**
   Whitespace around a name is ignored in the library (so REST and both MCP servers) and both CLIs (`"skl "` is SKL; a
-  blank name follows each interface's rule for `""`: SKL in the library, unknown in the native CLI); a repeated name in a
+  blank name follows each interface's rule for `""`: SKL in the library, unknown in the native CLI, 404 in REST's path); a repeated name in a
   compare list counts once, in the order of its first appearance (library; the server de-duplicates before it splits a
   compare into parts, after its limit of 15 names, which counts the list as given); `-details` without `-json` (and in the
   npm CLI with several CPUs) prints one line on stderr, "-details: shown only with -json ...; ignored" (`-trace`
