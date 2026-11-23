@@ -1,4 +1,7 @@
 {
   "private": true,
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "cf": "^1.0.0-rc.2"
+  }
 }
