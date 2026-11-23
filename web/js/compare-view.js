@@ -259,6 +259,7 @@ export function createComparePanels(env) {
       h('table', { class: 'grid cmp-cpus' }, h('thead', null, head), body))];
     if (p.waitingForClick) parts.unshift(runButton(p));
     p.body.replaceChildren(...parts);
+    if (input) env.decorateCpus?.(p.body.querySelector('table'), { hex: input.hex, options: input.options }); // cmp-slots.js
   }
 
   function runButton(p) {
