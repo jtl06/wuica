@@ -245,8 +245,8 @@ export function createBound(env = {}) {
       btn.addEventListener('click', () => jumpToRow(root, k));
       return h('li', null, btn);
     });
-    body.replaceChildren(h('div', { class: 'bd-groups' }, groups, ps ? setLine(ps) : null, d?.issue ? slotsLine(d.issue) : null),
-      top.length ? h('div', { class: 'bd-top' }, h('span', { class: 'bd-g', text: 'top', title: `the instructions with the largest share of ${name}; the uop table is shaded by the share` }), h('ol', { class: 'bd-list' }, list)) : null);
+    body.replaceChildren(...[h('div', { class: 'bd-groups' }, groups, ps ? setLine(ps) : null, d?.issue ? slotsLine(d.issue) : null),
+      top.length ? h('div', { class: 'bd-top' }, h('span', { class: 'bd-g', text: 'top', title: `the instructions with the largest share of ${name}; the uop table is shaded by the share` }), h('ol', { class: 'bd-list' }, list)) : null].filter(Boolean));
     shade(b, name);
     if (root?.dataset) root.dataset.bound = selected ?? '';
   }

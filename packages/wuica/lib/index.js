@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { Analyzer, Assembler, parseDiagnostics, codeModeError } from './wasm.js';
 import { archList, DEFAULT_ARCH, ARCH_INFO, ARCH_ORDER } from './archs.js';
 import { insights } from './insights.js';
+import { instrDetails, detailInsights } from './details.js';
 import { readMaybeCompressed } from './files.js';
 import { CODES, WARM_HEX, failure, tableFailure, analysisResult, compareFields } from './core.js';
 import { ThreadPool, threadLimit, threadOption, threadsFor } from './threads.js';
@@ -31,6 +32,7 @@ export const OPTION_DEFAULTS = Object.freeze({
   minIterations: 10,
   minCycles: 500,
   includeTrace: false,
+  details: false,      // per instruction allowed ports, latencies, front-end facts; port set; issue slots (docs/WASM-API.md)
 });
 
 export const ARCH_FIELDS = Object.freeze(['id', 'name', 'year', 'prototype', 'table', 'xedChip']);
@@ -224,7 +226,7 @@ class Wuica {
     if (code.code !== undefined) return code;
     if (request.archs !== undefined && !Array.isArray(request.archs)) return failure(CODES.REQUEST, '`archs` must be an array of ids');
     const ids = request.archs?.length ? request.archs : this.#archs.map((a) => a.id);
-    const options = { ...opts.options, includeTrace: false };
+    const options = { ...opts.options, includeTrace: false, details: false };
     const resolved = ids.map((arch) => this.resolveArch(arch));
     // the microarchitectures in threads (if that means at least two threads), each as #run() would on this thread;
     // whatever the threads do not do (unknown ids, a thread that failed) is done here, one after another
@@ -264,7 +266,7 @@ class Wuica {
     const { name, year, prototype } = this.#info(r.arch);
     const round = (x) => Math.round(x * 100) / 100;
     const sources = new Set(['MITE', 'MS', 'DSB', 'LSD']);
-    const instructions = r.rows.map((row) => {
+    const instructions = r.rows.map((row, k) => {
       const e = { instr: row.label };
       if (row.opcode) e.bytes = row.opcode.toLowerCase();
       if (row.kind !== 'instr') e.kind = row.kind;
@@ -281,9 +283,12 @@ class Wuica {
       if (Object.keys(ports).length) e.ports = ports;
       if (row.notes) e.notes = row.notes;
       if (row.instrStr) e.uopsInfo = row.instrStr;
+      const det = instrDetails(r.details?.rows?.[k]);
+      if (det) Object.assign(e, det);
       return e;
     });
-    const ins = insights(r);
+    const base = insights(r);
+    const ins = base ? { ...base, ...detailInsights(r) } : null;
     return {
       code: r.code, arch: r.arch, name, year, prototype, tp: r.tp, unit: 'cycles per iteration', mode: r.mode,
       bottlenecks: r.bottlenecks, limits: r.limits, decodeErrors: r.decodeErrors, ...(r.hex ? { hex: r.hex } : {}),

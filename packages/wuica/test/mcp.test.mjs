@@ -91,6 +91,21 @@ test('what_if: every variant against analyses of the library', async () => {
   await w.close();
 });
 
+test('analyze with details: allowed ports, latencies, front end; port set and issue slots', async () => {
+  const r = await call('analyze', { hex: '48030649ffcf75f9', format: 'json', details: true });
+  assert.equal(r.json.code, 0);
+  const add = r.json.instructions[0];
+  assert.equal(add.allowedPorts, '1*p0156+1*p23');
+  assert.ok(add.latencies.includes('RAX->RAX:1') && add.latencies.includes('[RSI]->RAX:6'), JSON.stringify(add.latencies));
+  assert.deepEqual(add.frontEnd, { length: 3, offset: 0 });
+  assert.deepEqual(r.json.insights.portSet, { ports: ['Port 6'], uops: 1, cycles: 1, instructions: [{ index: 1, instr: 'dec r15', uops: 1 }] });
+  assert.equal(r.json.insights.issueSlots.width, 4);
+  const plain = await call('analyze', { hex: '48030649ffcf75f9', format: 'json' });
+  assert.equal(plain.json.instructions[0].allowedPorts, undefined);
+  assert.equal(plain.json.insights.portSet, undefined);
+  assert.deepEqual({ ...plain.json, instructions: null, insights: null }, { ...r.json, instructions: null, insights: null });
+});
+
 test('analyze formats and options', async () => {
   const t = await call('analyze', { hex: HEX, format: 'text' });
   assert.equal(t.content.length, 1);

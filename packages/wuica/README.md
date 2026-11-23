@@ -163,7 +163,7 @@ Request:
   "syntax": "intel",
   "options": {
     "alignmentOffset": 0, "initPolicy": "diff", "simpleFrontEnd": false, "noMicroFusion": false,
-    "noMacroFusion": false, "minIterations": 10, "minCycles": 500, "includeTrace": false
+    "noMacroFusion": false, "minIterations": 10, "minCycles": 500, "includeTrace": false, "details": false
   }
 }
 ```
@@ -230,7 +230,11 @@ bottlenecks, limits, decodeErrors, hex?, stderr, instructions, insights}`. Each 
 page's "bound" view): `utilization` (each limit and port: cycles / tp), `binding`, `next` (`{limit, tp, maxSpeedup}`:
 the next limit, and the speedup at most if the binding one went away), `unexplained` (cycles no single limit explains),
 `chain` (the critical loop-carried chain: `{index, instr, operand, latency, carried}`) and `hot` (`{resource, ports?,
-instructions: [{index, instr, share}]}`: the largest shares of the binding resource).
+instructions: [{index, instr, share}]}`: the largest shares of the binding resource). With `options.details` (MCP:
+`details: true`), each instruction also has `allowedPorts` (`1*p0156+1*p23`), `uops`, `fusedUops`, `latencies`
+(`"RAX->RAX:1"`) and `frontEnd` (`length`, `offset`, `crosses`, `lcp`, `microcoded`, fusion), and `insights` has `portSet`
+(the ports behind the Ports limit, `cycles` = uops / ports, and the instructions that load them) and `issueSlots` (per
+iteration: issued, and lost to the front end, a full ROB or RS, or other).
 
 ### Failures
 

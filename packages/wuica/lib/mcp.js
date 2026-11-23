@@ -103,17 +103,23 @@ export function createServer(w) {
         'bound of the speedup if the binding component were removed), `unexplained` (cycles no single limit explains), ' +
         '`chain` (the loop-carried critical dependency chain: `index` into `instructions`, operand, latency, carried ' +
         'into the next iteration), `hot` (the instructions with the largest share of the binding resource: fix these ' +
-        'first). Format "text" (or the second item of "both") is uiCA\'s complete text report. ' + ERRORS_NOTE,
+        'first). With `details: true`, each instruction also has `allowedPorts` (uops.info notation, e.g. 1*p0156+1*p23), ' +
+        '`uops`, `fusedUops`, `latencies` ("input->output:cycles"), `frontEnd` (length, offset from the 64-byte line, crosses ' +
+        '16/32/64-byte boundaries, lcp = length-changing prefix, microcoded, macro-fusion), and `insights` has `portSet` (the ' +
+        'ports behind the Ports limit and the instructions whose uops can only use them) and `issueSlots` (issue slots per ' +
+        'iteration: issued, or lost to the front end, a full reorder buffer (rob) or scheduler (rs), other). ' +
+        'Format "text" (or the second item of "both") is uiCA\'s complete text report. ' + ERRORS_NOTE,
       inputSchema: z.object({
         arch: z.string().optional().describe('microarchitecture id (default "SKL"); see list_archs, e.g. SKL, ICL, TGL, RKL, ADL-P, ZEN3'),
         ...codeShape,
         options: optionsShape,
         format: z.enum(['json', 'text', 'both']).optional().describe('"json" (summary), "text" (uiCA\'s report) or "both" (default)'),
+        details: z.boolean().optional().describe('true: per instruction also its allowed ports, latencies and front-end facts, and in insights the port set behind the Ports limit and the issue slots per cause (a slower analysis; default false)'),
       }).strict(),
       annotations: readOnly,
     },
-    async ({ arch, format, ...request }) => {
-      const r = await w.analyze(arch ?? 'SKL', request);
+    async ({ arch, format, details, ...request }) => {
+      const r = await w.analyze(arch ?? 'SKL', details ? { ...request, options: { ...(request.options ?? {}), details: true } } : request);
       if (r.code) return result(r);
       const content = [];
       if (format !== 'text') content.push(json(w.summarize(r)));

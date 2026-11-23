@@ -115,8 +115,8 @@ export function createSrcMap(env) {
       b.addEventListener('click', () => jumpToRow(root, x.top));
       return h('li', null, b);
     });
-    body.replaceChildren(h('ol', { class: 'sm-list', 'aria-label': `source lines, share of ${m.resource}` }, items),
-      m.unmapped > 0.005 ? h('p', { class: 'hint', text: `no line: ${pct(m.unmapped)}` }) : null);
+    body.replaceChildren(...[h('ol', { class: 'sm-list', 'aria-label': `source lines, share of ${m.resource}` }, items),
+      m.unmapped > 0.005 ? h('p', { class: 'hint', text: `no line: ${pct(m.unmapped)}` }) : null].filter(Boolean));
     body.dataset.state = 'drawn';
   }
 

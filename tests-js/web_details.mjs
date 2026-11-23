@@ -12,6 +12,7 @@ import { ACCURACY, accuracyNote } from '../web/js/archs.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
 import { SHA256_BLOCK_HEX } from '../web/js/showcase.js';
+import * as pkg from '../packages/wuica/lib/details.js';
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -145,6 +146,8 @@ if (!fs.existsSync(wasm) || !fs.existsSync(new URL('data/uarch.json', root))) {
           const ms = r.rows[row].values[r.columns.indexOf('MS')] || 0;
           if (ms > 0) check(det.uopsMS > 0, `${what}: row ${row} µ badge only for microcoded instructions`);
           if (x.notes !== 'X') check(det.portData.length === 0 || portString(det.portData).length > 0, `${what}: row ${row} ports`);
+          // the MCP summary (packages/wuica/lib/details.js) says what the card says
+          check(pkg.portString(det.portData) === portString(det.portData) && JSON.stringify(pkg.latencyPairs(det)) === JSON.stringify(latencyPairs(det)), `${what}: row ${row}: the package's ports and latencies are the page's`);
         });
         if (d.ports) {
           const pb = portSetBlame(r, d.ports);
@@ -152,6 +155,8 @@ if (!fs.existsSync(wasm) || !fs.existsSync(new URL('data/uarch.json', root))) {
           check(pb && near(pb.total, d.ports.uops, 1e-6) && Math.abs(d.ports.tp - limit) <= 0.005 + 1e-9, `${what}: the port set gives the Ports limit`, JSON.stringify([d.ports, limit]));
         }
         if (d.issue) check(slotParts(d.issue) !== null, `${what}: issue slots`);
+        const di = pkg.detailInsights(res);
+        if (d.ports) check(di.portSet.ports.join() === d.ports.ports.join() && di.portSet.instructions.every((x) => d.ports.rows[x.index] > 0), `${what}: the package's port set`);
       }
     }
   }

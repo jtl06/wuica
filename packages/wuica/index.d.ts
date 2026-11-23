@@ -16,6 +16,9 @@ export interface AnalysisOptions {
   minCycles?: number;
   /** Include uiCA's cycle-by-cycle events (`trace`; large). Default false. */
   includeTrace?: boolean;
+  /** Include `details` (per instruction allowed ports, latencies, front-end facts; the port set behind the Ports limit;
+   *  issue slots per cause: docs/WASM-API.md). Default false. */
+  details?: boolean;
 }
 
 export type Syntax = 'intel' | 'att';
@@ -120,6 +123,13 @@ export interface AnalyzeSummary {
     ports?: Record<string, number>;
     notes?: string;
     uopsInfo?: string;
+    /** With options.details: */
+    allowedPorts?: string;
+    uops?: number;
+    fusedUops?: number;
+    msUops?: number;
+    latencies?: string[];
+    frontEnd?: { length: number; offset: number; crosses?: number[]; lcp?: true; microcoded?: true; complexDecoder?: true; macroFusedWithNext?: true; macroFusedWithPrev?: true };
   }>;
   /** A diagnosis derived from the analysis (the web page's bound view); absent if tp is 0. */
   insights?: Insights;
@@ -138,6 +148,10 @@ export interface Insights {
   chain?: { index: number; instr: string; operand: string; latency: number; carried: boolean }[];
   /** The instructions with the largest share of the binding resource (top 5). */
   hot?: { resource: string; ports?: string[]; instructions: { index: number; instr: string; share: number }[] };
+  /** With options.details: the ports behind the Ports limit (cycles = uops / ports) and the instructions that load them. */
+  portSet?: { ports: string[]; uops: number; cycles: number; instructions: { index: number; instr: string; uops: number }[] };
+  /** With options.details: issue slots per iteration, used and lost by cause. */
+  issueSlots?: { width: number; perIteration: { issued: number; frontEnd: number; rob: number; rs: number; other: number } };
 }
 
 export interface ArchInfo {
