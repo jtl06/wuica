@@ -65,14 +65,20 @@ html.dense { font-size: 13px; line-height: 1.4; }
 .dense .grid.uops th, .dense .grid.uops td { padding-left: 0.45ch; padding-right: 0.45ch; }
 .dense .grid.uops .first { padding-left: 0.6rem; }
 .dense .grid.uops th.first { position: sticky; left: 0; z-index: 1; background-color: var(--surface); box-shadow: inset -1px 0 var(--border);
-  max-width: var(--ins-max, none); overflow: hidden; text-overflow: ellipsis; } /* (cut to fit the ports: render.js fitInstr) */
-@media (max-width: 640px) { .dense .grid.uops th.first { max-width: min(var(--ins-max, 45vw), 45vw); } } /* (phones: the ports keep room) */
+  overflow: hidden; text-overflow: ellipsis; }
+/* the instruction's text cut to fit the ports (render.js fitInstr; the text, not the cell: a cell's max-width does not
+   bind its column) */
+.dense .grid.uops tbody th.first > :first-child { display: inline-block; vertical-align: bottom; max-width: var(--ins-max, none); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 640px) { .dense .grid.uops th.first { max-width: 45vw; } .dense .grid.uops tbody th.first > :first-child { max-width: min(var(--ins-max, 45vw), calc(45vw - 1.5rem)); } } /* (phones: the ports keep room) */
 .dense .grid.uops thead th.first { z-index: 3; }
 /* the port columns: a group's name once (P, ALU, AGU, FP, SD), over one number per column (render.js) */
-.dense .grid.uops:has(.cg) thead th { padding-top: 1.25em; vertical-align: bottom; }
-.dense .grid.uops thead th.pg { text-align: right; }
-.dense .grid.uops thead th:has(> .cg) { z-index: 2; }
-.dense .grid.uops .cg { position: absolute; top: 0.15rem; left: 0.45ch; color: var(--description); pointer-events: none; }
+.dense .grid.uops:has(.cg) thead th, .dense .grid.ab-diff:has(.cg) thead th { vertical-align: bottom; }
+.dense .grid.uops thead th.pg, .dense .grid.ab-diff thead th.pg { text-align: right; }
+/* (in the flow, over the group's first number: its column is at least as wide, nothing sticks out of the table) */
+.dense .grid.uops .cg, .dense .grid.ab-diff .cg { display: block; text-align: left; color: var(--description); }
+/* A–B's Δ table: its instruction columns cut as the uop table's (render.js fitInstr) */
+.dense .grid.ab-diff td.ab-i > span:first-child { display: inline-block; vertical-align: bottom; max-width: var(--ins-max, none); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dense .grid.ab-diff thead th.pg { position: sticky; }
 .dense .ic-ins { overflow-wrap: anywhere; } /* (the instruction card: the whole instruction, also where the table cuts it) */
 /* (opaque tints: the cells scroll under it) */
 .dense .grid.uops tbody tr:hover > th.first, .dense .grid.uops tbody tr.tl-linked > th.first { background-color: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
