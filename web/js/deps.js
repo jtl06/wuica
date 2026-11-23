@@ -134,7 +134,8 @@ export function createDeps(env) {
       await yieldToPage();
       if (graph) {
         annotateLatencies(graph, v.response, res.details);
-        graph.slack = await slackOfAsync(graph, v.response.criticalPath?.ratio);
+        await yieldToPage();
+        graph.slack = await slackOfAsync(graph, v.response.criticalPath?.ratio, { slice: 12 });
         if (pending !== key) return;
       }
       if (!graph && !error) error = 'the trace does not match the table';
@@ -170,15 +171,18 @@ export function createDeps(env) {
         s('text', { x: 4, y: y(i) + 4 }, document.createTextNode(short(nd.label))));
       return gEl;
     });
-    const arcs = g.edges.map((e) => {
+    const arcTitle = (e) => s('title', null, document.createTextNode(`${g.nodes[e.a].label} → ${g.nodes[e.b].label}${e.mem ? ' (through memory)' : ''}${e.dist ? ` (${e.dist === 1 ? 'next iteration' : e.dist + ' iterations later'})` : ''}${latText(e) ? ` · ${e.critical ? '' : '≈'}${latText(e)} cycles` : ''}${e.critical ? ' · critical chain' : ''}`));
+    const lazyTitles = n > 500; // a large graph: an arc gets its tooltip when the pointer first comes over it
+    const arcs = g.edges.map((e, k) => {
       const x = X0 + (e.lane + 1) * lane;
       const p = s('path', {
         class: ['dp-arc', e.dist ? 'carried' : '', e.critical ? 'crit' : ''].filter(Boolean).join(' '),
         d: e.a === e.b ? `M${X0 - 2},${y(e.a) - 3} H${x} V${y(e.b) + 3} H${X0 - 2}` : `M${X0 - 2},${y(e.a)} H${x} V${y(e.b)} H${X0 - 2}`,
-        'marker-end': 'url(#dp-arrow)', 'data-a': e.a, 'data-b': e.b,
-      }, s('title', null, document.createTextNode(`${g.nodes[e.a].label} → ${g.nodes[e.b].label}${e.mem ? ' (through memory)' : ''}${e.dist ? ` (${e.dist === 1 ? 'next iteration' : e.dist + ' iterations later'})` : ''}${latText(e) ? ` · ${e.critical ? '' : '≈'}${latText(e)} cycles` : ''}${e.critical ? ' · critical chain' : ''}`)));
+        'marker-end': 'url(#dp-arrow)', 'data-a': e.a, 'data-b': e.b, 'data-k': k,
+      }, lazyTitles ? null : arcTitle(e));
       return p;
     });
+    if (lazyTitles) svg.addEventListener('pointerover', (ev) => { const p = ev.target.closest?.('.dp-arc'); if (p && !p.firstChild) p.append(arcTitle(g.edges[Number(p.dataset.k)])); });
     // the latency of an arc, next to its vertical part: the chain's always, the selected instruction's while selected
     const latLabel = (e, cls) => {
       const t = latText(e);
@@ -224,11 +228,13 @@ export function createDeps(env) {
       slack ? h('span', { class: 'dp-k sl', title: `slack (the column left of the arcs): cycles an instruction could be delayed in every iteration without lengthening the chain; 0 on the chain, ∞ off every loop-carried cycle${g.slack.partial ? '; too large a graph to compute' : ''}`, text: 'slack' }) : null);
     body.replaceChildren(legend, h('div', { class: 'dp-wrap' }, svg), info);
     // the slack column (a large graph: in a task of its own)
-    const addSlack = () => labels.forEach((x, i) => {
+    const addSlack = (from, to) => { for (let i = from; i < to; i++) {
       const sv = fmtSlack(slack[i]);
-      if (sv) x.append(s('text', { class: 'dp-sl' + (sv === '0' ? ' zero' : ''), x: LABEL * CH + SL - 2, y: y(i) + 4, 'text-anchor': 'end' }, document.createTextNode(sv)));
-    });
-    if (slack) { if (n > 500) setTimeout(() => { if (svg.isConnected) addSlack(); }, 0); else addSlack(); }
+      if (sv) labels[i].append(s('text', { class: 'dp-sl' + (sv === '0' ? ' zero' : ''), x: LABEL * CH + SL - 2, y: y(i) + 4, 'text-anchor': 'end' }, document.createTextNode(sv)));
+    } };
+    const STEP = 500; // a large graph: in tasks of their own, STEP instructions each
+    const more = (from) => setTimeout(() => { if (!svg.isConnected) return; addSlack(from, Math.min(n, from + STEP)); if (from + STEP < n) more(from + STEP); }, 0);
+    if (slack) { if (n > STEP) more(0); else addSlack(0, n); }
   }
 
   function paint() {
