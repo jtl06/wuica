@@ -1,0 +1,10 @@
+[package]
+name = "wuica-testkit"
+description = "Test helpers of wuica (not published): reads the gzipped fixtures through an uncompressed cache in target/fixture-cache"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+flate2 = "1"

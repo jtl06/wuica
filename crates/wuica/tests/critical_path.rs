@@ -2,7 +2,6 @@
 //! of rows of the uop table, and the sum of its latencies divided by the number of iterations it spans is the "Dependencies"
 //! limit of the same response. Plus hand-checked cases.
 
-use std::io::{BufRead, BufReader};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use wuica::{Engine, Request, Response};
@@ -104,9 +103,8 @@ fn hand_checked_cycles() {
 #[test]
 fn critical_path_gives_the_dependency_limit_on_fixtures() {
     let engine = engine();
-    let file = std::fs::File::open(format!("{}/fixtures/generated/sim_fixtures.jsonl.gz", root())).expect("run tools/export_fixtures.py");
-    // every case of the main set (with the option variants)
-    let lines: Vec<String> = BufReader::with_capacity(1 << 20, flate2::read::GzDecoder::new(file)).lines().map(|l| l.unwrap()).collect();
+    // every case of the main set (with the option variants); the `json` field is not used
+    let lines: Vec<String> = wuica_testkit::lines_without_json(format!("{}/fixtures/generated/sim_fixtures.jsonl.gz", root())).collect();
 
     let next = AtomicUsize::new(0);
     let (checked, with_path) = (AtomicUsize::new(0), AtomicUsize::new(0));

@@ -4,4 +4,7 @@ target*/
 # generated from a uiCA installation with tools/export_data.py and tools/export_fixtures.py
 data/
 fixtures/generated/
+# (or symlinks to them, e.g. in a worktree)
+/data
+/fixtures/generated
 .claude/

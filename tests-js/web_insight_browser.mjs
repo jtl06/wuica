@@ -12,6 +12,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { hostHandler } from './static-host.mjs';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES } from '../web/js/examples.js';
 
@@ -68,16 +69,8 @@ const BIG_BODY = '4801d8'.repeat(1000) + '49ffcf';
 const BIG = BIG_BODY + '0f85' + (0x100000000 - (BIG_BODY.length / 2 + 6)).toString(16).padStart(8, '0').match(/../g).reverse().join('');
 
 // ---- server and browser (as in web_trace_browser.mjs) ---------------------------------------------------------------------
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8' };
-const server = http.createServer((req, res) => {
-  const url = new URL(req.url, 'http://x');
-  let p = path.normalize(path.join(dist, decodeURIComponent(url.pathname)));
-  if (!p.startsWith(dist)) { res.writeHead(403).end(); return; }
-  if (fs.existsSync(p) && fs.statSync(p).isDirectory()) p = path.join(p, 'index.html');
-  if (!fs.existsSync(p)) { res.writeHead(404).end(); return; }
-  res.writeHead(200, { 'content-type': TYPES[path.extname(p)] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
-  fs.createReadStream(p).pipe(res);
-});
+// like the host (redirects /index.html to /, a 404 page, _headers): see static-host.mjs
+const server = http.createServer(hostHandler(dist));
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const origin = `http://127.0.0.1:${server.address().port}`;
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-insight-test-'));

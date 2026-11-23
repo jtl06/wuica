@@ -11,6 +11,41 @@ Read `docs/DESIGN.md` first: the architecture, the fixtures and, above all, the 
 - `data/` (instruction tables, configurations) and `fixtures/generated/` are generated and not in git; they are present on the
   development Mac. `tools/export_data.py` and `tools/export_fixtures.py` regenerate them from a uiCA installation.
 
+## Checks
+
+`scripts/check.sh` builds what is out of date and runs every test suite in parallel (up to one job per CPU, at most 2 headless
+Chrome suites at a time), each into `target/check/<suite>.log`, and prints one table: suite, result, time, the suite's count line.
+On failure it prints the tail of the failed logs and exits with 1. `--list` shows the suites, `--only PATTERN` (a regular
+expression) runs some of them and the builds they need.
+
+- `scripts/check.sh` (= `quick`, about a minute): the simulation fixtures only for SKL and ZEN3, `analyze_fixtures.mjs 7`,
+  `web_trace.mjs 16`, browser suites only if their last run took at most 10 s; no npm package, no doc tests. While working.
+- `scripts/check.sh full`: everything (`analyze_fixtures.mjs 1` in 4 shards). The gate before a commit to main or a deploy.
+- `scripts/check.sh full --remote aethia`: the same on aethia, under a perfq lease (shared) taken from the Mac. The tree is
+  copied to `~/wuica-check/` with rsync (`data/` and `fixtures/generated/` are linked to `~/wuica/`), with the WebAssembly
+  module built on the Mac (aethia has no wasm32 target). aethia has no Chrome: the browser suites are skipped there.
+
+The browser suites serve `web/dist` with `tests-js/static-host.mjs`, which behaves like the host (Cloudflare): `/index.html`
+redirects to `/` and `/404.html` to `/404` (307), `/404` and missing files get `404.html` with status 404, `_headers` is
+applied. `web_host_browser.mjs` checks the service worker against it (fresh profile, reloads, `/index.html`, offline). A new
+browser suite should use `hostHandler` too, and is recognized as one (at most 2 at a time) if it starts Chrome with
+`--headless` or `--remote-debugging-port`.
+
+What makes it fast:
+- Rust tests use the profile `check-fast` (`Cargo.toml`: release without LTO, 16 codegen units, incremental). The
+  WebAssembly module and everything deployed keep `release` (fat LTO).
+- The WebAssembly module, `web/dist` and `packages/wuica/dist` are rebuilt only when their inputs change (content hashes in
+  `target/check/stamps/`). The test binaries are run directly, without cargo.
+- `sccache` is used as `RUSTC_WRAPPER` when it is installed (`brew install sccache`; `WUICA_SCCACHE=0` turns it off). It
+  helps a clean rebuild at the same path (12 s -> about 10 s: XED's C files and the registry crates are cached). In another
+  worktree only the registry crates hit (paths differ, so XED's C files miss) and a clean build is about 2 s slower than
+  without it; the workspace crates are incremental, which sccache does not cache.
+- The Rust fixture tests read the fixtures through `wuica-testkit` (a dev-dependency): the smaller gzipped files are
+  decompressed once into `target/fixture-cache/`, and tests that do not use the `json` field of the simulation fixtures
+  (1.3 of their 1.4 GB) read a copy without it (`lines_without_json`). Copies are remade when a fixture's size or
+  modification time changes; `WUICA_FIXTURE_CACHE=off` reads the gzipped files directly, `WUICA_FIXTURE_CACHE=DIR` puts the
+  cache elsewhere (e.g. one for several worktrees). New fixture tests should read files with `wuica_testkit::lines`.
+
 ## The reference
 
 - Read: `reference/uiCA/*.py` (the exact commit the fixtures come from). The decoder's C code that produces the decoded records

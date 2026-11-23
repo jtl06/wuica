@@ -11,6 +11,15 @@ license = "AGPL-3.0-only"
 opt-level = 3
 lto = true
 
+# For tests (scripts/check.sh): the release code without fat LTO, built in parallel and incrementally. The WebAssembly
+# module and anything deployed are built with `release`.
+[profile.check-fast]
+inherits = "release"
+lto = "off"
+codegen-units = 16
+incremental = true
+strip = false
+
 # for iterating on performance work: release code without LTO, quicker to rebuild
 [profile.iter]
 inherits = "release"
