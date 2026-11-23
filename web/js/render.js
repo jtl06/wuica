@@ -175,6 +175,7 @@ export function renderResult(root, view) {
       h('pre', { class: 'report', tabindex: '0', text: typeof r.text === 'string' ? r.text : '' }));
     report.addEventListener('toggle', () => view.onUi('reportOpen', report.open));
     out.push(row('report', report));
+    if (view.trace) out.push(row('trace', view.trace)); // the cycle-by-cycle trace panel (trace.js)
   }
 
   root.replaceChildren(...out);

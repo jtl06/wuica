@@ -10,6 +10,7 @@ import { EXAMPLES, MOCK_EXAMPLES } from './examples.js';
 import { fetchBytes, fetchManifest, PATHS, formatSize, whenIdle } from './loader.js';
 import { WasmAssembler, isWasm } from './assembler.js';
 import { renderResult, renderEmpty, renderFailure, h } from './render.js';
+import { createTracePanel } from './trace.js';
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -57,6 +58,7 @@ let assemblerPromise = null;
 let assemblerMissing = false; // true: this build has no assembler (final); a failed load of an existing one is not
 let assemblerError = '';
 let prefetchStarted = false;
+const tracePanel = createTracePanel({ analyze: (request) => engine.analyze(request), config: (v) => uarch?.configs?.[v.archKey] });
 
 // ---- status line and progress ----------------------------------------------------------------------------------
 
@@ -326,7 +328,8 @@ function nextFrame() { // lets the busy state paint before the (synchronous) ana
 
 function draw() {
   if (!lastView) return;
-  renderResult(el.body, { ...lastView, ui, onUi: (k, v) => { ui[k] = v; if (k === 'hideEmpty') draw(); } });
+  const trace = lastView.response && !lastView.response.error ? tracePanel.update(lastView) : null;
+  renderResult(el.body, { ...lastView, trace, ui, onUi: (k, v) => { ui[k] = v; if (k === 'hideEmpty') draw(); } });
   paintStale();
 }
 
@@ -401,11 +404,12 @@ async function run() {
     await nextFrame();
     if (id !== runSeq) return;
     const t0 = performance.now();
-    const response = await engine.analyze(makeRequest(hex, archKey, options()));
+    const request = makeRequest(hex, archKey, options());
+    const response = await engine.analyze(request);
     const elapsedMs = performance.now() - t0;
     if (id !== runSeq) return;
     lastView = {
-      response, elapsedMs, hex, byteCount: bytes.length,
+      response, request, elapsedMs, hex, byteCount: bytes.length,
       archKey, archTitle: archTitle(archKey), experimental: item.experimental,
     };
     lastRunKey = key;
