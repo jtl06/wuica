@@ -219,6 +219,10 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
   // the checked CPUs: a short list; the focused CPU (a=) is one of them; old links: one CPU, or all with cmpcpu=1
   const m = { ...DEFAULT_STATE, arch: 'ZEN3', cpus: 'SKL,ZEN3,ADL-P', text: 'nop\n' };
   check(encodeState(m) === 'v=1&m=asm&a=ZEN3&as=SKL,ZEN3,ADL-P&c=bm9wCg' && JSON.stringify(decodeState(encodeState(m))) === JSON.stringify(m), 'url: the checked CPUs round trip', encodeState(m));
+  // the default CPU focused, with an earlier CPU checked: a= is needed (without it the first of the list is focused)
+  const d = { ...DEFAULT_STATE, cpus: 'HSW,SKL', text: 'nop\n' };
+  check(encodeState(d) === 'v=1&m=asm&a=SKL&as=HSW,SKL&c=bm9wCg' && JSON.stringify(decodeState(encodeState(d))) === JSON.stringify(d)
+    && encodeState({ ...d, cpus: 'SKL,ZEN3' }) === 'v=1&m=asm&as=SKL,ZEN3&c=bm9wCg', 'url: SKL focused with HSW checked round trips', encodeState(d));
   check(encodeState({ ...DEFAULT_STATE, arch: 'ZEN3', cpus: 'ZEN3' }) === 'v=1&m=asm&a=ZEN3' && encodeState({ ...DEFAULT_STATE, cpus: 'all' }) === 'v=1&m=asm&as=all', 'url: one CPU needs no list; all of them is "all"');
   check(decodeState('v=1&as=HSW,ICL').arch === 'HSW' && decodeState('v=1&as=HSW,ICL').cpus === 'HSW,ICL' && decodeState('v=1&a=ZEN3').cpus === '' && decodeState('v=1&a=ZEN3&cmpcpu=1').cpus === 'all',
     'url: without a=, the first checked CPU is focused; an old link with the table of all CPUs open checks them all');

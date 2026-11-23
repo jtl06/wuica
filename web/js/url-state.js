@@ -73,8 +73,9 @@ export function encodeState(state) {
   const s = { ...DEFAULT_STATE, ...state };
   const p = [];
   if (s.mode === 'asm' && s.syntax !== DEFAULT_STATE.syntax) p.push(`s=${s.syntax}`);
-  if (s.arch !== DEFAULT_STATE.arch) p.push(`a=${encodeURIComponent(s.arch)}`);
   const cpus = cpuList(s.cpus);
+  // a= also for the default CPU when a list follows that starts with another one (without a=, the first is focused)
+  if (s.arch !== DEFAULT_STATE.arch || (cpus !== '' && cpus !== 'all' && cpus !== s.arch && cpus.split(',')[0] !== s.arch)) p.push(`a=${encodeURIComponent(s.arch)}`);
   if (cpus !== '' && cpus !== s.arch) p.push(`as=${cpus}`);
   for (const [k, name] of Object.entries(INTS)) if (s[name] !== DEFAULT_STATE[name]) p.push(`${k}=${s[name]}`);
   if (s.initPolicy !== DEFAULT_STATE.initPolicy) p.push(`ip=${s.initPolicy}`);
