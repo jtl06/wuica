@@ -8,6 +8,15 @@ const CACHE = `wuica-${VERSION}`;
 const LAZY = /^(data\/arch\/|wuica_asm\.wasm$)/; // large, fetched when needed (the page prefetches the tables)
 
 const scope = new URL(self.registration.scope);
+
+// The host redirects /index.html to / (and /404.html to /404). A redirected response must never be cached or served
+// for a navigation: the browser rejects it (ERR_FAILED). So the page is fetched as './' and every response that was
+// reached through a redirect is stored as a plain copy without the redirect flag.
+const fetchPath = (path) => (path === 'index.html' ? './' : path === '404.html' ? '404' : path);
+async function plain(res) {
+  if (!res.redirected) return res;
+  return new Response(await res.blob(), { status: res.status, statusText: res.statusText, headers: res.headers });
+}
 const relative = (url) => (url.origin === scope.origin && url.pathname.startsWith(scope.pathname) ? url.pathname.slice(scope.pathname.length) : null);
 
 self.addEventListener('install', (event) => {
@@ -19,9 +28,9 @@ self.addEventListener('install', (event) => {
     if (manifest.version !== VERSION) throw new Error('manifest.json belongs to another build'); // mid-deploy: retry on the next visit
     await cache.put('manifest.json', res);
     await Promise.all(Object.keys(manifest.files).filter((p) => !LAZY.test(p)).map(async (path) => {
-      const r = await fetch(path, { cache: 'no-cache' });
+      const r = await fetch(fetchPath(path), { cache: 'no-cache' });
       if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
-      await cache.put(path, r);
+      await cache.put(path, await plain(r));
     }));
     await self.skipWaiting();
   })());
@@ -46,9 +55,9 @@ self.addEventListener('fetch', (event) => {
   event.respondWith((async () => {
     const key = new URL(path, scope).href;
     const hit = await caches.match(key, { cacheName: CACHE });
-    if (hit) return hit;
+    if (hit && !hit.redirected) return hit; // (a redirected copy from an older worker is never served)
     try {
-      const res = await fetch(req);
+      const res = await plain(await fetch(req));
       if (res.ok && res.status === 200 && res.type === 'basic') {
         const copy = res.clone();
         event.waitUntil((async () => {
