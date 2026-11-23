@@ -33,7 +33,8 @@ export const PART_ARCHS = 2;
 export class Facade {
   #local; #pool; #cfg;
 
-  // local: a wuica instance on the main thread, used only for the list of microarchitectures, arch ids and summarize().
+  // local: a wuica instance on the main thread, used only for the list of microarchitectures, arch ids, insights() and
+  // summarize().
   constructor(local, pool, cfg) {
     this.#local = local; this.#pool = pool; this.#cfg = cfg;
   }
@@ -41,6 +42,7 @@ export class Facade {
   archs(fields) { return this.#local.archs(fields); }
   resolveArch(arch) { return this.#local.resolveArch(arch); }
   summarize(r) { return this.#local.summarize(r); }
+  insights(r) { return this.#local.insights(r); }
 
   // The checks that need no analysis: sizes and simulation options. Returns a failure or null.
   #check(req) {

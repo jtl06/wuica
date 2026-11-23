@@ -44,8 +44,10 @@ export function fixtureSources() {
 
 // The library's result without the fields that do not cross the HTTP boundary (`bytes`, a Uint8Array).
 export const plain = (r) => JSON.parse(JSON.stringify(r, (k, v) => (k === 'bytes' && v instanceof Uint8Array ? undefined : v)));
-// a library result as POST /api/analyze returns it: with `insights` (the package's insights.js) on success
-export const rest = (r) => { const p = plain(r); const ins = p.code === 0 ? insights(p) : null; return ins ? { ...p, insights: { ...ins, ...detailInsights(p) } } : p; };
+// a library result as POST /api/analyze returns it: with `insights` (the package's insights.js, with the CPU's
+// configuration: the split-load caveat depends on it) on success
+const CONFIGS = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/uarch.json'), 'utf8')).configs;
+export const rest = (r) => { const p = plain(r); const ins = p.code === 0 ? insights(p, CONFIGS[p.arch]) : null; return ins ? { ...p, insights: { ...ins, ...detailInsights(p) } } : p; };
 
 // POST over node:http with a given agent (fetch opens one connection per parallel request, and macOS accepts at most
 // 128 pending connections per listening socket: kern.ipc.somaxconn).

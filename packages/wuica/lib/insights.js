@@ -55,8 +55,11 @@ function weights(r, id) {
 //   hot: {resource, ports?, instructions: [{index, instr, share}]}: the largest shares of the binding resource (top 5)
 //   caveats: [{id, text, title, instructions: [index]}]: known blind spots the block meets (web/js/caveats.js):
 //            rmw-index (store forwarding between iterations through an indexed address), exit (an exit's mispredict),
-//            split (loads that may cross a cache line); absent if none
-export function insights(r) {
+//            split (loads that may cross a cache line; on a CPU whose model charges crossings, only the loads it cannot
+//            follow); absent if none
+// config: the CPU's configuration in uarch.json (configs[r.arch]), for the caveats; without it, split warns as on a CPU
+// without a split-load cost (the instance's insights() and summarize() pass it).
+export function insights(r, config = null) {
   const tp = Number(r?.tp);
   if (!(tp > 0) || !Array.isArray(r.limits) || !Array.isArray(r.rows) || !Array.isArray(r.columns)) return null;
   const utilization = {};
@@ -91,7 +94,7 @@ export function insights(r) {
       out.hot = { resource: top[0], ...(b.ports ? { ports: b.ports } : {}), instructions: shares };
     }
   }
-  const cv = caveats(r);
+  const cv = caveats(r, config);
   if (cv.length) out.caveats = cv.map((c) => ({ id: c.id, text: c.text, title: c.title, instructions: c.rows }));
   return out;
 }

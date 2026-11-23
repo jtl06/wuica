@@ -13,7 +13,7 @@
 // JSON by default; `Accept: text/plain` gives uiCA's text report (or the stderr lines of a failure).
 
 import http from 'node:http';
-import { createWuica, ARCH_FIELDS, insights, detailInsights } from 'wuica';
+import { createWuica, ARCH_FIELDS, detailInsights } from 'wuica';
 import { createServer as createMcpServer } from 'wuica/mcp';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { resolveConfig } from './config.js';
@@ -265,7 +265,7 @@ export async function createApp(options = {}) {
       const r = await facade.analyze(arch, body, ctx);
       ctx.code = r.code;
       // the derived diagnosis of the page's bound view (the package's insights.js), as in the MCP tool's summary
-      const ins = r.code === 0 && !wantText ? insights(r) : null;
+      const ins = r.code === 0 && !wantText ? facade.insights(r) : null;
       if (ins) r.insights = { ...ins, ...detailInsights(r) }; // with options.details: portSet, issueSlots
       const unknownArch = r.code === 1 && facade.resolveArch(arch) === null && /^unknown microarchitecture/.test(r.error ?? '');
       return sendResult(res, r, wantText, (x) => x.text, unknownArch ? 404 : undefined);

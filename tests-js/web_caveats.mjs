@@ -1,7 +1,8 @@
 // Tests of the warnings for the model's known blind spots (web/js/caveats.js; the API's insights.caveats): a read-modify-
 // write to an indexed address, an exit before the loop's branch, loads that may split a cache line. With the analyzer,
-// the loops of the dogfood runs (tests-js/fixtures/caveats): gcc's FIR (3.7 split loads per iteration measured) and the
-// winning variant (1.5) warn, the all-shuffle variant (0) does not; the histogram warns; the scan loop has an exit.
+// the loops of the dogfood runs (tests-js/fixtures/caveats): on SKL (no split-load cost in the model) gcc's FIR (3.7
+// split loads per iteration measured) and the winning variant (1.5) warn, the all-shuffle variant (0) does not; on ZEN3
+// (splitLoadCycles 2: the model charges them) none of them does; the histogram warns; the scan loop has an exit.
 // Usage: node tests-js/web_caveats.mjs
 import fs from 'node:fs';
 import { caveats, memOperand } from '../web/js/caveats.js';
@@ -40,6 +41,22 @@ const loop = (...labels) => ({ mode: 'loop', rows: labels.map(instr) });
   check(fir.length === 1 && fir[0].id === 'split' && j(fir[0].rows) === '[1]' && fir[0].text === 'split loads? (1)', 'split: a ymm load at +4; not at +0 or +32, not a store', j(fir));
   check(ids(loop('mov eax, dword ptr [rdi+0x2]', 'movzx ecx, byte ptr [rdi+0x3]', 'jnz 0x0')) === 'split' && caveats(loop('mov eax, dword ptr [rdi+0x2]', 'movzx ecx, byte ptr [rdi+0x3]', 'jnz 0x0'))[0].rows.length === 1, 'split: a dword at +2; a byte never');
   check(ids({ rows: [] }) === '' && ids(null) === '', 'nothing: no caveats');
+  // per CPU: with a split-load cost (splitLoadCycles > 0) the model charges crossings where the address advances by an
+  // immediate; only a load with an address register written otherwise warns
+  const SPLIT = { splitLoadCycles: 2 }, STOCK = { splitLoadCycles: 0 };
+  const firRows = ['vfmadd231ps ymm0, ymm15, ymmword ptr [rdi+rax*4+0x4]', 'add rax, 0x8', 'cmp rax, rcx', 'jnz 0x0'];
+  check(ids(loop(...firRows)) === 'split' && caveats(loop(...firRows), STOCK).length === 1 && caveats(loop(...firRows), SPLIT).length === 0, 'split cost: a load advanced by add rax, imm is modelled; stock (or no configuration): it warns');
+  check(caveats(loop('vmovups ymm0, ymmword ptr [rdi+0x4]', 'jnz 0x0'), SPLIT).length === 0, 'split cost: a load at a constant address (register not written) is modelled');
+  check(caveats(loop('mov eax, dword ptr [rsi+rdx*4+0x2]', 'inc rdx', 'sub esi, 0x40', 'jnz 0x0'), SPLIT).length === 0, 'split cost: inc and sub of an immediate (64 and 32 bits) keep a register followed');
+  const chase = loop('vmovups ymm0, ymmword ptr [rdi+0x4]', 'mov rdi, qword ptr [rdi+0x40]', 'test rdi, rdi', 'jnz 0x0');
+  const cc = caveats(chase, SPLIT);
+  check(cc.length === 1 && cc[0].id === 'split' && j(cc[0].rows) === '[0]' && cc[0].text === 'split loads? (1)' && /rdi is written otherwise here \(mov rdi, qword ptr \[rdi\+0x40\]\)/.test(cc[0].title) && !/at an offset that is not a multiple of the width \(vmovups[^)]*\): some cross/.test(cc[0].title), 'split cost: a pointer chase (mov rdi, [rdi+...]) is not followed: it warns, worded for that', j(cc));
+  check(caveats(chase, STOCK)[0].title !== cc[0].title && /some cross a 64-byte line, which costs extra; not modelled$/.test(caveats(chase, STOCK)[0].title), 'the same response: stock wording without a split-load cost (kept per cost)');
+  check(caveats(loop('mov eax, dword ptr [rsi+0x2]', 'lea rsi, ptr [rsi+0x40]', 'jnz 0x0'), SPLIT).length === 1, 'split cost: lea is not an add of an immediate');
+  check(caveats(loop('mov eax, dword ptr [rsi+rdx*4+0x2]', 'add dx, 0x1', 'jnz 0x0'), SPLIT).length === 1, 'split cost: a 16-bit add is not followed');
+  check(caveats(loop('mov eax, dword ptr [rsi+rcx*4+0x2]', 'add rcx, rbx', 'jnz 0x0'), SPLIT).length === 1 && caveats(loop('mov eax, dword ptr [rsi+0x2]', 'rep movsb byte ptr [rdi], byte ptr [rsi]', 'jnz 0x0'), SPLIT).length === 1, 'split cost: add of a register; an implicit write (rep movsb: rsi)');
+  check(caveats(loop('mov eax, dword ptr [rsi+0x2]', 'cmp rsi, rdi', 'test rsi, rsi', 'push rsi', 'jnz 0x0'), SPLIT).length === 0, 'split cost: cmp, test and push only read the register');
+  check(caveats(loop('mov eax, dword ptr [rsi+0x2]', 'xchg rdi, rsi', 'jnz 0x0'), SPLIT).length === 1, 'split cost: xchg writes both registers');
   // review round 1: a forward branch inside the loop (an if) is not an exit; lea is not an access; xchg is a read-modify-write
   const op = (label, opcode) => ({ kind: 'instr', label, opcode, notes: '', values: [] });
   const ifLoop = { mode: 'loop', rows: [op('mov eax, dword ptr [rdi]', '8b07'), op('test eax, eax', '85c0'), op('jle 0x5', '7e03'), op('add rbx, rax', '4801c3'), op('add rdi, 0x4', '4883c704'), op('dec rcx', '48ffc9'), op('jnz 0xffffffffffffffeb', '75eb')] };
@@ -59,20 +76,30 @@ if (!fs.existsSync(wasm) || !fs.existsSync(asmPath) || !fs.existsSync(new URL('d
   console.log('(analyzer, assembler or data/ missing: only the hand-written cases)');
 } else {
   const e = await WasmEngine.create(fs.readFileSync(wasm));
-  await e.loadUarch(fs.readFileSync(new URL('data/uarch.json', root)));
-  await e.loadArch('ZEN3', fs.readFileSync(new URL('data/arch/ZEN3.json', root)));
+  const uarchBytes = fs.readFileSync(new URL('data/uarch.json', root));
+  await e.loadUarch(uarchBytes);
+  const uarch = JSON.parse(uarchBytes.toString('utf8'));
+  for (const arch of ['ZEN3', 'SKL']) await e.loadArch(uarch.configs[arch].name, fs.readFileSync(new URL(`data/arch/${uarch.configs[arch].name}.json`, root)));
+  check(uarch.configs.ZEN3.splitLoadCycles > 0 && !(uarch.configs.SKL.splitLoadCycles > 0), 'data: ZEN3 has a split-load cost, SKL none', `${uarch.configs.ZEN3.splitLoadCycles} ${uarch.configs.SKL.splitLoadCycles}`);
   const a = await WasmAssembler.create(fs.readFileSync(asmPath));
-  const of = async (name) => {
+  const of = async (name, arch) => {
     const r = await a.assemble(fs.readFileSync(new URL(`tests-js/fixtures/caveats/${name}`, root), 'utf8'), 'intel');
-    return caveats(await e.analyze(makeRequest([...r.bytes].map((b) => b.toString(16).padStart(2, '0')).join(''), 'ZEN3')));
+    const resp = await e.analyze(makeRequest([...r.bytes].map((b) => b.toString(16).padStart(2, '0')).join(''), arch));
+    return caveats(resp, uarch.configs[resp.arch]);
   };
-  const want = { 'fir8.s': 'split', 'fir8_s.s': 'split', 'fir8_s2.s': '', 'hist_b.s': 'rmw-index', 'scan_a.s': 'exit', 'psum.s': '' };
-  for (const [name, id] of Object.entries(want)) {
-    const c = await of(name);
-    check(c.map((x) => x.id).join() === id, `${name}: ${id || 'no caveats'}`, j(c.map((x) => [x.id, x.text])));
+  const want = {
+    SKL: { 'fir8.s': 'split', 'fir8_s.s': 'split', 'fir8_s2.s': '', 'hist_b.s': 'rmw-index', 'scan_a.s': 'exit', 'psum.s': '' },
+    // the FIR loads advance by add rax, imm: the model charges their crossings
+    ZEN3: { 'fir8.s': '', 'fir8_s.s': '', 'fir8_s2.s': '', 'hist_b.s': 'rmw-index', 'scan_a.s': 'exit', 'psum.s': '' },
+  };
+  for (const [arch, cases] of Object.entries(want)) {
+    for (const [name, id] of Object.entries(cases)) {
+      const c = await of(name, arch);
+      check(c.map((x) => x.id).join() === id, `${arch} ${name}: ${id || 'no caveats'}`, j(c.map((x) => [x.id, x.text])));
+    }
   }
-  const firN = (await of('fir8.s'))[0].rows.length, winN = (await of('fir8_s.s'))[0].rows.length;
-  check(firN === 7 && winN === 3, 'FIR: 7 loads off their width in gcc\'s, 3 in the winner (measured 3.7 and 1.5 split loads per iteration)', `${firN} ${winN}`);
+  const firN = (await of('fir8.s', 'SKL'))[0].rows.length, winN = (await of('fir8_s.s', 'SKL'))[0].rows.length;
+  check(firN === 7 && winN === 3, 'SKL FIR: 7 loads off their width in gcc\'s, 3 in the winner (measured 3.7 and 1.5 split loads per iteration)', `${firN} ${winN}`);
 }
 
 console.log(`${count} caveat checks, ${failed} failed`);

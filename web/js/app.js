@@ -683,7 +683,7 @@ function draw() {
   tracePanel.setOpen(state.trace); // (opened or closed in A–B mode meanwhile)
   const trace = lastView.response && !lastView.response.error && Array.isArray(lastView.response.rows) ? tracePanel.update(lastView) : null;
   const onUi = (k, v) => { ui[k] = v; if (k === 'hideEmpty' || k === 'allRows') draw(); };
-  renderResult(el.body, { ...lastView, ui, onUi });
+  renderResult(el.body, { ...lastView, config: uarch?.configs?.[lastView.archKey], ui, onUi });
   showTrace(trace);
   insight.decorate(el.body, lastView);
   traceLink.decorate(el.body, lastView, { onUi });

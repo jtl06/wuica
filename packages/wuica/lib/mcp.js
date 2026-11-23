@@ -113,7 +113,8 @@ export function createServer(w) {
         'first), `caveats` (known blind spots of the model the block meets, not simulated: rmw-index = a read-modify-write ' +
         'to an indexed address, whose store forwarding between iterations depends on the data; exit = an exit before the ' +
         'loop\'s branch, whose mispredict is not modelled; split = loads at an offset that is not a multiple of their width, ' +
-        'which may cross a cache line; `instructions` = indexes into `instructions`). With `details: true`, each instruction also has `allowedPorts` (uops.info notation, e.g. 1*p0156+1*p23), ' +
+        'which may cross a cache line (on ZEN3, ADL-P and ICX, whose models charge crossings, only loads whose address register ' +
+        'is written other than by adding an immediate); `instructions` = indexes into `instructions`). With `details: true`, each instruction also has `allowedPorts` (uops.info notation, e.g. 1*p0156+1*p23), ' +
         '`uops`, `fusedUops`, `latencies` ("input->output:cycles"), `frontEnd` (length, offset = alignment offset + position in the block, crosses ' +
         '16/32/64-byte boundaries, lcp = length-changing prefix, microcoded, macro-fusion), and `insights` has `portSet` (the ' +
         'ports behind the Ports limit and the instructions whose uops can only use them) and `issueSlots` (issue slots per ' +

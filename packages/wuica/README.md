@@ -51,6 +51,7 @@ await w.compare({ source: 'imul rax, rbx' });            // every microarchitect
 w.archs();                                                // [{id, name, year, prototype, table, xedChip}, ...]
 await w.assemble('vaddps zmm0, zmm1, zmm2');              // {code: 0, hex, length, bytes, stderr}
 w.summarize(r);                                           // compact form (the MCP analyze result)
+w.insights(r);                                            // the diagnosis alone (REST's insights)
 ```
 
 Methods never throw for bad input: they resolve to a failure `{code, error, stderr}` (see the contract below).
@@ -254,7 +255,7 @@ The fields from `arch` to `trace` are the analysis response of the WebAssembly m
 repository: `rows[].values[i]` belongs to `columns[i]`, and `notes` is `M` macro-fused, `J` JCC erratum or `X`
 unsupported). `hex` is present when `source` was given and holds the assembled bytes. `stderr` holds the assembler's
 warnings, the notes on exits taken as not taken, and the warning "N position(s) could not be decoded". `insights` (REST only; the library's `analyze()` result
-does not have it, `insights(r)` computes it) is the diagnosis described under the compact form below, with `portSet`
+does not have it, `w.insights(r)` computes it) is the diagnosis described under the compact form below, with `portSet`
 and `issueSlots` when `options.details` is true.
 
 **Plain text** (CE's `Accept: text/plain`): the response is `text` (uiCA's report), or the `stderr` lines on failure.
@@ -274,7 +275,9 @@ instructions: [{index, instr, share}]}`: the largest shares of the binding resou
 `caveats` (only if any: `[{id, text, title, instructions}]`, known blind spots of the model that the block meets:
 `rmw-index` a read-modify-write to an indexed address, whose store forwarding between iterations depends on the data;
 `exit` an exit before the loop's branch, whose mispredict is not modelled; `split` loads at an offset that is not a
-multiple of their width, which may cross a cache line; the web page shows them in one line under the throughput). With `options.details` (MCP:
+multiple of their width, which may cross a cache line: on the CPUs whose model charges line crossings (ZEN3, ADL-P,
+ICX: `splitLoadCycles` in uarch.json) only the loads whose address the model cannot follow (an address register written
+other than by adding an immediate); the web page shows them in one line under the throughput). With `options.details` (MCP:
 `details: true`), each instruction also has `allowedPorts` (`1*p0156+1*p23`), `uops`, `fusedUops`, `latencies`
 (`"RAX->RAX:1"`) and `frontEnd` (`length`, `offset`, `crosses`, `lcp`, `microcoded`, fusion), and `insights` has `portSet`
 (the ports behind the Ports limit, `cycles` = uops / ports, and the instructions that load them) and `issueSlots` (per

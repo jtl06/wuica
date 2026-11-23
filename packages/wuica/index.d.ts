@@ -239,6 +239,9 @@ export interface Wuica {
   /** The compact form of a successful analyze() result; a Failure is returned unchanged. */
   summarize(result: AnalyzeResult): AnalyzeSummary;
   summarize(result: Failure): Failure;
+  /** The derived diagnosis of a successful analyze() result with its microarchitecture's configuration (as in the REST
+   * response and summarize()); null for a failure. */
+  insights(result: AnalyzeResult | Failure): Insights | null;
   /** The id for a user-supplied name (case-insensitive, "-" optional), DEFAULT_ARCH for empty input, or null. */
   resolveArch(arch?: string | null): string | null;
   /** How many times the analyzer was restarted after a trap. */
@@ -280,8 +283,10 @@ export const WARM_HEX: string;
 export const ARCH_ORDER: string[];
 export const ARCH_INFO: Record<string, { name: string; year: number }>;
 
-/** The derived diagnosis of an analysis (the web page's bound view; also `insights` in the MCP summary and the REST response). */
-export function insights(result: AnalyzeResult): Insights | null;
+/** The derived diagnosis of an analysis (the web page's bound view; also `insights` in the MCP summary and the REST response).
+ * `config` is the microarchitecture's configuration in uarch.json (only `splitLoadCycles` is read, for the `split` caveat);
+ * without it, as on a CPU without a split-load cost. The instance's insights() passes it. */
+export function insights(result: AnalyzeResult, config?: { splitLoadCycles?: number } | null): Insights | null;
 
 export type WhatIfVariant = 'unroll2' | 'unroll4' | 'unroll8' | 'acc2' | 'acc3' | 'acc4' | 'acc8' | 'simpleFrontEnd' | 'noMacroFusion' | 'noMicroFusion' | 'nochain';
 export const WHAT_IF_VARIANTS: readonly WhatIfVariant[];

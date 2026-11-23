@@ -180,10 +180,11 @@ function mockLine(m, archKey) {
 //   inputMode,                'asm' | 'hex': the listing remembers its open state per input mode
 //   elapsedMs,                (the cycle-by-cycle trace is drawn by app.js below the result, full width)
 //   ui: { hideEmpty, reportOpen, listingOpen: {asm, hex} (null: closed), allRows }, onUi(name, value)
+//   config,                   the CPU's configuration in uarch.json (configs[archKey]), for the caveats (optional)
 // }
 // Known blind spots of the model that the block meets (caveats.js): one small line, the details in the tooltips.
-function caveatLine(r) {
-  const cv = caveats(r);
+function caveatLine(r, config) {
+  const cv = caveats(r, config);
   if (!cv.length) return null;
   return h('div', { class: 'cv-line' }, h('span', { class: 'k', text: 'not modelled' }), ' ',
     cv.flatMap((c, k) => [k ? ' · ' : '', h('span', { class: 'cv', 'data-cv': c.id, title: c.title, text: c.text })]));
@@ -234,7 +235,7 @@ export function renderResult(root, view) {
             : h('span', { class: 'hint', title: `no single limit explains the throughput${nearestLimit(r) ? `; the nearest is ${nearestLimit(r)} (the API's insights.largest)` : ''}`,
               text: nearestLimit(r) ? `unknown · nearest ${nearestLimit(r)}` : 'unknown' }))),
       mock ? h('div', { class: 'mock-tag', text: mockLine(mock, view.archKey) }) : null,
-      caveatLine(r),
+      caveatLine(r, view.config),
       r.decodeErrors > 0 ? h('div', { class: 'caveat', role: 'alert',
         text: `${r.decodeErrors} undecodable position${r.decodeErrors === 1 ? '' : 's'} skipped` }) : null));
 

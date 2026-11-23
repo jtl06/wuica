@@ -346,6 +346,12 @@ class Wuica {
   // The number of threads compare() has running now (0 if none).
   get threads() { return this.#pool?.threads ?? 0; }
 
+  // The derived diagnosis of an analyze() response (insights.js) with this CPU's configuration (the split-load caveat
+  // depends on it); null for a failure.
+  insights(r) {
+    return r?.code === CODES.OK ? insights(r, this.#configs[r.arch] ?? null) : null;
+  }
+
   // The compact form of an analyze() response (used by the MCP server): uop table reduced to non-zero values, plus the
   // derived diagnosis of the web page's bound view (insights.js).
   summarize(r) {
@@ -374,7 +380,7 @@ class Wuica {
       if (det) Object.assign(e, det);
       return e;
     });
-    const base = insights(r);
+    const base = this.insights(r);
     const ins = base ? { ...base, ...detailInsights(r) } : null;
     return {
       code: r.code, arch: r.arch, name, year, prototype, tp: r.tp, unit: 'cycles per iteration', mode: r.mode,

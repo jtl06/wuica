@@ -69,6 +69,16 @@ test('POST /api/analyze/<arch>: hex and source, equal to the library', async () 
   assert.equal((await post(s.base, `/api/analyze/${encodeURIComponent('ADL-P')}`, { hex: HEX })).json.arch, 'ADL-P');
 });
 
+test('POST /api/analyze/<arch>: the split-load caveat per CPU', async () => {
+  // gcc's FIR: its loads advance by add rax, 0x20; ZEN3's model charges their line crossings, SKL's has no such cost
+  const source = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/caveats/fir8.s'), 'utf8');
+  const skl = await post(s.base, '/api/analyze/SKL', { source });
+  assert.deepEqual(skl.json.insights.caveats.map((c) => [c.id, c.instructions.length]), [['split', 7]]);
+  const zen = await post(s.base, '/api/analyze/ZEN3', { source });
+  assert.equal(zen.json.code, 0);
+  assert.equal(zen.json.insights.caveats, undefined);
+});
+
 test('POST /api/analyze/<arch>: text/plain is uiCA\'s report', async () => {
   const r = await post(s.base, '/api/analyze/SKL', { hex: HEX }, { Accept: 'text/plain' });
   assert.equal(r.status, 200);

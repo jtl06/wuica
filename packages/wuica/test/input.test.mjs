@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createWuica } from '../lib/index.js';
+import { createWuica, insights } from '../lib/index.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const fx = (name) => fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/loop-find', name), 'utf8');
@@ -153,9 +153,19 @@ test('insights.caveats: the known blind spots the block meets', async () => {
   const hist = w.summarize(await w.analyze('ZEN3', { source: '.L:\n movzx edx, byte ptr [rdi]\n inc dword ptr [rsp+rdx*4]\n inc rdi\n cmp rdi, rsi\n jne .L\n' }));
   assert.deepEqual(hist.insights.caveats.map((c) => [c.id, c.instructions]), [['rmw-index', [1]]]);
   assert.match(hist.insights.caveats[0].title, /not modelled/);
-  const fir = w.summarize(await w.analyze('ZEN3', { source: fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/caveats/fir8.s'), 'utf8') }));
+  // split loads: SKL's model has no split-load cost (they warn); ZEN3's charges them where the address advances by an
+  // immediate (FIR: add rax, 0x20), and warns only for a load it cannot follow (a pointer chase)
+  const firSource = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/caveats/fir8.s'), 'utf8');
+  const fir = w.summarize(await w.analyze('SKL', { source: firSource }));
   assert.equal(fir.insights.caveats[0].id, 'split');
   assert.equal(fir.insights.caveats[0].instructions.length, 7);
+  const firZen = await w.analyze('ZEN3', { source: firSource });
+  assert.equal(w.summarize(firZen).insights.caveats, undefined);
+  assert.equal(w.insights(firZen).caveats, undefined);
+  assert.equal(insights(firZen).caveats[0].id, 'split', 'the bare function without a configuration: as without a split-load cost');
+  const chase = w.summarize(await w.analyze('ZEN3', { source: '.L:\n vaddps ymm0, ymm0, ymmword ptr [rdi+0x4]\n mov rdi, qword ptr [rdi+0x40]\n test rdi, rdi\n jne .L\n' }));
+  assert.deepEqual(chase.insights.caveats.map((c) => [c.id, c.instructions]), [['split', [0]]]);
+  assert.match(chase.insights.caveats[0].title, /rdi is written otherwise here/);
   const plain = w.summarize(await w.analyze('SKL', { source: CRC_LOOP }));
   assert.equal(plain.insights.caveats, undefined);
 });

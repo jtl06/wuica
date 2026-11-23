@@ -266,7 +266,7 @@ Only the package's CLI takes `-loop`; the native CLI (`crates/wuica-cli`) reads 
 
 Not in this module's response; the package computes them (`packages/wuica/README.md`, "Compact form"):
 `insights.binding` (exactly `bottlenecks`, `Divider` included), `insights.largest` (when `bottlenecks` is empty: the
-largest limit, the nearest bound), `insights.caveats` (known blind spots the block meets: `rmw-index`, `exit`, `split`),
-and `what_if`'s `acc2`/`acc3`/`acc4`/`acc8` variants (N accumulators: the chain's register renamed in each unrolled
-copy; refused, with a reason, for a chain through memory, flags, an implicit operand, the induction variable, or a
-register also used off the chain) with `accumulators.best`.
+largest limit, the nearest bound), `insights.caveats` (known blind spots the block meets: `rmw-index`, `exit`, `split`;
+`split` depends on the CPU's `splitLoadCycles`), and `what_if`'s `acc2`/`acc3`/`acc4`/`acc8` variants (N
+accumulators: the chain's register renamed in each unrolled copy; refused, with a reason, for a chain through memory,
+flags, an implicit operand, the induction variable, or a register also used off the chain) with `accumulators.best`.
