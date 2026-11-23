@@ -45,6 +45,8 @@ const CRC = {
   check(/implicit/.test(accumulatorText(div, 'f7f101d049ffc875f7', 2).reason), 'refused: the chain register is an implicit operand of div');
   const ah = { ...CRC, rows: [instr('add ah, bl', '00DC'), instr('dec r8', '49FFC8'), instr('jnz 0x0', '75F9', 'M')], criticalPath: { edges: [edge(0, 0, 'AH', true)] } };
   check(!accumulatorText(ah, '00dc49ffc875f9', 2).ok, 'refused: ah has no form in r8..');
+  const ptr = { ...CRC, criticalPath: { edges: [edge(2, 2, 'RDX', true)] } };
+  check(/induction variable rdx/.test(accumulatorText(ptr, CRC_HEX, 2).reason), 'refused: a chain through the pointer (used in an address) is not an accumulator');
   const notLoop = accumulatorText({ ...CRC, mode: 'unroll' }, CRC_HEX, 2);
   check(!notLoop.ok && /not a loop/.test(notLoop.reason), 'only loops');
   // 15 general registers: 8 accumulators of rax are fine; a loop that uses most of them runs out

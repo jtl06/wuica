@@ -110,6 +110,10 @@ export function accumulatorText(response, hex, n) {
   const used = new Set(ins.flatMap((i) => regsIn(i.label)).map((r) => family(r)?.base).filter(Boolean));
   const implicit = new Set(ins.flatMap((i) => { const s = splitInstr(i.label); return implicitUse(s.mnemonic, s.operands); }));
   for (const b of chain.bases) if (implicit.has(b)) return { ok: false, reason: `the chain's ${b} is an implicit operand` };
+  // a register used in an address is the loop's induction variable (a pointer or an index), not an accumulator
+  const addressed = new Set(ins.flatMap((i) => [...i.label.matchAll(/\[([^\]]*)\]/g)].flatMap((m) => regsIn(m[1]))).map((r) => family(r)?.base));
+  const induction = chain.bases.find((b) => addressed.has(b));
+  if (induction) return { ok: false, reason: `the chain is the induction variable ${chain.names[chain.bases.indexOf(induction)]} (used in an address), not an accumulator` };
   // free registers for the copies after the first
   const freeGpr = GPR_FREE.filter((r) => !used.has(r) && !implicit.has(r));
   const usesEvex = ins.some((i) => /\b[xyz]mm(?:1[6-9]|2\d|3[01])\b/i.test(i.label));

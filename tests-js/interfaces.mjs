@@ -305,7 +305,7 @@ for (const [arch, hex, id] of [['adlp', '0x48,0x01,0xd8,0x48,0x01,0xc3', 'ADL-P'
   ];
   for (const [i, wc] of wcases.entries()) {
     const c = { id: `what_if:${i}`, ...wc };
-    const want = JSON.parse(JSON.stringify(await whatIf((a, r) => lib.analyze(a, r), wc.arch, { hex: wc.hex, options: wc.options })));
+    const want = JSON.parse(JSON.stringify(await whatIf((a, r) => lib.analyze(a, r), wc.arch, { hex: wc.hex, options: wc.options }, undefined, { assemble: (t) => lib.assemble(t, 'intel') })));
     for (const [name, client] of [['mcp-http what_if', mcpHttp], ['mcp-stdio what_if', mcpStdio]]) {
       const got = await client.callTool({ name: 'what_if', arguments: { arch: wc.arch, hex: wc.hex, options: wc.options } });
       compared(name, c, firstDiff(want, JSON.parse(got.content[0].text)));

@@ -4,9 +4,10 @@
 //
 //    node tests-js/web_regions_browser.mjs [--chrome PATH] [--shots DIR]
 //
-// A listing with llvm-mca markers analyzes the loop between them (3 rows, the chip "▣ hot"); without the markers the
-// whole listing (6 rows, no chip); a gcc -g -S listing with src=1 shows its source rows as dot.c:N; a phone width has no
-// sideways scrolling. Skips (exit 0) without Chrome.
+// A listing with llvm-mca markers analyzes the loop between them (3 rows, the chip "▣ hot"); without the markers its
+// loop is found (the loop chip "loop .L1", which also picks the whole listing); a gcc -g -S listing with src=1 shows its
+// source rows as dot.c:N; objdump output sets the alignment offset from its address; an input that no longer assembles
+// leaves the result dimmed and says so; a phone width has no sideways scrolling. Skips (exit 0) without Chrome.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -136,6 +137,8 @@ const HELPERS = `
   const instrRows = () => [...document.querySelectorAll('table.uops tbody tr:not(.extra)')];
   const chip = () => { const c = $('region-chip'); return c && !c.hidden ? c.textContent : null; };
   const setCode = (v) => { const c = $('code'); c.value = v; c.dispatchEvent(new Event('input', { bubbles: true })); };
+  const loopChip = () => { const c = $('loop-chip'); return c && !c.hidden ? c.options[c.selectedIndex]?.text ?? null : null; };
+  const pickLoop = (v) => { const c = $('loop-chip'); c.value = v; c.dispatchEvent(new Event('change', { bubbles: true })); };
 `;
 const b64 = (s) => Buffer.from(s).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
 
@@ -152,10 +155,14 @@ try {
       $('region-chip').click();
       const c = $('code');
       out.sel = c.value.slice(c.selectionStart, c.selectionEnd);
-      // the markers removed: the whole listing, no chip
+      // the markers removed: the loop is found (the loop chip); the chip picks the whole listing, and back
       setCode(c.value.replace(/^# LLVM-MCA-.*$/gm, ''));
       await done(() => $('run').click());
-      out.after = { rows: instrRows().length, chip: chip() };
+      out.after = { rows: instrRows().length, chip: chip(), loop: loopChip(), options: [...$('loop-chip').options].map((o) => o.text) };
+      await done(() => pickLoop('whole'));
+      out.whole = { rows: instrRows().length, loop: loopChip(), hash: location.hash };
+      await done(() => pickLoop('0'));
+      out.loop0 = { rows: instrRows().length, loop: loopChip() };
       // back: the region again
       setCode(${JSON.stringify(MARKED)});
       await done(() => $('run').click());
@@ -171,7 +178,8 @@ try {
     check(r.rows === 3 && r.chip === '▣ hot 1/2', 'marked: the 3 instructions of the first region, the chip', JSON.stringify(r));
     check(/LLVM-MCA-BEGIN/.test(r.title) && /IACA/.test(r.title) && r.messages === '', 'the chip\'s tooltip lists the markers; no messages', JSON.stringify(r));
     check(r.sel === '# LLVM-MCA-BEGIN hot', 'a click on the chip selects the BEGIN line', JSON.stringify(r.sel));
-    check(r.after.rows > 6 && r.after.chip === null, 'no markers: the whole listing, no chip', JSON.stringify(r.after));
+    check(r.after.rows === 3 && r.after.chip === null && r.after.loop === 'loop .L1' && r.after.options.join() === 'loop .L1,whole', 'no markers: the loop is found, the loop chip', JSON.stringify(r.after));
+    check(r.whole.rows > 6 && r.whole.loop === 'whole' && /[#&]lp=whole(&|$)/.test(r.whole.hash) && r.loop0.rows === 3, 'the loop chip: the whole listing (in the link), and the loop again', JSON.stringify([r.whole, r.loop0]));
     check(r.again.rows === 3 && r.again.chip === '▣ hot 1/2', 'markers again: the region', JSON.stringify(r.again));
     check(r.hex.chip === null && r.hex.lines === 3, 'to hex: the region\'s 3 instructions, no chip', JSON.stringify(r.hex));
     check(r.back.chip === '▣ hot 1/2' && r.back.rows === 3, 'back to asm: the marked text, the chip again', JSON.stringify(r.back));
@@ -193,9 +201,11 @@ try {
       await wait(50);
       out.hash = location.hash;
       out.jump = { tab: document.querySelector('.view-tab[aria-selected="true"]')?.textContent, open: $('srcmap').open, flash: instrRows().some((tr) => tr.classList.contains('rj-flash')) };
-      // the whole listing (no markers): all its instructions, the lines of the function (the source tab again)
+      // the whole listing (no markers): its loop is found; the whole function with the loop chip (the source tab again)
       setCode(${JSON.stringify(GCC)});
       await done(() => $('run').click());
+      out.found = { rows: instrRows().length, loop: loopChip() };
+      await done(() => pickLoop('whole'));
       [...document.querySelectorAll('.view-tab')].find((b) => b.textContent === 'source').click();
       await until(() => document.querySelector('.sm-list'));
       out.whole = { rows: instrRows().length, items: [...document.querySelectorAll('#srcmap .sm-list > li')].map((li) => li.innerText.replace(/\\s+/g, ' ').trim()), hidden: $('srcmap-row').hidden };
@@ -205,9 +215,48 @@ try {
     check(r.items.length === 2 && /^3 .*dot\.c:3$/.test(r.items[0]) && /^4 .*dot\.c:4$/.test(r.items[1]) && r.messages === '', 'the source rows: dot.c:3 and dot.c:4', JSON.stringify(r.items));
     check(/line \d+ \d+%/.test(r.hint ?? ''), 'the summary hint names the costliest line', r.hint);
     check(r.jump.tab === 'table' && !r.jump.open && r.jump.flash, 'a click on a source line: the table tab, the row flashes', JSON.stringify(r.jump));
-    check(r.whole.rows === 12 && !r.whole.hidden && r.whole.items.length === 2, 'the whole function: 12 instructions, lines 3 and 4', JSON.stringify(r.whole));
+    check(r.found.rows === 6 && r.found.loop === 'loop .L3', 'the whole listing without markers: its loop .L3 (6 instructions)', JSON.stringify(r.found));
+    check(r.whole.rows === 12 && !r.whole.hidden && r.whole.items.length === 2, 'the whole function (loop chip): 12 instructions, lines 3 and 4', JSON.stringify(r.whole));
     await page.shot('regions-loc.png');
     check(page.problems.length === 0, 'no console errors (.loc)', page.problems.join('\n'));
+    await page.cmd('Page.close');
+  }
+
+  // --- objdump output: the loop at 0x10, the alignment offset from it; an input error marks the result stale ---------------
+  {
+    const OBJDUMP = fs.readFileSync(path.join(here, 'fixtures/loop-find/psum.noraw'), 'utf8');
+    const page = await openPage();
+    await page.goto(`${origin}/?nosw=1#v=1&m=asm`);
+    const r = await page.eval(`${HELPERS}
+      await until(() => !$('run').disabled);
+      setCode(${JSON.stringify(OBJDUMP)});
+      await done(() => $('run').click());
+      const out = { rows: instrRows().length, loop: loopChip(), title: $('loop-chip')?.title, align: $('opt-align').value, hash: location.hash, messages: $('input-messages').textContent };
+      // the offset changed by hand stays (it is taken from the addresses once per text)
+      const a = $('opt-align'); a.value = '0'; a.dispatchEvent(new Event('change', { bubbles: true }));
+      await wait(50);
+      await done(() => $('run').click());
+      out.manual = $('opt-align').value;
+      // an input that does not assemble: the old result stays, dimmed, and says so; fixed: gone
+      setCode('  add rax, 1\\n  frobnicate rax\\n');
+      $('run').click();
+      await until(() => $('input-stale'));
+      out.stale = { note: $('input-stale')?.textContent, dim: $('result-body').classList.contains('stale'), rows: instrRows().length };
+      setCode('.L1:\\n  add rax, 1\\n  dec rcx\\n  jnz .L1\\n');
+      await done(() => $('run').click());
+      out.fixed = { note: !!$('input-stale'), dim: $('result-body').classList.contains('stale'), rows: instrRows().length };
+      // a ';' comment and an exit to an undefined label: they assemble (a note for the exit)
+      setCode('; scan\\n.L:\\n  add rdx, 32 ; next\\n  cmp rdx, rsi\\n  jae .Lout\\n  vpcmpeqb ymm0, ymm1, [rdi+rdx]\\n  vpmovmskb ecx, ymm0\\n  test ecx, ecx\\n  je .L\\n');
+      await done(() => $('run').click());
+      out.scan = { rows: instrRows().length, messages: $('input-messages').textContent, caveats: [...document.querySelectorAll('.cv-line .cv')].map((x) => x.textContent) };
+      return out;`);
+    check(r.rows === 5 && r.loop === 'loop 0x10' && /at 0x10/.test(r.title) && r.align === '16' && /(^|&)al=16(&|$)/.test(r.hash.slice(1)), 'objdump: the loop at 0x10 and the alignment offset 16 from its address', JSON.stringify(r));
+    check(r.manual === '0', 'the alignment offset changed by hand stays', r.manual);
+    check(r.stale.note === 'stale: the input has an error' && r.stale.dim && r.stale.rows === 3, 'an input error: the old result stays, dimmed, and says so', JSON.stringify(r.stale));
+    check(!r.fixed.note && !r.fixed.dim && r.fixed.rows === 3, 'the input fixed: a current result, no note', JSON.stringify(r.fixed));
+    check(r.scan.rows === 7 && /\.Lout is not in the code/.test(r.scan.messages) && r.scan.caveats.join() === 'exit mispredict', "';' comments and an exit to .Lout: they assemble, a note, the exit caveat", JSON.stringify(r.scan));
+    await page.shot('regions-objdump.png');
+    check(page.problems.length === 0, 'no console errors (objdump)', page.problems.join('\n'));
     await page.cmd('Page.close');
   }
 
