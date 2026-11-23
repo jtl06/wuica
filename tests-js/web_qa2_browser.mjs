@@ -112,6 +112,21 @@ try {
     await page.eval(`${HELPERS} if ($('live').checked) $('live').click(); return 1;`);
   }
 
+  // ---- the trace's issue strip: the issue log of the trace's own cycles (with includeTrace), as the module gives it in Node --
+  for (const [id, arch] of [['ptrchase', 'ADL-P'], ['chain', 'SKL']]) {
+    const r = await page.eval(`${HELPERS} ${SNAP}
+      if (trace()?.open) trace().querySelector('summary').click();
+      cpus(${JSON.stringify(arch)}); $('mode-asm').click(); await done(() => set($('examples'), ${JSON.stringify(id)}));
+      trace().querySelector('summary').click();
+      await until(() => trace().wuicaTrace?.model, 30000);
+      const m = trace().wuicaTrace.model;
+      trace().querySelector('summary').click();
+      return { issue: m.issue && { first: m.issue.first, width: m.issue.width, issued: m.issue.issued.join(), cause: m.issue.cause } };`);
+    const want = (await ref(ex(id).hex, arch, { includeTrace: true })).details.issue;
+    check(r.issue && r.issue.first === want.first && r.issue.issued === want.issued.join() && r.issue.cause === want.cause,
+      `trace: the issue strip of ${id} on ${arch} is the log of the trace's cycles`, JSON.stringify([r.issue?.first, want.first, r.issue?.cause?.slice(0, 40), want.cause.slice(0, 40)]));
+  }
+
   // ---- an old link (the CPU table open: cmpcpu=1, no "as") with views: every CPU checked, the views open ---------------------
   {
     const hex = ex('chain').hex;
