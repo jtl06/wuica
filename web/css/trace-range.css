@@ -1,0 +1,10 @@
+/* The cycle range of the trace (js/trace-range-view.js): its chip in the trace's tools and in the bound view. Colours only
+   from the theme's custom properties. */
+
+.tr-chip { display: inline-flex; align-items: center; gap: 0.5ch; white-space: nowrap; color: var(--accent); font-variant-numeric: tabular-nums; }
+.tr-chip[hidden] { display: none; }
+.tr-chip .hint { color: var(--subtle); }
+.tr-x { padding: 0 0.6ch; line-height: 1.2; color: var(--subtle); }
+.tr-x:hover, .tr-x:focus-visible { color: var(--text); }
+.tr-item { cursor: help; }
+.sl-unknown { background: var(--description); } /* lost, no cause logged (outside the steady state) */
