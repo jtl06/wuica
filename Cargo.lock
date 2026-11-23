@@ -206,6 +206,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wuica-cli"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wuica",
+]
+
+[[package]]
 name = "wuica-core"
 version = "0.1.0"
 dependencies = [

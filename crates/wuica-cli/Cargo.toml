@@ -1,0 +1,14 @@
+[package]
+name = "wuica-cli"
+description = "Command-line tool of wuica"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "wuica"
+path = "src/main.rs"
+
+[dependencies]
+wuica = { path = "../wuica" }
+serde_json = { version = "1", features = ["preserve_order"] }
