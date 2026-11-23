@@ -11,7 +11,6 @@ use crate::decoded::MemAddr;
 use crate::model::{Instr, InstrList, OpId, Operand, TpKey, UopProperties};
 use crate::substr::has;
 use crate::x64::{canonical_reg, is_gp_reg, mem_width, reg_size};
-use std::collections::HashMap;
 
 pub(crate) const NONE: u32 = u32::MAX;
 
@@ -514,7 +513,7 @@ impl Prep {
         let mut props: Vec<PropInfo> = Vec::new();
         let mut info = Vec::new();
         // blockedResources: 'div', 'port' + p, and the TP keys
-        let mut tp_res: HashMap<&TpKey, usize> = HashMap::new();
+        let mut tp_res: FxHashMap<&TpKey, usize> = FxHashMap::default();
         let mut n_resources = 1 + ports.len();
 
         let mut port_lists: Vec<u8> = Vec::new();

@@ -8,11 +8,13 @@
 //! The order of the dicts is kept (`ports` is iterated by uiCA). Unknown keys are an error, so that a new kind of data in the
 //! tables is not silently ignored.
 
+use crate::fasthash::FxBuildHasher;
 use indexmap::IndexMap;
 use serde::Deserialize;
 
-/// Port usage: ports (one character each, e.g. "015") -> number of uops, in the order of the Python dict.
-pub type PortData = IndexMap<String, i64>;
+/// Port usage: ports (one character each, e.g. "015") -> number of uops, in the order of the Python dict. (The order of an
+/// `IndexMap` does not depend on its hasher.)
+pub type PortData = IndexMap<String, i64, FxBuildHasher>;
 
 /// The instruction tables of a microarchitecture (uiCA's `archData` module).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -20,7 +22,7 @@ pub type PortData = IndexMap<String, i64>;
 pub struct ArchData {
     /// XED iform -> the variants of the instruction, in the order in which they are tried
     #[serde(rename = "instrData")]
-    pub instr_data: IndexMap<String, Vec<InstrEntry>>,
+    pub instr_data: IndexMap<String, Vec<InstrEntry>, FxBuildHasher>,
     #[serde(rename = "attrData")]
     pub attr_data: Vec<AttrData>,
     #[serde(rename = "perfData")]
@@ -123,35 +125,75 @@ pub struct LatEntry {
 }
 
 /// A latency dict (`lat`, `lat_SR`), in the order of the Python dict.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
-#[serde(try_from = "IndexMap<String, i64>")]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LatData {
     pub entries: Vec<LatEntry>,
 }
 
-impl TryFrom<IndexMap<String, i64>> for LatData {
-    type Error = String;
-
-    fn try_from(map: IndexMap<String, i64>) -> Result<LatData, String> {
-        let mut entries = Vec::with_capacity(map.len());
-        for (key, lat) in map {
-            let mut parts = key.split(',');
-            let (Some(inp), Some(out)) = (parts.next(), parts.next()) else {
-                return Err(format!("latency key {key:?}"));
-            };
-            let kind = match parts.next() {
-                None => None,
-                Some("addr") => Some(LatKind::Addr),
-                Some("addrI") => Some(LatKind::AddrI),
-                Some("mem") => Some(LatKind::Mem),
-                Some(_) => return Err(format!("latency key {key:?}")),
-            };
-            if parts.next().is_some() {
-                return Err(format!("latency key {key:?}"));
-            }
-            entries.push(LatEntry { inp: inp.to_string(), out: out.to_string(), kind, lat });
+impl LatData {
+    /// `latData[key] = lat` for a key of the JSON form ("inp,out" or "inp,out,kind"); a key that is already there keeps its
+    /// position (as in a dict)
+    fn insert_json_key(&mut self, key: &str, lat: i64) -> Result<(), String> {
+        let mut parts = key.split(',');
+        let (Some(inp), Some(out)) = (parts.next(), parts.next()) else {
+            return Err(format!("latency key {key:?}"));
+        };
+        let kind = match parts.next() {
+            None => None,
+            Some("addr") => Some(LatKind::Addr),
+            Some("addrI") => Some(LatKind::AddrI),
+            Some("mem") => Some(LatKind::Mem),
+            Some(_) => return Err(format!("latency key {key:?}")),
+        };
+        if parts.next().is_some() {
+            return Err(format!("latency key {key:?}"));
         }
-        Ok(LatData { entries })
+        self.set(inp, out, kind, lat);
+        Ok(())
+    }
+}
+
+/// The JSON object is read directly into the entries (without a map of the keys as strings).
+impl<'de> Deserialize<'de> for LatData {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<LatData, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = LatData;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a map of latencies")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<LatData, A::Error> {
+                let mut lat = LatData { entries: Vec::with_capacity(map.size_hint().unwrap_or(4)) };
+                while let Some(Key(key)) = map.next_key()? {
+                    let value: i64 = map.next_value()?;
+                    lat.insert_json_key(&key, value).map_err(serde::de::Error::custom)?;
+                }
+                Ok(lat)
+            }
+        }
+        deserializer.deserialize_map(Visitor)
+    }
+}
+
+/// A key of a JSON object, borrowed from the input where it can be (no escape sequences)
+struct Key<'de>(std::borrow::Cow<'de, str>);
+
+impl<'de> Deserialize<'de> for Key<'de> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Key<'de>, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = Key<'de>;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a string")
+            }
+            fn visit_borrowed_str<E: serde::de::Error>(self, v: &'de str) -> Result<Key<'de>, E> {
+                Ok(Key(std::borrow::Cow::Borrowed(v)))
+            }
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Key<'de>, E> {
+                Ok(Key(std::borrow::Cow::Owned(v.to_string())))
+            }
+        }
+        deserializer.deserialize_str(Visitor)
     }
 }
 

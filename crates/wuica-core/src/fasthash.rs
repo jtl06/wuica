@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 
 #[derive(Default, Clone, Copy)]
-pub(crate) struct FxHasher {
+pub struct FxHasher {
     hash: u64,
 }
 
@@ -53,6 +53,9 @@ impl Hasher for FxHasher {
         self.hash
     }
 }
+
+/// The hasher of the maps of the instruction tables (`IndexMap`s, whose order does not depend on the hasher).
+pub type FxBuildHasher = BuildHasherDefault<FxHasher>;
 
 /// A `HashMap` with [`FxHasher`]: for lookups only, never iterate over it.
 pub(crate) type FastMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
