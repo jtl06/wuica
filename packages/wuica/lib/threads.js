@@ -109,7 +109,7 @@ export class ThreadPool {
       this.#queue.push({ id: this.#nextId++, table, request, resolve });
     })));
     // (not for a small block: its analyses are short, and the warm-up would compete with them for the CPU)
-    if (this.#pump() && !this.#warmed && jobs[0]?.request.hex.length >= WARM_MIN_HEX && !process.env.WUICA_NO_THREAD_WARMUP) {
+    if (this.#pump() && !this.#warmed && jobs[0]?.request.hex.length >= WARM_MIN_HEX) {
       this.#warmed = true;
       this.#warmUp(jobs[0]).catch(() => {});
     }
