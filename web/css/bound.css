@@ -48,3 +48,17 @@
 
 /* a view of the single-mode result: not in A–B mode (the "more" section shows the A–B traces there) */
 body.ab-on #bound-row { display: none !important; }
+
+/* the port set behind Ports (js/portset.js) and the issue slots (js/slots.js) */
+.bd-set .bd-share { color: var(--description); font-variant-numeric: tabular-nums; }
+.sl { display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 2ch; min-width: 0; }
+.sl-bar { display: flex; width: 12rem; max-width: 100%; height: 0.7em; background: var(--border); }
+.sl-seg { display: block; height: 100%; }
+.sl-keys { display: flex; flex-wrap: wrap; gap: 0.1rem 2ch; color: var(--description); }
+.sl-k { display: inline-flex; align-items: center; gap: 0.6ch; white-space: nowrap; cursor: help; }
+.sl-sw { display: inline-block; width: 0.8em; height: 0.8em; }
+.sl-issued { background: var(--accent); }
+.sl-frontEnd { background: var(--external); }
+.sl-rob { background: var(--caveat); }
+.sl-rs { background: var(--date); }
+.sl-other { background: var(--subtle); }

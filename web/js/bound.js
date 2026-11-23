@@ -7,6 +7,8 @@
 
 import { h, columnKind } from './render.js';
 import { jumpToRow, finishJump } from './rowjump.js';
+import { portSetBlame, setLine } from './portset.js';
+import { slotsLine } from './slots.js';
 
 const EPS = 0.005; // values are shown with two decimals
 const GROUPS = Object.freeze([['front', 'front end'], ['issue', 'issue'], ['ports', 'ports'], ['deps', 'chain'], ['other', 'other']]);
@@ -147,7 +149,8 @@ export const defaultResource = (m) => m?.binding[0] ?? null;
 
 // ---- the view ----------------------------------------------------------------------------------------------------
 
-// env: { onToggle(open) } (the URL keeps whether the view is open)
+// env: { onToggle(open) (the URL keeps whether the view is open), details (details.js: "Ports" drills down to the port
+// set once they are there) }
 export function createBound(env = {}) {
   let open = false;
   let selected = null; // the resource the user picked (kept while the response has it)
@@ -227,7 +230,12 @@ export function createBound(env = {}) {
       if (!its.length) continue;
       groups.push(h('div', { class: 'bd-group', role: 'group', 'aria-label': label }, h('span', { class: 'bd-g', text: label }), h('span', { class: 'bd-items' }, its.map((x) => bar(x, x.id === selected)))));
     }
-    const b = selected ? blame(r, selected) : null;
+    // Ports: the port set behind the limit, from the details (fetched once, when Ports is selected)
+    // and the issue slots per cause (slots.js); the details are fetched once, while the view is open
+    const d = env.details?.peek(view);
+    if (env.details && d === undefined && !r.mock) { const v = view; env.details.get(v).then((x) => { if (x && view === v && open) paint(); }); }
+    const ps = selected === 'Ports' ? portSetBlame(r, d?.ports) : null;
+    const b = ps ?? (selected ? blame(r, selected) : null);
     const it = m.items.find((x) => x.id === selected);
     const name = it ? (b?.ports ? `${it.name} (${b.ports.join(' ')})` : it.name) : '';
     const top = topRows(b, 5);
@@ -237,7 +245,7 @@ export function createBound(env = {}) {
       btn.addEventListener('click', () => jumpToRow(root, k));
       return h('li', null, btn);
     });
-    body.replaceChildren(h('div', { class: 'bd-groups' }, groups),
+    body.replaceChildren(h('div', { class: 'bd-groups' }, groups, ps ? setLine(ps) : null, d?.issue ? slotsLine(d.issue) : null),
       top.length ? h('div', { class: 'bd-top' }, h('span', { class: 'bd-g', text: 'top', title: `the instructions with the largest share of ${name}; the uop table is shaded by the share` }), h('ol', { class: 'bd-list' }, list)) : null);
     shade(b, name);
     if (root?.dataset) root.dataset.bound = selected ?? '';

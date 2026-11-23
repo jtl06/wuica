@@ -1,0 +1,28 @@
+/* The instruction card under the uop table (js/icard.js) and the front-end badges of the Notes column. Colours only
+   from the theme's custom properties. */
+
+.ic {
+  margin-top: 0.35rem; padding: 0.35rem 0.75rem 0.45rem;
+  background: var(--surface); border: 1px solid var(--border); border-top: 2px solid var(--accent);
+  display: grid; gap: 0.1rem; max-height: 40vh; overflow: auto; overflow-wrap: anywhere;
+}
+.ic[hidden] { display: none; }
+/* a long table: the card stays in view at the bottom while the table is */
+.ic.stick { position: sticky; bottom: 0; z-index: 2; box-shadow: 0 -0.4rem 0.8rem -0.4rem rgb(0 0 0 / 0.35); }
+.ic-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 2ch; }
+.ic-ins { color: var(--code); min-width: 0; }
+.ic-link { color: var(--external); }
+.ic-x { margin-left: auto; padding: 0 0.6ch; color: var(--subtle); }
+.ic-l { display: grid; grid-template-columns: 6ch minmax(0, 1fr); column-gap: 1ch; align-items: baseline; }
+.ic-l.hint { display: block; }
+.ic-k { color: var(--subtle); }
+.ic-v { min-width: 0; }
+.ic-d, .ic-tp { color: var(--description); }
+.ic-lat { white-space: nowrap; }
+.ic-t { color: var(--date); }
+
+/* the badges: drawn after the note, so the cell's text stays the note */
+.grid td.note[data-hz]::after { content: " " attr(data-hz); color: var(--caveat); font-size: 0.85em; }
+.grid td.note[data-hz] { cursor: help; }
+
+body.ab-on .ic { display: none !important; }
