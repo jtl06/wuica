@@ -19,6 +19,7 @@
 // for a reason of its own (a region or a .loc in another section), the plain text is assembled instead.
 
 import { stripHints } from './assembler.js';
+import { statements, preparePaste, loopName, normalizeText, isText } from './loop-find.js';
 
 const MAGIC = 0x77756963; // 'ciuw'
 // a cheap test first: without any of these the text is assembled as it is (no other work)
@@ -31,26 +32,6 @@ const LABELS = /^(?:\s*(?:[\w.$@]+|"[^"]*")\s*:)*\s*/;
 export const MARKERS_TITLE = 'region markers: # LLVM-MCA-BEGIN [name] … # LLVM-MCA-END, # wuica-begin … # wuica-end (also // or ;), '
   + "IACA's mov ebx, 111 / 222 + .byte 0x64,0x67,0x90; only the first region is analyzed";
 
-// Splits a line (block comments already removed) into its statements outside comments: [{at, text}] (at: the column
-// of the statement's first character, 0-based). '#' and '//' start a comment, ';' separates statements; quotes kept.
-function statements(line) {
-  const out = [];
-  let start = 0, q = false;
-  for (let i = 0; i <= line.length; i++) {
-    const c = line[i];
-    if (q) { if (c === '\\') i++; else if (c === '"') q = false; continue; }
-    if (c === '"') { q = true; continue; }
-    const end = i === line.length || c === '#' || c === ';' || (c === '/' && line[i + 1] === '/');
-    if (!end) continue;
-    const s = line.slice(start, i);
-    const lead = s.length - s.trimStart().length;
-    if (s.trim()) out.push({ at: start + lead, text: s.trim() });
-    if (c !== ';') break;
-    start = i + 1;
-  }
-  return out;
-}
-
 const quoted = (s) => [...s.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
 const sectionName = (args) => (/^\s*("?)([^",\s]+)\1/.exec(args)?.[2] ?? '');
 
@@ -58,9 +39,12 @@ const sectionName = (args) => (/^\s*("?)([^",\s]+)\1/.exec(args)?.[2] ?? '');
 //   { text: the text to assemble, labels: [name], regions: [{name, line}], region: {name, line, begin, end} | null
 //     (begin/end: indexes into labels; end null: to the end of the code), locs: [{label, file, line}],
 //     files: Map(number -> name), shifts: Map(line -> [{col, len}]), lineCount, error: {line, message} | null }
-export function planMarked(text) {
+// opts (loop-find.js, preparePaste): pick {begin, end}: lines (1-based) of the code to analyze when nothing is marked (the
+// loop: its first instruction at or after `begin` to the end of line `end`); stubs: symbols to define right after the
+// analyzed code (the loop's exits: its conditional branches out of it are then short and not taken).
+export function planMarked(text, { pick = null, stubs = [] } = {}) {
   text = String(text ?? '');
-  if (!QUICK.test(text)) return null;
+  if (!QUICK.test(text) && !pick && !stubs.length) return null;
   const lines = stripHints(text.replace(/^\uFEFF/, '')).split('\n');
   const labels = [];
   const inserts = []; // {line, col, label}
@@ -73,6 +57,10 @@ export function planMarked(text) {
   let block = false;
   const label = (line, col) => { const name = `.Lwuica_${labels.length}`; labels.push(name); inserts.push({ line, col, label: name }); return labels.length - 1; };
   const replaced = new Map(); // line -> new text (marker comments)
+  const stubText = stubs.map((n) => ` ${n}:`).join('');
+  let stubsPlaced = !stubs.length;
+  let pickPending = false;
+  if (pick) { region = { name: 'loop', line: pick.begin, begin: null, end: null, auto: true }; pickPending = true; }
 
   const begin = (name, line) => {
     regions.push({ name, line });
@@ -93,7 +81,8 @@ export function planMarked(text) {
         region.closed = true;
         region.end = labels.length;
         labels.push('.Lwuica_' + labels.length);
-        replaced.set(i, labels[region.end] + ':');
+        replaced.set(i, labels[region.end] + ':' + stubText);
+        stubsPlaced = true;
       } else {
         replaced.set(i, '');
       }
@@ -107,7 +96,8 @@ export function planMarked(text) {
       }
       line = out;
     }
-    for (const st of statements(line)) {
+    const sts = statements(line);
+    for (const st of sts) {
       const lead = LABELS.exec(st.text)[0].length;
       const body = st.text.slice(lead);
       if (!body) continue;
@@ -131,6 +121,8 @@ export function planMarked(text) {
         const d = /^\.([\w.]+)\s*(.*)$/.exec(body);
         const name = d?.[1].toLowerCase() ?? '';
         const args = d?.[2] ?? '';
+        // an objdump line with its bytes (loop-find.js) starts the picked code like an instruction
+        if (name === 'byte' && pickPending && inText && i + 1 >= pick.begin) { region.begin = label(i, col); pickPending = false; }
         if (name === 'loc') {
           const m = /^(\d+)\s+(\d+)/.exec(args);
           if (m && inText) locs.push({ label: label(i, col), file: Number(m[1]), line: Number(m[2]) });
@@ -148,22 +140,33 @@ export function planMarked(text) {
           if (m && q.length) files.set(Number(m[1]), q.length > 1 ? q[1] : q[0]);
         } else if (name === 'text') { prev = inText; inText = true; }
         else if (name === 'data' || name === 'bss') { prev = inText; inText = false; }
-        else if (name === 'section') { prev = inText; inText = sectionName(args) === '.text'; }
-        else if (name === 'pushsection') { stack.push(inText); prev = inText; inText = sectionName(args) === '.text'; }
+        else if (name === 'section') { prev = inText; inText = isText(args); }
+        else if (name === 'pushsection') { stack.push(inText); prev = inText; inText = isText(args); }
         else if (name === 'popsection') { prev = inText; inText = stack.pop() ?? true; }
         else if (name === 'previous') { [inText, prev] = [prev, inText]; }
         continue;
       }
       if (/^[\w.$@]+\s*=/.test(body)) continue; // a symbol assignment
       // an instruction
+      if (pickPending && inText && i + 1 >= pick.begin) { region.begin = label(i, col); pickPending = false; }
       // (a mov that can be an IACA marker is decided by the next statement)
       const im = IACA_MOV.exec(body);
       if (im) iaca = { kind: im[1] ?? im[2], line: i, col, inText };
       else if (pendingBegin && inText) { region.begin = label(i, col); pendingBegin = false; }
     }
+    // the end of the picked code: a label after the last statement of its last line (and the exits)
+    if (pick && i + 1 === pick.end && region.begin !== null && region.end === null && sts.length) {
+      const st = sts[sts.length - 1];
+      region.end = labels.length;
+      const name = `.Lwuica_${labels.length}`;
+      labels.push(name);
+      inserts.push({ line: i, col: st.at + st.text.length, text: `; ${name}:${stubText}` });
+      stubsPlaced = true;
+    }
   }
+  if (pick && region.begin === null) error ??= { line: pick.begin, message: 'the loop has no instructions' };
   if (pendingBegin) error ??= { line: region.line, message: 'the marked region has no instructions' };
-  if (!regions.length && !locs.length) return null;
+  if (!regions.length && !locs.length && !pick && !stubs.length) return null;
   // the new text: marker lines replaced, labels put in front of statements (right to left within a line)
   const shifts = new Map();
   const byLine = new Map();
@@ -172,7 +175,7 @@ export function planMarked(text) {
     xs.sort((a, b) => b.col - a.col);
     let l = lines[i];
     const sh = [];
-    for (const x of xs) { const ins = `${x.label}: `; l = l.slice(0, x.col) + ins + l.slice(x.col); sh.push({ col: x.col, len: ins.length }); }
+    for (const x of xs) { const ins = x.text ?? `${x.label}: `; l = l.slice(0, x.col) + ins + l.slice(x.col); sh.push({ col: x.col, len: ins.length }); }
     lines[i] = l;
     shifts.set(i + 1, sh);
   }
@@ -181,7 +184,8 @@ export function planMarked(text) {
   const parts = [];
   for (let k = 0; k < labels.length; k += 32) parts.push(`.long ${labels.slice(k, k + 32).map((n) => `.Lwuica_z-${n}`).join(', ')}`);
   const sets = [...views].map((n) => `.set ${n}, 0\n`).join('');
-  const out = `${lines.join('\n')}\n${sets}.text\n.Lwuica_z:\n.long ${MAGIC}\n${parts.join('\n')}\n`;
+  const tail = stubsPlaced ? '' : `${stubs.map((n) => `${n}:`).join('\n')}\n`; // the exits at the end of the code
+  const out = `${lines.join('\n')}\n${sets}.text\n${tail}.Lwuica_z:\n.long ${MAGIC}\n${parts.join('\n')}\n`;
   if (region) delete region.closed;
   return { text: out, labels, regions, region, locs, files, shifts, lineCount, error };
 }
@@ -235,7 +239,7 @@ export function cutPlan(plan, code, offsets) {
     start = offsets[r.begin];
     end = r.end === null ? code.length : offsets[r.end];
     if (!(end > start)) return { error: { line: r.line, message: 'the marked region has no machine code in .text' } };
-    region = { name: r.name, line: r.line, index: 0, count: plan.regions.length };
+    region = r.auto ? { auto: true } : { name: r.name, line: r.line, index: 0, count: plan.regions.length };
   }
   let source = null;
   if (plan.locs.length) {
@@ -259,10 +263,9 @@ export function cutPlan(plan, code, offsets) {
   return { bytes: code.slice(start, end), region, source };
 }
 
-// Assembles text with its marked region and .loc lines: assembler.assemble's result plus region ({name, line, index,
-// count} | null) and source ({text: null, file, spans: [{off, line}]} | null). assemble(text) -> promise of that result.
-export async function assembleMarked(assemble, text) {
-  const plan = planMarked(text);
+// One assembly of a text with its marked region (or picked loop) and .loc lines.
+async function assembleOnce(assemble, text, prep) {
+  const plan = planMarked(text, prep ? { pick: prep.pick, stubs: prep.stubs } : {});
   if (!plan) return assemble(text);
   const r = await assemble(plan.text);
   if (r.ok) {
@@ -271,20 +274,123 @@ export async function assembleMarked(assemble, text) {
     const c = cutPlan(plan, t.code, t.offsets);
     const diagnostics = mapDiagnostics(plan, r.diagnostics);
     if (c.error) return { ok: false, diagnostics: [{ line: c.error.line, column: null, severity: 'error', message: c.error.message }] };
-    return { ok: true, bytes: c.bytes, diagnostics, region: c.region, source: c.source };
+    return { ok: true, bytes: c.bytes, diagnostics, region: c.region?.auto ? null : c.region, source: c.source };
   }
   const own = r.diagnostics.some((d) => d.severity === 'error' && (!d.line || d.line > plan.lineCount));
   if (!own) return { ...r, diagnostics: mapDiagnostics(plan, r.diagnostics) };
   // the labels or the trailer failed (a region or a .loc outside .text): the plain text
   const p = await assemble(text);
-  if (!p.ok || !plan.region) return p;
+  if (!p.ok || !plan.region || plan.region.auto) return p;
   return { ok: false, diagnostics: [{ line: plan.region.line, column: null, severity: 'error', message: 'the marked region is not in .text' }] };
 }
 
+// ';' after a statement. LLVM (like GNU as) reads it as a separator: what follows is assembled as a statement if it can
+// be. Pasted listings use it for comments (MASM, NASM, Compiler Explorer). The rule:
+//   - what follows assembles: it is assembled (a separator), with a note that names it, unless the ';' chains
+//     statements as GNU as code writes it (no space before the ';': "dec rcx; jnz 1b")
+//   - it does not assemble, for any reason: it is a comment (nothing after a ';' turns a valid line into an error),
+//     with a note if it starts with a mnemonic ("add the next element"); silently if it does not ("sum += a[i]")
+// A ';' at the start of a line is always a comment (loop-find.js, leadingSemicolons).
+
+// The columns (0-based) of the ';' separators of a line, outside quotes and before a comment.
+function separators(line) {
+  const out = [];
+  let q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) { if (c === '\\') i++; else if (c === '"') q = false; continue; }
+    if (c === '"') q = true;
+    else if (c === '#' || (c === '/' && line[i + 1] === '/')) break;
+    else if (c === ';') out.push(i);
+  }
+  return out;
+}
+
+// After a failed assembly: the lines whose error lies after a ';' get that ';' as '#'. {fixes: Map line -> new text,
+// notes: [{line, column, severity: 'note', message}]}.
+export function commentFixes(diagnostics, text) {
+  const lines = String(text).split('\n');
+  const fixes = new Map(), notes = [];
+  for (const d of diagnostics ?? []) {
+    if (d.severity !== 'error' || !d.line || !d.column) continue;
+    const l = fixes.get(d.line) ?? lines[d.line - 1] ?? '';
+    const at = separators(l).filter((p) => p < d.column - 1).pop();
+    if (at === undefined || !l.slice(0, at).trim()) continue;
+    fixes.set(d.line, l.slice(0, at) + '#' + l.slice(at + 1));
+    if (!/^(?:invalid instruction mnemonic|unexpected token at start of statement)/.test(d.message)) {
+      notes.push({ line: d.line, column: at + 1, severity: 'note', message: "text after ';' taken as a comment" });
+    }
+  }
+  return { fixes, notes };
+}
+
+// After a successful assembly: a note for each ';' whose rest was assembled as a statement (see above), unless the ';'
+// is written as GNU as chains statements, right after the statement ("dec rcx; jnz 1b").
+export function separatorNotes(text) {
+  const notes = [];
+  String(text).split('\n').forEach((l, i) => {
+    const seps = separators(l);
+    seps.forEach((at, k) => {
+      const before = l.slice(0, at), seg = l.slice(at + 1, seps[k + 1] ?? l.length).replace(/(#|\/\/).*$/, '').trim();
+      if (!before.trim() || !seg || !/\s$/.test(before)) return;
+      notes.push({ line: i + 1, column: at + 1, severity: 'note', message: `';' separates statements: '${seg}' was assembled (use # for a comment)` });
+    });
+  });
+  return notes;
+}
+
+// Assembles text with its marked region and .loc lines: assembler.assemble's result plus region ({name, line, index,
+// count} | null) and source ({text: null, file, spans: [{off, line}]} | null). assemble(text) -> promise of that result.
+// A ';' comment after a statement is retried as '#' (above).
+// opts.loop ('auto', 'whole' or a loop's index): the text is assembled for an analysis (loop-find.js): objdump lines,
+// the loop or the body of a function, the exits as not taken. The result then also has loop ({index, count, name, line,
+// endLine, address, alignment} | null: what was picked), loops ([{begin, end, label}]: the choices), body ({begin, end}
+// | null), choosable (a choice matters: code around the loop or the body) and alignment (from
+// the text's addresses, or null), and the notes (exits, undefined jump targets) among its diagnostics.
+export async function assembleMarked(assemble, text, opts = {}) {
+  const analysis = opts.loop !== undefined && opts.loop !== null;
+  const prep = analysis ? preparePaste(text, { loop: opts.loop }) : null;
+  if (prep?.error) return { ok: false, diagnostics: [{ line: null, column: null, severity: 'error', message: prep.error }] };
+  let work = prep ? prep.text : normalizeText(text);
+  const fallback = new Map(prep?.fallback ?? []);
+  const commentNotes = [];
+  let r;
+  for (let round = 0; ; round++) {
+    r = await assembleOnce(assemble, work, prep);
+    if (r.ok || round >= 8) break;
+    // retry: ';' comments; objdump lines the assembler rejects, as their bytes
+    const { fixes, notes } = commentFixes(r.diagnostics, work);
+    commentNotes.push(...notes);
+    for (const d of r.diagnostics) {
+      if (d.severity === 'error' && d.line && !fixes.has(d.line) && fallback.has(d.line)) { fixes.set(d.line, fallback.get(d.line)); fallback.delete(d.line); }
+    }
+    if (!fixes.size) break;
+    const lines = work.split('\n');
+    for (const [l, t] of fixes) lines[l - 1] = t;
+    work = lines.join('\n');
+  }
+  if (r.ok) {
+    const notes = [...commentNotes, ...separatorNotes(work)];
+    if (notes.length) r = { ...r, diagnostics: [...r.diagnostics, ...notes] };
+  }
+  if (!prep) return r;
+  const loop = prep.choice === null ? null : {
+    index: prep.choice === 'body' ? null : prep.choice, count: prep.loops.length, name: loopName(prep),
+    line: prep.pick.begin, endLine: prep.pick.end, address: prep.address, alignment: prep.alignment,
+  };
+  const out = { ...r, loop, loops: prep.loops, body: prep.body, choosable: prep.choosable, alignment: prep.alignment };
+  if (r.ok && prep.notes.length) out.diagnostics = [...r.diagnostics, ...prep.notes];
+  return out;
+}
+
 // The assembler with marked regions (assemble() as assembleMarked; everything else as the assembler's own).
+// assemble(text, syntax, {loop, ...}): loop as assembleMarked's; the other options go to the assembler.
 export function withRegions(assembler) {
   if (!assembler) return assembler;
-  const assemble = (text, syntax, opts) => assembleMarked((t) => assembler.assemble(t, syntax, opts), text);
+  const assemble = (text, syntax, opts) => {
+    const { loop, ...rest } = opts ?? {};
+    return assembleMarked((t) => assembler.assemble(t, syntax, opts ? rest : opts), text, { loop });
+  };
   return new Proxy(assembler, {
     get(target, prop) {
       if (prop === 'assemble') return assemble;

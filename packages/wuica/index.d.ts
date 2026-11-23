@@ -23,11 +23,32 @@ export interface AnalysisOptions {
 
 export type Syntax = 'intel' | 'att';
 
+/** What of `source` is analyzed: "auto" (default: the innermost loop of a whole function, or its body if it has no
+ * loop; else the text as it is), "whole", or the index of a loop (innermost first, in code order). */
+export type LoopChoice = 'auto' | 'whole' | number;
+
+/** What was analyzed when it is not the whole text as given (AnalyzeResult.loop). */
+export interface LoopInfo {
+  /** The loop's index; null for a function's body or the whole text. */
+  index: number | null;
+  /** The number of loops in the text. */
+  count: number;
+  /** "loop .L3", "loop 0x10" (objdump), "body" or "whole". */
+  name: string;
+  /** Its first and last line in the source (null: the whole text). */
+  line: number | null;
+  endLine: number | null;
+  /** Its address (objdump input). */
+  address?: number;
+  /** The alignment offset from the addresses (objdump input): used unless options.alignmentOffset is given. */
+  alignmentOffset?: number;
+}
+
 /** The code: exactly one of `source` (assembly; `asm` is accepted as an alias) and `hex` (machine code). */
 export type CodeRequest =
-  | { source: string; asm?: undefined; hex?: undefined; syntax?: Syntax }
-  | { asm: string; source?: undefined; hex?: undefined; syntax?: Syntax }
-  | { hex: string | Uint8Array; source?: undefined; asm?: undefined; syntax?: Syntax };
+  | { source: string; asm?: undefined; hex?: undefined; syntax?: Syntax; loop?: LoopChoice }
+  | { asm: string; source?: undefined; hex?: undefined; syntax?: Syntax; loop?: LoopChoice }
+  | { hex: string | Uint8Array; source?: undefined; asm?: undefined; syntax?: Syntax; loop?: LoopChoice };
 
 /** Body of POST /api/analyze/<arch>. */
 export type AnalyzeRequest = CodeRequest & { options?: AnalysisOptions };
@@ -94,7 +115,9 @@ export interface AnalyzeResult {
   };
   /** The assembled machine code (lower-case hex), when `source` was given. */
   hex?: string;
-  /** Assembler warnings and the decode warning. */
+  /** What of `source` was analyzed, when not the whole text as given (request.loop). */
+  loop?: LoopInfo;
+  /** Assembler warnings, notes (exits taken as not taken), and the decode warning. */
   stderr: StderrLine[];
 }
 
@@ -112,6 +135,7 @@ export interface AnalyzeSummary {
   limits: Limit[];
   decodeErrors: number;
   hex?: string;
+  loop?: LoopInfo;
   stderr: StderrLine[];
   instructions: Array<{
     instr: string;
@@ -138,16 +162,21 @@ export interface AnalyzeSummary {
 export interface Insights {
   /** Each limit (by name) and execution port (by column name): cycles / tp. 1 = busy every cycle. */
   utilization: Record<string, number>;
-  /** The bottleneck(s), or the largest limit if uiCA names none. */
+  /** The bottleneck(s) uiCA names: the same as the response's `bottlenecks` (limit names, and "Divider", which has no limit of its own). [] when it names none (no
+   * single limit explains tp; the web page says "unknown"): then see `largest`. */
   binding: string[];
-  /** The largest limit below the binding one; maxSpeedup = tp / next.tp (an upper bound). */
+  /** Only when `binding` is []: the largest limit(s), the nearest bound, which alone does not reach tp. */
+  largest?: string[];
+  /** The largest limit below the binding (or largest) one; maxSpeedup = tp / next.tp (an upper bound). */
   next?: { limit: string; tp: number; maxSpeedup: number | null };
   /** Cycles per iteration that no single limit explains. */
   unexplained?: number;
   /** The critical loop-carried dependency chain (index: into `instructions`). */
   chain?: { index: number; instr: string; operand: string; latency: number; carried: boolean }[];
-  /** The instructions with the largest share of the binding resource (top 5). */
+  /** The instructions with the largest share of the binding resource, or of the largest limit (top 5). */
   hot?: { resource: string; ports?: string[]; instructions: { index: number; instr: string; share: number }[] };
+  /** Known blind spots of the model the block meets (absent if none): rmw-index, exit, split; instructions: indexes. */
+  caveats?: { id: 'rmw-index' | 'exit' | 'split'; text: string; title: string; instructions: number[] }[];
   /** With options.details: the ports behind the Ports limit (cycles = uops / ports) and the instructions that load them. */
   portSet?: { ports: string[]; uops: number; cycles: number; instructions: { index: number; instr: string; uops: number }[] };
   /** With options.details: issue slots per iteration, used and lost by cause. */
@@ -186,6 +215,7 @@ export interface CompareResult {
   code: 0;
   /** The assembled machine code, when `source` was given. */
   hex?: string;
+  loop?: LoopInfo;
   stderr: StderrLine[];
   results: CompareRow[];
 }
@@ -195,6 +225,9 @@ export interface Wuica {
   analyze(arch: string, request: AnalyzeRequest): Promise<AnalyzeResult | Failure>;
   /** Single-object form: `arch` in the request (default "SKL"). */
   analyze(request: AnalyzeRequest & { arch?: string }): Promise<AnalyzeResult | Failure>;
+  /** The machine code an analysis of assembly text gets (as the web page reads it: the loop of a whole function, objdump
+   * lines, exits as not taken, ';' comments, a marked region); `bytes` and `hex` of the analyzed code, `loop` what was picked. */
+  machineCode(source: string, syntax?: Syntax, loop?: LoopChoice): Promise<{ code: 0; hex: string; bytes: Uint8Array; stderr: StderrLine[]; loop: LoopInfo | null } | Failure>;
   /** POST /api/compare: one block on several microarchitectures (default: all of archs()); assembled once. The
    * microarchitectures are analyzed on worker threads (CreateOptions.threads); the response is the same either way. */
   compare(request: CompareRequest): Promise<CompareResult | Failure>;
@@ -206,6 +239,9 @@ export interface Wuica {
   /** The compact form of a successful analyze() result; a Failure is returned unchanged. */
   summarize(result: AnalyzeResult): AnalyzeSummary;
   summarize(result: Failure): Failure;
+  /** The derived diagnosis of a successful analyze() result with its microarchitecture's configuration (as in the REST
+   * response and summarize()); null for a failure. */
+  insights(result: AnalyzeResult | Failure): Insights | null;
   /** The id for a user-supplied name (case-insensitive, "-" optional), DEFAULT_ARCH for empty input, or null. */
   resolveArch(arch?: string | null): string | null;
   /** How many times the analyzer was restarted after a trap. */
@@ -247,10 +283,12 @@ export const WARM_HEX: string;
 export const ARCH_ORDER: string[];
 export const ARCH_INFO: Record<string, { name: string; year: number }>;
 
-/** The derived diagnosis of an analysis (the web page's bound view; also `insights` in the MCP summary and the REST response). */
-export function insights(result: AnalyzeResult): Insights | null;
+/** The derived diagnosis of an analysis (the web page's bound view; also `insights` in the MCP summary and the REST response).
+ * `config` is the microarchitecture's configuration in uarch.json (only `splitLoadCycles` is read, for the `split` caveat);
+ * without it, as on a CPU without a split-load cost. The instance's insights() passes it. */
+export function insights(result: AnalyzeResult, config?: { splitLoadCycles?: number } | null): Insights | null;
 
-export type WhatIfVariant = 'unroll2' | 'unroll4' | 'unroll8' | 'simpleFrontEnd' | 'noMacroFusion' | 'noMicroFusion' | 'nochain';
+export type WhatIfVariant = 'unroll2' | 'unroll4' | 'unroll8' | 'acc2' | 'acc3' | 'acc4' | 'acc8' | 'simpleFrontEnd' | 'noMacroFusion' | 'noMicroFusion' | 'nochain';
 export const WHAT_IF_VARIANTS: readonly WhatIfVariant[];
 export interface WhatIfResult {
   code: 0;
@@ -259,8 +297,14 @@ export interface WhatIfResult {
   mode: 'loop' | 'unroll';
   bottlenecks: string[];
   unit: 'cycles per original iteration';
-  /** tp per original iteration, delta = tp − base tp, speedup = base tp / tp; estimate: no analysis (nochain). */
-  variants: { id: WhatIfVariant; label: string; tp?: number; delta?: number; speedup?: number | null; estimate?: boolean; bottlenecks?: string[]; error?: string }[];
+  loop?: LoopInfo;
+  /** tp per original iteration, delta = tp − base tp, speedup = base tp / tp; estimate: no analysis (nochain);
+   * renamed (accN): the chain's registers and the ones of the copies after the first. */
+  variants: { id: WhatIfVariant; label: string; tp?: number; delta?: number; speedup?: number | null; estimate?: boolean; bottlenecks?: string[]; renamed?: { from: string; to: string[] }[]; error?: string }[];
+  /** With accumulator variants: the best N (the smallest within 1% of the fastest; 1 = as it is) and its tp. */
+  accumulators?: { best: number; tp: number };
 }
-/** The what-if experiments of the web page (the MCP tool `what_if`), with `analyze` (e.g. a Wuica's analyze, bound). */
-export function whatIf(analyze: (arch: string, request: AnalyzeRequest) => Promise<AnalyzeResult | Failure>, arch: string, request: AnalyzeRequest, variants?: readonly WhatIfVariant[]): Promise<WhatIfResult | Failure>;
+/** The what-if experiments of the web page (the MCP tool `what_if`), with `analyze` (e.g. a Wuica's analyze, bound) and,
+ * for the accumulator variants, `assemble` (e.g. a Wuica's assemble, bound). */
+export function whatIf(analyze: (arch: string, request: AnalyzeRequest) => Promise<AnalyzeResult | Failure>, arch: string, request: AnalyzeRequest, variants?: readonly WhatIfVariant[],
+  tools?: { assemble?: (text: string) => Promise<AssembleResult | Failure> }): Promise<WhatIfResult | Failure>;

@@ -19,6 +19,13 @@ test('version constants match the repository', () => {
   assert.equal(v.wuica, JSON.parse(read('packages/wuica/package.json')).version);
 });
 
+test('the server and the library have the site\'s version (web/js/app.js; tests-js/web_version.mjs)', () => {
+  const site = /^const VERSION = '([^']+)';/m.exec(read('web/js/app.js'))[1];
+  const v = versionInfo();
+  assert.equal(v.wuica, site);
+  assert.equal(v.server, site);
+});
+
 test('capMemory sets a maximum on a module without one and lowers a larger one', async () => {
   // (module (memory 2)) and (module (memory 2 100)), with an exported memory
   const noMax = Uint8Array.from([0, 97, 115, 109, 1, 0, 0, 0, 5, 3, 1, 0, 2, 7, 10, 1, 6, 109, 101, 109, 111, 114, 121, 2, 0]);

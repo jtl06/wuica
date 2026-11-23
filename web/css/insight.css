@@ -17,8 +17,13 @@
 .grid th.ins-cost, .grid td.ins-cost { border-left: 1px solid var(--border); text-align: right; min-width: 6ch; }
 .grid thead th.ins-cost { cursor: help; }
 .grid td.ins-cost { color: var(--subtle); }
-.grid td.ins-cost.neg { color: var(--heading); }
-.grid td.ins-cost.pos { color: var(--caveat); }
+/* the blind spots under the throughput (render.js, caveats.js) */
+.cv-line { font-size: 0.85em; color: var(--subtle); }
+.cv-line .k { color: var(--description); }
+.cv-line .cv { color: var(--caveat); cursor: help; }
+
+.grid td.ins-cost.adds { color: var(--heading); }  /* it costs cycles: removing it saves them */
+.grid td.ins-cost.helps { color: var(--caveat); }  /* the block is slower without it */
 .grid td.ins-cost.top { background-color: rgb(var(--accent-rgb) / 0.16); box-shadow: inset 0 0 0 1px rgb(var(--accent-rgb) / 0.6); }
 .grid td.ins-cost[title] { cursor: help; }
 @media (max-width: 640px) {

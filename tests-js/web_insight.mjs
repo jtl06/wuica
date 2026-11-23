@@ -79,20 +79,21 @@ const CHAIN = {
   const u = costUnits(CHAIN, CHAIN_HEX);
   const res = new Map([[0, { tp: 1, mode: 'loop' }], [1, { tp: 1, mode: 'loop' }]]);
   let cells = costCells(CHAIN, u, res);
-  check(cells.map((c) => c.kind).join() === 'value,value,pending,fixed' && cells[0].text === '−1.00' && cells[3].text === '—', 'cells: values, pending, the loop branch', JSON.stringify(cells));
-  check(cells[0].top && cells[1].top && !cells[2].top, 'cells: equal largest savings are all marked');
+  // the cost: what the instruction adds (with it 2.00, without it 1.00: +1.00)
+  check(cells.map((c) => c.kind).join() === 'value,value,pending,fixed' && cells[0].text === '+1.00' && cells[0].delta === 1 && cells[3].text === '—', 'cells: values, pending, the loop branch', JSON.stringify(cells));
+  check(cells[0].top && cells[1].top && !cells[2].top, 'cells: equal largest costs are all marked');
   res.set(2, { tp: 2.25, mode: 'loop' });
   cells = costCells(CHAIN, u, res);
-  check(cells[2].text === '+0.25' && cells[2].delta === 0.25 && !cells[2].top && /2\.25 cycles\/iteration/.test(cells[2].title), 'cells: a positive Δ', JSON.stringify(cells[2]));
+  check(cells[2].text === '−0.25' && cells[2].delta === -0.25 && !cells[2].top && /^adds −0\.25 cycles\/iteration: removed, 2\.25 instead of 2\.00$/.test(cells[2].title), 'cells: a negative cost (slower without it)', JSON.stringify(cells[2]));
   res.set(0, { tp: 0.5, mode: 'loop' });
   cells = costCells(CHAIN, u, res);
-  check(cells[0].top && !cells[1].top, 'cells: only the largest saving is marked');
+  check(cells[0].top && !cells[1].top && cells[0].text === '+1.50', 'cells: only the largest cost is marked');
   res.set(1, { error: 'boom' });
   res.set(0, { tp: 1, mode: 'unroll' });
   cells = costCells(CHAIN, u, res);
   check(cells[0].kind === 'na' && /unrolled/.test(cells[0].title) && cells[1].kind === 'na' && /boom/.test(cells[1].title) && !cells.some((c) => c.top), 'cells: another mode or an error give no value');
   const none = costCells(CHAIN, u, new Map([[0, { tp: 2, mode: 'loop' }], [1, { tp: 3, mode: 'loop' }], [2, { tp: 2, mode: 'loop' }]]));
-  check(!none.some((c) => c.top) && none[0].text === '0.00', 'cells: no saving, nothing marked');
+  check(!none.some((c) => c.top) && none[0].text === '0.00' && none[1].text === '−1.00', 'cells: no cost, nothing marked');
   const mid = { tp: 3, mode: 'unroll', rows: [extra('regMerge'), instr('add ah, bl', '00dc'), instr('cmp rax, rbx', '4839d8'), instr('jz 0x7', '7400', 'M')] };
   const mc = costCells(mid, costUnits(mid, '00dc4839d87400'), new Map([[1, { tp: 2, mode: 'unroll' }]]), 'nop');
   check(mc[0].kind === 'none' && mc[0].text === '' && mc[3].kind === 'with' && mc[3].text === '↑' && /NOPs together/.test(mc[3].title) && /macro-fused instruction below/.test(mc[2].title), 'cells: inserted uops and the second of a fused pair', JSON.stringify(mc));
@@ -139,7 +140,7 @@ if (!fs.existsSync(wasm) || !fs.existsSync(new URL('data/uarch.json', root))) {
     for (const j of costJobs(u.units, mid)) results.set(j.unit, summarize(await e.analyze(makeRequest(j.hex, 'SKL'))));
     const cells = costCells(base, u, results);
     const pair = await e.analyze(makeRequest('4883c00149ffcf75f2', 'SKL')); // hard-coded: without cmp and jz
-    check(cells[0].delta === delta(pair.tp, base.tp) && cells[1].text === '↑' && cells[4].text === '—', 'real: the pair\'s Δ is that of the block without both', JSON.stringify([cells.map((c) => c.text), pair.tp, base.tp]));
+    check(cells[0].delta === delta(base.tp, pair.tp) && cells[1].text === '↑' && cells[4].text === '—', 'real: the pair\'s cost is that of the block without both', JSON.stringify([cells.map((c) => c.text), pair.tp, base.tp]));
   }
   // an unrolled block: every instruction can go; undecodable bytes: no cost column
   {
@@ -174,7 +175,7 @@ if (!fs.existsSync(wasm) || !fs.existsSync(new URL('data/uarch.json', root))) {
         if (next?.notes === 'M' && i + 1 !== instrs[instrs.length - 1][1]) t = span.get(i + 1)[1];
         const h = ex.hex.slice(0, 2 * s) + (variant === 'nop' ? nopHex(t - s) : '') + ex.hex.slice(2 * t);
         const m = await e.analyze(makeRequest(h, ex.arch));
-        const want = m.mode === base.mode ? (Math.round(m.tp * 100) - Math.round(base.tp * 100)) / 100 : null;
+        const want = m.mode === base.mode ? (Math.round(base.tp * 100) - Math.round(m.tp * 100)) / 100 : null;
         if (want === null ? c.kind !== 'na' : c.delta !== want) { ok = false; console.log(ex.id, variant, i, c, m.tp, base.tp); }
       }
       if (process.env.SHOW) console.log(ex.id, variant, base.tp, cells.map((c) => c.text).join(" "));

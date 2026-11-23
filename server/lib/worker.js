@@ -93,7 +93,8 @@ async function code(req) {
   // every instruction takes at least 2 characters plus a separator, and only directives (which all contain a '.':
   // .rept, .fill, .p2align, .macro, ...) make code out of nothing; any '.' takes the slow path (assemble and count)
   if (source.length <= cfg.maxInstructions && !source.includes('.')) return { small: true };
-  const a = await w.assemble(source, req.syntax ?? 'intel');
+  // the code the analysis gets (the loop of a whole function, exits as not taken: the library's machineCode)
+  const a = await w.machineCode(source, req.syntax ?? 'intel', req.loop ?? 'auto');
   return a.code === 0 ? { bytes: a.bytes } : null;
 }
 

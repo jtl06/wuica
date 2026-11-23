@@ -24,7 +24,8 @@ import { createViews } from './views.js';         // the opt-in views below the 
 import { createABSlots } from './ab-slots.js';     // A–B: the issue slots of both sides
 import { createCmpSlots } from './cmp-slots.js';   // the issue slots per CPU in the CPU table (bound view open)
 import { withRegions } from './asm-regions.js';     // marked regions and .loc lines of pasted assembly
-import { createRegionChip } from './region-chip.js';
+import { createRegionChip, createLoopChip } from './region-chip.js';
+import { replacesText } from './loop-find.js';
 import { createKeys } from './keys.js';           // keyboard shortcuts, the ? overlay
 import { createABCpus } from './ab-cpus.js';       // A–B on every checked CPU
 import { branchLabels, startLabel } from './branch-label.js'; // branch targets as labels in the uop table
@@ -35,7 +36,7 @@ const MOCK = query.get('mock') === '1';       // ?mock=1: do not load the analyz
 const NO_SW = query.get('nosw') === '1';      // ?nosw=1: do not register the service worker
 // ?pool=N: N workers for the compare panels and the cost column (0: none, they share the main analyzer's worker)
 const POOL_SIZE = query.has('pool') ? Math.max(0, Math.min(16, Number.parseInt(query.get('pool'), 10) || 0)) : poolSize();
-const VERSION = '0.1.5';                  // the page's version (footer); bump it here
+const VERSION = '0.1.6';                  // the page's version (footer); bump it with packages/wuica and server (tests-js/web_version.mjs)
 
 const el = {
   notice: $('notice'), code: $('code'), codeHint: $('code-hint'), messages: $('input-messages'),
@@ -141,7 +142,21 @@ const insight = createInsight({
 });
 let pastedSource = null; // the .loc lines of pasted assembly (asm-regions.js), bound to its bytes
 const regionChip = createRegionChip(el.messages, (line) => selectLine(line));
-const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o), onToggle: (open) => { Object.assign(state, open); syncUrl(true); if ('bound' in open) cmpSlots.decorate(); }, getSel: () => state.sel, getSource: () => (ceSource && (!pastedSource || ceSource.hex === lastView?.hex) ? ceSource : pastedSource),
+// what of pasted assembly is analyzed (loop-find.js): the loop chip sets state.loop
+const loopChip = createLoopChip(el.messages, (v) => { if (state.loop === v) return; state.loop = v; changed({ rerun: true }); });
+// Where the alignment offset came from: 'auto' (the analyzed code's address, objdump input: set again for each pick, and
+// back to the default for a text without addresses), 'manual' (by hand, a link, an import: kept until the text is
+// replaced), or null (the default).
+let alignBy = null;
+// Side B of A–B: its own pick (not in the link) and its loop chip (made with the A–B view)
+let bLoop = 'auto';
+let bLoopChip = null;
+// (a text that replaces the box's text: loop-find.js, replacesText)
+let textA = '', textB = '';
+function newTextA() { state.loop = 'auto'; if (alignBy === 'manual') alignBy = null; textA = el.code.value; }
+function newTextB() { bLoop = 'auto'; textB = document.getElementById('code-b')?.value ?? ''; }
+const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o),
+  assemble: async (text) => { const a = await ensureAssembler(); return a ? a.assemble(text, 'intel') : null; }, cpus: () => checked, onToggle: (open) => { Object.assign(state, open); syncUrl(true); if ('bound' in open) cmpSlots.decorate(); }, getSel: () => state.sel, getSource: () => (ceSource && (!pastedSource || ceSource.hex === lastView?.hex) ? ceSource : pastedSource),
   // llvm-mca (mca.js): its module only if the build has it, downloaded on first use; the bytes as Intel assembly
   mca: {
     available: () => !!manifest.mca && !MOCK,
@@ -260,8 +275,25 @@ function paintDerived() {
   paintStale();
 }
 
-function runKey() {
-  return JSON.stringify([state.mode, state.mode === 'asm' ? state.syntax : '', el.code.value, state.arch, options(), ab?.key() ?? '']);
+// The input of a run. input: the parts a run captured at its start ({mode, syntax, text, arch, ab}); the loop and the
+// options are always the current ones (the assembly can set the loop back to auto and the alignment offset).
+function runInput() {
+  return { mode: state.mode, syntax: state.syntax, text: el.code.value, arch: state.arch, ab: `${ab?.key() ?? ''}|${state.ab ? bLoop : ''}` };
+}
+function runKey(input = runInput()) {
+  return JSON.stringify([input.mode, input.mode === 'asm' ? input.syntax : '', input.text, input.mode === 'asm' ? state.loop : '', input.arch, options(), input.ab]);
+}
+// The input does not assemble (or parse): the result shown is for an older input. Dimmed (paintStale), and said.
+let inputErrorNote = null;
+function inputError(on) {
+  on = on && !!lastView;
+  if (!on) { inputErrorNote?.remove(); inputErrorNote = null; return; }
+  el.body.classList.add('stale-now'); // (an error is not typing: dimmed at once)
+  if (!inputErrorNote?.isConnected) {
+    inputErrorNote = h('p', { class: 'input-stale', id: 'input-stale', role: 'status', text: 'stale: the input has an error' });
+    el.body.before(inputErrorNote);
+  }
+  paintStale();
 }
 // drawn: an A–B result was just drawn; if its input changed while it ran (e.g. B edited while A and B ran), it dims at
 // once (style.css: otherwise only after a pause in typing, as single mode's result does)
@@ -350,6 +382,7 @@ function setChecked(keys) {
   paintCpus();
   panels.refreshCpus();
   if (lastView?.ab) updateABCpus(lastView.ab, { auto: true });
+  views.refreshCpus(); // the try tab's best number of accumulators per checked CPU
 }
 // the focused CPU changed elsewhere (A–B swap, an example of the mock): it is checked too
 function keepFocusChecked() {
@@ -417,6 +450,7 @@ function scheduleRun() {
 
 function clearMessages() {
   regionChip.sync(state.mode === 'asm' ? el.code.value : null); // kept only for the text it was shown for
+  loopChip.sync(state.mode === 'asm' ? el.code.value : null);
   el.messages.replaceChildren();
   delete el.messages.dataset.key;
   el.code.removeAttribute('aria-invalid');
@@ -478,6 +512,7 @@ function setMode(mode, converted = null) { // converted: the code in the new for
   clearMessages();
   writeControls();
   regionChip.sync(state.mode === 'asm' ? el.code.value : null); // back to the marked text (asm -> hex -> asm)
+  loopChip.sync(state.mode === 'asm' ? el.code.value : null);
   if (mode === 'asm') {
     ensureAssembler().then((a) => { if (!a && state.mode === 'asm') showAssemblerMissing(); paintDerived(); });
   }
@@ -517,7 +552,16 @@ function ensureAssembler() {
 async function assemblerForRun() {
   const signal = assembling?.signal;
   const a = await ensureAssembler();
-  return a && { mock: a.mock, assemble: (text, syntax) => a.assemble(text, syntax, { signal }) };
+  if (!a) return a;
+  const assemble = async (text, syntax) => {
+    let r = await a.assemble(text, syntax, { signal, loop: bLoop });
+    // a loop picked for another text: the first one again
+    if (!r.ok && bLoop !== 'auto' && r.diagnostics.some((d) => /^loop: /.test(d.message))) { bLoop = 'auto'; r = await a.assemble(text, syntax, { signal, loop: bLoop }); }
+    bLoopChip?.show(r.choosable ? r : null, text);
+    if (!textB) textB = text; // (B's text from a link or a swap, before any input in its box)
+    return r;
+  };
+  return { mock: a.mock, assemble };
 }
 
 async function loadExample(ex) {
@@ -534,6 +578,7 @@ async function loadExample(ex) {
   const key = state.mode === 'asm' ? state.syntax : 'hex';
   el.code.value = buffers[state.mode] = ex.text[key];
   if (state.ab) ab.replacedA(); // other code: its elements per iteration start again
+  newTextA();
   // the mock has the reference's result for this microarchitecture
   if (engine?.capabilities.mock && archItems.has(ex.arch) && state.arch !== ex.arch) focusArch(ex.arch, { rerun: false });
   clearMessages();
@@ -672,7 +717,7 @@ function draw() {
   tracePanel.setOpen(state.trace); // (opened or closed in A–B mode meanwhile)
   const trace = lastView.response && !lastView.response.error && Array.isArray(lastView.response.rows) ? tracePanel.update(lastView) : null;
   const onUi = (k, v) => { ui[k] = v; if (k === 'hideEmpty' || k === 'allRows') draw(); };
-  renderResult(el.body, { ...lastView, ui, onUi });
+  renderResult(el.body, { ...lastView, config: uarch?.configs?.[lastView.archKey], ui, onUi });
   showTrace(trace);
   insight.decorate(el.body, lastView);
   traceLink.decorate(el.body, lastView, { onUi });
@@ -682,7 +727,7 @@ function draw() {
 
 async function machineCode(id) {
   const text = el.code.value;
-  pastedSource = null; regionChip.show(null); regionA = null;
+  pastedSource = null; regionChip.show(null); loopChip.show(null); regionA = null;
   if (state.mode === 'hex') {
     const p = parseHexInput(text);
     if (!p.ok) {
@@ -705,18 +750,33 @@ async function machineCode(id) {
   if (!assembler) { showAssemblerMissing(); paintDerived(); return null; }
   let r;
   try {
-    r = await assembler.assemble(text, state.syntax, { signal: assembling?.signal });
+    r = await assembler.assemble(text, state.syntax, { signal: assembling?.signal, loop: state.loop });
+    // a loop picked for another text that has fewer loops: the first one again
+    if (!r.ok && state.loop !== 'auto' && id === runSeq && r.diagnostics.some((d) => /^loop: /.test(d.message))) {
+      state.loop = 'auto';
+      r = await assembler.assemble(text, state.syntax, { signal: assembling?.signal, loop: state.loop });
+    }
   } catch (e) {
     if (e?.name === 'CancelledError') return null; // replaced by a newer run, an edit, or Cancel
     throw e;
   }
   if (id !== runSeq) return null;
+  // the alignment offset from the analyzed code's address (objdump), for each pick; none for a text without addresses
+  // (not one left from the last text); an offset set by hand, in a link or by an import stays
+  if (r.ok && alignBy !== 'manual') {
+    const want = Number.isInteger(r.alignment) ? r.alignment : alignBy === 'auto' ? DEFAULT_STATE.alignmentOffset : null;
+    if (want !== null) {
+      alignBy = Number.isInteger(r.alignment) ? 'auto' : null;
+      if (state.alignmentOffset !== want) { state.alignmentOffset = want; el.align.value = want; paintDerived(); }
+    }
+  }
   // what it assembled to is the result's objdump listing
   const items = [...r.diagnostics];
   if (r.ok && r.bytes.length === 0) items.push({ line: null, column: null, severity: 'error', message: 'No machine code' });
   if (r.ok && r.bytes.length && assembler.mock) items.push({ line: null, column: null, severity: 'note', message: 'mock assembler' });
   if (items.length) showMessages(items); else clearMessages();
-  if (r.ok && r.bytes.length) { regionChip.show(r.region ?? null, text); pastedSource = r.source ? { ...r.source, hex: toHex(r.bytes) } : null; regionA = r.region ?? null; }
+  if (r.ok && r.bytes.length) { regionChip.show(r.region ?? null, text); loopChip.show(r, text); pastedSource = r.source ? { ...r.source, hex: toHex(r.bytes) } : null; regionA = r.region ?? null; }
+  else if (r.choosable) loopChip.show(r, text); // the pick does not assemble: "whole" (or another loop) stays reachable
   return r.ok && r.bytes.length ? r.bytes : null;
 }
 
@@ -759,7 +819,8 @@ async function run({ auto = false } = {}) {
   if (!auto) { liveRunner.cancel(); cancelledKey = ''; settleMode(); }
   if (!ready || el.run.disabled) return;
   if (ce?.linkBox()) return; // a box that holds only a Compiler Explorer link is imported (analyze()), never analyzed
-  const key = runKey();
+  const input = runInput();
+  let key = runKey(input);
   const messages = !!el.messages.firstChild || !!ab?.hasMessages();
   if (auto && ((busy && key === inflight.key) || key === cancelledKey || (lastView && key === lastRunKey && !messages))) return;
   // a newer request replaces the one that is running (an assembly is always stopped: its input is out of date)
@@ -771,7 +832,7 @@ async function run({ auto = false } = {}) {
   assembling = ctrl;
   if (ab?.active()) { await runCompare(id, key, { auto, ctrl }); return; } // awaited: live mode runs one comparison at a time
   const archKey = state.arch;
-  const opts = options();
+  let opts = options();
   const item = archItems.get(archKey);
   const text0 = el.code.value; // (the label of the block's start, for its branch targets)
   let bytes;
@@ -788,8 +849,14 @@ async function run({ auto = false } = {}) {
   if (!bytes || id !== runSeq) {
     if (inflight.id === id) inflight = { id: 0, key: '' };
     if (id === runSeq && busy) setBusy(false);
+    // (only for an error shown: not for a cancelled assembly or a missing assembler)
+    if (id === runSeq && el.code.getAttribute('aria-invalid') === 'true') inputError(true);
     return;
   }
+  inputError(false);
+  // the assembly can set the alignment offset (from the text's addresses) and the loop (back to auto): the key of the
+  // input this run assembled, with those
+  if (runKey(input) !== key) { key = runKey(input); opts = options(); syncUrl(); }
   const hex = toHex(bytes);
 
   setBusy(true, { defer: auto });
@@ -863,11 +930,15 @@ async function runCompare(id, key, { auto = false, ctrl = null } = {}) {
   } finally {
     if (assembling === ctrl) assembling = null;
   }
+  // a side whose input has an error: the comparison shown is for an older input (dimmed, said)
+  const invalid = () => el.code.getAttribute('aria-invalid') === 'true' || ab.textareaB.getAttribute('aria-invalid') === 'true';
   if (!input || !current()) {
     if (inflight.id === id) inflight = { id: 0, key: '' };
     if (current() && busy) setBusy(false);
+    if (current() && invalid()) inputError(true);
     return;
   }
+  inputError(false); // (a side with an error is drawn as such)
   setBusy(true, { defer: auto });
   inflight = { id, key };
   try {
@@ -945,6 +1016,7 @@ function importCode({ mode, syntax, text }, { run: andRun = true } = {}) {
   if (mode === 'asm' || mode === 'hex') setMode(mode);
   if (syntax === 'intel' || syntax === 'att') state.syntax = syntax;
   el.code.value = buffers[state.mode] = text;
+  newTextA();
   clearMessages();
   writeControls();
   changed({ now: true });
@@ -1030,9 +1102,9 @@ function setupFeatures() {
     sides: () => (state.ab ? ['A', 'B'] : ['A']),
     getCode: (side) => (side === 'B' ? ab.getB() : { mode: state.mode, syntax: state.syntax, text: el.code.value }),
     importInto(side, code, { alignment = null, undo = false, source = null } = {}) {
-      if (alignment !== null) state.alignmentOffset = alignment;
       let analysis = null;
-      if (side === 'B') { ab.setB(code); writeControls(); if (ready && !undo) analysis = run(); } else { analysis = importCode(code, { run: !undo }); if (state.ab) ab.replacedA(); }
+      if (side === 'B') { ab.setB(code); newTextB(); writeControls(); if (ready && !undo) analysis = run(); } else { analysis = importCode(code, { run: !undo }); if (state.ab) ab.replacedA(); }
+      if (alignment !== null) { state.alignmentOffset = alignment; el.align.value = alignment; alignBy = 'manual'; }
       if (side === 'A') ceSourceOf(source, analysis);
       if (!undo && code.mode === 'hex') importAsAsm(side, code.text, analysis);
     },
@@ -1068,6 +1140,16 @@ function setupFeatures() {
     switchMode: (mode, other, apply) => switchMode('B', mode, other, apply),
   });
   ce.watch(el.code, 'A', el.messages);
+  // side B's loop chip, and its pick back to the first loop when B's text is replaced
+  const bCode = document.getElementById('code-b');
+  if (bCode) {
+    bLoopChip = createLoopChip(document.getElementById('b-messages'), (v) => { if (bLoop === v) return; bLoop = v; changed({ rerun: true }); }, 'loop-chip-b');
+    textB = bCode.value;
+    bCode.addEventListener('input', () => {
+      if (replacesText(textB, bCode.value)) newTextB(); else textB = bCode.value;
+      bLoopChip.sync(state.bMode === 'asm' ? bCode.value : null);
+    });
+  }
 }
 
 // ---- offline: service worker and background caching ------------------------------------------------------------------
@@ -1160,6 +1242,9 @@ function restore(fragment) {
   const s = decodeState(fragment);
   if (!s) return false;
   Object.assign(state, s);
+  // an alignment offset in the link is kept (not replaced by one from the text's addresses)
+  if (s.alignmentOffset !== DEFAULT_STATE.alignmentOffset) alignBy = 'manual';
+  textA = s.text;
   buffers.hex = buffers.asm = '';
   buffers[state.mode] = s.text;
   delete state.text;
@@ -1187,7 +1272,12 @@ function bind() {
     el.examples.value = '';
     if (ex) loadExample(ex);
   });
-  el.code.addEventListener('input', (e) => { buffers[state.mode] = el.code.value; changed({ now: replaced(e) }); });
+  el.code.addEventListener('input', (e) => {
+    buffers[state.mode] = el.code.value;
+    if (state.mode === 'asm' && replacesText(textA, el.code.value)) newTextA(); else textA = el.code.value;
+    changed({ now: replaced(e) });
+  });
+  el.align.addEventListener('change', () => { alignBy = 'manual'; });
   el.cpuGrid.addEventListener('change', cpusChanged);
   el.cpuAll.addEventListener('click', () => { setChecked([...archItems.keys()]); paintDerived(); syncUrl(true); });
   el.cpuClear.addEventListener('click', () => { setChecked([state.arch]); paintDerived(); syncUrl(true); });

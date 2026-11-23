@@ -49,7 +49,7 @@ async function expectedCost(ex, variant) {
     if (i === lines.length - 1) { out.push('—'); continue; }
     const hex = lines.map((b, k) => (k !== i ? b : variant === 'nop' ? NOP[b.length / 2] : '')).join('');
     const r = await tpOf(hex, ex.arch);
-    out.push(r.mode === base.mode ? fmt((Math.round(r.tp * 100) - Math.round(base.tp * 100)) / 100) : '—');
+    out.push(r.mode === base.mode ? fmt((Math.round(base.tp * 100) - Math.round(r.tp * 100)) / 100) : '—'); // what it adds
   }
   return out;
 }
@@ -59,8 +59,8 @@ const CHAIN_REMOVE = await Promise.all(['4883c00149ffcf75f3', '4883c00149ffcf75f
 const CHAIN_NOP = await Promise.all(['0f1f40004883c00149ffcf75f3', '4883c0010f1f400049ffcf75f3', '4883c0014883c0010f1f0075f3'].map((x) => tpOf(x, 'SKL')));
 const want = {};
 for (const ex of EXAMPLES) want[ex.id] = { remove: await expectedCost(ex, 'remove'), nop: await expectedCost(ex, 'nop') };
-check(JSON.stringify(want.chain.remove.slice(0, 3)) === JSON.stringify(CHAIN_REMOVE.map((r) => fmt(r.tp - 2))), 'node: the chain example, removal', JSON.stringify([want.chain.remove, CHAIN_REMOVE.map((r) => r.tp)]));
-check(JSON.stringify(want.chain.nop.slice(0, 3)) === JSON.stringify(CHAIN_NOP.map((r) => fmt(Math.round((r.tp - 2) * 100) / 100))), 'node: the chain example, NOPs', JSON.stringify([want.chain.nop, CHAIN_NOP.map((r) => r.tp)]));
+check(JSON.stringify(want.chain.remove.slice(0, 3)) === JSON.stringify(CHAIN_REMOVE.map((r) => fmt(2 - r.tp))), 'node: the chain example, removal', JSON.stringify([want.chain.remove, CHAIN_REMOVE.map((r) => r.tp)]));
+check(JSON.stringify(want.chain.nop.slice(0, 3)) === JSON.stringify(CHAIN_NOP.map((r) => fmt(Math.round((2 - r.tp) * 100) / 100))), 'node: the chain example, NOPs', JSON.stringify([want.chain.nop, CHAIN_NOP.map((r) => r.tp)]));
 
 // a large block: 1000 adds; dec r15; jnz (rel32): about 100 times the budget of 2 s (0.2 s per analysis today). The adds
 // cycle through 49 different ones (add r64, r64 without rsp), so that the 1000 blocks without one of them all differ (equal
@@ -176,15 +176,15 @@ try {
       document.querySelector('.ins-cost-box').click();
       out.again = [body().dataset.cost, cost()];
       return out;`);
-    check(r.tp === '2.00' && r.head[2] === 'Δ' && r.head[0] === 'Instruction' && r.head[1] === 'Notes', 'cost: a Δ column after the notes', JSON.stringify(r.head));
+    check(r.tp === '2.00' && r.head[2] === 'cost' && r.head[0] === 'Instruction' && r.head[1] === 'Notes', 'cost: a cost column after the notes', JSON.stringify(r.head));
     check(JSON.stringify(r.cost) === JSON.stringify(want.chain.remove), 'cost: the chain example equals independent analyses of the blocks without each instruction', JSON.stringify([r.cost, want.chain.remove]));
-    check(r.top.join() === '0,1' && /removed: 1\.00 cycles\/iteration \(−1\.00\)/.test(r.costTitle), 'cost: the largest saving is marked; the tooltip has the throughput', JSON.stringify([r.top, r.costTitle]));
+    check(r.top.join() === '0,1' && /^adds \+1\.00 cycles\/iteration: removed, 1\.00 instead of 2\.00/.test(r.costTitle), 'cost: the largest cost is marked; the tooltip has the throughput', JSON.stringify([r.top, r.costTitle]));
     check(r.chain[0] === 'chain' && r.chain[1] === 'add rax, 0x1 → add rax, 0x1 ↻' && r.chain[2] === '2.00 cycles/iteration' && r.chain[3] === 'nowrap' && r.afterLimits, 'chain: a line under the limits', JSON.stringify(r.chain));
     check(r.marked.join('|') === '← rax|← rax||' && /^critical dependency chain: 2\.00 cycles\/iteration\nreads rax from add rax, 0x1 \(1 cycle, previous iteration\)/.test(r.title) && r.marker === '" ← rax"', 'chain: its rows are marked, with the edges in the tooltip', JSON.stringify([r.marked, r.title, r.marker]));
     check(r.arrows[0] === 'rax, 1 cycle' && r.arrows[1] === 'rax, 1 cycle, into the next iteration', 'chain: the arrows say what flows', JSON.stringify(r.arrows));
     check(/[#&]cost=1(&|$)/.test(r.hash), 'cost: in the fragment', r.hash);
     check(JSON.stringify(r.nop) === JSON.stringify(want.chain.nop) && /cost=1&costnop=1/.test(r.nopHash), 'cost: the NOP variant equals independent analyses; remembered', JSON.stringify([r.nop, want.chain.nop, r.nopHash]));
-    check(!r.off.head.includes('Δ') && r.off.head.length === 9 && r.off.rows[0] === 'add rax, 0x1|1|1|1|0.22|0.22|0.29|0.27' && r.off.rows[3] === 'jnz loop|M' && !/cost/.test(r.off.hash) && r.off.state === 'off' && r.off.select, 'cost: off, the table is as before and the fragment forgets it', JSON.stringify(r.off));
+    check(!r.off.head.includes('cost') && r.off.head.length === 9 && r.off.rows[0] === 'add rax, 0x1|1|1|1|0.22|0.22|0.29|0.27' && r.off.rows[3] === 'jnz 0x0|M' && !/cost/.test(r.off.hash) && r.off.state === 'off' && r.off.select, 'cost: off, the table is as before and the fragment forgets it', JSON.stringify(r.off));
     check(r.again[0] === 'done' && JSON.stringify(r.again[1]) === JSON.stringify(want.chain.nop), 'cost: on again, from the cache', JSON.stringify(r.again));
     await page.shot('insight-chain.png');
 

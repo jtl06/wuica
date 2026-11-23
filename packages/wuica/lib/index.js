@@ -18,6 +18,10 @@ export { detailInsights };
 import { readMaybeCompressed } from './files.js';
 import { CODES, WARM_HEX, failure, tableFailure, analysisResult, compareFields } from './core.js';
 import { ThreadPool, threadLimit, threadOption, threadsFor } from './threads.js';
+// the web page's reading of pasted assembly (copies of web/js in lib/web: tests-js/web_pkg_copies.mjs): the loop of a whole function, objdump lines,
+// exits as not taken, ';' comments, region markers
+import { assembleMarked, commentFixes, separatorNotes } from './web/asm-regions.js';
+import { normalizeText } from './web/loop-find.js';
 
 export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, CODES, WARM_HEX, parseDiagnostics, insights };
 export { whatIf, VARIANTS as WHAT_IF_VARIANTS } from './whatif.js';
@@ -60,7 +64,19 @@ export function stderrLines(message) {
   });
 }
 
-const REQUEST_KEYS = ['source', 'asm', 'hex', 'syntax', 'options'];
+const REQUEST_KEYS = ['source', 'asm', 'hex', 'syntax', 'loop', 'options'];
+
+// `loop` of a request: what of the source is analyzed (web/js/loop-find.js). null if it is not one of these.
+export const LOOP_CHOICES = Object.freeze(['auto', 'whole']);
+const loopChoice = (v) => (v === undefined || v === null ? 'auto' : LOOP_CHOICES.includes(v) || (Number.isSafeInteger(v) && v >= 0) ? v : null);
+
+// Diagnostics ({line, column, severity, message}) as stderr lines in llvm-mc's form, with tags.
+function diagnosticLines(diagnostics) {
+  return diagnostics.map((d) => ({
+    text: `<input>:${d.line ?? 0}:${d.column ?? 0}: ${d.severity}: ${d.message}`,
+    ...(d.line ? { tag: { line: d.line, column: d.column ?? 0, severity: d.severity, text: d.message } } : {}),
+  }));
+}
 
 // The simulation options of a request: `options`, and (as a convenience) option keys at the top level of the request;
 // `options` wins. Unknown keys, at the top level or in `options`, are an error rather than being ignored.
@@ -172,22 +188,73 @@ class Wuica {
     const s = syntaxCode(syntax);
     if (s < 0) return failure(CODES.REQUEST, `unknown syntax "${syntax}" (use "intel" or "att")`);
     // a byte order mark (a file saved by some Windows editors) is not part of the code: LLVM would reject it
-    const r = (await this.#getAssembler()).assemble(source.replace(/^\uFEFF/, ''), s);
+    const asm = await this.#getAssembler();
+    // (CRLF and a lone CR are line feeds)
+    let text = normalizeText(source).replace(/^\uFEFF/, '');
+    let r = asm.assemble(text, s);
+    // ';' comments: a ';' whose rest the assembler rejects is retried as '#' (web/js/asm-regions.js)
+    const notes = [];
+    for (let round = 0; !r.ok && r.status !== 'trap' && round < 8; round++) {
+      const { fixes, notes: n } = commentFixes(parseDiagnostics(r.message), text);
+      notes.push(...n);
+      if (!fixes.size) break;
+      const lines = text.split('\n');
+      for (const [l, t] of fixes) lines[l - 1] = t;
+      text = lines.join('\n');
+      r = asm.assemble(text, s);
+    }
     if (!r.ok) {
       if (r.status === 'trap') return failure(CODES.ASSEMBLER, r.message, undefined, { trapped: true });
       const first = parseDiagnostics(r.message).find((d) => d.severity === 'error');
       const error = first ? `assembly failed: ${first.line !== null ? `line ${first.line}: ` : ''}${first.message}` : 'assembly failed';
       return failure(CODES.ASSEMBLER, error, stderrLines(r.message));
     }
-    return { code: CODES.OK, hex: Buffer.from(r.bytes).toString('hex'), length: r.bytes.length, bytes: r.bytes, stderr: stderrLines(r.message) };
+    return { code: CODES.OK, hex: Buffer.from(r.bytes).toString('hex'), length: r.bytes.length, bytes: r.bytes,
+      stderr: [...stderrLines(r.message), ...diagnosticLines([...notes, ...separatorNotes(text)])] };
   }
 
-  // {source | asm | hex, syntax} -> {hex, assembled, stderr} or a failure.
+  // The machine code an analysis of assembly text gets (as the web page reads it): the loop of a whole function, objdump
+  // lines, exits as not taken, ';' comments, a marked region (web/js/loop-find.js, asm-regions.js). loop: 'auto',
+  // 'whole' or a loop's index. -> {code: 0, hex, bytes, stderr, loop} (loop: what was picked, or null) or a failure.
+  async machineCode(source, syntax = 'intel', loop = 'auto') {
+    if (typeof source !== 'string') return failure(CODES.REQUEST, '`source` must be a string');
+    const s = syntaxCode(syntax);
+    if (s < 0) return failure(CODES.REQUEST, `unknown syntax "${syntax}" (use "intel" or "att")`);
+    if (loopChoice(loop) === null) return failure(CODES.REQUEST, '`loop` must be "auto", "whole" or the index of a loop (0, 1, ...)');
+    const asm = await this.#getAssembler();
+    let trap = null;
+    const assemble = async (t) => {
+      const r = asm.assemble(t, s);
+      if (!r.ok && r.status === 'trap') trap = r.message;
+      return { ok: r.ok, bytes: r.bytes, diagnostics: parseDiagnostics(r.message) };
+    };
+    const text = normalizeText(source).replace(/^\uFEFF/, '');
+    const r = await assembleMarked(assemble, text, { loop: loopChoice(loop) });
+    if (trap) return failure(CODES.ASSEMBLER, trap, undefined, { trapped: true });
+    if (!r.ok) {
+      const bad = r.diagnostics.find((d) => /^loop: /.test(d.message));
+      if (bad) return failure(CODES.REQUEST, bad.message);
+      const first = r.diagnostics.find((d) => d.severity === 'error');
+      const error = first ? `assembly failed: ${first.line ? `line ${first.line}: ` : ''}${first.message}` : 'assembly failed';
+      // llvm-mc's own lines (with the source line and the caret) when the text alone fails on the same line
+      const plain = asm.assemble(text, s);
+      const same = !plain.ok && first && parseDiagnostics(plain.message).find((d) => d.severity === 'error')?.line === first.line;
+      return failure(CODES.ASSEMBLER, error, same ? stderrLines(plain.message) : diagnosticLines(r.diagnostics));
+    }
+    // what was analyzed, if not the whole text as it is: the loop (or body) picked, or the alignment from addresses
+    const picked = r.loop ?? (r.alignment !== null ? { index: null, count: r.loops.length, name: 'whole', line: null, endLine: null, address: null, alignment: r.alignment } : null);
+    const loopInfo = picked && { index: picked.index, count: picked.count, name: picked.name, line: picked.line, endLine: picked.endLine,
+      ...(picked.address !== null && picked.address !== undefined ? { address: picked.address } : {}), ...(r.alignment !== null ? { alignmentOffset: r.alignment } : {}) };
+    return { code: CODES.OK, hex: Buffer.from(r.bytes).toString('hex'), bytes: r.bytes, stderr: diagnosticLines(r.diagnostics), loop: loopInfo };
+  }
+
+  // {source | asm | hex, syntax, loop} -> {hex, assembled, stderr, loop} or a failure.
   async #code(req) {
     const source = req.source ?? req.asm;
     const hasSource = source !== undefined && source !== null;
     const hasHex = req.hex !== undefined && req.hex !== null;
     if (hasSource === hasHex) return failure(CODES.REQUEST, 'give exactly one of `source` (assembly text) and `hex` (machine code)');
+    if (loopChoice(req.loop) === null) return failure(CODES.REQUEST, '`loop` must be "auto", "whole" or the index of a loop (0, 1, ...)');
     if (hasHex) {
       if (req.syntax !== undefined && syntaxCode(req.syntax) < 0) return failure(CODES.REQUEST, `unknown syntax "${req.syntax}"`);
       const hex = normalizeHex(req.hex);
@@ -198,10 +265,16 @@ class Wuica {
     // 16- or 32-bit code would be analyzed as 64-bit code (the analyzer only models 64-bit mode)
     const mode = typeof source === 'string' ? codeModeError(source) : null;
     if (mode) return failure(CODES.REQUEST, `line ${mode.line}: ${mode.message}`);
-    const a = await this.assemble(source, req.syntax);
+    const a = await this.machineCode(source, req.syntax ?? 'intel', loopChoice(req.loop));
     if (a.code !== CODES.OK) return a;
-    if (a.length === 0) return failure(CODES.REQUEST, 'the source contains no instructions');
-    return { hex: a.hex, assembled: true, stderr: a.stderr };
+    if (a.bytes.length === 0) return failure(CODES.REQUEST, 'the source contains no instructions');
+    return { hex: a.hex, assembled: true, stderr: a.stderr, loop: a.loop };
+  }
+
+  // The options of a request with the alignment offset of the code's addresses (objdump input), unless it was given.
+  static #withAlignment(req, options, code) {
+    const given = req.options?.alignmentOffset !== undefined || req.alignmentOffset !== undefined;
+    return !given && code.loop?.alignmentOffset !== undefined ? { ...options, alignmentOffset: code.loop.alignmentOffset } : options;
   }
 
   async #run(hex, arch, options) {
@@ -225,11 +298,11 @@ class Wuica {
     if (opts.error) return failure(CODES.REQUEST, opts.error);
     const code = await this.#code(req);
     if (code.code !== undefined) return code;
-    const r = await this.#run(code.hex, arch, opts.options);
+    const r = await this.#run(code.hex, arch, Wuica.#withAlignment(req, opts.options, code));
     if (r.code !== undefined) return r;
     const stderr = [...code.stderr];
     if (r.decodeErrors > 0) stderr.push({ text: `Warning: ${r.decodeErrors} position(s) could not be decoded` });
-    return { code: CODES.OK, ...r, ...(code.assembled ? { hex: code.hex } : {}), stderr };
+    return { code: CODES.OK, ...r, ...(code.assembled ? { hex: code.hex } : {}), ...(code.loop ? { loop: code.loop } : {}), stderr };
   }
 
   // POST /api/compare {source | hex, syntax, archs?, options}: one block on several microarchitectures (default: all).
@@ -240,7 +313,7 @@ class Wuica {
     if (code.code !== undefined) return code;
     if (request.archs !== undefined && !Array.isArray(request.archs)) return failure(CODES.REQUEST, '`archs` must be an array of ids');
     const ids = request.archs?.length ? uniqueArchs(request.archs, (a) => this.resolveArch(a)) : this.#archs.map((a) => a.id);
-    const options = { ...opts.options, includeTrace: false, details: false };
+    const options = { ...Wuica.#withAlignment(request, opts.options, code), includeTrace: false, details: false };
     const resolved = ids.map((arch) => this.resolveArch(arch));
     // the microarchitectures in threads (if that means at least two threads), each as #run() would on this thread;
     // whatever the threads do not do (unknown ids, a thread that failed) is done here, one after another
@@ -261,7 +334,7 @@ class Wuica {
       const row = { arch: id ?? String(arch), name, year, prototype };
       results.push({ ...row, ...(fields[i] ?? compareFields(await this.#run(code.hex, arch, options))) });
     }
-    return { code: CODES.OK, ...(code.assembled ? { hex: code.hex } : {}), stderr: code.stderr, results };
+    return { code: CODES.OK, ...(code.assembled ? { hex: code.hex } : {}), ...(code.loop ? { loop: code.loop } : {}), stderr: code.stderr, results };
   }
 
   // Stops compare()'s threads, if any (they also stop by themselves when idle, and never keep the process alive while
@@ -272,6 +345,12 @@ class Wuica {
 
   // The number of threads compare() has running now (0 if none).
   get threads() { return this.#pool?.threads ?? 0; }
+
+  // The derived diagnosis of an analyze() response (insights.js) with this CPU's configuration (the split-load caveat
+  // depends on it); null for a failure.
+  insights(r) {
+    return r?.code === CODES.OK ? insights(r, this.#configs[r.arch] ?? null) : null;
+  }
 
   // The compact form of an analyze() response (used by the MCP server): uop table reduced to non-zero values, plus the
   // derived diagnosis of the web page's bound view (insights.js).
@@ -301,11 +380,11 @@ class Wuica {
       if (det) Object.assign(e, det);
       return e;
     });
-    const base = insights(r);
+    const base = this.insights(r);
     const ins = base ? { ...base, ...detailInsights(r) } : null;
     return {
       code: r.code, arch: r.arch, name, year, prototype, tp: r.tp, unit: 'cycles per iteration', mode: r.mode,
-      bottlenecks: r.bottlenecks, limits: r.limits, decodeErrors: r.decodeErrors, ...(r.hex ? { hex: r.hex } : {}),
+      bottlenecks: r.bottlenecks, limits: r.limits, decodeErrors: r.decodeErrors, ...(r.hex ? { hex: r.hex } : {}), ...(r.loop ? { loop: r.loop } : {}),
       stderr: r.stderr, instructions, ...(ins ? { insights: ins } : {}),
     };
   }

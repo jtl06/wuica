@@ -1,5 +1,5 @@
 // The insight views on the result: the critical dependency chain (a line under the limits, a marker on its rows) and
-// the cost column (Δ cycles/iteration without each instruction). They decorate the result after render.js has drawn
+// the cost column (the cycles/iteration each instruction adds: with it minus without it). They decorate the result after render.js has drawn
 // it (app.js calls decorate() after renderResult): the rows of `table.uops tbody` are the response's rows, in order.
 // The cost analyses run after the main result, on the worker pool (pool.js) if the page has one, otherwise in the
 // analyzer's worker, one at a time; they stop as soon as their input is out of date and are cached (insight.js has the
@@ -66,21 +66,21 @@ export function createInsight(env) {
     const box = h('input', { type: 'checkbox', class: 'ins-cost-box', checked: open.cost && available, disabled: !available });
     box.checked = open.cost && available;
     box.addEventListener('change', () => { open.cost = box.checked; env.onToggle?.(); redecorate(); });
-    const sel = h('select', { class: 'ins-variant', 'aria-label': 'cost: what happens to the instruction', title: `Δ with the instruction ${VARIANTS[variant()]}` },
+    const sel = h('select', { class: 'ins-variant', 'aria-label': 'cost: what happens to the instruction', title: `cost: the instruction ${VARIANTS[variant()]}` },
       h('option', { value: 'remove', text: 'removed' }), h('option', { value: 'nop', text: 'as NOP' }));
     sel.value = variant();
     sel.hidden = !(open.cost && available);
     sel.addEventListener('change', () => { open.nop = sel.value === 'nop'; env.onToggle?.(); redecorate(); });
     tools = h('span', { class: 'ins-cost-status' });
     return h('span', { class: 'ins ins-cost-tools' },
-      h('label', { title: available ? 'change of cycles/iteration without each instruction (one analysis per instruction)' : reason }, box, ' cost'),
+      h('label', { title: available ? 'the cycles/iteration each instruction adds: with it minus without it (one analysis per instruction)' : reason }, box, ' cost'),
       ' ', sel, ' ', tools);
   }
 
   function addColumn(table, r) {
     const at = (tr) => tr.cells[2] ?? null; // after the instruction and the notes
     const head = table.tHead?.rows[0];
-    if (head) head.insertBefore(h('th', { scope: 'col', class: 'ins ins-cost', title: `Δ cycles/iteration with the instruction ${VARIANTS[variant()]}; macro-fused pairs together; the loop's branch is kept`, text: 'Δ' }), at(head));
+    if (head) head.insertBefore(h('th', { scope: 'col', class: 'ins ins-cost', title: `cycles/iteration the instruction adds: with it minus with it ${VARIANTS[variant()]} (+: it costs that much; −: the block is slower without it); macro-fused pairs together; the loop's branch is kept`, text: 'cost' }), at(head));
     cellsOf = new Map();
     const trs = table.tBodies[0]?.rows ?? [];
     r.rows.forEach((_, row) => {
@@ -101,7 +101,7 @@ export function createInsight(env) {
       const td = cellsOf.get(row);
       if (!td) return;
       td.textContent = c.text;
-      td.className = ['ins', 'ins-cost', `ins-${c.kind}`, c.kind === 'value' ? (c.delta < 0 ? 'neg' : c.delta > 0 ? 'pos' : 'zero') : '', c.top ? 'top' : ''].filter(Boolean).join(' ');
+      td.className = ['ins', 'ins-cost', `ins-${c.kind}`, c.kind === 'value' ? (c.delta > 0 ? 'adds' : c.delta < 0 ? 'helps' : 'zero') : '', c.top ? 'top' : ''].filter(Boolean).join(' ');
       if (c.title) td.title = c.title; else td.removeAttribute('title');
     });
   }

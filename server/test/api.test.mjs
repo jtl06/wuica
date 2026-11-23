@@ -2,7 +2,9 @@
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { createWuica } from 'wuica';
-import { start, post, get, HEX, ASM, plain, rest } from './helpers.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { start, post, get, HEX, ASM, ROOT, plain, rest } from './helpers.mjs';
 
 let s, w;
 before(async () => { [s, w] = await Promise.all([start(), createWuica()]); });
@@ -65,6 +67,16 @@ test('POST /api/analyze/<arch>: hex and source, equal to the library', async () 
   const r = await post(s.base, '/api/analyze/adlp', { hex: HEX });
   assert.equal(r.json.arch, 'ADL-P');
   assert.equal((await post(s.base, `/api/analyze/${encodeURIComponent('ADL-P')}`, { hex: HEX })).json.arch, 'ADL-P');
+});
+
+test('POST /api/analyze/<arch>: the split-load caveat per CPU', async () => {
+  // gcc's FIR: its loads advance by add rax, 0x20; ZEN3's model charges their line crossings, SKL's has no such cost
+  const source = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/caveats/fir8.s'), 'utf8');
+  const skl = await post(s.base, '/api/analyze/SKL', { source });
+  assert.deepEqual(skl.json.insights.caveats.map((c) => [c.id, c.instructions.length]), [['split', 7]]);
+  const zen = await post(s.base, '/api/analyze/ZEN3', { source });
+  assert.equal(zen.json.code, 0);
+  assert.equal(zen.json.insights.caveats, undefined);
 });
 
 test('POST /api/analyze/<arch>: text/plain is uiCA\'s report', async () => {
@@ -171,4 +183,30 @@ test('CORS: any origin, GET/POST, preflight, no credentials', async () => {
   assert.equal(p.headers.get('access-control-allow-credentials'), null);
   // errors carry it too (the browser must be able to read them)
   assert.equal((await post(s.base, '/api/analyze/K8', { hex: HEX })).headers.get('access-control-allow-origin'), '*');
+});
+
+test('a whole function: its loop (`loop`), as the library reads it; a bad `loop` is a 400; compare keeps it in its parts', async () => {
+  const fn = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/loop-find/crc_a.s'), 'utf8');
+  const a = await post(s.base, '/api/analyze/ZEN3', { source: fn });
+  assert.equal(a.status, 200);
+  assert.equal(a.json.loop.name, 'loop .L3');
+  const lib = await w.analyze('ZEN3', { source: fn });
+  assert.equal(a.json.hex, lib.hex);
+  assert.equal(a.json.tp, lib.tp);
+  const whole = await post(s.base, '/api/analyze/ZEN3', { source: fn, loop: 'whole' });
+  assert.equal(whole.json.loop, undefined);
+  assert.ok(whole.json.hex.length > a.json.hex.length);
+  // CRLF line ends (a file saved on Windows): the same
+  const crlf = await post(s.base, '/api/analyze/ZEN3', { source: fn.replace(/\n/g, '\r\n') });
+  assert.equal(crlf.json.hex, a.json.hex);
+  assert.equal(crlf.json.loop.name, 'loop .L3');
+  const bad = await post(s.base, '/api/analyze/ZEN3', { source: fn, loop: 'inner' });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.json.code, 1);
+  // four microarchitectures: split into parts on the two workers, each with the same loop
+  const c = await post(s.base, '/api/compare', { source: fn, archs: ['SKL', 'ICL', 'ADL-P', 'ZEN3'] });
+  assert.equal(c.json.code, 0);
+  assert.equal(c.json.hex, lib.hex);
+  assert.equal(c.json.loop.name, 'loop .L3');
+  assert.equal(c.json.results.find((r) => r.arch === 'ZEN3').tp, lib.tp);
 });

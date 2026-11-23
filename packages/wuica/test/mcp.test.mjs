@@ -66,7 +66,12 @@ test('what_if: every variant against analyses of the library', async () => {
   assert.equal(r.isError, undefined);
   assert.equal(r.json.code, 0);
   assert.equal(r.json.tp, 2);
-  assert.deepEqual(r.json.variants.map((v) => v.id), ['unroll2', 'unroll4', 'unroll8', 'simpleFrontEnd', 'noMacroFusion', 'noMicroFusion', 'nochain']);
+  assert.deepEqual(r.json.variants.map((v) => v.id), ['unroll2', 'unroll4', 'unroll8', 'acc2', 'acc3', 'acc4', 'acc8', 'simpleFrontEnd', 'noMacroFusion', 'noMicroFusion', 'nochain']);
+  // N accumulators: the chain's rax and rbx renamed in each copy (r8, r9, ...): per original iteration below the base
+  const acc2 = r.json.variants.find((x) => x.id === 'acc2');
+  assert.deepEqual(acc2.renamed.map((x) => x.from), ['rax', 'rbx']);
+  assert.ok(acc2.tp < 2 && acc2.speedup > 1, JSON.stringify(acc2));
+  assert.ok(Number.isInteger(r.json.accumulators.best) && r.json.accumulators.best > 1, JSON.stringify(r.json.accumulators));
   // the body (the two adds) n times, then dec r15; jnz once
   const body = '4801d84801c3', tail = '49ffcf75f5';
   for (const n of [2, 4, 8]) {
@@ -121,6 +126,19 @@ test('analyze formats and options', async () => {
   assert.equal(r.json.prototype, true);
   assert.equal(r.content.length, 1);
   assert.ok('ALU0' in r.json.instructions[0].ports);
+});
+
+test('analyze: a whole function with loop (auto, whole), and ; comments', async () => {
+  const fn = 'f:\n  mov ecx, 100\n.L1:\n  add rax, rbx ; sum\n  dec rcx\n  jnz .L1\n  ret\n';
+  const r = await call('analyze', { source: fn, format: 'json' });
+  assert.equal(r.json.code, 0);
+  assert.equal(r.json.loop.name, 'loop .L1');
+  assert.equal(r.json.instructions.length, 3);
+  const w = await call('analyze', { source: fn, loop: 'whole', format: 'json' });
+  assert.equal(w.json.loop, undefined);
+  assert.equal((await call('analyze', { source: fn, loop: 'inner' })).isError, true);
+  const { tools } = await client.listTools();
+  for (const t of ['analyze', 'what_if', 'compare_archs']) assert.ok(tools.find((x) => x.name === t).inputSchema.properties.loop, t);
 });
 
 test('analyze errors are tool errors', async () => {

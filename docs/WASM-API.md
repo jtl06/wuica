@@ -233,3 +233,40 @@ Compiler output with debug lines (`gcc -g -S`, `clang -g -S`: `.file N ["dir"] "
 instruction the line of the `.loc` before it, the same way; the cost per source line (`src=1`, `web/js/srcmap.js`) then shows
 `file:line` rows (the source text is not in the listing) for the main file, the one with the most lines in the analyzed code.
 gcc's `view` operand of `.loc`, which LLVM rejects, is dropped.
+
+### The loop of a whole function (the page, the library, REST, MCP, the package's CLI)
+
+For an analysis, pasted assembly goes through `web/js/loop-find.js` before the regions above (the npm package has a copy
+in `packages/wuica/lib/web`). The option is `loop`: `"auto"` (the default), `"whole"` (never a pick) or the index of a
+loop (innermost first, in code order). The page shows the choice as a select under the input when it matters; the API
+returns `loop: {index, count, name, line, endLine, address?, alignmentOffset?}` when something other than the whole text
+was analyzed. In `"auto"`:
+
+- **Loops**: backward branches to a label or an address; several branches back to one label are one loop. A span with a
+  `ret` or another function's label (`.globl`, `.type @function`, or a call/jump target from outside) is not a loop.
+  The first innermost loop is analyzed, unless the text is that loop already.
+- **No loop**: a compiler's function (a function label, directives, a prologue/epilogue, or objdump) that ends in `ret`
+  is analyzed without prologue, epilogue and `ret`; a bare snippet (`add rax, 1` / `ret`) as typed.
+- **Exits**: a conditional branch to a symbol the text does not define is a short, not-taken jump to the end of the
+  analyzed code (a note); an undefined `jmp` target is a warning.
+- **objdump**: recognised by a header, a byte column or `<sym+off>` targets, else only if every line is address-prefixed
+  (three or more, with steps that fit the instructions). Targets are addresses (`jne 1b <f+0x1b>` is 0x1b). Lines with
+  bytes are assembled as those bytes; a line the assembler rejects is left out only outside the analyzed loop (padding),
+  inside it is an error. The alignment offset is the analyzed code's address mod 64 unless one is given (the page: for
+  each pick; an offset set by hand, in a link or by an import stays for that text).
+- **Sections**: `.text.*` (gcc's `main` in `.text.startup`, `-ffunction-sections`) is analyzed as `.text`.
+- **Line ends**: CRLF and a lone CR are line feeds.
+- **`;`**: at the start of a line, a comment. After a statement, what assembles is assembled (a note names it, unless the
+  `;` follows the statement without a space: `dec rcx; jnz 1b`); what does not is a comment (a note if it starts with a
+  mnemonic). Nothing after a `;` makes a valid line an error.
+
+Only the package's CLI takes `-loop`; the native CLI (`crates/wuica-cli`) reads machine code only.
+
+### Derived fields (the npm package, REST, MCP)
+
+Not in this module's response; the package computes them (`packages/wuica/README.md`, "Compact form"):
+`insights.binding` (exactly `bottlenecks`, `Divider` included), `insights.largest` (when `bottlenecks` is empty: the
+largest limit, the nearest bound), `insights.caveats` (known blind spots the block meets: `rmw-index`, `exit`, `split`;
+`split` depends on the CPU's `splitLoadCycles`), and `what_if`'s `acc2`/`acc3`/`acc4`/`acc8` variants (N
+accumulators: the chain's register renamed in each unrolled copy; refused, with a reason, for a chain through memory,
+flags, an implicit operand, the induction variable, or a register also used off the chain) with `accumulators.best`.

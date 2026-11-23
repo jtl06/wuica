@@ -116,6 +116,9 @@ def instrToDict(instr, index, ops, instrIndex):
    # block with narrow stores, a key of its own ('narrowStore' and the index of that instruction)
    d['TPKey'] = instr.TPKey if isinstance(instr.TPKey, str) else [instr.TPKey[0], instrIndex[instr.TPKey[1]]]
    d['opCacheFields'] = instr.opCacheFields
+   # loads that cross a cache line (round 9; only when set, so that fixtures of earlier rounds keep their form)
+   if getattr(instr, 'splitLoadPattern', None) is not None:
+      d['splitLoadPattern'] = [bool(b) for b in instr.splitLoadPattern]
    d['isNextToLastInstr'] = bool(instr.isNextToLastInstr)
    d['isLastInstr'] = bool(instr.isLastInstr)
    d['UopPropertiesList'] = [uopProps(p, ops) for p in instr.UopPropertiesList]

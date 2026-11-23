@@ -15,6 +15,8 @@ import { fileURLToPath } from 'node:url';
 import { hostHandler } from './static-host.mjs';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
+import { experiments } from '../web/js/whatif.js';
+import { WasmAssembler } from '../web/js/assembler.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(here, '..', 'web', 'dist');
@@ -205,9 +207,11 @@ try {
     await page.goto(`${origin}/?nosw=1`);
     await page.ready();
     const r = await page.eval(`${HELPERS}
+      const before = { run: $('results').dataset.run, text: $('code').value.slice(0, 40), mode: document.querySelector('input[name="mode"]:checked')?.value ?? null, tp: tp() };
       set($('examples'), 'sha256'); await until(() => document.querySelector('#result-body .tp .value')?.textContent === '744.25' && !$('results').hasAttribute('aria-busy') && !$('result-body').classList.contains('stale'), 120000);
+      const after = { run: $('results').dataset.run, text: $('code').value.slice(0, 40) };
       await wait(100);
-      const out = { tp: tp(), closed: [$('bound').open, document.querySelector('.bd-body').children.length, $('result-body').dataset.bound, hot().length] };
+      const out = { tp: tp(), before, after, closed: [$('bound').open, document.querySelector('.bd-body').children.length, $('result-body').dataset.bound, hot().length] };
       const long = []; new PerformanceObserver((l) => { for (const e of l.getEntries()) long.push(Math.round(e.duration)); }).observe({ type: 'longtask' });
       document.querySelector('#bound summary').click();
       await until(() => document.querySelector('.bd-item'));
@@ -308,6 +312,13 @@ try {
     const d = (x) => (Math.abs(x) < 0.005 ? '0.00' : `${x < 0 ? '−' : '+'}${Math.abs(x).toFixed(2)}`);
     const want = [];
     for (const n of [2, 4, 8]) { const r = await analyze(body.repeat(n) + tail); want.push([`unroll${n}`, f(r.tp / n), d(r.tp / n - base.tp), `×${(base.tp / (r.tp / n)).toFixed(2)}`]); }
+    // N accumulators: the variants' text (accum.js), assembled here
+    const asm = await WasmAssembler.create(fs.readFileSync(path.join(dist, 'wuica_asm.wasm')));
+    for (const x of experiments(base, chain.hex, {}).filter((y) => /^acc\d+$/.test(y.id))) {
+      const a = await asm.assemble(x.text, 'intel');
+      const r = await analyze([...a.bytes].map((b) => b.toString(16).padStart(2, '0')).join(''));
+      want.push([x.id, f(r.tp / x.per), d(r.tp / x.per - base.tp), `×${(base.tp / (r.tp / x.per)).toFixed(2)}`]);
+    }
     for (const k of ['simpleFrontEnd', 'noMacroFusion', 'noMicroFusion']) { const r = await analyze(chain.hex, 'SKL', { [k]: true }); want.push([k, f(r.tp), d(r.tp - base.tp), `×${(base.tp / r.tp).toFixed(2)}`]); }
     const others = base.limits.filter((l) => l.name !== 'Dependencies').map((l) => l.tp);
     want.push(['nochain', `≥${f(Math.max(...others))}`, d(Math.max(...others) - base.tp), `≤×${(base.tp / Math.max(...others)).toFixed(2)}`]);

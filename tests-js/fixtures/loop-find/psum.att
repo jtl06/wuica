@@ -1,0 +1,22 @@
+
+kern.o:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000000000 <psum>:
+   0:	48 89 d1             	mov    %rdx,%rcx
+   3:	48 85 d2             	test   %rdx,%rdx
+   6:	74 16                	je     1e <psum+0x1e>
+   8:	31 c0                	xor    %eax,%eax
+   a:	31 d2                	xor    %edx,%edx
+   c:	0f 1f 40 00          	nopl   0x0(%rax)
+  10:	03 14 87             	add    (%rdi,%rax,4),%edx
+  13:	89 14 86             	mov    %edx,(%rsi,%rax,4)
+  16:	48 ff c0             	inc    %rax
+  19:	48 39 c1             	cmp    %rax,%rcx
+  1c:	75 f2                	jne    10 <psum+0x10>
+  1e:	c3                   	ret
+  1f:	90                   	nop
+
+0000000000000020 <fir8>:

@@ -7,6 +7,7 @@ export const DEFAULT_STATE = Object.freeze({
   arch: 'SKL',            // the focused CPU: its detailed result (and side A of an A–B comparison)
   cpus: '',               // the checked CPUs: '' = only arch; 'all'; or keys separated by commas (app.js orders them)
   text: '',
+  loop: 'auto',           // what of pasted assembly is analyzed (loop-find.js): 'auto', 'whole' or a loop's index
   alignmentOffset: 0,     // 0..63
   initPolicy: 'diff',     // 'diff' | 'same' | 'stack'
   simpleFrontEnd: false,
@@ -42,6 +43,7 @@ export const LIMITS = Object.freeze({
   aWork: [1, 65536],
   bWork: [1, 65536],
   sel: [0, 1000000],
+  loop: [0, 9999],
 });
 const MAX_TEXT = 200000; // characters accepted from a link
 
@@ -93,6 +95,7 @@ export function encodeState(state) {
   for (const [k, name] of Object.entries(FLAGS)) if (s[name]) p.push(`${k}=1`);
   for (const [k, name] of Object.entries(VIEWS)) if (s[name]) p.push(`${k}=1`);
   if (Number.isInteger(s.sel) && s.sel >= 0) p.push(`sel=${s.sel}`);
+  if (s.loop === 'whole' || Number.isInteger(s.loop)) p.push(`lp=${s.loop}`);
   if (s.text !== '') p.push(`c=${toBase64Url(s.text)}`);
   if (s.ab) { // side B, only in A–B mode: a single-mode link stays as it was
     p.push('ab=1');
@@ -142,6 +145,8 @@ export function decodeState(fragment) {
   for (const [k, name] of Object.entries(FLAGS)) if (q.get(k) === '1') s[name] = true;
   for (const [k, name] of Object.entries(VIEWS)) if (q.get(k) === '1') s[name] = true;
   if (q.has('sel')) s.sel = clampInt(q.get('sel'), LIMITS.sel, DEFAULT_STATE.sel);
+  if (q.get('lp') === 'whole') s.loop = 'whole';
+  else if (q.has('lp')) s.loop = clampInt(q.get('lp'), LIMITS.loop, DEFAULT_STATE.loop);
   const text = (k) => {
     try {
       const t = fromBase64Url(q.get(k));

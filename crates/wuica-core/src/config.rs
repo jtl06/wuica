@@ -164,6 +164,16 @@ pub struct UArchConfig {
     /// `rmwForwardDelay`; also in data exported before the field existed)
     #[serde(rename = "rotateCarryRMWForwardDelay", default)]
     pub rotate_carry_rmw_forward_delay: Option<i64>,
+    /// if > 0: a load that crosses a 64-byte line occupies its load port for this many cycles, where the addresses of the loop make the
+    /// crossing knowable (`splitLoadCycles`; 0 in data exported before the field existed)
+    #[serde(rename = "splitLoadCycles", default)]
+    pub split_load_cycles: i64,
+    /// AMD: if > 0, at most this many uops for the ports `fpSchedulerPorts` wait in the FP scheduler; younger ones wait in order in the
+    /// non-scheduling queue and are not dispatched before they enter it (`fpSchedulerSize`; 0 in data exported before the field existed)
+    #[serde(rename = "fpSchedulerSize", default)]
+    pub fp_scheduler_size: i64,
+    #[serde(rename = "fpSchedulerPorts", default)]
+    pub fp_scheduler_ports: String,
 }
 
 impl UArchConfig {

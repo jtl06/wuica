@@ -21,7 +21,12 @@ const ASSUMPTIONS =
 const INPUT_NOTE =
   'Give the block either as `source` (x86-64 assembly, Intel syntax without % prefixes by default, one instruction per ' +
   'line; labels and directives are allowed, e.g. "loop: add rax, [rsi]\\n dec rcx\\n jnz loop") or as `hex` (machine ' +
-  'code bytes, e.g. "4801d8"). Code only: no function prologue unless it is part of the hot loop.';
+  'code bytes, e.g. "4801d8"). A whole function (gcc -S or clang -S output, objdump -d lines with addresses, with or ' +
+  'without the bytes) is fine: by default (`loop: "auto"`) its innermost loop is analyzed (the first one in the code), ' +
+  'or the body without prologue and epilogue if it has no loop; branches out of the loop count as not taken (so an exit ' +
+  'to a label that is not in the text assembles); with addresses, the alignment offset is the loop\'s address mod 64 ' +
+  'unless options.alignmentOffset is given. The response\'s `loop` says what was analyzed (index, count, name, lines, ' +
+  'address). `loop: "whole"` analyzes the whole text; `loop: N` the N-th loop (innermost first, in code order).';
 
 const ERRORS_NOTE =
   'Failures are tool errors whose JSON is {code, error, stderr}: code 1 = bad request (e.g. unknown arch, bad hex), ' +
@@ -32,6 +37,7 @@ const codeShape = {
   source: z.string().optional().describe('x86-64 assembly text of the basic block (give source or hex)'),
   hex: z.string().optional().describe('machine code as hex bytes, e.g. "4801d84801c349ffcf75f5" (spaces allowed)'),
   syntax: z.enum(['intel', 'att']).optional().describe('syntax of `source`: "intel" (default, noprefix) or "att"'),
+  loop: z.union([z.enum(['auto', 'whole']), z.number().int().min(0)]).optional().describe('what of `source` is analyzed: "auto" (default: the innermost loop of a whole function, else the text), "whole", or the index of a loop'),
 };
 
 const optionsShape = z.object({
@@ -99,11 +105,16 @@ export function createServer(w) {
         'cacheable in the DSB because of the JCC erratum, X = instruction not supported by the model (no data: the ' +
         'result is unreliable); `stderr` = assembler warnings and decode warnings (`decodeErrors` > 0: some bytes could ' +
         'not be decoded); `insights` = a derived diagnosis: `utilization` (each limit and execution port as a fraction ' +
-        'of tp; 1 = saturated), `binding` (the limiting component), `next` (the next limit and `maxSpeedup`, an upper ' +
+        'of tp; 1 = saturated), `binding` (the limiting component: the same as `bottlenecks`; [] when uiCA names none, then ' +
+        '`largest` is the largest limit, the nearest bound, which alone does not reach tp), `next` (the next limit and `maxSpeedup`, an upper ' +
         'bound of the speedup if the binding component were removed), `unexplained` (cycles no single limit explains), ' +
         '`chain` (the loop-carried critical dependency chain: `index` into `instructions`, operand, latency, carried ' +
         'into the next iteration), `hot` (the instructions with the largest share of the binding resource: fix these ' +
-        'first). With `details: true`, each instruction also has `allowedPorts` (uops.info notation, e.g. 1*p0156+1*p23), ' +
+        'first), `caveats` (known blind spots of the model the block meets, not simulated: rmw-index = a read-modify-write ' +
+        'to an indexed address, whose store forwarding between iterations depends on the data; exit = an exit before the ' +
+        'loop\'s branch, whose mispredict is not modelled; split = loads at an offset that is not a multiple of their width, ' +
+        'which may cross a cache line (on ZEN3, ADL-P and ICX, whose models charge crossings, only loads whose address register ' +
+        'is written other than by adding an immediate); `instructions` = indexes into `instructions`). With `details: true`, each instruction also has `allowedPorts` (uops.info notation, e.g. 1*p0156+1*p23), ' +
         '`uops`, `fusedUops`, `latencies` ("input->output:cycles"), `frontEnd` (length, offset = alignment offset + position in the block, crosses ' +
         '16/32/64-byte boundaries, lcp = length-changing prefix, microcoded, macro-fusion), and `insights` has `portSet` (the ' +
         'ports behind the Ports limit and the instructions whose uops can only use them) and `issueSlots` (issue slots per ' +
@@ -136,7 +147,11 @@ export function createServer(w) {
         'Re-analyzes an x86-64 basic block with one change each and reports the predicted throughput per ORIGINAL ' +
         'iteration, the change `delta` (cycles; negative = faster) and `speedup` (base tp / variant tp) against the base: ' +
         'unroll2/unroll4/unroll8 (n copies of the loop body and its branch once; registers are not renamed, so the ' +
-        'dependencies stay and only the loop overhead goes; loops only), simpleFrontEnd (a front end limited only by the ' +
+        'dependencies stay and only the loop overhead goes; loops only), acc2/acc3/acc4/acc8 (N accumulators: unrolled ×N ' +
+        'with the register of the loop-carried chain renamed into a free register in each copy, so the copies form N ' +
+        'independent chains, as N accumulators or N CRC streams written by hand; `renamed` says which registers; the ' +
+        'result\'s `accumulators.best` is the smallest N within 1% of the fastest, 1 = as it is: call it per arch for the ' +
+        'best N per CPU; not possible when the chain goes through memory or flags or an implicit operand), simpleFrontEnd (a front end limited only by the ' +
         'issue width), noMacroFusion / noMicroFusion (switched; if the base already has the option set, the variant ' +
         'switches it back), nochain (no analysis: the largest limit other than Dependencies, an estimate of the ' +
         'throughput without the loop-carried chain; `estimate: true`). A variant that cannot be made or analyzed has ' +
@@ -150,7 +165,7 @@ export function createServer(w) {
       }).strict(),
       annotations: readOnly,
     },
-    async ({ arch, variants, ...request }) => result(await whatIf((a, req) => w.analyze(a, req), arch ?? 'SKL', request, variants ?? VARIANTS)),
+    async ({ arch, variants, ...request }) => result(await whatIf((a, req) => w.analyze(a, req), arch ?? 'SKL', request, variants ?? VARIANTS, { assemble: (text) => w.assemble(text, 'intel') })),
   );
 
   server.registerTool(

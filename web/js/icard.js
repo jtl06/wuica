@@ -73,6 +73,9 @@ export function cardModel(response, row, det, alignmentOffset = 0) {
     m.lat = latencyPairs(det);
     m.lcp = !!det.lcp; m.microcoded = !!det.microcoded; m.complex = !!det.complexDecoder;
     m.fusedNext = !!det.macroFusedWithNext; m.fused = m.fused || !!det.macroFusedWithPrev; m.div = det.divCycles || 0;
+    // its throughput bound: from its ports, or from the divider if that is busy longer (div: the loop's Divider limit)
+    m.tpBound = Math.max(m.tp, m.div);
+    m.tpBy = m.div > m.tp ? 'divider' : 'ports';
     m.loads = (det.uopList ?? []).filter((u) => u.load).length; m.stores = (det.uopList ?? []).filter((u) => u.storeData).length;
     m.eliminable = !!det.mayBeEliminated;
   } else {
@@ -88,7 +91,8 @@ export function bottleneckShare(response, row, details = null) {
   if (!res) return null;
   const b = (res === 'Ports' ? portSetBlame(response, details?.ports) : null) ?? blame(response, res);
   if (!b || !(b.total > 0)) return null;
-  return { resource: res, share: (b.weights[row] ?? 0) / b.total, unit: b.unit };
+  // (the divider's bottleneck is the Div column: named as the loop's bottleneck)
+  return { resource: res === 'col:Div' ? 'Divider' : res.replace(/^col:/, ''), share: (b.weights[row] ?? 0) / b.total, unit: b.unit };
 }
 
 // the front-end facts as short tags: [{text, title}]
@@ -176,7 +180,9 @@ export function createICard(env) {
     const lines = [head];
     if (m.details) {
       if (m.ports) lines.push(line('ports', 'allowed ports: uops*ports (uops.info notation)', h('span', { class: 'code', text: m.ports }),
-        m.tp > 0 ? h('span', { class: 'ic-tp', title: `cycles per instruction from its ports alone${m.tpTable ? `; table limit ${f2(m.tpTable)}` : ''}`, text: ` tp ${f2(m.tp)}` }) : null));
+        m.tpBound > 0 ? h('span', { class: 'ic-tp', title: m.tpBy === 'divider'
+          ? `cycles per instruction: the divider is busy ${f2(m.div)} cycles (its ports alone: ${f2(m.tp)})`
+          : `cycles per instruction from its ports alone${m.tpTable ? `; table limit ${f2(m.tpTable)}` : ''}`, text: ` tp ${f2(m.tpBound)}${m.tpBy === 'divider' ? ' div' : ''}` }) : null));
       lines.push(line('uops', 'unfused · fused (issue slots) · from the legacy decoders · from the microcode sequencer',
         `${m.uops}`, h('span', { class: 'ic-d', text: ` · ${m.fusedUops} fused · MITE ${m.mite}${m.msUops ? ` · MS ${m.msUops}` : ''}${m.div ? ` · div ${m.div}` : ''}${m.loads ? ` · ${m.loads} load${m.loads > 1 ? 's' : ''}` : ''}${m.stores ? ` · ${m.stores} store${m.stores > 1 ? 's' : ''}` : ''}` })));
       if (m.lat.length) {

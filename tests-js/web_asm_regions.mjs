@@ -107,10 +107,13 @@ if (!fs.existsSync(asmPath)) {
     const r3 = await A.assemble(bad, 'intel');
     const p3 = await wa.assemble(bad, 'intel');
     check(!r3.ok && JSON.stringify(r3.diagnostics) === JSON.stringify(p3.diagnostics), 'an error in the listing: the same line and column as without labels', JSON.stringify([r3.diagnostics, p3.diagnostics]));
-    const t4 = '# LLVM-MCA-BEGIN\n  add rax, 1 ; nope\n# LLVM-MCA-END\n';
+    // (after a ';', what does not assemble is a comment: web_loop_find.mjs)
+    const t4 = '# LLVM-MCA-BEGIN\n  addd rax, 1\n# LLVM-MCA-END\n';
     const r4 = await A.assemble(t4, 'intel');
     const p4 = await wa.assemble(t4, 'intel');
-    check(!r4.ok && r4.diagnostics[0].line === 2 && JSON.stringify(r4.diagnostics) === JSON.stringify(p4.diagnostics), 'an error in the region: the same diagnostics (with the hint)', JSON.stringify([r4.diagnostics, p4.diagnostics]));
+    check(!r4.ok && r4.diagnostics[0].line === 2 && JSON.stringify(r4.diagnostics) === JSON.stringify(p4.diagnostics), 'an error in the region: the same diagnostics', JSON.stringify([r4.diagnostics, p4.diagnostics]));
+    const r5 = await A.assemble('# LLVM-MCA-BEGIN\n  add rax, 1 ; a note\n# LLVM-MCA-END\n', 'intel');
+    check(r5.ok && hex(r5.bytes) === '4883c001', "a ';' comment in the region", JSON.stringify(r5.diagnostics));
   }
   // no markers: exactly the plain assembly
   {

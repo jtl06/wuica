@@ -4,7 +4,7 @@
 //   costUnits       what the cost column removes: instructions, macro-fused pairs together, never the loop's branch
 //   editHex, nopHex the block without a unit, or with NOPs of the same length in its place
 //   costJobs        the modified blocks to analyze
-//   costCells       Δ cycles/iteration per row from those results, and the largest saving
+//   costCells       the cycles/iteration each row adds (with it minus without it) from those results, and the largest
 //   costKey         results are reused across redraws
 
 export const VARIANTS = Object.freeze({
@@ -136,11 +136,13 @@ export function formatDelta(d) {
   return `${d < 0 ? '−' : '+'}${Math.abs(d).toFixed(2)}`;
 }
 
-// The cost column: one cell per row of the response.
+// The cost column: one cell per row of the response: what the instruction adds, in cycles/iteration (the throughput with
+// it minus the throughput without it: +0.94 costs 0.94 cycles; −0.94 means the block is slower without it, e.g. its
+// removal breaks a chain).
 //   results: Map unit index -> summary ({tp, mode} or {error}; absent: not analyzed yet)
 // Each cell: {kind, text, title, delta, top}; kind: 'none' (inserted uops), 'fixed' (the loop's branch), 'with' (the
 // second instruction of a fused pair: removed with the one above), 'pending', 'na' (no comparable result), 'value'.
-// top: the largest saving (most negative Δ); ties are all marked.
+// delta: the cost (with − without). top: the largest cost (the most to save); ties are all marked.
 export function costCells(response, cu, results, variant = 'remove') {
   const baseTp = Number(response.tp);
   const what = variant === 'nop' ? 'replaced by NOPs' : 'removed';
@@ -156,16 +158,16 @@ export function costCells(response, cu, results, variant = 'remove') {
     if (r.mode && response.mode && r.mode !== response.mode) {
       return { kind: 'na', text: '—', title: `without it, the block is analyzed ${r.mode === 'loop' ? 'as a loop' : 'unrolled'}: not comparable`, delta: null };
     }
-    const d = delta(r.tp, baseTp);
+    const d = delta(baseTp, r.tp);
     const pair = u.rows.length > 1 ? ' (with the macro-fused instruction below)' : '';
     return {
       kind: 'value', text: formatDelta(d), delta: d, tp: r.tp,
-      title: `${what}${pair}: ${Number(r.tp).toFixed(2)} cycles/iteration (${formatDelta(d)})`,
+      title: `adds ${formatDelta(d)} cycles/iteration: ${what}${pair}, ${Number(r.tp).toFixed(2)} instead of ${baseTp.toFixed(2)}`,
     };
   });
   const values = cells.filter((c) => c.kind === 'value').map((c) => c.delta);
-  const best = values.length ? Math.min(...values) : 0;
-  for (const c of cells) c.top = c.kind === 'value' && best < 0 && c.delta === best;
+  const best = values.length ? Math.max(...values) : 0;
+  for (const c of cells) c.top = c.kind === 'value' && best > 0 && c.delta === best;
   return cells;
 }
 

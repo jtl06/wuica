@@ -70,7 +70,8 @@ export function boundModel(r) {
     items.push({ id: 'other', name: 'unexplained', group: 'other', cycles: gap, util: gap / tp, limit: false, bottleneck: false,
       title: `${f2(gap)} cycles/iteration that no single limit explains (interactions between front end, ports and dependencies)` });
   }
-  const binding = bottlenecks.filter((b) => items.some((x) => x.id === b));
+  // (the divider has no limit of its own: its bottleneck is the Div column)
+  const binding = bottlenecks.map((b) => (b === 'Divider' && items.some((x) => x.id === 'col:Div') ? 'col:Div' : b)).filter((b) => items.some((x) => x.id === b));
   if (!binding.length) for (const x of limits) if (x.cycles >= max - EPS) binding.push(x.id);
   const bindValue = Math.max(...binding.map((b) => items.find((x) => x.id === b).cycles), 0);
   let next = null;

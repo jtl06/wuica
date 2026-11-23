@@ -4,9 +4,10 @@
 //
 //    node tests-js/web_regions_browser.mjs [--chrome PATH] [--shots DIR]
 //
-// A listing with llvm-mca markers analyzes the loop between them (3 rows, the chip "▣ hot"); without the markers the
-// whole listing (6 rows, no chip); a gcc -g -S listing with src=1 shows its source rows as dot.c:N; a phone width has no
-// sideways scrolling. Skips (exit 0) without Chrome.
+// A listing with llvm-mca markers analyzes the loop between them (3 rows, the chip "▣ hot"); without the markers its
+// loop is found (the loop chip "loop .L1", which also picks the whole listing); a gcc -g -S listing with src=1 shows its
+// source rows as dot.c:N; objdump output sets the alignment offset from its address; an input that no longer assembles
+// leaves the result dimmed and says so; a phone width has no sideways scrolling. Skips (exit 0) without Chrome.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -136,6 +137,8 @@ const HELPERS = `
   const instrRows = () => [...document.querySelectorAll('table.uops tbody tr:not(.extra)')];
   const chip = () => { const c = $('region-chip'); return c && !c.hidden ? c.textContent : null; };
   const setCode = (v) => { const c = $('code'); c.value = v; c.dispatchEvent(new Event('input', { bubbles: true })); };
+  const loopChip = () => { const c = $('loop-chip'); return c && !c.hidden ? c.options[c.selectedIndex]?.text ?? null : null; };
+  const pickLoop = (v) => { const c = $('loop-chip'); c.value = v; c.dispatchEvent(new Event('change', { bubbles: true })); };
 `;
 const b64 = (s) => Buffer.from(s).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
 
@@ -152,10 +155,14 @@ try {
       $('region-chip').click();
       const c = $('code');
       out.sel = c.value.slice(c.selectionStart, c.selectionEnd);
-      // the markers removed: the whole listing, no chip
+      // the markers removed: the loop is found (the loop chip); the chip picks the whole listing, and back
       setCode(c.value.replace(/^# LLVM-MCA-.*$/gm, ''));
       await done(() => $('run').click());
-      out.after = { rows: instrRows().length, chip: chip() };
+      out.after = { rows: instrRows().length, chip: chip(), loop: loopChip(), options: [...$('loop-chip').options].map((o) => o.text) };
+      await done(() => pickLoop('whole'));
+      out.whole = { rows: instrRows().length, loop: loopChip(), hash: location.hash };
+      await done(() => pickLoop('0'));
+      out.loop0 = { rows: instrRows().length, loop: loopChip() };
       // back: the region again
       setCode(${JSON.stringify(MARKED)});
       await done(() => $('run').click());
@@ -171,7 +178,8 @@ try {
     check(r.rows === 3 && r.chip === '▣ hot 1/2', 'marked: the 3 instructions of the first region, the chip', JSON.stringify(r));
     check(/LLVM-MCA-BEGIN/.test(r.title) && /IACA/.test(r.title) && r.messages === '', 'the chip\'s tooltip lists the markers; no messages', JSON.stringify(r));
     check(r.sel === '# LLVM-MCA-BEGIN hot', 'a click on the chip selects the BEGIN line', JSON.stringify(r.sel));
-    check(r.after.rows > 6 && r.after.chip === null, 'no markers: the whole listing, no chip', JSON.stringify(r.after));
+    check(r.after.rows === 3 && r.after.chip === null && r.after.loop === 'loop .L1' && r.after.options.join() === 'loop .L1,whole', 'no markers: the loop is found, the loop chip', JSON.stringify(r.after));
+    check(r.whole.rows > 6 && r.whole.loop === 'whole' && /[#&]lp=whole(&|$)/.test(r.whole.hash) && r.loop0.rows === 3, 'the loop chip: the whole listing (in the link), and the loop again', JSON.stringify([r.whole, r.loop0]));
     check(r.again.rows === 3 && r.again.chip === '▣ hot 1/2', 'markers again: the region', JSON.stringify(r.again));
     check(r.hex.chip === null && r.hex.lines === 3, 'to hex: the region\'s 3 instructions, no chip', JSON.stringify(r.hex));
     check(r.back.chip === '▣ hot 1/2' && r.back.rows === 3, 'back to asm: the marked text, the chip again', JSON.stringify(r.back));
@@ -194,9 +202,11 @@ try {
       await wait(50);
       out.hash = location.hash;
       out.jump = { tab: document.querySelector('.view-tab[aria-selected="true"]')?.textContent, open: $('srcmap').open, flash: instrRows().some((tr) => tr.classList.contains('rj-flash')) };
-      // the whole listing (no markers): all its instructions, the lines of the function (the source tab again)
+      // the whole listing (no markers): its loop is found; the whole function with the loop chip (the source tab again)
       setCode(${JSON.stringify(GCC)});
       await done(() => $('run').click());
+      out.found = { rows: instrRows().length, loop: loopChip() };
+      await done(() => pickLoop('whole'));
       [...document.querySelectorAll('.view-tab')].find((b) => b.textContent === 'source').click();
       await until(() => document.querySelector('.sm-list'));
       out.whole = { rows: instrRows().length, items: [...document.querySelectorAll('#srcmap .sm-list > li')].map((li) => li.innerText.replace(/\\s+/g, ' ').trim()), hidden: $('srcmap-row').hidden,
@@ -210,8 +220,152 @@ try {
     check(r.branch === 'jnz .L3' && r.whole.branches.join() === 'jle dot+0x23,jnz dot+0xb', 'branch targets as labels: the marked loop\'s own label; in the whole function, the function\'s label and the offset', JSON.stringify([r.branch, r.whole.branches]));
     check(r.tabs.at(-1) === 'source' && r.tabs.slice(0, -1).join() === 'table,bound,try,bytes,deps,mca,sweep,trace', 'the source tab comes last: the other tabs keep their places', JSON.stringify(r.tabs));
     check(r.whole.rows === 12 && !r.whole.hidden && r.whole.items.length === 2, 'the whole function: 12 instructions, lines 3 and 4', JSON.stringify(r.whole));
+    check(r.found.rows === 6 && r.found.loop === 'loop .L3', 'the whole listing without markers: its loop .L3 (6 instructions)', JSON.stringify(r.found));
+    check(r.whole.rows === 12 && !r.whole.hidden && r.whole.items.length === 2, 'the whole function (loop chip): 12 instructions, lines 3 and 4', JSON.stringify(r.whole));
     await page.shot('regions-loc.png');
     check(page.problems.length === 0, 'no console errors (.loc)', page.problems.join('\n'));
+    await page.cmd('Page.close');
+  }
+
+  // --- objdump output: the loop at 0x10, the alignment offset from it; an input error marks the result stale ---------------
+  {
+    const OBJDUMP = fs.readFileSync(path.join(here, 'fixtures/loop-find/psum.noraw'), 'utf8');
+    const page = await openPage();
+    await page.goto(`${origin}/?nosw=1#v=1&m=asm`);
+    const r = await page.eval(`${HELPERS}
+      await until(() => !$('run').disabled);
+      setCode(${JSON.stringify(OBJDUMP)});
+      await done(() => $('run').click());
+      const out = { rows: instrRows().length, loop: loopChip(), title: $('loop-chip')?.title, align: $('opt-align').value, hash: location.hash, messages: $('input-messages').textContent };
+      // the offset changed by hand stays (it is taken from the addresses once per text)
+      const a = $('opt-align'); a.value = '0'; a.dispatchEvent(new Event('change', { bubbles: true }));
+      await wait(50);
+      await done(() => $('run').click());
+      out.manual = $('opt-align').value;
+      // an input that does not assemble: the old result stays, dimmed, and says so; fixed: gone
+      setCode('  add rax, 1\\n  frobnicate rax\\n');
+      $('run').click();
+      await until(() => $('input-stale'));
+      out.stale = { note: $('input-stale')?.textContent, dim: $('result-body').classList.contains('stale'), rows: instrRows().length };
+      setCode('.L1:\\n  add rax, 1\\n  dec rcx\\n  jnz .L1\\n');
+      await done(() => $('run').click());
+      out.fixed = { note: !!$('input-stale'), dim: $('result-body').classList.contains('stale'), rows: instrRows().length };
+      // a ';' comment and an exit to an undefined label: they assemble (a note for the exit)
+      setCode('; scan\\n.L:\\n  add rdx, 32 ; next\\n  cmp rdx, rsi\\n  jae .Lout\\n  vpcmpeqb ymm0, ymm1, [rdi+rdx]\\n  vpmovmskb ecx, ymm0\\n  test ecx, ecx\\n  je .L\\n');
+      await done(() => $('run').click());
+      out.scan = { rows: instrRows().length, messages: $('input-messages').textContent, caveats: [...document.querySelectorAll('.cv-line .cv')].map((x) => x.textContent) };
+      return out;`);
+    check(r.rows === 5 && r.loop === 'loop 0x10' && /at 0x10/.test(r.title) && r.align === '16' && /(^|&)al=16(&|$)/.test(r.hash.slice(1)), 'objdump: the loop at 0x10 and the alignment offset 16 from its address', JSON.stringify(r));
+    check(r.manual === '0', 'the alignment offset changed by hand stays', r.manual);
+    check(r.stale.note === 'stale: the input has an error' && r.stale.dim && r.stale.rows === 5, 'an input error: the old result stays, dimmed, and says so', JSON.stringify(r.stale));
+    check(!r.fixed.note && !r.fixed.dim && r.fixed.rows === 3, 'the input fixed: a current result, no note', JSON.stringify(r.fixed));
+    check(r.scan.rows === 7 && /\.Lout is not in the code/.test(r.scan.messages) && r.scan.caveats.join() === 'exit mispredict', "';' comments and an exit to .Lout: they assemble, a note, the exit caveat", JSON.stringify(r.scan));
+    await page.shot('regions-objdump.png');
+    check(page.problems.length === 0, 'no console errors (objdump)', page.problems.join('\n'));
+    await page.cmd('Page.close');
+  }
+
+  // --- the split-load caveat per CPU (the page passes configs[arch] to caveats.js): gcc's FIR warns on SKL, not on ZEN3
+  // (its model charges the crossings of loads advanced by add rax, imm) ------------------------------------------------------
+  {
+    const FIR = fs.readFileSync(path.join(here, 'fixtures/caveats/fir8.s'), 'utf8');
+    const got = {};
+    for (const arch of ['SKL', 'ZEN3']) {
+      const page = await openPage();
+      await page.goto(`${origin}/?nosw=1#v=1&m=asm&a=${arch}&c=${b64(FIR)}`);
+      got[arch] = await page.eval(`${HELPERS}
+        await until(() => document.querySelector('.tp .value') && instrRows().length);
+        return { arch: location.hash.match(/[#&]a=([^&]*)/)?.[1] ?? 'SKL', caveats: [...document.querySelectorAll('.cv-line .cv')].map((x) => x.textContent) };`);
+      check(page.problems.length === 0, `no console errors (split caveat, ${arch})`, page.problems.join('\n'));
+      await page.cmd('Page.close');
+    }
+    check(got.SKL.caveats.join() === 'split loads? (7)' && got.ZEN3.arch === 'ZEN3' && got.ZEN3.caveats.length === 0, 'split loads: SKL warns, ZEN3 (splitLoadCycles 2) does not', JSON.stringify(got));
+  }
+
+  // --- links: lp=whole analyzes the whole text; an alignment offset in the link stays (not the address's) ------------------
+  {
+    const OBJDUMP = fs.readFileSync(path.join(here, 'fixtures/loop-find/psum.noraw'), 'utf8');
+    const page = await openPage();
+    await page.goto(`${origin}/?nosw=1#v=1&m=asm&lp=whole&c=${b64(MARKED.replace(/^# LLVM-MCA-.*$/gm, ''))}`);
+    const w = await page.eval(`${HELPERS}
+      await until(() => document.querySelector('.tp .value') && instrRows().length);
+      return { rows: instrRows().length, loop: loopChip() };`);
+    check(w.rows > 6 && w.loop === 'whole', 'a link with lp=whole: the whole text', JSON.stringify(w));
+    await page.goto(`${origin}/?nosw=1#v=1&m=asm&al=8&c=${b64(OBJDUMP)}`);
+    const a = await page.eval(`${HELPERS}
+      await until(() => document.querySelector('.tp .value') && instrRows().length);
+      return { rows: instrRows().length, align: $('opt-align').value, loop: loopChip() };`);
+    check(a.rows === 5 && a.align === '8' && a.loop === 'loop 0x10', 'an objdump link with al=8: the offset of the link stays', JSON.stringify(a));
+    check(page.problems.length === 0, 'no console errors (links)', page.problems.join('\n'));
+    await page.cmd('Page.close');
+  }
+
+  // --- review round 1: the alignment offset follows the pick; a new text starts at the first loop (A and B) -------------
+  {
+    const TWO = '   0:\tmov    ecx,0x5\n  10:\tadd    eax,0x1\n  13:\tdec    ecx\n  15:\tjne    10 <f+0x10>\n  17:\tmov    ecx,0x5\n'
+      + '  1c:\tnop    DWORD PTR [rax+0x0]\n  24:\tadd    edx,0x1\n  27:\tdec    ecx\n  29:\tjne    24 <f+0x24>\n  2b:\tret\n';
+    const FN2 = 'f:\n  mov ecx, 9\n.L1:\n  add rax, 1\n  dec rcx\n  jnz .L1\n  mov ecx, 9\n.L2:\n  imul rax, rax\n  dec rcx\n  jnz .L2\n  ret\n';
+    const PLAIN = '.L1:\n  add rax, 1\n  dec rcx\n  jnz .L1\n';
+    const page = await openPage();
+    await page.goto(`${origin}/?nosw=1#v=1&m=asm`);
+    const r = await page.eval(`${HELPERS}
+      await until(() => !$('run').disabled);
+      const out = {};
+      setCode(${JSON.stringify(TWO)}); await done(() => $('run').click());
+      out.first = [loopChip(), $('opt-align').value];
+      await done(() => pickLoop('1'));
+      out.second = [loopChip(), $('opt-align').value, /[#&]lp=1(&|$)/.test(location.hash)];
+      // an edit within the same text keeps the pick
+      const c = $('code'); c.value = c.value.replace('add    edx,0x1', 'add    edx,0x2'); c.dispatchEvent(new Event('input', { bubbles: true }));
+      await done(() => $('run').click());
+      out.edited = [loopChip(), $('opt-align').value];
+      // a new text (plain assembly): no inherited offset, the pick back to auto
+      setCode(${JSON.stringify(PLAIN)}); await done(() => $('run').click());
+      out.plain = [$('opt-align').value, /lp=/.test(location.hash)];
+      // by hand, then the objdump again: its addresses (a new text); then by hand for that text: kept on a pick
+      const a = $('opt-align'); a.value = '8'; a.dispatchEvent(new Event('change', { bubbles: true })); await wait(50);
+      setCode(${JSON.stringify(TWO)}); await done(() => $('run').click());
+      out.again = [loopChip(), $('opt-align').value];
+      a.value = '4'; a.dispatchEvent(new Event('change', { bubbles: true })); await wait(50);
+      await done(() => pickLoop('1'));
+      out.manual = [loopChip(), $('opt-align').value];
+      // a function whose second loop is picked; an example replaces it: auto again
+      setCode(${JSON.stringify(FN2)}); await done(() => $('run').click());
+      await done(() => pickLoop('1'));
+      out.fn = [loopChip(), instrRows().length];
+      await done(() => { const s = $('examples'); s.value = 'chain'; s.dispatchEvent(new Event('change', { bubbles: true })); });
+      out.example = [/lp=/.test(location.hash), loopChip()];
+      // a pick that does not assemble: the chip stays, so "whole" is reachable
+      setCode('f:\\n  mov ecx, 9\\n.L1:\\n  addd rax, 1\\n  dec rcx\\n  jnz .L1\\n  ret\\n'); $('run').click();
+      await until(() => $('input-messages').textContent.includes('addd'));
+      out.failChip = loopChip();
+      return out;`);
+    check(r.first[0] === 'loop 0x10' && r.first[1] === '16', 'two loops in objdump: the first, offset 16', JSON.stringify(r.first));
+    check(r.second[0] === 'loop 0x24' && r.second[1] === '36' && r.second[2], 'the second loop picked: its own offset 36 (0x24)', JSON.stringify(r.second));
+    check(r.edited[0] === 'loop 0x24' && r.edited[1] === '36', 'an edit within the text keeps the pick', JSON.stringify(r.edited));
+    check(r.plain[0] === '0' && !r.plain[1], 'a plain-asm text: no offset left from the objdump, the pick back to auto', JSON.stringify(r.plain));
+    check(r.again[0] === 'loop 0x10' && r.again[1] === '16', 'a new objdump text after an offset by hand: its address again', JSON.stringify(r.again));
+    check(r.manual[0] === 'loop 0x24' && r.manual[1] === '4', 'an offset set by hand for this text stays on another pick', JSON.stringify(r.manual));
+    check(r.fn[0] === 'loop .L2' && r.fn[1] === 3 && !r.example[0] && r.example[1] === null, 'an example replaces the text: the pick back to auto', JSON.stringify([r.fn, r.example]));
+    check(r.failChip === 'loop .L1', 'a pick that does not assemble: the loop chip stays', JSON.stringify(r.failChip));
+    // side B: its own pick and chip; a new B text starts at the first loop
+    const B = Buffer.from(FN2).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+    await page.goto(`${origin}/?nosw=1#v=1&m=asm&c=${b64(PLAIN)}&ab=1&bm=asm&bc=${B}`);
+    const rb = await page.eval(`${HELPERS}
+      const chipB = () => { const c = $('loop-chip-b'); return c && !c.hidden ? c.options[c.selectedIndex]?.text ?? null : null; };
+      await until(() => chipB());
+      const out = { start: [chipB(), loopChip()] };
+      const c = $('loop-chip-b'); c.value = '1'; c.dispatchEvent(new Event('change', { bubbles: true }));
+      await until(() => chipB() === 'loop .L2');
+      await wait(300);
+      out.picked = chipB();
+      const b = $('code-b'); b.value = 'h:\\n  xor eax, eax\\n.L7:\\n  sub rbx, 3\\n  dec rdx\\n  jnz .L7\\n  xor ecx, ecx\\n.L8:\\n  add rsi, rdi\\n  dec r8\\n  jnz .L8\\n  ret\\n'; b.dispatchEvent(new Event('input', { bubbles: true }));
+      await until(() => chipB() === 'loop .L7', 10000).catch(() => {});
+      out.replaced = chipB();
+      return out;`);
+    check(rb.start[0] === 'loop .L1' && rb.start[1] === null, 'A–B: side B has its own loop chip', JSON.stringify(rb));
+    check(rb.picked === 'loop .L2' && rb.replaced === 'loop .L7', 'A–B: B picks its second loop; a new B text starts at the first', JSON.stringify(rb));
+    check(page.problems.length === 0, 'no console errors (review)', page.problems.join('\n'));
     await page.cmd('Page.close');
   }
 

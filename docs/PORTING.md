@@ -100,8 +100,9 @@ added to the list in `ci/make-data-asset.sh`.
 
 ## The reference
 
-The reference is [jtl06/uiCA](https://github.com/jtl06/uiCA), branch `improve-r8`, model at commit `c899be7`: the model changes of
-round 8 (see `docs/ACCURACY.md`) on top of `improve-r7` (model `f4a7868`: the changes of round 7) on top of `improve-r6`
+The reference is [jtl06/uiCA](https://github.com/jtl06/uiCA), branch `improve-r9` (model at commit `640e40e`; not pushed yet,
+worktree aethia `/data/projects/uica-r9`): the model changes of round 9 (see `docs/ACCURACY.md`) on top of `improve-r8` (model
+`c899be7`: the changes of round 8) on top of `improve-r7` (model `f4a7868`: the changes of round 7) on top of `improve-r6`
 (`21b0b17`: the model changes of round 6, `9bed908`, merged with branch
 `crash-fixes`, `f85fcbd`: branch `perf` (`adf62ae`, whose output is identical to that of `8f24bd3`) plus the fixes of the inputs on
 which uiCA raised an exception, `docs/DEVIATIONS.md`). All fixtures in `fixtures/generated` are exported from it
@@ -111,8 +112,9 @@ which uiCA raised an exception, `docs/DEVIATIONS.md`). All fixtures in `fixtures
   (`git diff adf62ae f85fcbd -- uiCA.py` in the fork). The decoder's C code that produces the decoded records is mirrored in
   `crates/wuica-xed/shim/wuica_xed.c`.
 - Run: on the host `aethia` (`ssh aethia`), the fixed reference is installed in `~/uica-zen/uiCA-crashfix` (branch `crash-fixes`;
-  the unfixed one in `~/uica-zen/uiCA-perf`; `improve-r6` in `~/uica-zen/uiCA-r6`; `improve-r7` in `~/uica-zen/uiCA-r7`; the
-  reference of this branch, `improve-r8`, in `~/uica-zen/uiCA-r8`; never modify any of them), with the Python interpreter `~/uica-zen/venv/bin/python`. To add debug output, copy the directory (e.g. to `~/uicaspeed/<name>/uiCA`, 60 MB) and
+  the unfixed one in `~/uica-zen/uiCA-perf`; `improve-r6` in `~/uica-zen/uiCA-r6`; `improve-r7` in `~/uica-zen/uiCA-r7`;
+  `improve-r8` in `~/uica-zen/uiCA-r8`; the reference of this branch, `improve-r9`, in `/data/projects/uica-r9`; never modify any
+  of them), with the Python interpreter `~/uica-zen/venv/bin/python`. To add debug output, copy the directory (e.g. to `~/uicaspeed/<name>/uiCA`, 60 MB) and
   edit the copy. Example: `cd ~/uica-zen/uiCA-perf && ~/uica-zen/venv/bin/python -c "import xed, uiCA; ..."`; the functions take
   the list returned by `xed.disasHex(hexString, chip=config.XEDName)`.
 - aethia is also a measurement machine. A single short Python run is fine. Anything CPU-heavy (more than a few seconds, or
@@ -139,7 +141,8 @@ with `"error": "InputError: <message>"` must give an error with the text `<messa
   but no instruction-object cases.
 
 **Extra set** (same formats; files `fixtures/decode_fixtures_extra.jsonl.gz`, `fixtures/generated/extra_instr_fixtures.jsonl.gz`,
-`fixtures/generated/extra_sim_fixtures.jsonl.gz`; sources in `fixtures/extra-src/x_*.s`): 36 hand-written blocks for paths that
+`fixtures/generated/extra_sim_fixtures.jsonl.gz`; sources in `fixtures/extra-src/x_*.s`): 36 hand-written blocks (and since round 9
+six more, `x_r9_*.s`) for paths that
 the main corpus does not reach (ZMM registers, stack operations, high-8 registers, LCP, lock, rep, fences, microcode, x87, ...,
 and four blocks for the crash fixes: `x_dsb_fused_mid*.s`, `x_push_mem_pair.s`, `x_stack_init.s`), each with all option variants
 and the `-json` output (6156 simulation cases, 3420 instruction-object cases). Every case was run in a new process (`FRESH=1`),
@@ -151,13 +154,18 @@ options, each with the `-json` output; made with `REPLAY=<the previous file> too
 simulation fixture test reads it with `WUICA_SET=more WUICA_MORE_SIM_FIXTURES=<path>`; `scripts/check.sh full` runs it if the file
 is present.
 
-Current sets: exported from the fork's `improve-r8` (`c899be7`) on aethia into `~/projects/wuica-r8/r8` (`data/`, `fix/`; a copy on
-the development Mac in `~/Documents/blackedge/wuica-r8-exports/r8`, `data/` and `fixtures-generated/`), with the sources of the extra
-blocks from `~/uicaspeed/wuica-fix-crash/extra-src` and the cases of the set `more` replayed from `~/uicaspeed/wuica-fix-crash/final`.
-Compared with the export of `improve-r7`, only cases of ZEN3 and ICX differ (instruction fixtures: 5 of ICX; simulation fixtures: 24 of
-ZEN3 and 3 of ICX; extra simulation fixtures: 28 of ZEN3; set `more`: 8 of ZEN3), the decode fixtures are the same, and of the tables only `ZEN3.json` and `uarch.json` changed. CI needs a new data
-asset (`ci-data-v5`) with these files; `ci/data-asset.txt` still names `ci-data-v4`. Earlier sets: `crash-fixes` (`f85fcbd`) in
-`~/uicaspeed/wuica-fix-crash/final`; `improve-r6` in `~/projects/wuica-r6/r6m`; `improve-r7` in `~/projects/wuica-r7/t1`.
+Current sets: exported from the fork's `improve-r9` (`640e40e`) on aethia with `/data/projects/wuica-r9/export_r9.sh` into
+`/data/projects/wuica-r9/r9` (`data/`, `fix/`; a copy on the development Mac in `~/Documents/blackedge/wuica-r9-exports/r9`, `data/`
+and `fixtures-generated/`), with the sources of the extra blocks from `~/uicaspeed/wuica-fix-crash/extra-src` plus the six blocks of
+round 9 (`fixtures/extra-src/x_r9_*.s`: dogfood loops and loop benchmarks that reach the new rules: crossing loads, the store-line
+rule with rewritten registers, long FP chains; the extra set now has 42 blocks) and the cases of the set `more` replayed from
+`~/uicaspeed/wuica-fix-crash/final`. Compared with the export of `improve-r8`: instruction fixtures 1 case of ZEN3 differs; simulation
+fixtures 4 of ZEN3 and 1 of ADL-P; extra fixtures 5 instruction and 10 simulation cases of ZEN3, plus the cases of the new blocks
+(30 instruction and 54 simulation cases per configuration); set `more`: 5 of ZEN3. `fixtures/decode_fixtures_extra.jsonl.gz` gained
+the decoder cases of the new blocks (the others are unchanged); of the tables only `uarch.json` changed (new configuration fields).
+CI reads these files from the data asset `ci-data-v7` (`ci/data-asset.txt`; `ci-data-v6` has round 8's). Earlier sets: `crash-fixes`
+(`f85fcbd`) in `~/uicaspeed/wuica-fix-crash/final`; `improve-r6` in `~/projects/wuica-r6/r6m`; `improve-r7` in
+`~/projects/wuica-r7/t1`; `improve-r8` in `~/projects/wuica-r8/r8`.
 
 The decoded records of a case are found in the decode fixtures by `file` and the chip `configs[arch].XEDName`.
 Compare JSON with `wuica_core::jsoncmp::diff` (numbers by value, object key order ignored).

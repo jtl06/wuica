@@ -4,7 +4,8 @@
 // The instruction card (icard.js) and the port-set drill-down of the bound view share the details of the result
 // (details.js), fetched once per result when one of them needs them.
 // env: { engine(), pool(), onToggle(patch), setAlign(offset), getSel(), getSource() (the last Compiler Explorer import:
-// srcmap.js), mca: the llvm-mca view's env (mca.js) }
+// srcmap.js), mca: the llvm-mca view's env (mca.js), assemble(text) (Intel; the accumulator variants of whatif.js),
+// cpus() (the checked CPUs) }
 
 import { createBound } from './bound.js';
 import { createWhatIf } from './whatif.js';
@@ -19,7 +20,7 @@ import { createMca } from './mca.js';
 export function createViews(env) {
   const details = createDetails({ engine: env.engine });
   const bound = createBound({ details, onToggle: (open) => env.onToggle?.({ bound: open }) });
-  const whatif = createWhatIf({ engine: env.engine, pool: env.pool, onToggle: (open) => env.onToggle?.({ whatif: open }) });
+  const whatif = createWhatIf({ engine: env.engine, pool: env.pool, assemble: env.assemble, cpus: env.cpus, onToggle: (open) => env.onToggle?.({ whatif: open }) });
   const codemap = createCodeMap({ setAlign: env.setAlign, onToggle: (open) => env.onToggle?.({ codemap: open }) });
   const deps = createDeps({ engine: env.engine, onToggle: (open) => env.onToggle?.({ deps: open }) });
   const icard = createICard({ details, getSel: () => env.getSel?.() ?? -1 });
@@ -31,6 +32,8 @@ export function createViews(env) {
     decorate(root, view) { last = [root, view]; for (const p of parts) p.decorate(root, view); },
     // the source of an import arrived after the result was drawn
     refreshSource() { if (last) srcmap.decorate(...last); },
+    // the checked CPUs changed (the try tab's best N per CPU)
+    refreshCpus() { if (last) whatif.decorate(...last); },
     setOpen(state) { bound.setOpen(state.bound); whatif.setOpen(state.whatif); codemap.setOpen(state.codemap); deps.setOpen(state.deps); srcmap.setOpen(state.srcmap); mca.setOpen(state.mca); },
   };
 }

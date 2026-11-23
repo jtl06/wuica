@@ -5,9 +5,10 @@ import fs from 'node:fs';
 import {
   risonDecode, unrisonify, lzDecompressFromBase64, unminifyLayout, decodeFragment, parseCeLink, isCeLink, fromClientState,
   resolveShortLink, compilersOf, compilePane, compileRequest, outputModes, ceRequest, CeError, compilerMessages,
-  parseListing, findLoops, defaultSelection, extractRange, sourceAsAssembly, targetProblem, is32bit, CE_ORIGIN, gasToLlvmIntel,
+  parseListing, findLoops, defaultSelection, bodyRange, extractRange, sourceAsAssembly, targetProblem, is32bit, CE_ORIGIN, gasToLlvmIntel,
 } from '../web/js/godbolt.js';
 import { WasmAssembler } from '../web/js/assembler.js';
+import { withRegions } from '../web/js/asm-regions.js';
 import { parseHexInput, toHex } from '../web/js/hex-input.js';
 
 let failed = 0, count = 0;
@@ -183,10 +184,15 @@ function fakeFetch(routes) {
   const whole = extractRange(L2.functions[1], 0, L2.functions[1].items.length - 1, L2);
   check(!whole.endsInBranch && whole.text.trim().split('\n').at(-1).endsWith('ret'), 'a whole function ends in ret: analyzed unrolled');
 
-  // no loops: the whole first function
+  // no loops: the first function's body (without its prologue and epilogue)
   const L3 = parseListing(fx('compile-g132-short.json'));
   const d3 = defaultSelection(L3);
-  check(L3.functions.map((f) => f.name).join('|') === 'square(int)|main' && !d3.loop && d3.fn === 0 && d3.end === L3.functions[0].items.length - 1, 'no loop: the whole first function', j(d3));
+  const f3 = L3.functions[0].items;
+  check(L3.functions.map((f) => f.name).join('|') === 'square(int)|main' && !d3.loop && d3.fn === 0 && d3.end < f3.length - 1
+    && f3.slice(d3.start, d3.end + 1).every((it) => !/^(push|pop|ret|leave)/.test(it.mnemonic)) && /^ret/.test(f3.at(-1).mnemonic), 'no loop: the first function\'s body', j([d3, f3.map((it) => it.text)]));
+  const q = { items: ['endbr64', 'push rbp', 'mov rbp, rsp', 'movss DWORD PTR [rbp-20], xmm0', 'mulss xmm0, xmm1', 'pop rbp', 'ret'].map((t) => ({ kind: 'instr', text: t, mnemonic: t.split(' ')[0] })) };
+  const qb = bodyRange(q);
+  check(qb && qb.start === 3 && qb.end === 4, 'a body without the prologue (endbr64, push rbp, mov rbp, rsp) and the epilogue (pop, ret)', j(qb));
 
   // the assembly text of a compiler without machine code: labels, loops by label, the block as assembly
   const T = parseListing(fx('compile-clang1810-text.json').response);
@@ -201,7 +207,9 @@ function fakeFetch(routes) {
   check(gasToLlvmIntel('mov eax, OFFSET FLAT:.LC0') === 'mov eax, offset .LC0' && gasToLlvmIntel('movsx rsi, esi') === 'movsxd rsi, esi' && gasToLlvmIntel('movsx eax, al') === 'movsx eax, al', 'GNU as Intel syntax for LLVM');
   const asmWasm = new URL('../assembler/dist/wuica_asm.wasm', import.meta.url);
   if (fs.existsSync(asmWasm)) {
-    const a = await WasmAssembler.create(fs.readFileSync(asmWasm));
+    // as the page analyzes them: exits taken as not taken (loop-find.js)
+    const wa = withRegions(await WasmAssembler.create(fs.readFileSync(asmWasm)));
+    const a = { assemble: (t, s) => wa.assemble(t, s, { loop: 'auto' }) };
     const results = [];
     for (const f of T.functions) {
       const ranges = [[0, f.items.length - 1], ...findLoops(f).map((l) => [l.start, l.end])];

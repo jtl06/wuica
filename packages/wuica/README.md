@@ -51,6 +51,7 @@ await w.compare({ source: 'imul rax, rbx' });            // every microarchitect
 w.archs();                                                // [{id, name, year, prototype, table, xedChip}, ...]
 await w.assemble('vaddps zmm0, zmm1, zmm2');              // {code: 0, hex, length, bytes, stderr}
 w.summarize(r);                                           // compact form (the MCP analyze result)
+w.insights(r);                                            // the diagnosis alone (REST's insights)
 ```
 
 Methods never throw for bad input: they resolve to a failure `{code, error, stderr}` (see the contract below).
@@ -82,6 +83,7 @@ npx wuica loop.s -arch all           # throughput table for every microarchitect
 npx wuica loop.s -arch SKL,ICL,ZEN3  # throughput table for these
 npx wuica -list                      # the microarchitectures
 npx wuica loop.s -json               # the JSON result (the contract's analyze response)
+npx wuica psum.s -loop whole         # the whole text, not the loop found in it (-loop auto, the default, or -loop N)
 ```
 
 The simulation options are uiCA's: `-alignmentOffset N`, `-initPolicy diff|same|stack`, `-simpleFrontEnd`,
@@ -97,7 +99,7 @@ Diagnostics go to stderr. The exit status is the result code: 0 ok, 1 bad reques
 | Tool | What it does |
 |---|---|
 | `analyze` | one block on one microarchitecture: `tp`, bottlenecks, limits, a compact per-instruction table (ports, uop sources, fusion notes) and uiCA's text report (`format`: `json`, `text`, `both`) |
-| `what_if` | one block re-analyzed with one change each (the web page's "try" row): `unroll2`/`unroll4`/`unroll8` (per original iteration), `simpleFrontEnd`, `noMacroFusion`, `noMicroFusion`, and `nochain` (an estimate without the loop-carried chain); per variant `tp`, `delta`, `speedup` |
+| `what_if` | one block re-analyzed with one change each (the web page's "try" row): `unroll2`/`unroll4`/`unroll8` (per original iteration), `acc2`/`acc3`/`acc4`/`acc8` (N accumulators: unrolled ×N with the loop-carried register renamed in each copy; `renamed` lists the registers, `accumulators.best` is the best N, 1 = as it is), `simpleFrontEnd`, `noMacroFusion`, `noMicroFusion`, and `nochain` (an estimate without the loop-carried chain); per variant `tp`, `delta`, `speedup` |
 | `compare_archs` | one block on several or all microarchitectures: `tp` and bottlenecks per microarchitecture |
 | `list_archs` | ids, names, years, prototype flags |
 | `assemble` | assembly → hex bytes, or diagnostics with line/column |
@@ -138,7 +140,7 @@ text, and errors with structured stderr.
 | `GET /api/archs[?fields=id,name]` | `w.archs(fields?)` | `list_archs {fields?}` |
 | `POST /api/analyze/<arch>` | `w.analyze(arch, request)` | `analyze {arch, ...request, format?}` |
 | `POST /api/compare` | `w.compare(request)` | `compare_archs {...request}` |
-| — | `whatIf((a, r) => w.analyze(a, r), arch, request, variants?)` | `what_if {arch, ...request, variants?}` |
+| — | `whatIf((a, r) => w.analyze(a, r), arch, request, variants?, {assemble: (t) => w.assemble(t)})` | `what_if {arch, ...request, variants?}` |
 | `POST /api/assemble` | `w.assemble(source, syntax)` | `assemble {source, syntax?}` |
 
 ### Microarchitectures: `GET /api/archs`
@@ -170,6 +172,38 @@ Request:
 
 - Give exactly one of `source` (assembly; the library also accepts `asm`) and `hex` (machine code; spaces, commas and
   `0x` are allowed).
+- `source` is read as the web page reads pasted assembly. `loop` (optional) says what of it is analyzed:
+  - `"auto"` (the default): a whole function (`gcc -S`, `clang -S`, `objdump -d` lines with addresses, with or
+    without the bytes, Intel or AT&T) is analyzed at its innermost loop (the first in the code: a compiler puts the
+    main loop before its remainder loop). A span that holds a `ret` or another function's label is not a loop (a tail
+    call jumping back). A compiler's function without a loop (it has a function label, directives or a
+    prologue/epilogue, and ends in `ret`) is analyzed at its body, without prologue, epilogue and `ret`; a bare snippet
+    such as `add rax, 1` / `ret` is analyzed as typed. A text that is one loop already, or has region markers, is
+    analyzed as it is.
+  - `"whole"`: the whole text, never a pick; a number: that loop (innermost first, in code order).
+
+  objdump text is recognised by a header line (`0000… <f>:`), a byte column or `<sym+off>` branch targets; without
+  those, only when every line is address-prefixed, there are at least three, and the steps between the addresses fit
+  the instructions (so `a: add rax, 1` / `b: dec rcx` / `jnz a` stays assembly). In objdump text a branch target is
+  always an address (`jne 1b <psum+0x1b>`); GNU numeric labels (`1:` … `jnz 1b`) keep working in assembly. Code in
+  `.text.*` sections (gcc's `main` in `.text.startup`, `-ffunction-sections`) is analyzed as `.text`. CRLF and lone CR
+  line ends are line feeds (REST, MCP, the library, the CLI).
+
+  Conditional branches to a symbol the text does not define (a loop's exits, `jae .Lout`, `.L` or not) are taken as
+  not taken: the symbol is defined right after the analyzed code, so they assemble as short jumps; a note says so in
+  `stderr`. An undefined target of a `jmp` gives a warning (it is encoded as a 32-bit jump to an external symbol).
+  objdump lines with their bytes are assembled as those bytes. With addresses, the alignment offset is the analyzed
+  code's address modulo 64, unless `options.alignmentOffset` is given. When something other than the whole text was
+  analyzed, the response has `loop`: `{index, count, name, line, endLine, address?, alignmentOffset?}` (`name`:
+  `"loop .L3"`, `"loop 0x10"`, `"body"`).
+  Region markers (`# LLVM-MCA-BEGIN` … `# LLVM-MCA-END`, `# wuica-begin` … `# wuica-end`, IACA's byte markers) select
+  the first marked region. A `;` that starts a line is a comment. After a statement, LLVM reads `;` as a separator. If
+  what follows assembles, it is assembled, with a note in `stderr` naming it (`';' separates statements: 'call helper'
+  was assembled (use # for a comment)`), unless the `;` follows the statement without a space, as GNU as code chains
+  statements (`dec rcx; jnz 1b`). If it does not assemble, for any reason, it is a comment: nothing after a `;` makes a
+  valid line an error; a note says so when it starts with a mnemonic (`add the next element`), and nothing when it does
+  not (`sum += a[i]`). A line the assembler rejects inside the analyzed code is an error with its line number (objdump
+  lines outside the picked loop that the assembler rejects, such as padding, are left out).
 - `syntax` is `intel` (noprefix, the default) or `att`. The source may also switch syntax itself with
   `.intel_syntax noprefix` / `.att_syntax`.
 - Every field of `options` is optional; the defaults are shown. Unknown options and unknown request fields are an
@@ -177,6 +211,9 @@ Request:
   (`{hex, arch, minIterations}`); `options` takes precedence. The MCP tools accept only the nested form.
 - The source must be 64-bit code: `.code16`, `.code16gcc` and `.code32` are an error (code 1), since the analyzer
   only models 64-bit mode. `assemble` alone accepts them.
+- `loop` exists in the library, REST (`/api/analyze`, `/api/compare`), the MCP tools `analyze`, `what_if` and
+  `compare_archs`, and the package's CLI (`wuica -loop auto|whole|N`). The native CLI (`crates/wuica-cli`) reads
+  machine code only (hex or `-raw`), so it has no `-loop`.
 
 ### Option ranges per interface
 
@@ -217,21 +254,30 @@ Response (JSON), on success:
 The fields from `arch` to `trace` are the analysis response of the WebAssembly module (`docs/WASM-API.md` in the wuica
 repository: `rows[].values[i]` belongs to `columns[i]`, and `notes` is `M` macro-fused, `J` JCC erratum or `X`
 unsupported). `hex` is present when `source` was given and holds the assembled bytes. `stderr` holds the assembler's
-warnings and the warning "N position(s) could not be decoded". `insights` (REST only; the library's `analyze()` result
-does not have it, `insights(r)` computes it) is the diagnosis described under the compact form below, with `portSet`
+warnings, the notes on exits taken as not taken, and the warning "N position(s) could not be decoded". `insights` (REST only; the library's `analyze()` result
+does not have it, `w.insights(r)` computes it) is the diagnosis described under the compact form below, with `portSet`
 and `issueSlots` when `options.details` is true.
 
 **Plain text** (CE's `Accept: text/plain`): the response is `text` (uiCA's report), or the `stderr` lines on failure.
 In the library this is `r.text`; the MCP tool takes `format: "text"`.
 
 **Compact form** (the MCP `analyze` JSON, `w.summarize(r)`): `{code, arch, name, year, prototype, tp, unit, mode,
-bottlenecks, limits, decodeErrors, hex?, stderr, instructions, insights}`. Each entry of `instructions` is
+bottlenecks, limits, decodeErrors, hex?, loop?, stderr, instructions, insights}`. Each entry of `instructions` is
 `{instr, bytes, issued, executed, uopSource: {MITE|DSB|LSD|MS: n}, ports: {"Port 0": n, ...}, notes, uopsInfo}`
 (zero values omitted, numbers rounded to 2 decimals). `insights` is a diagnosis derived from the analysis (as the web
-page's "bound" view): `utilization` (each limit and port: cycles / tp), `binding`, `next` (`{limit, tp, maxSpeedup}`:
-the next limit, and the speedup at most if the binding one went away), `unexplained` (cycles no single limit explains),
+page's "bound" view): `utilization` (each limit and port: cycles / tp), `binding` (the bottlenecks uiCA names: always
+the same as `bottlenecks`, `[]` when it names none), `largest` (only when `binding` is `[]`: the largest limit, the
+nearest bound, which alone does not reach tp; the web page shows "unknown · nearest Ports"), `next` (`{limit, tp,
+maxSpeedup}`: the next limit, and the speedup at most if the binding one went away), `unexplained` (cycles no single
+limit explains),
 `chain` (the critical loop-carried chain: `{index, instr, operand, latency, carried}`) and `hot` (`{resource, ports?,
-instructions: [{index, instr, share}]}`: the largest shares of the binding resource). With `options.details` (MCP:
+instructions: [{index, instr, share}]}`: the largest shares of the binding resource, or of the largest limit), and
+`caveats` (only if any: `[{id, text, title, instructions}]`, known blind spots of the model that the block meets:
+`rmw-index` a read-modify-write to an indexed address, whose store forwarding between iterations depends on the data;
+`exit` an exit before the loop's branch, whose mispredict is not modelled; `split` loads at an offset that is not a
+multiple of their width, which may cross a cache line: on the CPUs whose model charges line crossings (ZEN3, ADL-P,
+ICX: `splitLoadCycles` in uarch.json) only the loads whose address the model cannot follow (an address register written
+other than by adding an immediate); the web page shows them in one line under the throughput). With `options.details` (MCP:
 `details: true`), each instruction also has `allowedPorts` (`1*p0156+1*p23`), `uops`, `fusedUops`, `latencies`
 (`"RAX->RAX:1"`) and `frontEnd` (`length`, `offset`, `crosses`, `lcp`, `microcoded`, fusion), and `insights` has `portSet`
 (the ports behind the Ports limit, `cycles` = uops / ports, and the instructions that load them) and `issueSlots` (per
@@ -281,7 +327,8 @@ reported in its row.
 
 ### Assemble: `POST /api/assemble`
 
-Request: `{"source": "...", "syntax": "intel"}`. Response: `{"code": 0, "hex": "4801d8", "length": 3, "stderr": []}`;
+Request: `{"source": "...", "syntax": "intel"}`. The whole text is assembled as it is (no loop finding, no region
+markers; `;` comments as above). Response: `{"code": 0, "hex": "4801d8", "length": 3, "stderr": []}`;
 the library also returns `bytes` (a `Uint8Array`). On failure: `{code: 2, error, stderr}` as above. The assembler is
 LLVM 22.1.2's (the same bytes as `llvm-mc`). Only `.text` is returned. `.include`/`.incbin` always fail. GNU as's
 `{load}`/`{store}` hints, which LLVM rejects, are removed at the start of a line.

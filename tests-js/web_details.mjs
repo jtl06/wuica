@@ -58,7 +58,10 @@ const near = (a, b, eps = 1e-9) => Math.abs(a - b) < eps;
   check(basic.length === 14 && basic.crosses.join() === '16,32,64' && !basic.details && basic.issued === 1, 'card: without details, from the response', JSON.stringify(basic));
   const det = { offset: 52, length: 14, crosses: [16, 64], portData: [{ ports: ['Port 0'], uops: 1 }], latencies: [], uops: 1, retireSlots: 1, uopsMITE: 1, uopsMS: 0, lcp: true, microcoded: false, complexDecoder: true, macroFusedWithNext: false, macroFusedWithPrev: false, uopList: [{ load: true }] };
   const full = cardModel(r, 0, det, 52);
-  check(full.details && full.ports === '1*p0' && full.tp === 1 && full.lcp && full.loads === 1, 'card: with details');
+  check(full.details && full.ports === '1*p0' && full.tp === 1 && full.lcp && full.loads === 1 && full.tpBound === 1 && full.tpBy === 'ports', 'card: with details');
+  // div: the card's tp is the divider's cycles (the loop's Divider limit), not its ports' (2.00 for div ecx on ZEN3)
+  const dv = cardModel(r, 0, { ...det, portData: [{ ports: ['Port 0'], uops: 2 }], divCycles: 6 }, 52);
+  check(dv.tp === 2 && dv.div === 6 && dv.tpBound === 6 && dv.tpBy === 'divider', 'card: a div, tp from the divider', JSON.stringify([dv.tp, dv.div, dv.tpBound]));
   const tags = frontTags(full).map((t) => t.text);
   check(tags.join(' ') === '14 B @52 ✂16 ✂64 LCP complex', 'card: front-end tags', tags.join(' '));
   check(cardModel(r, 3, null).fused && frontTags(cardModel(r, 3, null)).some((t) => t.text === '←fused'), 'card: macro-fused');
@@ -68,6 +71,10 @@ const near = (a, b, eps = 1e-9) => Math.abs(a - b) < eps;
   check(b && b.total === 5 && b.max === 4 && b.set.name === 'p0156' && b.ports.join() === 'p0,p1,p5,p6' && b.unit === 'uops', 'port set: blame', JSON.stringify(b));
   check(portSetBlame(r, { ...ps, rows: [1] }) === null && portSetBlame(r, null) === null && portSetBlame(r, { ...ps, rows: [0, 0, 0, 0] }) === null, 'port set: wrong or empty');
   check(setName(['ALU0', 'ALU1']) === 'ALU0 ALU1', 'port set: other names');
+  // the divider: the share of the Div column, named as the loop's bottleneck
+  const rdiv = { tp: 6, mode: 'loop', bottlenecks: ['Divider'], limits: [{ name: 'Ports', tp: 2 }], columns: ['Div', 'Port 0'], rows: [{ kind: 'instr', label: 'div ecx', opcode: 'f7f1', values: [6, 2] }, { kind: 'instr', label: 'jnz 0x0', opcode: '75fc', values: [0, 1] }] };
+  const sd = bottleneckShare(rdiv, 0, null);
+  check(sd?.resource === 'Divider' && sd.share === 1 && sd.unit === 'cycles', 'card: share of the Divider bottleneck', JSON.stringify(sd));
   // the card's share of the bottleneck: Ports by the port set when the details have it, else the busiest ports
   const rp = { ...r, tp: 2, bottlenecks: ['Ports'], limits: [{ name: 'Ports', tp: 2 }] };
   const s0 = bottleneckShare(rp, 0, null), s1 = bottleneckShare(rp, 0, { ports: ps });

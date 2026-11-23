@@ -204,7 +204,7 @@ for (const [arch, hex, id] of [['adlp', '0x48,0x01,0xd8,0x48,0x01,0xc3', 'ADL-P'
 
 // ---- features of round 2 (qa-r2): details, compare with arch lists and threads, what_if, REST insights
 {
-  const { whatIf, insights, detailInsights } = await import(pathToFileURL(path.join(PKG, 'lib/index.js')).href);
+  const { whatIf, detailInsights } = await import(pathToFileURL(path.join(PKG, 'lib/index.js')).href);
   // details: every 5th case (and the examples' kinds of blocks) with options.details through every interface
   const dcases = cases.filter((_, i) => i % 5 === 0).map((c) => ({ ...c, id: `${c.id}+details`, options: { ...c.options, details: true } }));
   dcases.push({ id: 'details:ptrchase', arch: 'ADL-P', hex: '488b0048ffc975f8', options: { details: true } },
@@ -227,8 +227,9 @@ for (const [arch, hex, id] of [['adlp', '0x48,0x01,0xd8,0x48,0x01,0xc3', 'ADL-P'
       if (want.failed) e = { failed: !!e.failed, trapped: want.trapped };
       compared(`${name} details`, c, firstDiff(want.failed ? { failed: true, trapped: want.trapped } : want, e));
     }
-    // REST insights: the library's insights(), with portSet and issueSlots
-    if (ref.code === 0) compared('rest insights', c, firstDiff({ ...insights(ref), ...detailInsights(ref) }, r.insights));
+    // REST insights: the library's insights() with the CPU's configuration (the split-load caveat depends on it), with
+    // portSet and issueSlots
+    if (ref.code === 0) compared('rest insights', c, firstDiff({ ...lib.insights(ref), ...detailInsights(ref) }, r.insights));
     // the MCP tools with details: true: the library's summarize()
     const { details: _d, includeTrace: _t, ...mreq } = c.options; // (the MCP tools have no trace)
     for (const [name, client] of [['mcp-http', mcpHttp], ['mcp-stdio', mcpStdio]]) {
@@ -305,7 +306,7 @@ for (const [arch, hex, id] of [['adlp', '0x48,0x01,0xd8,0x48,0x01,0xc3', 'ADL-P'
   ];
   for (const [i, wc] of wcases.entries()) {
     const c = { id: `what_if:${i}`, ...wc };
-    const want = JSON.parse(JSON.stringify(await whatIf((a, r) => lib.analyze(a, r), wc.arch, { hex: wc.hex, options: wc.options })));
+    const want = JSON.parse(JSON.stringify(await whatIf((a, r) => lib.analyze(a, r), wc.arch, { hex: wc.hex, options: wc.options }, undefined, { assemble: (t) => lib.assemble(t, 'intel') })));
     for (const [name, client] of [['mcp-http what_if', mcpHttp], ['mcp-stdio what_if', mcpStdio]]) {
       const got = await client.callTool({ name: 'what_if', arguments: { arch: wc.arch, hex: wc.hex, options: wc.options } });
       compared(name, c, firstDiff(want, JSON.parse(got.content[0].text)));

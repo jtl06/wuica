@@ -3,6 +3,8 @@
 // and the instructions with the largest share of the binding resource. Derived from the response only (no analysis).
 // tests-js/web_bound.mjs checks that it agrees with the page on the built-in examples.
 
+import { caveats } from './web/caveats.js';
+
 const FRONT = new Set(['MITE', 'MS', 'DSB', 'LSD']);
 const COUNTS = new Set(['Issued', 'Exec.']);
 const isPort = (c) => !FRONT.has(c) && !COUNTS.has(c);
@@ -31,6 +33,7 @@ function weights(r, id) {
     return { w: r.rows.map((x) => (x.kind === 'instr' && x.notes !== 'M' ? 1 : 0)) };
   }
   if (id === 'Predecoder') return { w: r.rows.map((x) => (x.kind === 'instr' ? String(x.opcode ?? '').length / 2 : 0)) };
+  if (id === 'Divider') return { w: fromColumn(col('Div')) };
   if (id === 'Dependencies') {
     const edges = r.criticalPath?.edges;
     if (!Array.isArray(edges) || !edges.length) return null;
@@ -41,14 +44,22 @@ function weights(r, id) {
   return null;
 }
 
-// {utilization, binding, next?, unexplained?, chain?, hot?} or null.
+// {utilization, binding, largest?, next?, unexplained?, chain?, hot?} or null.
 //   utilization: {limit or port column: cycles / tp} (1 = busy every cycle; above 1: uiCA's bound is above the simulation)
-//   binding: the bottleneck(s), or the largest limit if uiCA names none
+//   binding: the bottleneck(s) uiCA names (the response's `bottlenecks`; [] when it names none: no single limit explains
+//            tp, the page says "unknown")
+//   largest: when uiCA names none, the largest limit(s): the nearest bound, which alone does not reach tp
 //   next: {limit, tp, maxSpeedup}: the largest limit below the binding one; tp / next.tp is an upper bound of the speedup
 //   unexplained: cycles per iteration that no single limit explains
 //   chain: the critical loop-carried chain: [{index, instr, operand, latency, carried}] (index into `instructions`)
 //   hot: {resource, ports?, instructions: [{index, instr, share}]}: the largest shares of the binding resource (top 5)
-export function insights(r) {
+//   caveats: [{id, text, title, instructions: [index]}]: known blind spots the block meets (web/js/caveats.js):
+//            rmw-index (store forwarding between iterations through an indexed address), exit (an exit's mispredict),
+//            split (loads that may cross a cache line; on a CPU whose model charges crossings, only the loads it cannot
+//            follow); absent if none
+// config: the CPU's configuration in uarch.json (configs[r.arch]), for the caveats; without it, split warns as on a CPU
+// without a split-load cost (the instance's insights() and summarize() pass it).
+export function insights(r, config = null) {
   const tp = Number(r?.tp);
   if (!(tp > 0) || !Array.isArray(r.limits) || !Array.isArray(r.rows) || !Array.isArray(r.columns)) return null;
   const utilization = {};
@@ -56,27 +67,34 @@ export function insights(r) {
   r.columns.forEach((c, i) => { if (isPort(c)) { const t = total(r, i); if (t > 0) utilization[c] = round(t / tp); } });
   const limits = r.limits.map((l) => ({ name: l.name, tp: Number(l.tp) }));
   const max = limits.length ? Math.max(...limits.map((l) => l.tp)) : 0;
-  let binding = (r.bottlenecks ?? []).filter((b) => limits.some((l) => l.name === b));
-  if (!binding.length) binding = limits.filter((l) => l.tp >= max - EPS).map((l) => l.name);
-  const bindValue = Math.max(0, ...limits.filter((l) => binding.includes(l.name)).map((l) => l.tp));
+  // the cycles of a bottleneck: its limit; the divider (no limit of its own): the Div column
+  const divCol = r.columns.indexOf('Div');
+  const valueOf = (name) => limits.find((l) => l.name === name)?.tp ?? (name === 'Divider' && divCol >= 0 ? total(r, divCol) : 0);
+  const binding = [...(r.bottlenecks ?? [])];
+  const largest = binding.length ? [] : limits.filter((l) => l.tp >= max - EPS).map((l) => l.name);
+  const top = binding.length ? binding : largest;
+  const bindValue = Math.max(0, ...top.map(valueOf));
   let next = null;
-  for (const l of limits) if (!binding.includes(l.name) && l.tp < bindValue - EPS && (!next || l.tp > next.tp)) next = { limit: l.name, tp: l.tp };
+  for (const l of limits) if (!top.includes(l.name) && l.tp < bindValue - EPS && (!next || l.tp > next.tp)) next = { limit: l.name, tp: l.tp };
   const out = { utilization, binding };
+  if (largest.length) out.largest = largest;
   if (next) out.next = { ...next, maxSpeedup: next.tp > 0 ? round(tp / next.tp) : null };
   if (limits.length && tp - max > EPS) out.unexplained = round(tp - max);
   const edges = r.criticalPath?.edges;
   if (Array.isArray(edges) && edges.length) {
     out.chain = edges.map((e) => ({ index: e.from, instr: r.rows[e.from]?.label, operand: String(e.operand).toLowerCase(), latency: e.latency, carried: !!e.carried }));
   }
-  if (binding[0]) {
-    const b = weights(r, binding[0]);
+  if (top[0]) {
+    const b = weights(r, top[0]);
     const sum = b?.w?.reduce((s, x) => s + x, 0) ?? 0;
     if (b?.w && sum > 0) {
-      const top = b.w.map((x, index) => ({ index, share: x / sum })).filter((x) => x.share > 0)
+      const shares = b.w.map((x, index) => ({ index, share: x / sum })).filter((x) => x.share > 0)
         .sort((a, c) => c.share - a.share || a.index - c.index).slice(0, 5)
         .map((x) => ({ index: x.index, instr: r.rows[x.index].label, share: round(x.share) }));
-      out.hot = { resource: binding[0], ...(b.ports ? { ports: b.ports } : {}), instructions: top };
+      out.hot = { resource: top[0], ...(b.ports ? { ports: b.ports } : {}), instructions: shares };
     }
   }
+  const cv = caveats(r, config);
+  if (cv.length) out.caveats = cv.map((c) => ({ id: c.id, text: c.text, title: c.title, instructions: c.rows }));
   return out;
 }

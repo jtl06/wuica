@@ -91,6 +91,10 @@ pub(crate) struct Scheduler {
     dep_lists: Vec<(u32, u32)>,
     /// (uop, next node)
     dep_nodes: Vec<(u32, u32)>,
+    /// uops for the FP scheduler's ports that are in the FP scheduler (`nFPUopsInScheduler`, see `fpSchedulerSize`)
+    n_fp_uops_in_scheduler: i64,
+    /// uops waiting in the non-scheduling queue (`fpNonSchedulingQueue`)
+    fp_non_scheduling_queue: VecDeque<u32>,
 }
 
 /// `uopsReadyInCycle`: cycle -> uops, for the cycles after the current one. A ring of buckets indexed by `cycle & mask`; it
@@ -239,6 +243,8 @@ impl Scheduler {
             blocked_is_active: vec![false; n_resources],
             dep_lists: Vec::new(),
             dep_nodes: Vec::new(),
+            n_fp_uops_in_scheduler: 0,
+            fp_non_scheduling_queue: VecDeque::new(),
         }
     }
 }
@@ -288,6 +294,11 @@ impl<'a> Sim<'a> {
         }
         self.add_new_uops(clock, new_uops)?;
         self.dispatch_uops(clock)?;
+        while !self.sched.fp_non_scheduling_queue.is_empty() && self.sched.n_fp_uops_in_scheduler < self.cfg.fp_scheduler_size {
+            self.sched.n_fp_uops_in_scheduler += 1;
+            let u = self.sched.fp_non_scheduling_queue.pop_front().expect("not empty");
+            self.check_depending_uops_executed(u);
+        }
         self.process_pending_uops()?;
         self.process_non_ready_uops(clock)?;
         self.process_pending_fences(clock);
@@ -307,6 +318,12 @@ impl<'a> Sim<'a> {
             }
         }
         Ok(())
+    }
+
+    /// whether uops for the port (index) wait in the FP scheduler (`fpSchedulerSize`, `fpSchedulerPorts`)
+    #[inline]
+    fn is_fp_scheduler_port(&self, port: usize) -> bool {
+        self.cfg.fp_scheduler_size != 0 && self.cfg.fp_scheduler_ports.as_bytes().contains(&self.prep.ports[port])
     }
 
     /// `Scheduler.dispatchUops`
@@ -381,8 +398,8 @@ impl<'a> Sim<'a> {
                     }
                 }
             }
-            // (a port is only blocked with slow256BitMemAcc)
-            if cfg.slow_256bit_mem_acc && s.blocked_resources[1 + port] != 0.0 {
+            // (a port is only blocked with slow256BitMemAcc or splitLoadCycles)
+            if (cfg.slow_256bit_mem_acc || cfg.split_load_cycles != 0) && s.blocked_resources[1 + port] != 0.0 {
                 continue;
             }
             let queue = if use_div_queue { &mut s.ready_div_uops } else { &mut s.ready_queue[port] };
@@ -390,6 +407,9 @@ impl<'a> Sim<'a> {
 
             self.uops[u as usize].dispatched = clock;
             s.n_uops -= 1;
+            if cfg.fp_scheduler_size != 0 && cfg.fp_scheduler_ports.as_bytes().contains(&self.prep.ports[port]) {
+                s.n_fp_uops_in_scheduler -= 1;
+            }
             // also added to pendingUops (in processPendingUops)
             uops_dispatched.push(u);
 
@@ -397,6 +417,19 @@ impl<'a> Sim<'a> {
             if div_cycles != 0 {
                 s.blocked_resources[RES_DIV] += div_cycles as f64;
                 s.mark_blocked(RES_DIV);
+            }
+            if cfg.split_load_cycles != 0 {
+                let prop = &self.prep.props[self.uops[u as usize].prop as usize];
+                if prop.has(pf::LOAD) {
+                    if let Some(pattern) = &self.instrs[prop.instr as usize].split_load_pattern {
+                        let rnd = self.insts[self.uops[u as usize].instr_instance as usize].rnd;
+                        if pattern[rnd.rem_euclid(pattern.len() as i64) as usize] {
+                            // a load that crosses a 64-byte line (see splitLoadCycles)
+                            s.blocked_resources[1 + port] = cfg.split_load_cycles as f64;
+                            s.mark_blocked(1 + port);
+                        }
+                    }
+                }
             }
             if cfg.slow_256bit_mem_acc
                 && port == port4
@@ -648,7 +681,16 @@ impl<'a> Sim<'a> {
                 self.sched.port_usage[port] += 1;
                 self.sched.n_uops += 1;
 
-                self.check_depending_uops_executed(u);
+                if self.is_fp_scheduler_port(port) {
+                    if !self.sched.fp_non_scheduling_queue.is_empty() || self.sched.n_fp_uops_in_scheduler >= self.cfg.fp_scheduler_size {
+                        self.sched.fp_non_scheduling_queue.push_back(u);
+                    } else {
+                        self.sched.n_fp_uops_in_scheduler += 1;
+                        self.check_depending_uops_executed(u);
+                    }
+                } else {
+                    self.check_depending_uops_executed(u);
+                }
 
                 let flags = self.prep.props[self.uops[u as usize].prop as usize].flags;
                 if flags & pf::FIRST != 0 {
