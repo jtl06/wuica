@@ -219,6 +219,10 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
   // the checked CPUs: a short list; the focused CPU (a=) is one of them; old links: one CPU, or all with cmpcpu=1
   const m = { ...DEFAULT_STATE, arch: 'ZEN3', cpus: 'SKL,ZEN3,ADL-P', text: 'nop\n' };
   check(encodeState(m) === 'v=1&m=asm&a=ZEN3&as=SKL,ZEN3,ADL-P&c=bm9wCg' && JSON.stringify(decodeState(encodeState(m))) === JSON.stringify(m), 'url: the checked CPUs round trip', encodeState(m));
+  // the default CPU focused, with an earlier CPU checked: a= is needed (without it the first of the list is focused)
+  const d = { ...DEFAULT_STATE, cpus: 'HSW,SKL', text: 'nop\n' };
+  check(encodeState(d) === 'v=1&m=asm&a=SKL&as=HSW,SKL&c=bm9wCg' && JSON.stringify(decodeState(encodeState(d))) === JSON.stringify(d)
+    && encodeState({ ...d, cpus: 'SKL,ZEN3' }) === 'v=1&m=asm&as=SKL,ZEN3&c=bm9wCg', 'url: SKL focused with HSW checked round trips', encodeState(d));
   check(encodeState({ ...DEFAULT_STATE, arch: 'ZEN3', cpus: 'ZEN3' }) === 'v=1&m=asm&a=ZEN3' && encodeState({ ...DEFAULT_STATE, cpus: 'all' }) === 'v=1&m=asm&as=all', 'url: one CPU needs no list; all of them is "all"');
   check(decodeState('v=1&as=HSW,ICL').arch === 'HSW' && decodeState('v=1&as=HSW,ICL').cpus === 'HSW,ICL' && decodeState('v=1&a=ZEN3').cpus === '' && decodeState('v=1&a=ZEN3&cmpcpu=1').cpus === 'all',
     'url: without a=, the first checked CPU is focused; an old link with the table of all CPUs open checks them all');
@@ -241,7 +245,7 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
 
   // A fake module with the interface of assembler/wuica_asm.cpp; its memory grows in malloc and in the call.
   const enc = new TextEncoder();
-  let instances = 0, live = 0;
+  let instances = 0, live = 0, runs = 0;
   const make = () => {
     instances++;
     const memory = new WebAssembly.Memory({ initial: 1 });
@@ -253,13 +257,14 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
       wuica_fatal_message() { return fatal; },
       wuica_assemble(text, syntax, out, outCap, err, errCap) {
         if (!initialized) throw new Error('not initialized');
+        runs++;
         memory.grow(1);
         const m = new Uint8Array(memory.buffer);
         const src = new TextDecoder().decode(m.subarray(text, m.indexOf(0, text)));
         put(err, errCap, '');
         if (src.includes('trap')) { fatal = malloc(64); live--; put(fatal, 64, 'LLVM ERROR: boom'); throw new WebAssembly.RuntimeError('unreachable'); }
         if (src.includes('bogus')) { put(err, errCap, `<input>:${src.split('\n').findIndex((l) => l.includes('bogus')) + 1}:3: error: invalid instruction mnemonic 'bogus'\n  bogus\n  ^\n`); return -1; }
-        const n = src.includes('huge') ? 70000 : 3;
+        const n = src.includes('enormous') ? 2000000 : src.includes('huge') ? 70000 : 3;
         if (n > outCap) { put(err, errCap, `output buffer too small: ${n} bytes needed`); return -2; }
         new Uint8Array(memory.buffer).fill(syntax === 1 ? 0xa7 : 0x17, out, out + n);
         if (src.includes('warn')) put(err, errCap, '<input>:1:1: warning: careful\n');
@@ -277,6 +282,10 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
   check(!e.ok && e.diagnostics.length === 1 && e.diagnostics[0].line === 3 && e.diagnostics[0].column === 3, 'assembler: errors with line and column', JSON.stringify(e));
   const hg = await a.assemble('huge\n');
   check(hg.ok && hg.bytes.length === 70000, 'assembler: retries with a larger output buffer');
+  const runsBefore = runs;
+  const en = await a.assemble('enormous\n');
+  check(!en.ok && runs === runsBefore + 1 && en.diagnostics[0].message === 'Too much machine code: 2,000,000 bytes (at most 1,048,576)',
+    'assembler: more than 1 MiB of machine code is an error after one run (no second, larger run)', JSON.stringify([en, runs - runsBefore]));
   check(live === 0, 'assembler: buffers are freed', `${live} live`);
   const t = await a.assemble('trap\n');
   check(!t.ok && /boom/.test(t.diagnostics[0].message), 'assembler: a trap is reported with the fatal message', JSON.stringify(t));

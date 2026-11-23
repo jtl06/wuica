@@ -89,7 +89,14 @@ function pickOptions(req, extraKeys) {
   const unknown = Object.keys(options ?? {}).filter((k) => !Object.hasOwn(OPTION_DEFAULTS, k));
   if (unknown.length) return { error: `unknown option(s): ${unknown.join(', ')} (known: ${Object.keys(OPTION_DEFAULTS).join(', ')})` };
   const out = {};
-  for (const [k, d] of Object.entries(OPTION_DEFAULTS)) out[k] = options?.[k] ?? req[k] ?? d;
+  for (const [k, d] of Object.entries(OPTION_DEFAULTS)) {
+    const v = options?.[k] ?? req[k] ?? d;
+    // a value of the wrong kind is a bad request (code 1), like an unknown option, not a failed analysis
+    const bad = typeof d === 'number' ? !Number.isSafeInteger(v) : typeof d === 'boolean' ? typeof v !== 'boolean'
+      : k === 'initPolicy' && !['diff', 'same', 'stack'].includes(v);
+    if (bad) return { error: `option ${k}: ${JSON.stringify(v)} is not ${typeof d === 'number' ? 'an integer' : typeof d === 'boolean' ? 'true or false' : 'one of "diff", "same", "stack"'}` };
+    out[k] = v;
+  }
   return { options: out };
 }
 
@@ -158,7 +165,8 @@ class Wuica {
     if (typeof source !== 'string') return failure(CODES.REQUEST, '`source` must be a string');
     const s = syntaxCode(syntax);
     if (s < 0) return failure(CODES.REQUEST, `unknown syntax "${syntax}" (use "intel" or "att")`);
-    const r = (await this.#getAssembler()).assemble(source, s);
+    // a byte order mark (a file saved by some Windows editors) is not part of the code: LLVM would reject it
+    const r = (await this.#getAssembler()).assemble(source.replace(/^\uFEFF/, ''), s);
     if (!r.ok) {
       if (r.status === 'trap') return failure(CODES.ASSEMBLER, r.message, undefined, { trapped: true });
       const first = parseDiagnostics(r.message).find((d) => d.severity === 'error');
@@ -177,6 +185,7 @@ class Wuica {
     if (hasHex) {
       if (req.syntax !== undefined && syntaxCode(req.syntax) < 0) return failure(CODES.REQUEST, `unknown syntax "${req.syntax}"`);
       const hex = normalizeHex(req.hex);
+      if (hex === null && typeof req.hex === 'string' && normalizeHex(req.hex + '00') === '00') return failure(CODES.REQUEST, '`hex` is empty: no machine code');
       if (hex === null) return failure(CODES.REQUEST, '`hex`: expected an even number of hex digits (spaces, commas and 0x prefixes are allowed)');
       return { hex, assembled: false, stderr: [] };
     }

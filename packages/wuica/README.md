@@ -219,7 +219,7 @@ Every call can fail like a compiler run in Compiler Explorer, with a non-zero `c
 | code | meaning | REST status |
 |---|---|---|
 | 0 | success | 200 |
-| 1 | bad request: neither or both of source/hex, bad hex, unknown arch, unknown option or syntax | 400 (unknown arch: 404) |
+| 1 | bad request: neither or both of source/hex, bad hex, unknown arch, unknown option, bad option value or syntax | 400 (unknown arch: 404) |
 | 2 | assembler error (stderr as `llvm-mc` prints it; positioned lines carry `tag`) | 200, like a failed compile in CE |
 | 3 | the analysis failed for this input (as the Python uiCA would); `trapped: true` if the module trapped | 200 |
 

@@ -614,10 +614,11 @@ try {
   check(false, 'the test ran to the end', e?.stack ?? String(e));
 } finally {
   browser.close();
+  const exited = proc.exitCode !== null ? Promise.resolve() : new Promise((r) => proc.once('exit', r));
   proc.kill();
   await stop().catch(() => {});
-  await sleep(300);
-  if (!args.includes('--keep')) fs.rmSync(tmp, { recursive: true, force: true });
+  await Promise.race([exited, sleep(5000)]); // Chrome may still write to its profile in tmp (ENOTEMPTY under load)
+  if (!args.includes('--keep')) fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
 
 console.log(`${count} browser checks, ${failed} failed`);

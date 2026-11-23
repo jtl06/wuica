@@ -20,6 +20,9 @@
 export const SYNTAX = Object.freeze({ intel: 0, att: 1 });
 const ERR_CAP = 16384;
 const OUT_CAP = 1 << 16;
+// At most this much machine code (as in the npm package): the assembler runs on the page's thread, and a block this
+// large is already more than the analyzer can simulate in its memory.
+export const MAX_CODE_BYTES = 1 << 20;
 
 // llvm-mc's diagnostics: "<input>:LINE:COL: error: MESSAGE", followed by the source line and a caret line.
 export function parseDiagnostics(text) {
@@ -36,6 +39,17 @@ export function parseDiagnostics(text) {
 // Removes GNU as's {load} / {store} pseudo-prefixes at the start of a line (LLVM 22 says "unknown prefix").
 export function stripHints(text) {
   return text.replace(/^([ \t]*)\{(?:load|store)\}[ \t]*/gm, '$1');
+}
+
+// LLVM (like GNU as) reads ';' as a separator between statements, not as a comment, so "add rax, 1 ; note" fails with
+// "invalid instruction mnemonic 'note'". Such an error (right after a ';') gets a hint. diagnostics: changed in place.
+export function semicolonHint(diagnostics, text) {
+  const lines = String(text).split('\n');
+  for (const d of diagnostics) {
+    if (d.severity !== 'error' || !d.line || !d.column || !/^(invalid instruction mnemonic|unexpected token at start of statement)/.test(d.message)) continue;
+    if (/;\s*$/.test((lines[d.line - 1] ?? '').slice(0, d.column - 1))) d.message += " (';' separates instructions; comments start with '#')";
+  }
+  return diagnostics;
 }
 
 // True if the bytes are a WebAssembly module. A static host may answer a missing file with an HTML page and
@@ -113,13 +127,18 @@ export class WasmAssembler {
   async assemble(text, syntax = 'intel') {
     if (!(syntax in SYNTAX)) throw new TypeError(`unknown syntax: ${syntax}`);
     if (!this.#x) await this.#instantiate();
-    const source = new TextEncoder().encode(stripHints(String(text).replace(/\0/g, ' ')) + '\0');
+    // (a byte order mark at the start is not code: LLVM would reject it)
+    const plain = stripHints(String(text).replace(/^\uFEFF/, '').replace(/\0/g, ' '));
+    const source = new TextEncoder().encode(plain + '\0');
     let r;
     try {
       r = this.#run(source, SYNTAX[syntax], OUT_CAP);
       if (r.status === -2) {
         const need = Number(/(\d+) bytes needed/.exec(r.message)?.[1]);
-        if (need > OUT_CAP && need <= (1 << 26)) r = this.#run(source, SYNTAX[syntax], need);
+        if (need > MAX_CODE_BYTES) {
+          return { ok: false, diagnostics: [{ line: null, column: null, severity: 'error', message: `Too much machine code: ${need.toLocaleString('en-US')} bytes (at most ${MAX_CODE_BYTES.toLocaleString('en-US')})` }] };
+        }
+        if (need > OUT_CAP) r = this.#run(source, SYNTAX[syntax], need);
       }
     } catch (e) {
       // A trap (LLVM's fatal error handler). The instance is unusable afterwards: drop it, the next call makes a new one.
@@ -131,6 +150,7 @@ export class WasmAssembler {
     }
     const diagnostics = parseDiagnostics(r.message);
     if (r.status >= 0) return { ok: true, bytes: r.bytes, diagnostics };
+    semicolonHint(diagnostics, plain);
     if (!diagnostics.some((d) => d.severity === 'error')) {
       diagnostics.push({ line: null, column: null, severity: 'error', message: `the assembler failed (code ${r.status})` });
     }

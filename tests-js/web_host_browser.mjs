@@ -130,7 +130,9 @@ try {
   const reload = async () => { await cmd('Page.reload'); await sleep(150); return loaded(); };
   // the page is there and an analysis gives a result
   const works = async (what) => {
-    const ready = await waitFor(`document.getElementById('run') && !document.getElementById('run').disabled`);
+    // (a reload restores the state from the fragment and analyzes it at once: while that runs, the button is
+    // "Cancel", and a click would stop it; wait until it is "Analyze" again)
+    const ready = await waitFor(`document.getElementById('run') && !document.getElementById('run').disabled && !document.getElementById('run').classList.contains('busy')`);
     let r = { ready };
     if (ready) {
       r = await evaluate(`

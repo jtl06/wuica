@@ -8,9 +8,9 @@
 //   (web/build.sh) and the npm package's dist/ (packages/wuica/build.sh).
 // - Suites: every Rust test binary of the workspace (unit tests together as one suite), tests-js/analyze_fixtures.mjs,
 //   tests-js/decode_fixtures.mjs, every tests-js/web_*.mjs (found by glob; those that start Chrome are "browser" suites, at
-//   most --chrome-jobs of them at a time) and the npm package's tests.
+//   most --chrome-jobs of them at a time), the npm package's and the API server's tests, and tests-js/interfaces.mjs.
 // - quick: the simulation fixtures only for a few configurations, analyze_fixtures on every 7th case, web_trace on every 16th
-//   case, browser suites only if their last run took at most 10 s, no npm package, no doc tests. full: everything.
+//   case, browser suites only if their last run took at most 10 s, no npm package or server, no doc tests. full: everything.
 // - Each suite's output goes to target/check/<suite>.log; at the end one table, and the tail of the logs of failed suites.
 //   The exit status is 1 if anything failed.
 // --only PATTERN: only the suites whose name matches the regular expression (and the builds they need).
@@ -62,7 +62,7 @@ const VARIANTS = {
 };
 const variants = (name) => VARIANTS[opts.mode][name] ?? [{ tag: null, env: {} }];
 const ARGS = {
-  quick: { analyze_fixtures: ['7'], web_trace: ['16'] },
+  quick: { analyze_fixtures: ['7'], web_trace: ['16'], web_interfaces_browser: ['60', '8'] },
   full: { analyze_fixtures: ['1'] },
 };
 const QUICK_BROWSER_MAX_S = 10; // quick runs a browser suite only if its last run took at most this long
@@ -272,6 +272,31 @@ if (!QUICK) {
     run: async (log) => {
       const code = await exec('node', ['--test'], { cwd: PKG, env: cliBinary ? { WUICA_CLI: cliBinary } : {}, log });
       return { status: code ? 'fail' : 'pass', count: nodeTestCount(fs.readFileSync(log, 'utf8')) };
+    },
+  });
+  // the API server (server/): its dependencies (the package is a file: dependency, so after build:npm)
+  const SERVER = path.join(ROOT, 'server');
+  task({
+    name: 'build:server', kind: 'build', deps: ['build:npm'],
+    run: async (log) => {
+      if (exists(path.join(SERVER, 'node_modules'))) { fs.appendFileSync(log, 'server/node_modules present\n'); return { status: 'pass', count: 'node_modules present' }; }
+      const code = await exec('npm', ['ci', '--no-audit', '--no-fund'], { cwd: SERVER, log });
+      return { status: code ? 'fail' : 'pass', count: code ? `npm ci: exit ${code}` : 'npm ci' };
+    },
+  });
+  task({
+    name: 'npm:server', kind: 'js', deps: ['build:server'], weight: 2,
+    run: async (log) => {
+      const code = await exec('node', ['--test', '--test-concurrency=1', ...fs.readdirSync(path.join(SERVER, 'test')).filter((f) => f.endsWith('.test.mjs')).sort().map((f) => `test/${f}`)], { cwd: SERVER, log });
+      return { status: code ? 'fail' : 'pass', count: nodeTestCount(fs.readFileSync(log, 'utf8')) };
+    },
+  });
+  // the same random requests through the library, the native and npm tools, the server's REST and MCP, the stdio MCP
+  task({
+    name: 'interfaces', kind: 'js', deps: ['build:server', 'build:rust', 'build:wasm'], weight: 2,
+    run: async (log) => {
+      const code = await exec('node', ['tests-js/interfaces.mjs', '300'], { env: cliBinary ? { WUICA_CLI: cliBinary } : {}, log });
+      return { status: code ? 'fail' : 'pass', count: jsCount(fs.readFileSync(log, 'utf8')) };
     },
   });
 }

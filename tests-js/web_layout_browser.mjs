@@ -234,12 +234,23 @@ try {
       const b = document.querySelector('table.cmp-cpus tr[data-arch="ADL-P"] button.pick'); b.focus();
       await done(() => b.click());
       out.key = [focused(), document.activeElement?.getAttribute('data-focus')];
-      // checking another CPU leaves the focus where it is
-      cpus('SKL', 'ZEN3', 'ADL-P', 'HSW'); await until(() => tableDone() && rows().length === 4);
-      out.added = [focused(), checkedCpus(), rows().length];
-      // unchecking the focused one moves the focus to the first checked
-      await done(() => cpus('HSW', 'SKL', 'ZEN3'));
-      out.unchecked = [focused(), checkedCpus()];
+      // a click on another CPU's box focuses it: the detailed result and the status line follow (in live mode too)
+      const box = (k) => document.querySelector('#cpu-grid input[value="' + k + '"]');
+      await done(() => box('HSW').click()); const status = $('status').textContent; // (read at once: it shows for 6 s)
+      await until(() => tableDone() && rows().length === 4);
+      out.added = [focused(), checkedCpus(), rows().length, document.querySelector('#result-body .meta')?.textContent, status, tp() === rows().find((x) => x[0] === 'HSW')[1], $('live').checked];
+      // unchecking the focused one moves the focus to the CPU focused before it (ADL-P), then to the one before that (ZEN3)
+      await done(() => box('HSW').click());
+      out.unchecked = [focused(), checkedCpus(), $('status').textContent];
+      await done(() => box('ADL-P').click());
+      out.unchecked2 = [focused(), checkedCpus()];
+      // unchecking a CPU that is not focused keeps the focus
+      await done(() => box('HSW').click()); await until(() => tableDone() && rows().length === 3);
+      await done(() => document.querySelector('table.cmp-cpus tr[data-arch="ZEN3"]').click());
+      const n2 = $('results').dataset.run;
+      box('HSW').click(); await until(() => tableDone() && rows().length === 2); await wait(300);
+      out.uncheckedOther = [focused(), checkedCpus(), $('results').dataset.run === n2];
+      await done(() => box('HSW').click()); await until(() => tableDone() && rows().length === 3);
       return out;`);
     check(r.start[0] === 'SKL' && r.start[1] === 'SKL' && r.start[2], 'cpus: SKL is checked by default; one CPU: no table', JSON.stringify(r.start));
     check(r.three[0] === 'SKL' && r.three[1] === 'SKL,ZEN3,ADL-P' && r.three[2].map((x) => x[0]).join() === 'SKL,ZEN3,ADL-P' && r.three[2].every((x) => /^\d+\.\d\d$/.test(x[1]))
@@ -247,8 +258,12 @@ try {
     check(r.zen[0] === 'ZEN3' && r.zen[1] === r.zen[2] && r.zen[3] && r.zen[4] === 'ZEN3' && r.zen[5] === '#v=1&a=ZEN3&as=SKL,ZEN3,ADL-P' && r.zen[6] === 'ZEN3' && /ZEN3/.test(r.zen[7]),
       'cpus: a row focuses its CPU (same throughput, the table is not recomputed, the URL and the boxes follow)', JSON.stringify(r.zen));
     check(r.key[0] === 'ADL-P' && r.key[1] === 'cpu-ADL-P', 'cpus: a row works from the keyboard; the focus stays on it', JSON.stringify(r.key));
-    check(r.added[0] === 'ADL-P' && r.added[1] === 'HSW,SKL,ZEN3,ADL-P' && r.added[2] === 4, 'cpus: checking another CPU adds its row; the focus stays', JSON.stringify(r.added));
-    check(r.unchecked[0] === 'HSW' && r.unchecked[1] === 'HSW,SKL,ZEN3', 'cpus: unchecking the focused CPU focuses the first checked', JSON.stringify(r.unchecked));
+    check(r.added[0] === 'HSW' && r.added[1] === 'HSW,SKL,ZEN3,ADL-P' && r.added[2] === 4 && /HSW/.test(r.added[3]) && r.added[5] && r.added[6]
+      && /^\d+\.\d\d cycles\/iteration · HSW · 4 CPUs · \d+(\.\d)? ms$/.test(r.added[4]),
+    'cpus: checking a CPU adds its row and focuses it; the details and the status line (with the number of CPUs) follow', JSON.stringify(r.added));
+    check(r.unchecked[0] === 'ADL-P' && r.unchecked[1] === 'SKL,ZEN3,ADL-P' && / · ADL-P · 3 CPUs · /.test(r.unchecked[2]) && r.unchecked2[0] === 'ZEN3' && r.unchecked2[1] === 'SKL,ZEN3',
+      'cpus: unchecking the focused CPU focuses the one focused most recently among the rest', JSON.stringify([r.unchecked, r.unchecked2]));
+    check(r.uncheckedOther[0] === 'ZEN3' && r.uncheckedOther[1] === 'SKL,ZEN3' && r.uncheckedOther[2], 'cpus: unchecking another CPU keeps the focus (no new analysis)', JSON.stringify(r.uncheckedOther));
 
     // the URL round trip: a reload restores the checked CPUs and the focused one
     await page.eval(`${HELPERS} await done(() => document.querySelector('table.cmp-cpus tr[data-arch="ZEN3"]').click()); return 1;`);
@@ -265,7 +280,8 @@ try {
       const box = document.querySelector('#cpu-grid input[value=ZEN3]'); box.click(); await wait(50);
       out.last = [box.checked, checkedCpus()];
       // A–B: one CPU per side; side A is the focused one; no table
-      cpus('SKL', 'ZEN3'); await until(() => tableDone() && rows().length === 2); // the focus stays on ZEN3
+      await done(() => cpus('SKL', 'ZEN3')); out.two = [focused(), $('status').textContent]; // SKL, checked, gets the focus
+      await until(() => tableDone() && rows().length === 2);
       await done(() => $('cmp-ab').click());
       out.ab = [$('cmp-cpus').offsetParent === null, document.querySelector('.ab-a .ab-desc')?.textContent, document.querySelector('#result-body .meta')?.textContent];
       // in A–B mode (no table), a CPU that is checked becomes side A's
@@ -278,7 +294,8 @@ try {
     check(u.all[0] === 15 && u.all[1] && u.all[2] === 'ZEN3', 'cpus: "all" checks every CPU ("as=all" in the URL)', JSON.stringify(u.all));
     check(u.clear[0] === 'ZEN3' && u.clear[1] === 'ZEN3' && u.clear[2] && !u.clear[3], 'cpus: "clear" keeps the focused CPU only', JSON.stringify(u.clear));
     check(u.last[0] && u.last[1] === 'ZEN3', 'cpus: the last checked CPU cannot be unchecked', JSON.stringify(u.last));
-    check(u.ab[0] && /ZEN3/.test(u.ab[1]) && /A ZEN3/.test(u.ab[2]) && u.abCheck[0] === 'ICL' && /ICL/.test(u.abCheck[1]) && /A ICL/.test(u.abCheck[2])
+    check(u.two[0] === 'SKL' && / · SKL · 2 CPUs · /.test(u.two[1]), 'cpus: a checked CPU becomes the focused one (with a table already there)', JSON.stringify(u.two));
+    check(u.ab[0] && /SKL/.test(u.ab[1]) && /A SKL/.test(u.ab[2]) && u.abCheck[0] === 'ICL' && /ICL/.test(u.abCheck[1]) && /A ICL/.test(u.abCheck[2])
       && u.single[0] && u.single[1] === 'SKL,ICL,ZEN3' && u.single[2] === 'ICL', 'cpus: A–B uses the focused CPU (a newly checked one becomes it) and hides the table; back in single mode it is there again', JSON.stringify([u.ab, u.abCheck, u.single]));
 
     // old links: one CPU (a=); the table of all CPUs (cmpcpu=1) checks them all

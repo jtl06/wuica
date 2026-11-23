@@ -79,10 +79,14 @@ export class Analyzer {
     } catch (e) {
       return { error: `the analyzer could not be restarted: ${e instanceof Error ? e.message : e}` };
     }
+    const x = this.#x;
     try {
       return this.#call('wuica_analyze', [enc.encode(JSON.stringify(request))]);
     } catch (e) {
-      const detail = e instanceof Error ? e.message : String(e);
+      // an allocation that fails ends in `unreachable` like any panic; more than 1 GiB in use: the memory ran out
+      let used = 0;
+      try { used = x.memory.buffer.byteLength; } catch { /* unknown */ }
+      const detail = (e instanceof Error ? e.message : String(e)) + (used >= 2 ** 30 ? `: out of memory, ${(used / 2 ** 30).toFixed(1)} GB in use; try a smaller block or fewer iterations` : '');
       return {
         error: `the analysis failed for this input (the WebAssembly module trapped: ${detail}); the analyzer was restarted`,
         trapped: true,

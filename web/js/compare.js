@@ -18,6 +18,7 @@ export function summarize(response) {
     tp,
     bottlenecks: Array.isArray(response.bottlenecks) ? response.bottlenecks.map(String) : [],
     mode: response.mode,
+    decodeErrors: Number(response.decodeErrors) || 0, // positions this CPU's decoder skipped (e.g. AVX2 on SNB)
     mock: !!response.mock,
   };
 }
@@ -27,11 +28,15 @@ const round2 = (x) => Math.round(x * 100) / 100;
 
 // items: the menu items in menu order ([{key, title, experimental, ...}]); results: Map key -> summary (absent:
 // not analyzed yet). sort: 'menu' (chronological, the menu's order) | 'tp' (fastest first) | 'tp-desc'.
-// Rows without a result sort last, in menu order. bar: tp relative to the slowest result (0..1).
+// Rows without a result sort last, in menu order. bar: tp relative to the slowest result (0..1). decodeErrors: the
+// positions a CPU could not decode (its result leaves those instructions out); such a row is not the fastest unless
+// every row skipped as much.
 export function compareRows(items, results, { sort = 'menu', current = null } = {}) {
   const ok = items.map((it) => results.get(it.key)).filter((r) => r && !r.error);
   const max = Math.max(0, ...ok.map((r) => r.tp));
-  const min = ok.length ? Math.min(...ok.map((r) => round2(r.tp))) : null;
+  const fewest = Math.min(...ok.map((r) => r.decodeErrors ?? 0));
+  const complete = ok.filter((r) => (r.decodeErrors ?? 0) === fewest);
+  const min = complete.length ? Math.min(...complete.map((r) => round2(r.tp))) : null;
   const rows = items.map((it, index) => {
     const r = results.get(it.key);
     const state = !r ? 'pending' : r.error ? 'error' : 'ok';
@@ -40,8 +45,9 @@ export function compareRows(items, results, { sort = 'menu', current = null } = 
       tp: state === 'ok' ? r.tp : null,
       bottlenecks: state === 'ok' ? r.bottlenecks : [],
       error: state === 'error' ? r.error : null,
+      decodeErrors: state === 'ok' ? r.decodeErrors ?? 0 : 0,
       bar: state === 'ok' && max > 0 ? r.tp / max : 0,
-      fastest: state === 'ok' && round2(r.tp) === min,
+      fastest: state === 'ok' && (r.decodeErrors ?? 0) === fewest && round2(r.tp) === min,
       current: it.key === current,
     };
   });

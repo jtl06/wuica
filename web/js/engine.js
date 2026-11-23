@@ -26,6 +26,17 @@ function hexBytes(hex) {
 
 export class EngineError extends Error {}
 
+// What a trap says, and whether the memory was exhausted: an allocation that fails in the module (a very large block,
+// or very many iterations) ends in `unreachable` like any other panic. A normal block needs some MB; an instance that
+// trapped with more than 1 GiB most likely ran out of memory (wasm32 has at most 4 GiB, browsers may give less).
+export const OOM_BYTES = 2 ** 30;
+export function trapDetail(e, exports) {
+  const what = e instanceof Error ? e.message : String(e);
+  let used = 0;
+  try { used = exports?.memory?.buffer?.byteLength ?? 0; } catch { /* no memory to read */ }
+  return used >= OOM_BYTES ? `${what}: out of memory, ${(used / 2 ** 30).toFixed(1)} GB in use; try a smaller block or fewer iterations` : what;
+}
+
 function check(exports) {
   for (const name of ['memory', 'wuica_alloc', 'wuica_free', 'wuica_result_ptr']) {
     if (!exports?.[name]) throw new EngineError(`not a wuica module: export "${name}" is missing`);
@@ -153,11 +164,12 @@ export class WasmEngine {
   async analyze(request) {
     await this.#live();
     const input = [enc.encode(JSON.stringify(request))];
+    const x = this.#x;
     try {
       return this.#json('wuica_analyze', input);
     } catch (e) {
       if (e instanceof EngineError) throw e;
-      return { error: 'the analysis failed for this input', trapped: true, detail: e instanceof Error ? e.message : String(e) };
+      return { error: 'the analysis failed for this input', trapped: true, detail: trapDetail(e, x) };
     }
   }
 

@@ -272,11 +272,18 @@ function setLive(on) {
 }
 // ---- the checked CPUs ---------------------------------------------------------------------------------------------
 // Several can be checked (a table compares them); one of them, state.arch, is focused: it has the detailed result, the
-// sweep, the trace and side A of an A–B comparison. The focus stays where it is (a row of the table moves it) unless
-// its CPU is unchecked (then the first checked one); in A–B mode, a CPU that is checked gets it (side A has no table).
-// At least one CPU stays checked.
+// sweep, the trace and side A of an A–B comparison. A CPU that is checked (one click) becomes the focused one; a row of
+// the table moves the focus too. Unchecking the focused CPU moves the focus to the checked CPU that was focused most
+// recently (or the first checked one). "All" and "clear" keep the focus. At least one CPU stays checked.
 
 const inMenuOrder = (keys) => [...archItems.keys()].filter((k) => keys.includes(k));
+// the CPUs that were focused, most recent first (recorded where the boxes are painted: every change of state.arch
+// passes there, also those made elsewhere, e.g. the A–B swap or a link)
+let focusHistory = [];
+function noteFocus() {
+  if (focusHistory[0] === state.arch) return;
+  focusHistory = [state.arch, ...focusHistory.filter((k) => k !== state.arch)].slice(0, 64);
+}
 // the checked CPUs for the URL: '' (only the focused one), 'all', or a list
 function cpusField() {
   if (!archItems.size) return state.cpus; // not read yet: as the link had it
@@ -315,6 +322,7 @@ function focusArch(key, { rerun = true } = {}) {
 }
 const cpuBoxes = () => [...el.cpuGrid.querySelectorAll('input[type=checkbox]')];
 function paintCpus() {
+  if (archItems.has(state.arch)) noteFocus();
   for (const b of cpuBoxes()) {
     b.checked = checked.includes(b.value);
     const focus = b.value === state.arch;
@@ -332,8 +340,10 @@ function cpusChanged(e) {
   const now = cpuBoxes().filter((b) => b.checked).map((b) => b.value);
   if (!now.length) { if (e?.target) e.target.checked = true; return; } // the last one stays checked
   const added = now.filter((k) => !checked.includes(k));
+  // one CPU checked (a click): it gets the focus; the focused one unchecked: the most recently focused of the rest.
+  // (Several at once, which only a script does: the focus stays if it can.)
+  const focus = added.length === 1 ? added[0] : now.includes(state.arch) ? state.arch : focusHistory.find((k) => now.includes(k)) ?? now[0];
   setChecked(now);
-  const focus = state.ab && added.length === 1 ? added[0] : now.includes(state.arch) ? state.arch : now[0];
   if (focus !== state.arch) {
     state.arch = focus;
     ab?.paint(); // side A's caption, B's "same as A"
@@ -659,6 +669,10 @@ async function run({ auto = false } = {}) {
     const response = await engine.analyze(request);
     const elapsedMs = performance.now() - t0;
     if (id !== runSeq) return;
+    // the status line tells the result of a run that was asked for, and of one for another CPU than the result shown
+    // (a CPU was checked or picked: the status line must not keep the old CPU's time)
+    const prevArch = lastView?.archKey;
+    const tell = !auto || (prevArch !== undefined && prevArch !== archKey);
     lastView = {
       response, request, elapsedMs, hex, byteCount: bytes.length, inputMode: state.mode,
       archKey, archTitle: archTitle(archKey, item.experimental), experimental: item.experimental,
@@ -667,9 +681,11 @@ async function run({ auto = false } = {}) {
     draw();
     if (response && !response.error) {
       // the time is shown here (not in the result): how fast the analyzer is
-      if (!auto) flash(`${Number(response.tp).toFixed(2)} cycles/iteration · ${archKey}${response.mock ? ' (mock data)' : ` · ${elapsedMs < 10 ? elapsedMs.toFixed(1) : Math.round(elapsedMs)} ms`}`, { ms: 6000 });
+      // with several CPUs checked, their number: the table has the others (the time is this CPU's)
+      const n = checked.length > 1 && !state.ab ? ` · ${checked.length} CPUs` : '';
+      if (tell) flash(`${Number(response.tp).toFixed(2)} cycles/iteration · ${archKey}${n}${response.mock ? ' (mock data)' : ` · ${elapsedMs < 10 ? elapsedMs.toFixed(1) : Math.round(elapsedMs)} ms`}`, { ms: 6000 });
       panels.update({ hex, arch: archKey, options: opts, elapsedMs, response }, { auto });
-    } else if (!auto) {
+    } else if (tell) {
       flash('analysis failed', { error: true });
     }
     syncUrl(true);

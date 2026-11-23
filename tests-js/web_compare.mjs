@@ -45,6 +45,13 @@ const root = new URL('../', import.meta.url);
   check(ties.map((r) => r.key).join() === 'SNB,HSW,SKL,ZEN3,ADL-P' && ties.every((r) => r.fastest), 'cpus: ties keep the menu order');
   const none = compareRows(items, new Map());
   check(none.every((r) => r.state === 'pending' && r.bar === 0 && !r.fastest), 'cpus: nothing yet');
+  // a CPU that cannot decode part of the block (AVX2 on SNB): its result leaves those instructions out, so it is
+  // marked and not the fastest; when every CPU skipped the same, the fastest is as usual
+  check(summarize({ tp: 1, decodeErrors: 2 }).decodeErrors === 2 && summarize({ tp: 1 }).decodeErrors === 0, 'summarize: the undecodable positions');
+  const skip = compareRows(items, new Map([['SNB', { tp: 1, bottlenecks: [], decodeErrors: 2 }], ['HSW', { tp: 2, bottlenecks: [], decodeErrors: 0 }], ['SKL', { tp: 2, bottlenecks: [] }]]));
+  check(skip[0].decodeErrors === 2 && !skip[0].fastest && skip[1].fastest && skip[2].fastest && skip[2].decodeErrors === 0, 'cpus: a row with undecodable positions is marked and not the fastest', JSON.stringify(skip.map((r) => [r.key, r.decodeErrors, r.fastest])));
+  const allSkip = compareRows(items, new Map([['SNB', { tp: 1, bottlenecks: [], decodeErrors: 1 }], ['HSW', { tp: 2, bottlenecks: [], decodeErrors: 1 }]]));
+  check(allSkip[0].fastest && !allSkip[1].fastest, 'cpus: every row skipped the same: the fastest as usual');
 }
 
 // --- the alignment sweep --------------------------------------------------------------------------------------------
