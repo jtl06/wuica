@@ -36,9 +36,9 @@ The reference commit is recorded in `docs/DESIGN.md`.
 
 - wuica is a derivative work of uiCA and is licensed under the **GNU AGPL v3** (`LICENSE`), like uiCA.
 - `third_party/xed` is a subset of [Intel XED](https://github.com/intelxed/xed) (Apache License 2.0, `third_party/xed/LICENSE`).
-- The instruction data comes from [uops.info](https://www.uops.info). It is **not** part of this repository: uops.info does not
-  state a license for its data, so the tables are generated locally from a uiCA installation (`tools/export_data.py`).
-  Ask the uops.info authors before publishing a build that contains them.
+- The instruction data (latencies, throughputs and port usage) comes from [uops.info](https://www.uops.info) by Andreas Abel and
+  Jan Reineke. It is not part of this repository: the tables are generated locally from a uiCA installation with
+  `tools/export_data.py`.
 
 If you use uiCA's models in research, cite the uiCA paper: Andreas Abel and Jan Reineke, *uiCA: Accurate Throughput Prediction of
 Basic Blocks on Recent Intel Microarchitectures*, ICS 2022.

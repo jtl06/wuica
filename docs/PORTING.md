@@ -38,6 +38,14 @@ One JSON object per line, gzip. A case with an `error` field is one where the re
   initPolicy "diff", simpleFrontEnd false, minIterations 10, minCycles 500). Blocks of more than 2000 bytes have simulation cases
   but no instruction-object cases.
 
+**Extra set** (same formats; files `fixtures/decode_fixtures_extra.jsonl.gz`, `fixtures/generated/extra_instr_fixtures.jsonl.gz`,
+`fixtures/generated/extra_sim_fixtures.jsonl.gz`; sources in `fixtures/extra-src/x_*.s`): 32 hand-written blocks for paths that
+the main corpus does not reach (ZMM registers, stack operations, high-8 registers, LCP, lock, rep, fences, microcode, x87, ...),
+each with all option variants and the `-json` output. Every case was run in a new process (`FRESH=1`), like a run of the
+command-line tool: the reference modifies its instruction tables in place for code that uses ZMM registers, so within one
+process earlier cases can change later ones (the main set has no ZMM code). 108 of its 5472 simulation cases are reference
+crashes (`error`), which are skipped.
+
 The decoded records of a case are found in the decode fixtures by `file` and the chip `configs[arch].XEDName`.
 Compare JSON with `wuica_core::jsoncmp::diff` (numbers by value, object key order ignored).
 

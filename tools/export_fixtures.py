@@ -5,8 +5,9 @@
 - simulation results: the throughput and the detailed text output; for a subset of the files, also the -json output; for a few
   files, also runs with non-default options
 
-Usage: export_fixtures.py UICA_DIR OUT_DIR FILE...
-Writes OUT_DIR/instr_fixtures.jsonl.gz and OUT_DIR/sim_fixtures.jsonl.gz (one JSON object per line; a case that raised an
+Usage: [FRESH=1] [PREFIX=name_] export_fixtures.py UICA_DIR OUT_DIR FILE...
+FRESH=1: every case runs in a new process and with all option variants (slower; for small sets of special cases).
+Writes OUT_DIR/[PREFIX]instr_fixtures.jsonl.gz and OUT_DIR/[PREFIX]sim_fixtures.jsonl.gz (one JSON object per line; a case that raised an
 exception in the reference has an 'error' field instead of results).
 
 Both sides get the same bytes: the 'hex' field is the code of all instructions in the file's text section, and the reference
@@ -156,32 +157,52 @@ def simCase(hexStr, arch, options, withJson):
          os.remove(jf)
 
 
-def run(args):
-   fileIdx, f = args
-   name = os.path.basename(f)
+def hexOfFile(f):
    with contextlib.redirect_stderr(io.StringIO()):
-      hexStr = ''.join(i['opcode'] for i in xed.disasFile(f, chip='ALL'))
+      return ''.join(i['opcode'] for i in xed.disasFile(f, chip='ALL'))
+
+
+def runCase(name, hexStr, arch, options, withJson):
+   """Returns (line for the instruction fixtures or None, line for the simulation fixtures)."""
+   base = {'file': name, 'arch': arch, 'options': options, 'hex': hexStr}
+   instrLine = None
+   # instruction objects: only for the options that affect them
+   if not (set(options) - {'alignmentOffset', 'noMicroFusion', 'noMacroFusion'}) and len(hexStr) <= 2 * MAX_INSTR_FIXTURE_BYTES:
+      try:
+         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            r = instrCase(hexStr, arch, options)
+      except BaseException as e:
+         r = {'error': type(e).__name__ + ': ' + str(e)[:200]}
+      instrLine = json.dumps(dict(base, **r))
+   try:
+      r = simCase(hexStr, arch, options, withJson=(withJson and not options and len(hexStr) <= 2 * MAX_INSTR_FIXTURE_BYTES))
+   except BaseException as e:
+      r = {'error': type(e).__name__ + ': ' + str(e)[:200]}
+   return instrLine, json.dumps(dict(base, **r))
+
+
+def run(args):
+   # all cases of a file in one process
+   fileIdx, f = args
+   hexStr = hexOfFile(f)
    instrLines, simLines = [], []
    variants = [{}] + (OPTION_VARIANTS if fileIdx < N_OPTION_FILES else [])
    for arch in sorted(M):
       if arch in SKIP_ARCHS:
          continue
       for options in variants:
-         base = {'file': name, 'arch': arch, 'options': options, 'hex': hexStr}
-         # instruction objects: the options that affect them
-         if not (set(options) - {'alignmentOffset', 'noMicroFusion', 'noMacroFusion'}) and len(hexStr) <= 2 * MAX_INSTR_FIXTURE_BYTES:
-            try:
-               with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                  r = instrCase(hexStr, arch, options)
-            except BaseException as e:
-               r = {'error': type(e).__name__ + ': ' + str(e)[:200]}
-            instrLines.append(json.dumps(dict(base, **r)))
-         try:
-            r = simCase(hexStr, arch, options, withJson=(fileIdx < N_JSON_FILES and not options and len(hexStr) <= 2 * MAX_INSTR_FIXTURE_BYTES))
-         except BaseException as e:
-            r = {'error': type(e).__name__ + ': ' + str(e)[:200]}
-         simLines.append(json.dumps(dict(base, **r)))
+         i, s = runCase(os.path.basename(f), hexStr, arch, options, fileIdx < N_JSON_FILES)
+         if i: instrLines.append(i)
+         simLines.append(s)
    return instrLines, simLines
+
+
+def runFresh(args):
+   # one case; with FRESH=1 each case runs in a new process, like a run of the command-line tool (the reference modifies
+   # its instruction tables in place for code that uses ZMM registers, so earlier cases in the same process can matter)
+   f, arch, options = args
+   i, s = runCase(os.path.basename(f), hexOfFile(f), arch, options, True)
+   return ([i] if i else []), [s]
 
 
 if __name__ == '__main__':
@@ -190,10 +211,19 @@ if __name__ == '__main__':
    files = sorted((os.path.abspath(f) for f in sys.argv[3:]), key=lambda f: hashlib.sha1(os.path.basename(f).encode()).hexdigest())
    os.makedirs(outDir, exist_ok=True)
    nI = nS = errI = errS = 0
-   with Pool(15, initializer=init, initargs=(uicaDir,)) as p, gzip.open(os.path.join(outDir, 'instr_fixtures.jsonl.gz'), 'wt') as fi, \
-         gzip.open(os.path.join(outDir, 'sim_fixtures.jsonl.gz'), 'wt') as fs:
-      # imap keeps the order of the files, so the output is reproducible
-      for instrLines, simLines in p.imap(run, list(enumerate(files)), chunksize=1):
+   fresh = os.environ.get('FRESH') == '1'
+   prefix = os.environ.get('PREFIX', '')
+   if fresh:
+      init(uicaDir)
+      tasks = [(f, arch, options) for f in files for arch in sorted(M) if arch not in SKIP_ARCHS for options in [{}] + OPTION_VARIANTS]
+      pool, fn = Pool(15, initializer=init, initargs=(uicaDir,), maxtasksperchild=1), runFresh
+   else:
+      tasks = list(enumerate(files))
+      pool, fn = Pool(15, initializer=init, initargs=(uicaDir,)), run
+   with pool as p, gzip.open(os.path.join(outDir, prefix + 'instr_fixtures.jsonl.gz'), 'wt') as fi, \
+         gzip.open(os.path.join(outDir, prefix + 'sim_fixtures.jsonl.gz'), 'wt') as fs:
+      # imap keeps the order of the tasks, so the output is reproducible
+      for instrLines, simLines in p.imap(fn, tasks, chunksize=1):
          for l in instrLines:
             fi.write(l + '\n'); nI += 1; errI += '"error": ' in l[-300:]
          for l in simLines:
