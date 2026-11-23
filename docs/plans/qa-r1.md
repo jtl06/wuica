@@ -116,3 +116,28 @@ random requests. Differences in what they accept:
   instructions. Hex input in the page has no limit; a block that large runs the analyzer out of memory (now said so).
 - `GET /api/archs?fields=bogus` gives a list of empty objects (not an error). `POST /mcp` with invalid JSON gives the
   REST error object, not a JSON-RPC parse error (-32700).
+
+## Open problems (not fixed here: larger changes or decisions)
+
+1. **The assembler runs on the page's thread.** A large `.rept` freezes the page while it assembles: `.rept 1000000` /
+   `nop` / `.endr` about 0.7 s, `.rept 10000000` about 3.5 s (one run now; it was two runs and 7 s, then a 10 MB block
+   for the analyzer). In live mode this happens on each edit that changes the count. Moving `WasmAssembler` into a
+   worker (as the analyzer is) would remove it. Reproduction: asm mode, paste `.rept 10000000\nnop\n.endr`.
+2. **The analyzer's memory is never given back in the page.** WebAssembly memory only grows. The analyzer needs about
+   7.6 KB per instruction (natively: 300,000 nops → 2.3 GB RSS) and more for long-latency loops (20,000 `div rcx` →
+   2.6 GB of wasm memory; 50,000 → out of memory at about 3.7 GB). After such a block the page's analyzer worker keeps
+   that memory until the page is reloaded (the server replaces a worker that grew by more than 256 MB; the page and
+   the pool do not). Suggestion: after an analysis, if `engine.memory()` is above, say, 512 MB, restart the worker
+   (`engine.cancel()` does that; the data is reloaded lazily). Reproduction: hex mode, `48f7f1` repeated 20,000 times,
+   Analyze, then look at the tab's memory.
+3. **No size limit for hex input in the page.** The page parses the text on its thread (210 KB of hex: 0.7 s) and
+   sends any number of bytes to the analyzer; above roughly 450,000 instructions (fewer for slow instructions) the
+   analyzer runs out of memory (now reported as such). A limit like the assembler's 1 MiB would make both inputs
+   behave alike; the A–B side B input (ab.js, being changed on another branch) would need the same.
+4. **`.code16` / `.code32` blocks are analyzed as 64-bit code** without a warning (`.code16` + `add ax, 1` gives
+   `83 c0 01`, analyzed as `add eax, 1`). A note in the result when the source switches mode would avoid a silent
+   wrong answer.
+5. **Different option ranges per interface** (listed below). Not wrong, but a request that works in one place is
+   refused or clamped in another; a single documented range (0–63, 1–10000, 1–100000, the page's) would be simpler.
+6. **Deploy:** the live site and API run the code before these fixes (checked: the focus problem, a bad option value
+   giving code 3, a BOM failing); they change only with the next deploy.
