@@ -1,9 +1,10 @@
 //! `"details": true` against the rest of the response on random blocks (tests/fuzz/mod.rs, all 15 CPUs, random options): the
 //! response with details is the default one plus `details` (byte for byte); the port set is the one an independent computation
 //! from the rows' `portData` finds (Facile's unions of two allowed port sets) and gives the "Ports" limit; a row's uops in the uop
-//! table run only on its allowed ports, as many as its `portData` lists; the issue log's issued uops per iteration are the
-//! table's "Issued" uops, and its window's cycles per iteration are the throughput. `WUICA_DETAILS_FUZZ_SEED` and
-//! `WUICA_DETAILS_FUZZ_BLOCKS` change the seed and the number of blocks (default 3000).
+//! table run only on the allowed ports of its `uopList`, as many as it lists; the issue log's issued uops per iteration are the
+//! table's "Issued" uops, and its window's cycles per iteration are the throughput (but in at most 1 % of the blocks without a
+//! trace: docs/plans/qa-r2.md, D1). `WUICA_DETAILS_FUZZ_SEED` and `WUICA_DETAILS_FUZZ_BLOCKS` change the seed and the number
+//! of blocks (default 3000).
 mod fuzz;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -301,10 +302,16 @@ fn details_agree_with_the_response_on_random_blocks() {
                     break;
                 }
                 let mut req: Request = fuzz::case(&encodings, seed, i);
+                let t0 = std::time::Instant::now();
                 let plain = engine.analyze(&req);
+                let t1 = t0.elapsed().as_secs_f64();
                 req.details = true;
                 let detailed = engine.analyze(&req);
+                let t2 = t0.elapsed().as_secs_f64() - t1;
                 let name = fuzz::describe(seed, i, &req);
+                if t2 > 0.5 && t2 > 4.0 * t1 {
+                    notes.lock().unwrap().push(format!("slow details: {t1:.2} s plain, {t2:.2} s with details: {}", &name[..name.len().min(160)]));
+                }
                 match (plain, detailed) {
                     (Ok(plain), Ok(mut detailed)) => {
                         checked.fetch_add(1, Ordering::Relaxed);
