@@ -14,7 +14,31 @@ pub const HIGH8_REGS: &[&str] = &["AH", "BH", "CH", "DH"];
 
 /// `reg in GPRegs`
 pub fn is_gp_reg(reg: &str) -> bool {
-    GP_REGS.binary_search(&reg).is_ok()
+    gp_reg_to_64(reg).is_some()
+}
+
+/// `regTo64(reg) if reg in GPRegs else None`, as one lookup (the test `gp_reg_table` checks it against [`GP_REGS`] and
+/// [`reg_to_64`])
+fn gp_reg_to_64(reg: &str) -> Option<&'static str> {
+    match reg {
+        "AH" | "AL" | "AX" | "EAX" | "RAX" => Some("RAX"),
+        "BH" | "BL" | "BX" | "EBX" | "RBX" => Some("RBX"),
+        "BP" | "BPL" | "EBP" | "RBP" => Some("RBP"),
+        "CH" | "CL" | "CX" | "ECX" | "RCX" => Some("RCX"),
+        "DH" | "DL" | "DX" | "EDX" | "RDX" => Some("RDX"),
+        "DI" | "DIL" | "EDI" | "RDI" => Some("RDI"),
+        "ESI" | "RSI" | "SI" | "SIL" => Some("RSI"),
+        "ESP" | "RSP" | "SP" | "SPL" => Some("RSP"),
+        "R10" | "R10B" | "R10D" | "R10W" => Some("R10"),
+        "R11" | "R11B" | "R11D" | "R11W" => Some("R11"),
+        "R12" | "R12B" | "R12D" | "R12W" => Some("R12"),
+        "R13" | "R13B" | "R13D" | "R13W" => Some("R13"),
+        "R14" | "R14B" | "R14D" | "R14W" => Some("R14"),
+        "R15" | "R15B" | "R15D" | "R15W" => Some("R15"),
+        "R8" | "R8B" | "R8D" | "R8W" => Some("R8"),
+        "R9" | "R9B" | "R9D" | "R9W" => Some("R9"),
+        _ => None,
+    }
 }
 
 /// `reg in High8Regs`
@@ -72,8 +96,8 @@ pub fn canonical_reg(reg: &str) -> String {
 /// [`canonical_reg`] without an allocation where the result is a constant or the register itself.
 pub fn canonical_reg_cow(reg: &str) -> std::borrow::Cow<'_, str> {
     use std::borrow::Cow;
-    if is_gp_reg(reg) {
-        Cow::Borrowed(reg_to_64(reg).expect("general-purpose register"))
+    if let Some(r64) = gp_reg_to_64(reg) {
+        Cow::Borrowed(r64)
     } else if reg.contains("MM") {
         // re.sub('^[YZ]', 'X', reg)
         match reg.as_bytes().first() {
@@ -141,6 +165,17 @@ mod tests {
     #[test]
     fn gp_regs_are_sorted() {
         assert!(GP_REGS.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn gp_reg_table() {
+        for reg in GP_REGS {
+            assert_eq!(gp_reg_to_64(reg), Some(reg_to_64(reg).unwrap()), "{reg}");
+        }
+        for reg in ["RIP", "RFLAGS", "XMM0", "YMM15", "MM0", "K1", "ST0", "STACKPUSH", "FS", "", "rax", "R16", "EIP"] {
+            assert_eq!(gp_reg_to_64(reg), None, "{reg}");
+            assert!(!GP_REGS.contains(&reg));
+        }
     }
 
     #[test]
