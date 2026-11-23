@@ -1,0 +1,21 @@
+/* Cost per source line (js/srcmap.js). Colours only from the theme's custom properties. */
+
+.sm-body:empty { display: none; }
+.sm-body { margin-top: 0.4rem; display: grid; gap: 0.25rem; }
+.sm-list { list-style: none; margin: 0; padding: 0; max-height: 28rem; overflow: auto; background: var(--surface); border: 1px solid var(--border); }
+.sm-l { display: grid; grid-template-columns: 4ch 3.5rem 4.5ch minmax(0, 1fr); column-gap: 1ch; align-items: baseline;
+  width: 100%; padding: 0 0.6ch; text-align: left; text-decoration: none; color: var(--text); border: 0; }
+button.sm-l:hover { background: var(--accent-dim); border: 0; }
+.sm-l.none { color: var(--subtle); }
+.sm-no { color: var(--subtle); text-align: right; font-variant-numeric: tabular-nums; }
+.sm-bar { display: block; height: 0.55em; background: var(--border); align-self: center; }
+.sm-fill { display: block; height: 100%; background: var(--accent); }
+.sm-pct { color: var(--description); text-align: right; font-variant-numeric: tabular-nums; }
+.sm-code { white-space: pre; overflow: hidden; text-overflow: ellipsis; min-width: 0; color: var(--code); }
+.sm-l.none .sm-code { color: var(--subtle); }
+
+@media (max-width: 640px) {
+  .sm-l { grid-template-columns: 3ch 2rem 4ch minmax(0, 1fr); }
+}
+
+body.ab-on #srcmap-row { display: none !important; }

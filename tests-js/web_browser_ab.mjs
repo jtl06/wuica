@@ -293,7 +293,16 @@ try {
       out.first = first;
       out.imported = [line('code'), $('mode-asm').checked, $('code').value, document.querySelector('.tp .value')?.textContent, $('opt-align').value, document.querySelector('.ce-line[data-for=code]').title,
         $('syntax').value, $('result-body').classList.contains('stale'), $('results').dataset.run === first[2], $('input-messages').innerText];
+      // the cost per source line (srcmap.js): offered after the import, opt-in
+      out.src = { hidden: $('srcmap-row')?.hidden, open: $('srcmap')?.open, hint: document.querySelector('.sm-hint')?.textContent };
+      document.querySelector('#srcmap summary').click(); await wait(50);
+      out.src.lines = [...document.querySelectorAll('.sm-list li')].map((li) => li.innerText.replace(/\\s+/g, ' ').trim());
+      out.src.hash = /[#&]src=1(&|$)/.test(location.hash);
+      document.querySelector('.sm-list button.sm-l')?.click(); await wait(50);
+      out.src.jump = !!document.querySelector('table.uops tr.rj-flash');
+      document.querySelector('#srcmap summary').click(); await wait(30);
       $('ce-undo-a').click(); await wait(400);
+      out.src.afterUndo = $('srcmap-row')?.hidden;
       out.undone = [$('code').value === ${JSON.stringify(links.countSetBits)}, line('code'), document.querySelector('.ce-pick:not([hidden])') === null];
       // pasted again after undo: replaced (not appended) and imported again
       paste($('code'), ${JSON.stringify(links.countSetBits)});
@@ -356,6 +365,8 @@ try {
     check(r.busy[0] === 'importing from godbolt.org…' && r.busy[1], 'ce: a pasted link replaces the box\'s text and is imported at once (one status line)', JSON.stringify(r.busy));
     check(/^imported: loop in countSetBits\(unsigned int\) · undo$/.test(r.imported[0]) && r.imported[1] && r.imported[2] === 'loop:\n  inc eax\n  blsr edi, edi\n  jnz loop\n' && r.imported[6] === 'intel'
       && /^\d+\.\d\d$/.test(r.imported[3]) && r.imported[4] === '0' && /x86-64 gcc 8\.2/.test(r.imported[5]), 'ce: one pane, one loop: the innermost loop is imported without asking, analyzed, and shown as assembly', JSON.stringify(r.imported));
+    check(r.src.hidden === false && r.src.open === false && /^ · line [46] \d+%$/.test(r.src.hint) && r.src.lines.length === 5 && /^4 \d+% while \(a != 0\)$/.test(r.src.lines[1])
+      && /^6 \d+% count\+\+;$/.test(r.src.lines[3]) && r.src.hash && r.src.jump && r.src.afterUndo === true, 'ce: the cost per source line of the import (opt-in), a line jumps to its row; gone after undo', JSON.stringify(r.src));
     check(r.first[0] === false && r.first[1] === '  10:  ff c0             inc eax' && !r.imported[7] && r.imported[8] && r.imported[9] === '', 'ce: the machine code is analyzed at once; the assembly comes after, and the result stays current (no second run)', JSON.stringify([r.first, r.imported.slice(7)]));
     check(r.edit.join() === 'false,true,true', 'ce: an edit before the conversion is kept (and the box stays hex)', JSON.stringify(r.edit));
     check(r.undone[0] && r.undone[1] === '' && r.undone[2], 'ce: undo puts the link back (and does not import it again)', JSON.stringify(r.undone));

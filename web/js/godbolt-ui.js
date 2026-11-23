@@ -8,7 +8,7 @@
 import { h } from './render.js';
 import {
   parseCeLink, isCeLink, resolveShortLink, compilersOf, compilePane, parseListing, findLoops, defaultSelection,
-  extractRange, sourceAsAssembly, compilerMessages, targetProblem, is32bit,
+  extractRange, sourceAsAssembly, compilerMessages, targetProblem, is32bit, rangeLines,
 } from './godbolt.js';
 
 const hex2 = (b) => (b < 16 ? '0' : '') + b.toString(16);
@@ -310,7 +310,9 @@ export function createCeImport(api) {
     b.picker.hidden = true;
     b.picker.replaceChildren();
     b.skip = null;
-    api.importInto(b.side, c.code, { alignment });
+    // the source line of each instruction (srcmap.js: cost per source line)
+    const source = c.info && c.fn && s.choice.kind === 'compiler' ? { text: String(s.choice.editor?.source ?? ''), lines: rangeLines(c.fn, s.sel.start, s.sel.end) } : null;
+    api.importInto(b.side, c.code, { alignment, source });
     const isLoop = c.info && findLoops(c.fn).some((l) => l.start === s.sel.start && l.end === s.sel.end);
     const what = c.info ? `${isLoop ? 'loop' : plural(c.info.instructions, 'instruction')} in ${c.fn.name}` : 'assembly source';
     const undo = h('button', { type: 'button', class: 'plain', id: `ce-undo-${b.side.toLowerCase()}`, title: 'put the link back' }, 'undo');
