@@ -155,11 +155,13 @@ try {
       const out = { tp: document.querySelector('.tp .value').textContent };
       out.closed = !!panel() && !panel().open && !document.querySelector('.trace-viewer');
       out.label = panel()?.closest('.row')?.querySelector('.label')?.textContent;
-      out.wide = panel()?.closest('#more') !== null && Math.abs(panel().getBoundingClientRect().width - document.getElementById('more').getBoundingClientRect().width) < 120; // below both panes, full width
+      out.inResult = !!panel()?.closest('#more')?.closest('#results'); // the views are tabs of the result pane
       const t0 = performance.now();
-      panel().querySelector('summary').click();
+      [...document.querySelectorAll('.view-tab')].find((b) => b.textContent === 'trace').click();
       await until(() => document.querySelector('.trace-viewer'));
       out.openMs = performance.now() - t0;
+      // open, the trace takes the result pane's width
+      out.wide = Math.abs(panel().getBoundingClientRect().width - document.getElementById('results').getBoundingClientRect().width) < 120 && panel().getBoundingClientRect().width > 0;
       await wait(200);
       const v = viewer();
       out.note = document.querySelector('.trace-note').textContent;
@@ -186,7 +188,7 @@ try {
       key('Escape'); await wait(30); out.escHidden = tip().hidden;
       return out;`);
     check(r.tp === '32.00', 'the 50-instruction loop is analyzed', r.tp);
-    check(r.closed && r.label === 'trace' && r.wide, 'the trace panel is in the result, closed, and nothing is loaded until it is opened', JSON.stringify([r.closed, r.label]));
+    check(r.closed && r.label === 'trace' && r.inResult && r.wide, 'the trace panel is in the result, closed, and nothing is loaded until it is opened; open, it is the pane\'s width', JSON.stringify([r.closed, r.label, r.inResult, r.wide]));
     check(r.range === 'steady' && r.rowRounds.length === 3 && r.rowRounds[0] === r.relevant.first && /uops in cycles/.test(r.note), 'it opens on three steady-state iterations', JSON.stringify([r.range, r.rowRounds, r.relevant, r.note]));
     check(r.canvas[0] > 600 && r.canvas[1] > 200 && r.colours >= 5, 'the timeline is drawn', JSON.stringify([r.canvas, r.colours]));
     check(r.legend.length === 8, 'the legend', JSON.stringify(r.legend));

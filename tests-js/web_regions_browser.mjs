@@ -188,13 +188,15 @@ try {
       await until(() => document.querySelector('.tp .value') && instrRows().length && $('srcmap-row') && !$('srcmap-row').hidden && $('srcmap').open && document.querySelector('.sm-list'));
       const items = [...document.querySelectorAll('#srcmap .sm-list > li')].map((li) => li.innerText.replace(/\\s+/g, ' ').trim());
       const out = { rows: instrRows().length, chip: chip(), items, hint: document.querySelector('.sm-hint')?.textContent, messages: $('input-messages').textContent };
-      // a click on a line jumps to its costliest row
+      // a click on a line jumps to its costliest row: the table tab shows, the row flashes
       document.querySelector('#srcmap button.sm-l')?.click();
       await wait(50);
       out.hash = location.hash;
-      // the whole listing (no markers): all its instructions, the lines of the function
+      out.jump = { tab: document.querySelector('.view-tab[aria-selected="true"]')?.textContent, open: $('srcmap').open, flash: instrRows().some((tr) => tr.classList.contains('rj-flash')) };
+      // the whole listing (no markers): all its instructions, the lines of the function (the source tab again)
       setCode(${JSON.stringify(GCC)});
       await done(() => $('run').click());
+      [...document.querySelectorAll('.view-tab')].find((b) => b.textContent === 'source').click();
       await until(() => document.querySelector('.sm-list'));
       out.whole = { rows: instrRows().length, items: [...document.querySelectorAll('#srcmap .sm-list > li')].map((li) => li.innerText.replace(/\\s+/g, ' ').trim()), hidden: $('srcmap-row').hidden };
       // hex mode: no source rows
@@ -202,6 +204,7 @@ try {
     check(r.rows === 6 && r.chip === '▣ region', 'gcc -g, the loop marked: its 6 instructions', JSON.stringify(r));
     check(r.items.length === 2 && /^3 .*dot\.c:3$/.test(r.items[0]) && /^4 .*dot\.c:4$/.test(r.items[1]) && r.messages === '', 'the source rows: dot.c:3 and dot.c:4', JSON.stringify(r.items));
     check(/line \d+ \d+%/.test(r.hint ?? ''), 'the summary hint names the costliest line', r.hint);
+    check(r.jump.tab === 'table' && !r.jump.open && r.jump.flash, 'a click on a source line: the table tab, the row flashes', JSON.stringify(r.jump));
     check(r.whole.rows === 12 && !r.whole.hidden && r.whole.items.length === 2, 'the whole function: 12 instructions, lines 3 and 4', JSON.stringify(r.whole));
     await page.shot('regions-loc.png');
     check(page.problems.length === 0, 'no console errors (.loc)', page.problems.join('\n'));

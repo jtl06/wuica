@@ -75,12 +75,16 @@ try {
     await page.eval(`document.activeElement?.blur(); return 1;`);
   }
 
-  // ---- 5 opens the trace (a row selected by a key opens it too, as a click does: open it first, then the rows) ------------
+  // ---- 5 opens the trace tab; 5 again closes it, back to the table (the trace keeps its model for later) -----------------
   {
     await press('5');
     await page.waitFor(`document.querySelector('details.trace-panel')?.open && document.querySelector('details.trace-panel').wuicaTrace`, 'the trace');
-    check(/(^|&)trace=1(&|$)/.test((await page.eval(`return location.hash;`)).slice(1)), '5 opens the trace (in the URL)');
+    const tab = await page.eval(`return [location.hash, document.querySelector('.view-tab[aria-selected="true"]')?.textContent];`);
+    check(/(^|&)trace=1(&|$)/.test(tab[0].slice(1)) && tab[1] === 'trace', '5 opens the trace (its tab, in the URL)', JSON.stringify(tab));
     await page.eval(`document.activeElement?.blur(); return 1;`);
+    await press('5');
+    await page.waitFor(`!document.querySelector('details.trace-panel').open`, 'the trace closed');
+    check(await page.eval(`return document.querySelector('.view-tab[aria-selected="true"]')?.textContent;`) === 'table', '5 again closes it: the table tab');
   }
 
   // ---- j/k: rows, the card follows ------------------------------------------------------------------------------------------
@@ -98,6 +102,18 @@ try {
     check(await page.eval(`${KH} return sel();`) === 0, 'k on the first row: stays');
     const url = await page.eval(`return location.hash;`);
     check(/(^|&)sel=0(&|$)/.test(url.slice(1)) || /sel/.test(url), 'the selection is in the URL', url);
+    // the selection carries over to the trace tab; j there steps on (the card follows), and the trace with it
+    await page.eval(`document.activeElement?.blur(); return 1;`);
+    await press('5');
+    await page.waitFor(`document.querySelector('details.trace-panel')?.open && document.querySelector('.trace-viewer canvas')`, 'the trace again');
+    const inTrace = async () => page.eval(`${KH} await wait(50); return [sel(), card(), document.querySelector('details.trace-panel').wuicaTrace?.selKey ?? null];`);
+    const t0 = await inTrace();
+    await press('j');
+    const t1 = await inTrace();
+    check(t0[0] === 0 && t0[1] === 0 && t0[2] === '0/instr' && t1[0] === 1 && t1[1] === 1 && t1[2] === '1/instr', 'the trace tab: the selection carries over (the trace marks it); j selects the next row', JSON.stringify([t0, t1]));
+    await page.eval(`document.activeElement?.blur(); return 1;`);
+    await press('5');
+    await page.waitFor(`!document.querySelector('details.trace-panel').open`, 'the trace closed');
   }
 
   // ---- / and typing in the editor; Escape leaves it ---------------------------------------------------------------------------
@@ -161,7 +177,8 @@ try {
 
   // ---- SHA-256: j on the drawn table; the handler's time ---------------------------------------------------------------------
   {
-    await page.eval(`${KH} await done(() => set($('examples'), 'sha256')); document.activeElement?.blur(); return 1;`);
+    // (the showcase loads its assembly first, showcase-asm.js: wait for its own result)
+    await page.eval(`${KH} await done(() => set($('examples'), 'sha256')); await until(() => tp() === '744.25' && trs().length >= 200, 60000); document.activeElement?.blur(); return 1;`);
     const r = await page.eval(`${KH}
       const n = trs().length, ms = [], s0 = sel();
       for (let i = 0; i < 5; i++) { const t0 = performance.now(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', bubbles: true, cancelable: true })); ms.push(performance.now() - t0); }

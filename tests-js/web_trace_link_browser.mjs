@@ -154,6 +154,11 @@ const HELPERS = `
   const key = (el, k) => el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
   const shownLabels = (v, k) => [...new Set(Array.from(v.rows).map((i) => v.model.uops[i]).filter((u) => gk(u) === k).map((u) => v.model.labels[u.instrID] + '|' + u.kind))];
   const overflow = () => document.documentElement.scrollWidth - innerWidth;
+  // the table and the trace are tabs of the result (workspace.js): one shows at a time
+  const tab = async (name) => { [...document.querySelectorAll('.view-tab')].find((b) => b.textContent === name).click(); await wait(50);
+    if (name === 'trace') await until(() => panel().open && viewer() && viewer().viewW > 0); };
+  const shownTab = () => document.querySelector('.view-tab[aria-selected="true"]')?.textContent;
+  const inView = (el) => { const b = el?.getBoundingClientRect(); return !!b && b.height > 0 && b.top >= 0 && b.bottom <= innerHeight; };
 `;
 const b64 = (s) => Buffer.from(s).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
 const LINK = `#v=1&a=${ARCH}&c=${b64(HEX)}`;
@@ -180,9 +185,11 @@ try {
     // hovering a row before the trace is loaded: nothing is loaded
     over(trs()[${instrRow}]); await wait(100);
     out.stillClosed = !panel().open && !viewer();
-    // a click on a row opens the trace and scrolls it to the instruction
-    trs()[${instrRow}].click();
-    await until(() => viewer());
+    // a click on a row selects it; the trace stays closed (another tab)
+    trs()[${instrRow}].click(); await wait(100);
+    out.notOpened = [!panel().open, !viewer(), shownTab()];
+    // the trace tab: scrolled to the selected instruction
+    await tab('trace');
     await wait(150);
     const v = viewer();
     out.open = panel().open; out.sel = v.selKey; out.hash = hash();
@@ -191,16 +198,14 @@ try {
     out.labels = shownLabels(v, v.selKey);
     out.rowSel = trs()[${instrRow}].classList.contains('tl-sel') && trs()[${instrRow}].getAttribute('aria-current') === 'true';
     const tr = panel().getBoundingClientRect(); out.inView = tr.top < innerHeight && tr.bottom > 0;
-    // hover: the register-merge row marks its uops in the trace (and only them)
-    over(trs()[${regMergeRow}]); await wait(50);
-    out.merge = [v.linkKey, shownLabels(v, v.linkKey)];
+    // the register-merge row selected in the table: the trace tab marks its uops (and only them)
+    await tab('table'); trs()[${regMergeRow}].click(); await tab('trace'); await wait(50);
+    out.merge = [v.selKey, shownLabels(v, v.selKey)];
     // the macro-fused branch: the uops of the instruction before it
-    over(trs()[${fusedRow}]); await wait(50);
-    out.fused = [v.linkKey, shownLabels(v, v.linkKey)];
-    // leaving the table: the mark goes, the selection stays
-    trs()[${fusedRow}].dispatchEvent(new PointerEvent('pointerout', { bubbles: true, relatedTarget: document.body }));
-    await wait(30); out.left = [v.linkKey, v.selKey];
-    // the link on an instruction name works as before: no selection
+    await tab('table'); trs()[${fusedRow}].click(); await tab('trace'); await wait(50);
+    out.fused = [v.selKey, shownLabels(v, v.selKey)];
+    // the row selected again; the link on an instruction name works as before: no selection
+    await tab('table'); trs()[${instrRow}].click(); await wait(50);
     let navigated = 0; const stop = (e) => { if (e.target.closest('a')) { e.preventDefault(); navigated++; } };
     document.addEventListener('click', stop);
     const link = trs()[${instrRow + 1}].querySelector('a'); link.click(); await wait(30);
@@ -210,73 +215,79 @@ try {
   check(a.tp === reference.tp.toFixed(2), 'the loop is analyzed', a.tp);
   check(a.closed && a.linkable && a.tabbable === 1 && a.waitsBox && a.waitsOff, 'the trace is closed; the rows are linkable, one is in the tab order; the wait column is off', JSON.stringify(a));
   check(a.stillClosed, 'hovering a row does not load the trace');
-  check(a.open && a.sel === expectGroup(instrRow) && a.visible && a.rowSel && a.inView, 'a click on a row opens the trace, scrolled to the instruction (in view), and selects the row', JSON.stringify(a));
+  check(a.notOpened[0] && a.notOpened[1] && a.notOpened[2] === 'table', 'a click on a row does not open the trace', JSON.stringify(a.notOpened));
+  check(a.open && a.sel === expectGroup(instrRow) && a.visible && a.rowSel && a.inView, 'a click on a row selects it; the trace tab is scrolled to its instruction (in view)', JSON.stringify(a));
   check(a.labels.length === 1 && a.labels[0] === `${ROWS[instrRow].label}|instr`, 'the trace marks the uops of the row\'s instruction', JSON.stringify(a.labels));
   check(/trace=1/.test(a.hash) && new RegExp(`sel=${instrRow}(&|$)`).test(a.hash), 'the open trace and the selected row are in the URL', a.hash);
   check(a.merge[0] === expectGroup(regMergeRow) && a.merge[1].length === 1 && a.merge[1][0].endsWith('|regMerge'), 'a register-merge row marks its own uops', JSON.stringify(a.merge));
   check(a.fused[0] === expectGroup(fusedRow) && a.fused[1][0]?.startsWith('dec r15 + jnz'), 'the macro-fused branch marks the uops of its pair', JSON.stringify(a.fused));
-  check(a.left[0] === null && a.left[1] === expectGroup(instrRow), 'leaving the table clears the mark; the selection stays', JSON.stringify(a.left));
   check(a.anchor[0] && a.anchor[1] === 1 && !a.anchor[2] && a.anchor[3] === expectGroup(instrRow), 'the link on an instruction name still works and does not select the row', JSON.stringify(a.anchor));
 
   // keyboard
   const k = await page.eval(`${HELPERS}
     const v = viewer(); const out = {};
     const t = trs()[${instrRow}]; t.focus(); await wait(30);
-    out.focus = [document.activeElement === t, t.getAttribute('tabindex'), v.linkKey];
+    out.focus = [document.activeElement === t, t.getAttribute('tabindex')];
     key(t, 'ArrowDown'); await wait(30);
     const n = trs()[${instrRow + 1}];
-    out.down = [document.activeElement === n, n.getAttribute('tabindex'), t.getAttribute('tabindex'), v.linkKey];
+    out.down = [document.activeElement === n, n.getAttribute('tabindex'), t.getAttribute('tabindex')];
     key(n, 'Enter'); await wait(80);
-    out.enter = [hash().includes('sel=${instrRow + 1}'), v.selKey, n.classList.contains('tl-sel')];
+    out.enter = [hash().includes('sel=${instrRow + 1}'), n.classList.contains('tl-sel')];
+    await tab('trace'); out.enter.push(v.selKey, shownLabels(v, v.selKey).length);
+    await tab('table'); n.focus();
     key(n, 'Escape'); await wait(30);
-    out.esc = [hash().includes('sel='), v.selKey, document.querySelectorAll('tr.tl-sel').length];
+    out.esc = [hash().includes('sel='), document.querySelectorAll('tr.tl-sel').length];
+    await tab('trace'); out.esc.push(v.selKey);
+    await tab('table'); n.focus();
     key(n, 'Enter'); await wait(30);
-    // the trace: Enter on a uop selects its row
+    // the trace tab: Enter on a uop selects its row
+    await tab('trace');
     v.canvas.focus();
     v.canvas.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
     for (let i = 0; i < 3; i++) v.canvas.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
     await wait(30);
     const u = v.model.uops[v.rows[v.active]];
     out.traceKey = gk(u);
-    out.marked = document.querySelector('tr.tl-linked')?.sectionRowIndex ?? -1;
     v.canvas.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await wait(50);
     out.traceEnter = [document.querySelector('tr.tl-sel')?.sectionRowIndex ?? -1, hash()];
     return out;`);
-  check(k.focus[0] && k.focus[1] === '0' && k.focus[2] === expectGroup(instrRow), 'keyboard: a focused row marks its instruction in the trace', JSON.stringify(k.focus));
-  check(k.down[0] && k.down[1] === '0' && k.down[2] === '-1' && k.down[3] === expectGroup(instrRow + 1), 'keyboard: arrow down moves to the next row (one row in the tab order)', JSON.stringify(k.down));
-  check(k.enter[0] && k.enter[1] === expectGroup(instrRow + 1) && k.enter[2], 'keyboard: Enter selects the row and the trace follows', JSON.stringify(k.enter));
-  check(!k.esc[0] && k.esc[1] === null && k.esc[2] === 0, 'keyboard: Escape clears the selection', JSON.stringify(k.esc));
+  check(k.focus[0] && k.focus[1] === '0', 'keyboard: a row takes the focus', JSON.stringify(k.focus));
+  check(k.down[0] && k.down[1] === '0' && k.down[2] === '-1', 'keyboard: arrow down moves to the next row (one row in the tab order)', JSON.stringify(k.down));
+  check(k.enter[0] && k.enter[1] && k.enter[2] === expectGroup(instrRow + 1) && k.enter[3] > 0, 'keyboard: Enter selects the row and the trace tab follows', JSON.stringify(k.enter));
+  check(!k.esc[0] && k.esc[1] === 0 && k.esc[2] === null, 'keyboard: Escape clears the selection (in the trace too)', JSON.stringify(k.esc));
   const traceRow = ROWS.findIndex((_, i) => expectGroup(i) === k.traceKey && ROWS[i].notes !== 'M');
-  check(k.marked === traceRow && k.traceEnter[0] === traceRow && k.traceEnter[1].includes(`sel=${traceRow}`), 'keyboard: a uop of the trace marks its row; Enter selects it', JSON.stringify([k, traceRow]));
+  check(k.traceEnter[0] === traceRow && k.traceEnter[1].includes(`sel=${traceRow}`), 'keyboard: Enter on a uop of the trace selects its row', JSON.stringify([k, traceRow]));
 
   // trace -> table with a real pointer
   const pt = await page.eval(`${HELPERS}
     const v = viewer(); v.canvas.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); v.canvas.blur(); let r = Array.from(v.rows).findIndex((i) => gk(v.model.uops[i]) === ${JSON.stringify(expectGroup(regMergeRow))});
     v.reveal(r); await wait(50);
     const u = v.model.uops[v.rows[r]]; const p = v.pointOf(r, u.dispatched ?? u.issued); let b = v.canvas.getBoundingClientRect();
-    // the point in the viewport, wherever the trace is on the page (the views above it can push it below the fold)
-    window.scrollBy(0, b.top + p.y - innerHeight / 2); await wait(50); b = v.canvas.getBoundingClientRect();
+    // the point in the viewport, wherever the trace is in the result (the page or the result pane scrolls)
+    v.canvas.scrollIntoView({ block: 'center' }); await wait(50); b = v.canvas.getBoundingClientRect();
+    const y = b.top + p.y; if (y < 0 || y > innerHeight) { v.canvas.scrollIntoView({ block: 'start' }); await wait(50); b = v.canvas.getBoundingClientRect(); }
     return { x: b.left + p.x, y: b.top + p.y };`);
   await page.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: pt.x, y: pt.y });
   await sleep(120);
-  const hov = await page.eval(`${HELPERS} return document.querySelector('tr.tl-linked')?.sectionRowIndex ?? -1;`);
-  check(hov === regMergeRow, 'pointer over a uop of the trace marks its row in the table', `${hov} vs ${regMergeRow}`);
   await page.cmd('Input.dispatchMouseEvent', { type: 'mousePressed', x: pt.x, y: pt.y, button: 'left', clickCount: 1 });
   await page.cmd('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pt.x, y: pt.y, button: 'left', clickCount: 1 });
   await sleep(150);
-  const clk = await page.eval(`${HELPERS} const t = document.querySelector('tr.tl-sel'); const b = t?.getBoundingClientRect(); return [t?.sectionRowIndex ?? -1, hash(), b && b.top >= 0 && b.bottom <= innerHeight];`);
-  check(clk[0] === regMergeRow && clk[1].includes(`sel=${regMergeRow}`) && clk[2], 'a click on a uop selects its row and scrolls the table to it', JSON.stringify(clk));
+  // the table tab: the row selected, in view
+  const clk = await page.eval(`${HELPERS} const before = document.querySelector('tr.tl-sel')?.sectionRowIndex ?? -1; await tab('table'); await wait(100);
+    const t = document.querySelector('tr.tl-sel'); return [t?.sectionRowIndex ?? -1, hash(), inView(t), before];`);
+  check(clk[3] === regMergeRow && clk[0] === regMergeRow && clk[1].includes(`sel=${regMergeRow}`) && clk[2], 'a click on a uop selects its row; the table tab shows it', JSON.stringify(clk));
 
   // screenshots: a marked pair (hover on a table row, the trace marks it)
   for (const theme of ['dark', 'light']) {
     await page.theme(theme);
-    await page.eval(`${HELPERS} trs()[${instrRow}].click(); await wait(100); viewer().canvas.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); over(trs()[${instrRow}]); await wait(80); return 1;`);
-    await page.shot(`link-1440-${theme}.png`, 'table.uops', '#trace-slot .trace-chart');
+    await page.eval(`${HELPERS} await tab('table'); trs()[${instrRow}].click(); await wait(100); await tab('trace'); await wait(80); return 1;`);
+    await page.shot(`link-1440-${theme}.png`, '#trace-slot .trace-chart');
   }
   await page.theme('dark');
 
-  // the wait column
+  // the wait column (the table tab)
   const w = await page.eval(`${HELPERS}
+    await tab('table');
     const box = document.querySelector('.tl-waits-box'); box.click();
     await until(() => document.querySelector('th.tl-wait'));
     const v = viewer();
@@ -321,8 +332,8 @@ try {
   }
   await page.theme('dark');
 
-  // the URL restores the trace, the selection and the wait column
-  const h = await page.eval(`return location.hash;`);
+  // the URL restores the trace (its tab), the selection and the wait column
+  const h = await page.eval(`${HELPERS} await tab('trace'); return location.hash;`);
   await page.goto(`${origin}/?nosw=1${h}`);
   const re = await page.eval(`${HELPERS}
     await until(() => viewer() && document.querySelector('th.tl-wait'));
@@ -348,10 +359,11 @@ try {
       const out = { drawn: trs().length };
       const v = viewer(); const r = Array.from(v.rows).findIndex((i) => v.model.uops[i].instrID === 300);
       v.pick(r); await wait(200);
-      const t = document.querySelector('tr.tl-sel'); const b = t?.getBoundingClientRect();
-      out.after = [trs().length, t?.sectionRowIndex ?? -1, t?.querySelector('th')?.textContent, hash().includes('sel=300'), b && b.top >= 0 && b.bottom <= innerHeight];
+      await tab('table'); await wait(100);
+      const t = document.querySelector('tr.tl-sel');
+      out.after = [trs().length, t?.sectionRowIndex ?? -1, t?.querySelector('th')?.textContent, hash().includes('sel=300'), inView(t)];
       return out;`);
-    check(lr.drawn === 200 && lr.after[0] === 450 && lr.after[1] === 300 && lr.after[2] === 'add rax, rbx' && lr.after[3] && lr.after[4], 'a click on a uop whose row is not drawn: all rows are drawn and the row is selected, in view', JSON.stringify(lr));
+    check(lr.drawn === 200 && lr.after[0] === 450 && lr.after[1] === 300 && lr.after[2] === 'add rax, rbx' && lr.after[3] && lr.after[4], 'a click on a uop whose row is not drawn: all rows are drawn and the row is selected; the table tab shows it', JSON.stringify(lr));
     check(p.problems.length === 0, 'no console errors (long block)', p.problems.join('\n'));
     await p.cmd('Page.close');
   }
@@ -436,13 +448,15 @@ try {
     await p.goto(`${origin}/?nosw=1${LINK}&trace=1&waits=1&sel=${instrRow}`);
     const m = await p.eval(`${HELPERS}
       await until(() => viewer() && document.querySelector('th.tl-wait')); await wait(200);
-      return { overflow: overflow(), sel: viewer().selKey };`);
-    check(m.overflow <= 0 && m.sel === expectGroup(instrRow), 'at 375px: the linked table, the wait column and the trace do not widen the page', JSON.stringify(m));
+      const trace = [shownTab(), overflow()];
+      await tab('table'); await wait(100); // the linked table with the wait column
+      return { overflow: Math.max(trace[1], overflow()), trace, table: overflow(), sel: viewer().selKey };`);
+    check(m.overflow <= 0 && m.trace[0] === 'trace' && m.sel === expectGroup(instrRow), 'at 375px: the linked table, the wait column (the table tab) and the trace (its tab) do not widen the page', JSON.stringify(m));
     for (const theme of ['dark', 'light']) {
       await p.theme(theme);
-      await p.eval(`${HELPERS} over(trs()[${instrRow}]); await wait(80); return 1;`);
-      await p.shot(`link-375-${theme}.png`, `table.uops tbody tr:nth-child(${instrRow + 1})`, '#trace-slot .trace-chart');
-      await p.eval(`const w = document.querySelector('#results .table-wrap'); w.scrollLeft = document.querySelector('th.tl-wait').offsetLeft - 150; window.scrollTo(0, 0); return 1;`);
+      await p.eval(`${HELPERS} await tab('trace'); await wait(80); return 1;`);
+      await p.shot(`link-375-${theme}.png`, '#trace-slot .trace-chart');
+      await p.eval(`${HELPERS} await tab('table'); const w = document.querySelector('#results .table-wrap'); w.scrollLeft = document.querySelector('th.tl-wait').offsetLeft - 150; window.scrollTo(0, 0); return 1;`);
       await p.shot(`waits-375-${theme}.png`, '#results .table-tools', 'table.uops');
       await p.eval(`document.querySelector('#results .table-wrap').scrollLeft = 0; return 1;`);
     }

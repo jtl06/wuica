@@ -1,11 +1,12 @@
-# 0.1.7: from the first dogfood run
+# 0.1.6: from the dogfood runs
 
-Source: a performance engineer's session tuning four real loops (CRC32C, float dot product, an AVX2 memchr scan, a byte
-histogram) with wuica 0.1.4. Each loop was measured on a Zen 3+ machine. The full report is kept outside the repo.
+0.1.6 is everything below, bugs and features alike:
+- the browser suites adapted to the tabbed layout;
+- "Must fix" items 1–6 and items 7–13 from the GUI-only run;
+- "Features, in order";
+- the GUI run's UI list and the smaller items.
 
-**What already works:**
-- ZEN3 predictions were within 1% on every loop bound by a dependency chain or the load ports, and within 12% on the scans.
-- The chain line, the port strip of the trace, `insights.portSet` and `Accept: text/plain` were praised by name.
+It is done when the full check passes and a third dogfood run has tried it.
 
 ## Must fix
 

@@ -133,6 +133,10 @@ const HELPERS = `
   const hot = () => trs().map((tr, i) => tr.classList.contains('bd-hot') ? i + ':' + tr.cells[0].style.getPropertyValue('--bd') : null).filter(Boolean);
   const items = () => [...document.querySelectorAll('.bd-item')].map((b) => [b.dataset.id, b.querySelector('.bd-pct').textContent, b.getAttribute('aria-pressed')]);
   const top = () => [...document.querySelectorAll('.bd-row')].map((b) => b.innerText.replace(/\\s+/g, ' ').trim());
+  // the table and the views are tabs of the result (workspace.js): one shows at a time
+  const tab = async (name) => { [...document.querySelectorAll('.view-tab')].find((b) => b.textContent === name).click(); await wait(50); };
+  const shownTab = () => document.querySelector('.view-tab[aria-selected="true"]')?.textContent;
+  const openViews = () => ['bound', 'whatif', 'codemap', 'deps', 'mca', 'cmp-sweep'].filter((id) => $(id)?.open).concat(document.querySelector('details.trace-panel')?.open ? ['trace'] : []);
 `;
 
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-views-'));
@@ -159,21 +163,21 @@ try {
       await until(() => document.querySelector('.bd-item'));
       const out = { tp: tp(), open: $('bound').open, label: $('bound-row').querySelector('.label').textContent, summary: $('bound').querySelector('summary').innerText,
         items: items(), hot: hot(), top: top(), desc: trs()[0].cells[0].getAttribute('aria-description'), afterSweep: $('bound-row').nextElementSibling?.id,
-        rowText: trs().map((tr) => tr.innerText.replace(/\\s+/g, ' ').trim()) };
+        rowText: trs().map((tr) => [...tr.cells].map((c) => c.textContent).join(' ').replace(/\\s+/g, ' ').trim()) }; // (the table is another tab)
       // another resource: port 6
       document.querySelector('.bd-item[data-id="col:Port 6"]').click(); await wait(30);
       out.p6 = { items: items().filter((x) => x[2] === 'true').map((x) => x[0]), hot: hot(), top: top() };
       // keyboard: the items are buttons
       out.keyboard = [...document.querySelectorAll('.bd-item')].every((b) => b.tagName === 'BUTTON' && b.tabIndex === 0);
-      // jump: a top row scrolls to the row in the table and flashes it
+      // jump: a top row shows the table tab, scrolls to the row and flashes it
       document.querySelector('.bd-row').click(); await wait(50);
       out.flash = trs().findIndex((tr) => tr.classList.contains('rj-flash'));
       out.focus = document.activeElement === trs()[out.flash]?.cells[0];
-      // closed: nothing shaded, the link forgets it
-      document.querySelector('#bound summary').click(); await wait(50);
-      out.closed = { hot: hot(), body: document.querySelector('.bd-body').children.length, hash: location.hash };
-      document.querySelector('#bound summary').click(); await wait(50);
-      out.reopened = [hot().length > 0, /[#&]bound=1(&|$)/.test(location.hash)];
+      out.jumpTab = shownTab();
+      // so the bound view is closed: nothing shaded, the link forgets it
+      out.closed = { open: $('bound').open, hot: hot(), body: document.querySelector('.bd-body').children.length, hash: location.hash };
+      await tab('bound');
+      out.reopened = [hot().length > 0, /[#&]bound=1(&|$)/.test(location.hash), $('bound').open];
       return out;`);
     const lim = Object.fromEntries(want.limits.map((l) => [l.name, l.tp]));
     check(r.tp === '2.00' && r.open && r.label === 'bound' && r.afterSweep === 'whatif-row', 'bound: a row before the experiments and the sweep, open from the link', JSON.stringify(r));
@@ -189,8 +193,8 @@ try {
     const p6 = want.rows.map((x) => x.values[want.columns.indexOf('Port 6')]);
     const p6max = Math.max(...p6);
     check(r.p6.items.join() === 'col:Port 6' && r.p6.hot.join() === p6.map((v, i) => (v > 0 ? `${i}:${(v / p6max).toFixed(3)}` : null)).filter(Boolean).join() && r.p6.top[0] === `dec r15 ${pct(p6[2] / p6.reduce((s, x) => s + x, 0))}`, 'bound: port 6 selected: its rows shaded by their uops there', JSON.stringify([r.p6, p6]));
-    check(r.keyboard && r.flash === 2 && r.focus, 'bound: buttons; a top row jumps to the table row (flash, focus)', JSON.stringify([r.keyboard, r.flash, r.focus]));
-    check(r.closed.hot.length === 0 && r.closed.body === 0 && !/bound=1/.test(r.closed.hash) && r.reopened.every(Boolean), 'bound: closed, nothing is shaded and the link forgets it; reopened, back', JSON.stringify([r.closed, r.reopened]));
+    check(r.keyboard && r.flash === 2 && r.focus && r.jumpTab === 'table', 'bound: buttons; a top row jumps to the table row (the table tab, flash, focus)', JSON.stringify([r.keyboard, r.flash, r.focus, r.jumpTab]));
+    check(!r.closed.open && r.closed.hot.length === 0 && r.closed.body === 0 && !/bound=1/.test(r.closed.hash) && r.reopened.every(Boolean), 'bound: closed by the jump, nothing is shaded and the link forgets it; its tab again, back', JSON.stringify([r.closed, r.reopened]));
     await page.shot('bound-chain.png');
   }
 
@@ -244,7 +248,8 @@ try {
       out.cols = [...document.querySelectorAll('table.uops thead th.ps-on')].map((th) => th.textContent);
       out.slots = document.querySelector('.bd-slots')?.innerText.replace(/\\s+/g, ' ').trim();
       out.top = top();
-      // a click on a row: the card with the details
+      // a click on a row of the table tab: the card with the details
+      await tab('table');
       trs()[0].cells[2].click();
       await until(() => $('result-body').dataset.icard === 'details', 10000);
       const c = $('icard');
@@ -278,13 +283,14 @@ try {
       await done(() => set($('examples'), 'sha256'));
       await wait(200);
       long.length = 0;
-      document.querySelector('#bound summary').click();
+      await tab('bound');
       await until(() => document.querySelector('.bd-slots'), 20000);
+      await tab('table');
       trs()[5].cells[2].click();
       await until(() => $('result-body').dataset.icard === 'details', 20000);
       await wait(100);
       return { long, hz: document.querySelectorAll('td.note[data-hz]').length, sticky: $('icard').classList.contains('stick') };`);
-    check(s.long.every((ms) => ms < 100) && s.sticky, 'details: SHA-256: bound view and card with details, no task of 100 ms or more', JSON.stringify(s));
+    check(s.long.every((ms) => ms < 100) && s.sticky, 'details: SHA-256: the bound tab, then a card with details, no task of 100 ms or more', JSON.stringify(s));
     console.log(`details: SHA-256: long tasks ${JSON.stringify(s.long)} ms`);
     await page.goto(`${origin}/?nosw=1#v=1&m=hex`);
   }
@@ -318,7 +324,7 @@ try {
       check(JSON.stringify(r.rows) === JSON.stringify(want), `what if (${k}): every experiment equals an analysis made here`, JSON.stringify([r.rows, want]));
     }
     const r = out.pool;
-    check(r.label === 'try' && /[#&]whatif=1(&|$)/.test(r.hash) && r.order.join() === 'bound-row,whatif-row,codemap-row,deps-row,sweep-row,trace-slot', 'what if: a row "try" after "bound", open from the link', JSON.stringify(r));
+    check(r.label === 'try' && /[#&]whatif=1(&|$)/.test(r.hash) && r.order.join() === 'bound-row,whatif-row,codemap-row,deps-row,mca-row,sweep-row,trace-slot', 'what if: a row "try" after "bound", open from the link', JSON.stringify(r));
     const { decodeState } = await import('../web/js/url-state.js');
     const s = decodeState(r.href.split('#')[1]);
     check(r.target === '_blank' && s.mode === 'hex' && s.text.replace(/ /g, '') === body.repeat(2) + tail && s.arch === 'SKL', 'what if: a variant opens in a new tab as machine code', r.href);
@@ -371,17 +377,22 @@ try {
       out.key = [svg.getAttribute('aria-activedescendant'), document.querySelector('.ly-info').textContent, document.activeElement === svg];
       svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await wait(50);
       out.flash = trs().findIndex((tr) => tr.classList.contains('rj-flash'));
-      svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
-      out.end = svg.getAttribute('aria-activedescendant');
+      out.jumpTab = [shownTab(), $('codemap').open];
+      // the bytes tab again
+      await tab('bytes'); await until(() => document.querySelector('.ly-map'));
+      const svg2 = document.querySelector('.ly-map');
+      svg2.focus();
+      svg2.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+      out.end = svg2.getAttribute('aria-activedescendant');
       // the alignment: +1 is a new analysis at offset 59
       await done(() => document.querySelectorAll('.ly-shift')[1].click());
       await until(() => document.querySelector('.ly-offv')?.textContent === 'offset 59');
       out.after = [document.querySelector('.ly-offv').textContent, $('opt-align').value, /[#&]al=59(&|$)/.test(location.hash), /[#&]codemap=1(&|$)/.test(location.hash)];
       return out;`);
-    check(r.label === 'bytes' && r.summary === 'cache lines · 13 B, 2 lines' && r.order.join() === 'bound-row,whatif-row,codemap-row,deps-row,sweep-row,trace-slot', 'code map: a row "bytes", open from the link', JSON.stringify(r));
+    check(r.label === 'bytes' && r.summary === 'cache lines · 13 B, 2 lines' && r.order.join() === 'bound-row,whatif-row,codemap-row,deps-row,mca-row,sweep-row,trace-slot', 'code map: a row "bytes", open from the link', JSON.stringify(r));
     check(r.ins.join() === '1,2,1,1' && r.split.join() === 'false,true,false,false' && r.off === 'offset 58' && r.legend.join() === '16B 1,32B 1,64B 1', 'code map: the split instruction has a box on each line', JSON.stringify(r));
     check(r.info === 'add rax, 0x1 · 0x3a–0x3d (4 B)' && r.key[0] === 'ly-i1' && /^add rax, 0x1 · 0x3e–0x41 \(4 B\) · crosses a cache line$/.test(r.key[1]) && r.key[2], 'code map: arrow keys move through the instructions', JSON.stringify([r.info, r.key]));
-    check(r.flash === 1 && r.end === 'ly-i3', 'code map: Enter jumps to the row; End to the last instruction', JSON.stringify([r.flash, r.end]));
+    check(r.flash === 1 && r.jumpTab[0] === 'table' && !r.jumpTab[1] && r.end === 'ly-i3', 'code map: Enter jumps to the row (the table tab); End to the last instruction', JSON.stringify([r.flash, r.jumpTab, r.end]));
     check(r.after.every((x, i) => (i === 0 ? x === 'offset 59' : i === 1 ? x === '59' : x)), 'code map: ▸ shifts the alignment offset (analyzed again, in the link)', JSON.stringify(r.after));
     await page.shot('codemap-chain.png');
 
@@ -426,7 +437,7 @@ try {
       svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await wait(50);
       out.flash = trs().findIndex((tr) => tr.classList.contains('rj-flash'));
       return out;`);
-    check(r.label === 'deps' && r.summary === 'dependency arcs · 3 edges, 2 ↻' && r.order.join() === 'bound-row,whatif-row,codemap-row,deps-row,sweep-row,trace-slot', 'deps: a row "deps", open from the link', JSON.stringify(r));
+    check(r.label === 'deps' && r.summary === 'dependency arcs · 3 edges, 2 ↻' && r.order.join() === 'bound-row,whatif-row,codemap-row,deps-row,mca-row,sweep-row,trace-slot', 'deps: a row "deps", open from the link', JSON.stringify(r));
     check(r.arcs.slice().sort().join() === '0>1!,1>0c!,2>2c' && r.legend.join() === '→ 1,↻ 2,chain 2,slack' && r.nodes === 4, 'deps: add → add, add ↻ add (the chain), dec ↻ dec', JSON.stringify(r));
     check(r.slack.join() === '0,0,1,∞' && r.critNodes === '0,1', 'deps: slack per instruction (the adds are the chain: 0; dec r15 1 of 2 cycles; jnz off every cycle)', JSON.stringify(r));
     check(r.lats.length === 2 && r.lats.every(([t, crit]) => t === '1' && crit), 'deps: latencies on the arcs of the chain', JSON.stringify(r.lats));
@@ -438,19 +449,21 @@ try {
     await page.ready();
     const s = await page.eval(`${HELPERS}
       await done(() => set($('examples'), 'sha256'));
-      document.querySelector('#deps summary').click();
-      await until(() => document.querySelector('#deps .dp-body')?.dataset.state === 'waiting');
-      const out = [document.querySelector('#deps .dp-body button')?.textContent, document.querySelectorAll('.dp-map').length];
+      // the button past the size limit (data-gate), with its size; picking the tab presses it (workspace.js)
+      const seen = []; const obs = new MutationObserver(() => { const b = document.querySelector('#deps .dp-body button[data-gate]'); if (b && !seen.length) seen.push(b.textContent); });
+      obs.observe($('deps'), { childList: true, subtree: true });
       const long = []; new PerformanceObserver((l) => { for (const e of l.getEntries()) long.push(Math.round(e.duration)); }).observe({ type: 'longtask' });
       const t0 = performance.now();
-      document.querySelector('#deps .dp-body button').click();
+      await tab('deps');
+      const out = [seen[0] ?? document.querySelector('#deps .dp-body button[data-gate]')?.textContent, document.querySelectorAll('.dp-map').length];
       await until(() => document.querySelector('#deps .dp-body')?.dataset.state === 'done', 60000);
+      obs.disconnect();
       const drawn = Math.round(performance.now() - t0);
       await until(() => document.querySelector('.dp-sl.zero'), 10000); // the slack column: a task of its own
       return [...out, drawn, long, document.querySelectorAll('.dp-node').length, document.querySelectorAll('.dp-sl.zero').length, document.querySelector('.dp-k.sl')?.title ?? ''];`);
-    check(s[0] === 'trace 2,949 instructions' && s[1] === 0 && s[4] === 2949, 'deps: SHA-256: the trace waits for a click, then every instruction is drawn', JSON.stringify(s));
+    check(s[0] === 'trace 2,949 instructions' && s[1] === 0 && s[4] === 2949, 'deps: SHA-256: past its size limit (the button), picking the tab loads it; every instruction is drawn', JSON.stringify(s));
     check(s[5] > 100 && s[6] && !/too large/.test(s[6]), 'deps: SHA-256: the slack is computed (the chain has slack 0)', JSON.stringify(s.slice(5)));
-    console.log(`deps: SHA-256: traced and drawn in ${s[2]} ms after the click; long tasks ${JSON.stringify(s[3])}`);
+    console.log(`deps: SHA-256: traced and drawn in ${s[2]} ms after the tab; long tasks ${JSON.stringify(s[3])}`);
   }
 
   // --- A–B mode: the views of the single result are hidden, also when the A–B traces show the "more" section -------------
@@ -459,19 +472,31 @@ try {
     await page.goto(`${origin}/?nosw=1#v=1&bound=1&whatif=1&codemap=1&deps=1&trace=1&c=${b64(chain.text.hex)}`);
     await page.result();
     const r = await page.eval(`${HELPERS}
-      await until(() => document.querySelector('.bd-item') && document.querySelector('.dp-map'), 20000);
+      await until(() => document.querySelector('.view-tab') && document.querySelector('details.trace-panel'), 20000); await wait(300);
+      const VIEWS = ['bound', 'try', 'bytes', 'deps'];
       const shown = () => ['bound-row', 'whatif-row', 'codemap-row', 'deps-row'].map((id) => getComputedStyle($(id)).display !== 'none');
-      const single = shown();
+      const tabs = () => [...document.querySelectorAll('.view-tab')].filter((b) => b.offsetParent !== null).map((b) => b.textContent);
+      // five views from the link: one stays open (the one opened last)
+      const open = openViews();
+      // each view in its tab
+      const single = [];
+      for (const name of VIEWS) { await tab(name); single.push(shown()[VIEWS.indexOf(name)]); }
+      await tab('table');
       trs()[1].cells[2].click(); await wait(100); // a selected row (its card) in single mode
       const cardSingle = !$('icard').hidden;
+      await tab('trace'); // the A–B traces open too: they show the "more" section
       await done(() => $('cmp-ab').click()); await wait(300);
-      const ab = [shown(), getComputedStyle($('more')).display];
+      const ab = [shown(), getComputedStyle($('more')).display, tabs(), getComputedStyle($('trace-slot')).display];
       // a click on a row of A's table in A–B mode: no card (not the single result's)
       document.querySelector('table.uops tbody tr')?.cells[2]?.click(); await wait(300);
       const cards = [...document.querySelectorAll('.ic')].filter((c) => !c.hidden && c.offsetParent !== null).length;
       await done(() => $('cmp-single').click()); await wait(300);
-      return { single, ab, back: shown(), cardSingle, cards };`);
-    check(r.single.every(Boolean) && r.ab[0].every((x) => !x) && r.back.every(Boolean), 'A–B mode: the views are hidden (also with the A–B traces open), back in single mode they are there', JSON.stringify(r));
+      const back = [];
+      for (const name of VIEWS) { await tab(name); back.push(shown()[VIEWS.indexOf(name)]); }
+      return { open, single, ab, back, backTabs: tabs(), cardSingle, cards };`);
+    check(r.open.length === 1, 'A–B section: five views from a link, one stays open', JSON.stringify(r.open));
+    check(r.single.every(Boolean) && r.ab[0].every((x) => !x) && r.ab[1] !== 'none' && r.ab[2].length === 0 && r.ab[3] !== 'none' && r.back.every(Boolean)
+      && ['bound', 'try', 'bytes', 'deps'].every((t) => r.backTabs.includes(t)), 'A–B mode: the views are hidden, no tabs (the A–B traces open), back in single mode they are there', JSON.stringify(r));
     check(r.cardSingle && r.cards === 0, 'A–B mode: no instruction card', JSON.stringify(r));
   }
 
@@ -505,9 +530,13 @@ try {
       await page.theme(theme);
       await page.goto(`${origin}/?nosw=1#v=1&m=asm&bound=1&whatif=1&codemap=1&deps=1&c=${b64(ex('dot1').text.intel)}`);
       await page.result();
-      out.push(await page.eval(`${HELPERS} await until(() => document.querySelector('.bd-item') && document.querySelector('.ly-map') && document.querySelector('.dp-map') && document.querySelector('#whatif .wi-body')?.dataset.state === 'done'); return { w: ${w}, o: overflow(), bg: getComputedStyle(document.documentElement).backgroundColor };`));
+      // one view at a time (the tabs): each open and drawn
+      out.push(await page.eval(`${HELPERS} await until(() => document.querySelector('.view-tab')); const o = {};
+        for (const [name, ready] of [['bound', () => document.querySelector('.bd-item')], ['try', () => document.querySelector('#whatif .wi-body')?.dataset.state === 'done'],
+          ['bytes', () => document.querySelector('.ly-map')], ['deps', () => document.querySelector('.dp-map')]]) { await tab(name); await until(ready); await wait(50); o[name] = overflow(); }
+        return { w: ${w}, o: Math.max(...Object.values(o)), each: o, bg: getComputedStyle(document.documentElement).backgroundColor };`));
     }
-    check(out.every((m) => m.o <= 0), 'layout: no sideways scrolling from 320 to 2560 px with the views open', JSON.stringify(out));
+    check(out.every((m) => m.o <= 0), 'layout: no sideways scrolling from 320 to 2560 px with each view open', JSON.stringify(out));
     check(out[0].bg !== out[2].bg, 'layout: both themes', JSON.stringify(out.map((m) => m.bg)));
     await page.size(1440, 900);
   }

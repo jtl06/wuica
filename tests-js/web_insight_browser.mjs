@@ -157,7 +157,9 @@ try {
       await until(() => (runAnyway(), document.querySelector('.tp .value') && body().dataset.cost === 'done'));
       const out = { tp: document.querySelector('.tp .value').textContent, cost: cost(), top: top(), head: head(), hash: location.hash };
       const chain = document.querySelector('.ins-chain-row');
-      out.chain = [chain?.querySelector('.label').textContent, chain?.querySelector('.field').innerText.replace(/\\s+/g, ' ').trim()];
+      // the chain on one line; its length (the hint) is hidden in the dense layout, the Dependencies limit says it
+      out.chain = [chain?.querySelector('.label').textContent, chain?.querySelector('.field').innerText.replace(/\\s+/g, ' ').trim(),
+        chain?.querySelector('.hint')?.textContent.replace(/\\s+/g, ' ').trim(), chain && getComputedStyle(chain.querySelector('.field')).whiteSpace];
       out.afterLimits = chain?.previousElementSibling?.querySelector('.limits') !== null;
       out.marked = instrRows().map((tr) => tr.classList.contains('ins-on-chain') ? tr.cells[0].dataset.chain : '');
       out.title = instrRows()[0].cells[0].title;
@@ -177,7 +179,7 @@ try {
     check(r.tp === '2.00' && r.head[2] === 'Δ' && r.head[0] === 'Instruction' && r.head[1] === 'Notes', 'cost: a Δ column after the notes', JSON.stringify(r.head));
     check(JSON.stringify(r.cost) === JSON.stringify(want.chain.remove), 'cost: the chain example equals independent analyses of the blocks without each instruction', JSON.stringify([r.cost, want.chain.remove]));
     check(r.top.join() === '0,1' && /removed: 1\.00 cycles\/iteration \(−1\.00\)/.test(r.costTitle), 'cost: the largest saving is marked; the tooltip has the throughput', JSON.stringify([r.top, r.costTitle]));
-    check(r.chain[0] === 'chain' && r.chain[1] === 'add rax, 0x1 → add rax, 0x1 ↻ 2.00 cycles/iteration' && r.afterLimits, 'chain: a line under the limits', JSON.stringify(r.chain));
+    check(r.chain[0] === 'chain' && r.chain[1] === 'add rax, 0x1 → add rax, 0x1 ↻' && r.chain[2] === '2.00 cycles/iteration' && r.chain[3] === 'nowrap' && r.afterLimits, 'chain: a line under the limits', JSON.stringify(r.chain));
     check(r.marked.join('|') === '← rax|← rax||' && /^critical dependency chain: 2\.00 cycles\/iteration\nreads rax from add rax, 0x1 \(1 cycle, previous iteration\)/.test(r.title) && r.marker === '" ← rax"', 'chain: its rows are marked, with the edges in the tooltip', JSON.stringify([r.marked, r.title, r.marker]));
     check(r.arrows[0] === 'rax, 1 cycle' && r.arrows[1] === 'rax, 1 cycle, into the next iteration', 'chain: the arrows say what flows', JSON.stringify(r.arrows));
     check(/[#&]cost=1(&|$)/.test(r.hash), 'cost: in the fragment', r.hash);

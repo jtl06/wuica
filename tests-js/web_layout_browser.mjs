@@ -176,27 +176,32 @@ try {
       await page.goto(`${origin}/?nosw=1#v=1&as=SKL,ZEN3,ADL-P&cmpsweep=1&c=NDggODMgYzAgMDEgNDggODMgYzAgMDEgNDkgZmYgY2YgNzUgZjM`);
       await page.waitFor(`document.getElementById('cmp-cpus').dataset.state === 'done' && document.getElementById('cmp-sweep').dataset.state === 'done' && document.querySelector('.tp .value')`, `the result at ${w} px`);
       const m = await page.eval(`${HELPERS}
+        // the views are tabs of the result (workspace.js): the link opens the sweep's; then the table's
+        const tab = async (name) => { [...document.querySelectorAll('.view-tab')].find((b) => b.textContent === name).click(); await wait(50); };
+        const sweep = [document.querySelector('.view-tab[aria-selected="true"]')?.textContent, overflow()];
+        await tab('table');
         document.querySelector('details.report-wrap summary').click(); await wait(50); // the wide text report, open
-        const o = { w: ${w}, single: overflow(), side: rect('#results').left > rect('#code').right, gap: rect('#results').top - rect('#run').bottom };
+        const o = { w: ${w}, single: Math.max(sweep[1], overflow()), sweep, side: rect('#results').left > rect('#code').right, gap: rect('#results').top - rect('#run').bottom };
         document.querySelector('#advanced summary').click(); await wait(50); o.pop = overflow(); document.querySelector('#advanced summary').click();
-        // the trace, open, with the wait column and a selected row
+        // the wait column and a selected row in the table, then the trace tab, open (the selection carries over)
         const tpanel = () => document.querySelector('#trace-slot details.trace-panel');
-        tpanel().querySelector('summary').click(); await until(() => tpanel().wuicaTrace); await wait(100);
         document.querySelector('.tl-waits-box').click(); await until(() => document.querySelector('th.tl-wait'));
         document.querySelector('table.uops tbody tr').click(); await wait(100);
-        o.trace = overflow(); o.traceWide = Math.abs(rect(tpanel()).right - rect('#more').right) < 4;
+        o.waits = overflow();
+        await tab('trace'); await until(() => tpanel().wuicaTrace); await wait(100);
+        o.trace = Math.max(o.waits, overflow()); o.traceWide = Math.abs(rect(tpanel()).right - rect('#more').right) < 4 && rect(tpanel()).right > rect(tpanel()).left;
         document.querySelector('.tl-waits-box').click(); await wait(50);
         await done(() => $('cmp-ab').click()); await wait(200);
         o.ab = overflow(); o.abSide = rect('#code-b').left > rect('#code').right; o.abBelow = rect('#results').top > rect('#run').bottom; o.abTable = $('cmp-cpus').offsetParent === null;
         // the A–B traces (the trace stays open)
         await until(() => tpanel()?.wuicaTraces); await wait(100);
-        o.abTrace = overflow(); o.abTraceBelow = rect(tpanel()).top > rect('#results').bottom;
+        o.abTrace = overflow(); o.abTraceBelow = rect(tpanel()).top >= rect('#result-body').bottom && rect(tpanel()).right > rect(tpanel()).left; // (A–B has no tabs: below the A–B result)
         tpanel().querySelector('summary').click(); await wait(50);
         await done(() => $('cmp-single').click());
         return o;`);
       out.push(m);
     }
-    check(out.every((m) => m.single <= 0 && m.pop <= 0 && m.ab <= 0), 'layout: no sideways scrolling from 320 to 2560 px (single with three CPUs, the sweep and the report open; the options open; A–B)', JSON.stringify(out));
+    check(out.every((m) => m.sweep[0] === 'sweep' && m.single <= 0 && m.pop <= 0 && m.ab <= 0), 'layout: no sideways scrolling from 320 to 2560 px (single with three CPUs, the sweep and the report open; the options open; A–B)', JSON.stringify(out));
     check(out.every((m) => m.trace <= 0 && m.traceWide && m.abTrace <= 0 && m.abTraceBelow), 'layout: the trace (with the wait column and a selected row) and the A–B traces: full width below, no sideways scrolling from 320 to 2560 px', JSON.stringify(out.map((m) => [m.w, m.trace, m.traceWide, m.abTrace, m.abTraceBelow])));
     check(out.every((m) => m.side === m.w >= 1200), 'layout: input and result side by side from 1200 px, stacked below', JSON.stringify(out.map((m) => [m.w, m.side])));
     check(out.every((m) => m.abBelow && m.abTable && m.abSide === m.w > 800), 'layout: A–B: A and B side by side (stacked on narrow screens), the result below, no CPU table', JSON.stringify(out.map((m) => [m.w, m.abSide, m.abBelow, m.abTable])));
@@ -320,7 +325,7 @@ try {
       await done(() => { $('examples').value = 'sha256'; $('examples').dispatchEvent(new Event('change', { bubbles: true })); });
       const ms = performance.now() - t0;
       await wait(300);
-      const out = { opts, ms, long: [...long], tp: tp(), hex: $('mode-hex').checked, rows: document.querySelectorAll('table.uops tbody tr').length,
+      const out = { opts, ms, long: [...long], tp: tp(), asm: $('mode-asm').checked && $('code').value.startsWith('loop:') && $('code').value.includes('mov qword ptr [rsp+0x98], r8'), rows: document.querySelectorAll('table.uops tbody tr').length,
         more: document.querySelector('.more-rows')?.innerText, status: $('status').textContent, cost: $('result-body').dataset.cost,
         closed: [...document.querySelectorAll('details.text-block, details.trace-panel')].every((d) => !d.open), meta: document.querySelector('#result-body .meta').title };
       // the cost column waits for a click (2,949 analyses)
@@ -336,7 +341,7 @@ try {
       out.cpus = rows(); out.cpusInfo = $('cmp-cpus-info').textContent;
       return out;`);
     check(r.opts.at(-1) === 'showcase:sha256', 'showcase: its own group at the end of the examples', JSON.stringify(r.opts));
-    check(r.tp === '744.25' && r.hex && /^2949 instructions · 11602 bytes/.test(r.meta), 'showcase: SHA-256 (2,949 instructions) gives 744.25 on SKL; the input switches to hex', JSON.stringify([r.tp, r.hex, r.meta]));
+    check(r.tp === '744.25' && r.asm && /^2949 instructions · 11602 bytes/.test(r.meta), 'showcase: SHA-256 (2,949 instructions) gives 744.25 on SKL; the input switches to Intel assembly', JSON.stringify([r.tp, r.asm, r.meta]));
     check(r.rows === 200 && /^2,749 more rows · show all 2,949 rows$/.test(r.more) && r.closed && r.cost === 'off', 'showcase: the first 200 rows are drawn, the rest on request; objdump, report and trace stay closed; no cost column', JSON.stringify([r.rows, r.more, r.closed, r.cost]));
     check(/^744\.25 cycles\/iteration · SKL · \d+(\.\d)? ms$/.test(r.status), 'showcase: the status line shows the analysis time', r.status);
     check(r.costWait[0] === 'waiting' && /compute \(\d{4} analyses\)/.test(r.costWait[1] ?? ''), 'showcase: the cost column waits for a click', JSON.stringify(r.costWait));

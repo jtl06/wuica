@@ -516,7 +516,7 @@ try {
     check(requests.some((x) => x.includes('wuica_wasm.wasm')) && requests.some((x) => x.includes('data/arch/SKL.json')) && requests.some((x) => x.includes('js/engine-worker.js')), 'real: the analyzer, its worker and the selected table are fetched');
     check(r.examples === ',chain,loadstore,avx,stack,saxpy,dot1,dot4,popcnt,ptrchase,strlen,crc32,memcpy,gemm,sha256', 'real: no mock-only examples', r.examples);
     check(r.start[0] && r.start[1] === '  add rax, 1' && r.asmFirst === '2.00', 'real: assembly is the default; the first example assembled gives 2.00', JSON.stringify([r.start, r.asmFirst]));
-    check(r.first.tp === '2.00' && !r.first.mock && /^loop · SKL/m.test(r.first.text) && /bottleneck\s+Dependencies/.test(r.first.text) && !/ ms\n|bytes|instructions/.test(r.first.text)
+    check(r.first.tp === '2.00' && !r.first.mock && /^loop · SKL/m.test(r.first.text) && /bottleneck\s+Dependencies/.test(r.first.text) && !/ ms\n|\d bytes|\d instructions/.test(r.first.text)
       && /^4 instructions · 13 bytes · \d+(\.\d)? ms$/.test(r.first.metaTitle), 'real: the first example: 2.00 cycles, a loop, bottleneck Dependencies; counts and time only in the tooltip', JSON.stringify([r.first.text.slice(0, 300), r.first.metaTitle]));
     check(r.first.rows.length === 4 && r.first.rows[0] === 'add rax, 0x1|1|1|1|0.22|0.22|0.29|0.27' && r.first.rows[3] === 'jnz 0xfffffffffffffff5|M' && r.first.total === 'Total|3|3|3|0.5|0.52|0.52|1.47', 'real: the uop table equals the reference (rounded like uiCA, totals as in its "Total" line)', JSON.stringify([r.first.rows, r.first.total]));
     check(r.first.report.startsWith('Throughput (in cycles per iteration): 2.00\nBottleneck: Dependencies\n') && r.first.report.includes('│ Total'), 'real: the text report');
@@ -525,7 +525,7 @@ try {
     check(r.prototype[0] === true && /^ADL-P .*prototype$/.test(r.prototype[1]) && r.notPrototype[0] === false && r.notPrototype[1] === '', 'real: a prototype model (ADL-P) is marked at its checkbox and in the result; SKL is not', JSON.stringify([r.prototype, r.notPrototype]));
     check(r.stack[0] === '2.10' && r.stack[3] === 1 && /unknown/.test(r.stack[6].split('\n')[1]), 'real: stack example on SKL (2.10, a stack-sync row, bottleneck unknown)', JSON.stringify(r.stack.slice(0, 6)));
     check([r.loadstore, r.avx, r.stack].every((x) => x[5] <= 0) && r.overflow0 <= 0 && r.overflow1 <= 0 && r.tableScrolls[0] && r.tableScrolls[1] === 'auto', 'real: at 375px the page never scrolls sideways; the table scrolls in its container', JSON.stringify([r.overflow0, r.overflow1, r.tableScrolls]));
-    check(r.fontSize[0] === '16px' && r.fontSize[1] === '15px' && /IBM Plex Mono/.test(r.fontSize[2]), 'real: font sizes', JSON.stringify(r.fontSize));
+    check(r.fontSize[0] === '16px' && r.fontSize[1] === '14px' && /IBM Plex Mono/.test(r.fontSize[2]), 'real: font sizes', JSON.stringify(r.fontSize));
     check(r.before === '---M' && r.noMacroFusion[0] === '----' && r.noMacroFusion[2], 'real: "no macro-fusion" reruns the analysis and removes the M note', JSON.stringify([r.before, r.noMacroFusion]));
     check(r.aligned[0] === '2.00' && r.aligned[1] && /Issue 0.75 Dependencies 2.00|Issue/.test(r.simpleFrontEnd[0]) && !/DSB|LSD|Decoder/.test(r.simpleFrontEnd[0]), 'real: alignment offset and simple front end reach the analyzer', JSON.stringify([r.aligned, r.simpleFrontEnd]));
     check(r.reset[0] === '2.00' && r.reset[1] === '---M', 'real: reset restores the default result', JSON.stringify(r.reset));
@@ -553,8 +553,9 @@ try {
       const keys = await caches.keys();
       const c = await caches.open(keys[0]);
       return { keys, controlled: !!navigator.serviceWorker.controller, cached: (await c.keys()).map((r) => new URL(r.url).pathname.slice(1)).sort() };`);
-    // everything, the assembler included (the page prefetches it when idle; the checks above also used it)
-    const expected = Object.keys(manifest.files).concat('manifest.json').sort();
+    // everything, the assembler included (the page prefetches it when idle; the checks above also used it), except
+    // what is fetched only on use: llvm-mca (the mca view) and the showcase's assembly (picking SHA-256)
+    const expected = Object.keys(manifest.files).filter((f) => !/^(wuica_mca\.wasm|js\/showcase-asm\.js)$/.test(f)).concat('manifest.json').sort();
     check(sw.controlled && sw.keys.length === 1 && sw.keys[0] === `wuica-${manifest.version}`, 'sw: controls the page; the cache is named after the build', JSON.stringify(sw.keys));
     check(JSON.stringify(sw.cached) === JSON.stringify(expected), 'sw: the page, the analyzer and all tables are cached', `missing: ${expected.filter((f) => !sw.cached.includes(f))}; extra: ${sw.cached.filter((f) => !expected.includes(f))}`);
     check(page.take().length === 0, 'real: no console errors (online)', page.problems.join('\n'));

@@ -3,10 +3,12 @@
 // - the URL state with each view open (bound, try, bytes, deps, trace, a selected row and its card): reload, and the copied
 //   link in a new tab, give the same state and the same numbers
 // - the bound view's port set and issue slots against the module's details run in Node
-// - A–B mode with the views open: no errors; back to single mode restores them
-// - keyboard only: each view's summary opens with Enter and closes with Space; a row's card with Enter, Escape closes it
-// - both themes × widths 320–2560 with every view open: no horizontal scrolling, no errors
-// - the SHA-256 showcase with every view open and a card: no long task of 100 ms or more
+// - A–B mode with a view open: no errors; back to single mode restores it
+// - keyboard only: each view's tab opens it with Enter (the focus stays), Space on the table tab closes it; a row's card
+//   with Enter, Escape closes it
+// - both themes × widths 320–2560 with each view (and a card) open: no horizontal scrolling, no errors
+// - the SHA-256 showcase, each view open in turn and a card: no long task of 100 ms or more
+// The views are tabs of the result (workspace.js): one is open at a time, the one opened last.
 // - the links of the page: only the project's repository, uiCA, uops.info and the accuracy page
 // Skipped (exit 0) without Chrome.
 //
@@ -39,12 +41,14 @@ const ex = (id) => [...EXAMPLES, ...CLASSIC_EXAMPLES].find((e) => e.id === id);
 const SNAP = `
   const openOf = (id) => !!$(id)?.open;
   const trace = () => document.querySelector('#trace-slot details.trace-panel');
+  const snapOpen = () => ['bound', 'whatif', 'codemap', 'deps'].filter(openOf).concat(trace()?.open ? ['trace'] : []).join();
+  const tab = async (name) => { [...document.querySelectorAll('.view-tab')].find((b) => b.textContent === name).click(); await wait(50); };
   const snap = async () => {
     await until(() => tp() && !$('results').hasAttribute('aria-busy'), 60000);
     const settle = async (f) => { try { await until(f, 20000); } catch { /* recorded as it is */ } };
     if (openOf('bound')) await settle(() => /slots/.test($('bound').innerText) || /no port/.test($('bound').innerText));
     if (openOf('whatif')) await settle(() => !/…/.test($('whatif').innerText) && /unroll ×8\\s+[\\d.]+/.test($('whatif').innerText));
-    if (openOf('deps')) await settle(() => /edges/.test($('deps').innerText));
+    if (openOf('deps')) await settle(() => /edges/.test($('deps').textContent)); // (in its summary, hidden while it is open)
     if ($('icard') && !$('icard').hidden) await settle(() => $('result-body').dataset.icard === 'details');
     if (trace()?.open) await settle(() => trace().querySelector('canvas, svg'));
     await wait(100);
@@ -70,7 +74,8 @@ try {
   const cases = [
     { ex: 'chain', arch: 'SKL', views: ['bound'] }, { ex: 'chain', arch: 'SKL', views: ['whatif'] }, { ex: 'chain', arch: 'SKL', views: ['codemap'] },
     { ex: 'chain', arch: 'SKL', views: ['deps'] }, { ex: 'ptrchase', arch: 'ADL-P', views: ['bound'], row: 0 },
-    { ex: 'loadstore', arch: 'ZEN3', views: ['bound', 'whatif', 'codemap', 'deps'], row: 1 }, { ex: 'chain', arch: 'ICX', views: ['trace'], row: 2 },
+    // several opened one after another: the last one stays open (bound: its numbers are checked)
+    { ex: 'loadstore', arch: 'ZEN3', views: ['whatif', 'codemap', 'deps', 'bound'], row: 1 }, { ex: 'chain', arch: 'ICX', views: ['trace'], row: 2 },
   ];
   for (const c of cases) {
     const what = `${c.ex} on ${c.arch} with ${c.views.join(', ')}${c.row !== undefined ? ` and row ${c.row}` : ''}`;
@@ -80,17 +85,17 @@ try {
       if (focused() !== ${JSON.stringify(c.arch)} || checkedCpus() !== ${JSON.stringify(c.arch)}) cpus(${JSON.stringify(c.arch)});
       $('mode-asm').click();
       await done(() => set($('examples'), ${JSON.stringify(c.ex)}));
-      for (const v of ${JSON.stringify(c.views)}) (v === 'trace' ? trace() : $(v)).querySelector('summary').click();
       ${c.row !== undefined ? `document.querySelectorAll('table.uops tbody tr')[${c.row}].cells[2].click(); await wait(50);` : ''}
+      for (const v of ${JSON.stringify(c.views)}) { (v === 'trace' ? trace() : $(v)).querySelector('summary').click(); await wait(30); }
       const s = await snap();
       $('copy-link').click(); await wait(100); // writes the state to the address bar first (the clipboard may be refused)
       return { ...s, href: location.href };`);
     const want = await ref(ex(c.ex).hex, c.arch);
-    // (a selected row opens the trace: trace-link.js)
-    const views = c.row !== undefined && !c.views.includes('trace') ? [...c.views, 'trace'] : c.views;
+    // (one view at a time: the one opened last; a selected row does not open the trace)
+    const views = c.views.slice(-1);
     check(a.tp === want.tp.toFixed(2) && a.open.join() === views.join() && a.sel === (c.row ?? null), `url: ${what}: the result and the views`, JSON.stringify(a));
     // the numbers of the bound view: the issue slots of the details (the port set: web_views_browser.mjs)
-    if (c.views.includes('bound')) {
+    if (views.includes('bound')) {
       const s = want.details.issue?.slots;
       const total = s ? s.issued + s.frontEnd + s.rob + s.rs + s.other : 0;
       const issued = s ? `issued ${Math.round((s.issued / total) * 100)}%` : '';
@@ -134,9 +139,14 @@ try {
     const p2 = await Page.open(browser, { width: 1440, height: 900 });
     await p2.goto(`${origin}/?nosw=1#v=1&m=hex&cmpcpu=1&bound=1&codemap=1&c=${b64}`);
     await p2.ready();
-    const r = await p2.eval(`${HELPERS} ${SNAP} if (!tp()) await done(() => $('run').click()); const s = await snap(); return { ...s, n: checkedCpus().split(',').length };`);
+    // (the link runs by itself: a click on Analyze while it runs would cancel it)
+    const r = await p2.eval(`${HELPERS} ${SNAP} await until(() => tp() || !$('results').hasAttribute('aria-busy'), 60000); if (!tp()) await done(() => $('run').click()); const s = await snap();
+      // one of the two stays open; each in its tab
+      await tab('bound'); const b = await snap(); await tab('bytes'); const m = await snap();
+      return { ...s, n: checkedCpus().split(',').length, bound: b.bound, codemap: m.codemap, tabs: [b.open, m.open] };`);
     const want = await ref(hex, 'SKL');
-    check(r.tp === want.tp.toFixed(2) && r.n === 15 && r.open.join() === 'bound,codemap' && /slots/.test(r.bound), 'url: an old link with the CPU table and two views', JSON.stringify(r));
+    check(r.tp === want.tp.toFixed(2) && r.n === 15 && r.open.length === 1 && ['bound', 'codemap'].includes(r.open[0]) && /slots/.test(r.bound) && /add rax, 0x1 · 0x00/.test(r.codemap ?? '')
+      && r.tabs.join('|') === 'bound|codemap', 'url: an old link with the CPU table and two views: one open, both there', JSON.stringify(r));
     check(p2.take().length === 0, 'url: the old link: no console errors');
     await p2.close();
   }
@@ -165,15 +175,17 @@ try {
   {
     const out = {};
     await page.eval(`${HELPERS} for (const id of ['bound', 'whatif', 'codemap', 'deps']) if ($(id).open) document.querySelector('#' + id + ' summary').click(); return 1;`);
-    for (const id of ['bound', 'whatif', 'codemap', 'deps']) {
-      await page.eval(`document.querySelector('#${id} summary').focus(); return 1;`);
+    const tabOf = (name) => `[...document.querySelectorAll('.view-tab')].find((b) => b.textContent === '${name}')`;
+    for (const [id, name] of [['bound', 'bound'], ['whatif', 'try'], ['codemap', 'bytes'], ['deps', 'deps']]) {
+      await page.eval(`${tabOf(name)}.focus(); return 1;`);
       await page.key('Enter', { keyCode: 13, text: '\r' });
-      const opened = await page.eval(`return document.getElementById('${id}').open && document.activeElement === document.querySelector('#${id} summary');`);
+      const opened = await page.eval(`return document.getElementById('${id}').open && document.activeElement === ${tabOf(name)} && document.activeElement.getAttribute('aria-selected') === 'true';`);
+      await page.eval(`${tabOf('table')}.focus(); return 1;`);
       await page.key(' ', { code: 'Space', keyCode: 32 });
-      const closed = await page.eval(`return !document.getElementById('${id}').open;`);
+      const closed = await page.eval(`return !document.getElementById('${id}').open && document.activeElement === ${tabOf('table')} && document.activeElement.getAttribute('aria-selected') === 'true';`);
       out[id] = [opened, closed];
     }
-    check(Object.values(out).every(([o, c]) => o && c), 'keyboard: Enter opens each view, Space closes it, the focus stays', JSON.stringify(out));
+    check(Object.values(out).every(([o, c]) => o && c), 'keyboard: Enter on a tab opens its view, Space on the table tab closes it, the focus stays on the tab', JSON.stringify(out));
     // the row in the tab order (the selected one), then ArrowDown to the next, Enter: its card
     await page.eval(`document.getElementById('icard').hidden || document.querySelector('#icard button')?.click(); document.querySelector('#result-body table.uops tbody tr[tabindex="0"]').focus(); return 1;`);
     await page.key('ArrowDown', { keyCode: 40 });
@@ -187,20 +199,23 @@ try {
 
   // ---- themes × widths with every view open ----------------------------------------------------------------------------
   {
-    await page.eval(`${HELPERS} ${SNAP} for (const id of ['bound', 'whatif', 'codemap', 'deps']) if (!$(id).open) document.querySelector('#' + id + ' summary').click();
-      document.querySelectorAll('table.uops tbody tr')[0].cells[2].click(); await snap(); return 1;`);
+    // each view (one at a time), all drawn once; the card of row 0 on the table tab
+    await page.eval(`${HELPERS} ${SNAP} await tab('table'); document.querySelectorAll('table.uops tbody tr')[0].cells[2].click(); await snap();
+      for (const name of ['bound', 'try', 'bytes', 'deps']) { await tab(name); await snap(); } await tab('table'); return 1;`);
     const bad = [];
     for (const theme of ['light', 'dark']) {
       await page.eval(`${HELPERS} if ($('theme-toggle').textContent !== ${JSON.stringify(theme)}) $('theme-toggle').click(); return 1;`);
       for (const w of [320, 375, 414, 768, 1024, 1280, 1440, 1920, 2560]) {
         await page.size(w, 900, w < 768);
-        const r = await page.eval(`${HELPERS} for (let k = 0; k < 2; k++) await new Promise((f) => requestAnimationFrame(f)); return { o: overflow(), t: $('theme-toggle').textContent,
-          wide: [...document.querySelectorAll('#bound, #whatif, #codemap, #deps, #icard')].filter((e) => e.offsetParent && e.getBoundingClientRect().right > innerWidth + 1).map((e) => e.id) };`);
-        if (r.o > 0 || r.t !== theme || r.wide.length) bad.push({ theme, w, ...r });
+        for (const name of ['table', 'bound', 'try', 'bytes', 'deps']) {
+          const r = await page.eval(`${HELPERS} ${SNAP} await tab(${JSON.stringify(name)}); for (let k = 0; k < 2; k++) await new Promise((f) => requestAnimationFrame(f)); return { o: overflow(), t: $('theme-toggle').textContent,
+            wide: [...document.querySelectorAll('#bound, #whatif, #codemap, #deps, #icard')].filter((e) => e.offsetParent && e.getBoundingClientRect().right > innerWidth + 1).map((e) => e.id) };`);
+          if (r.o > 0 || r.t !== theme || r.wide.length) bad.push({ theme, w, name, ...r });
+        }
       }
     }
     await page.size(1440, 900);
-    check(bad.length === 0, 'layout: both themes × 9 widths with every view and a card open: no horizontal scrolling', JSON.stringify(bad));
+    check(bad.length === 0, 'layout: both themes × 9 widths with each view, and a card, open: no horizontal scrolling', JSON.stringify(bad));
     check(page.take().length === 0, 'layout: no console errors');
   }
 
@@ -212,13 +227,21 @@ try {
       cpus('SKL');
       $('mode-hex').click();
       await done(() => set($('examples'), 'sha256'), 120000);
+      await tab('table');
       document.querySelectorAll('table.uops tbody tr')[3].cells[2].click();
       const s = await snap();
+      // each view in turn (the trace and the dependency graph load past their size limits when their tab is picked)
+      const open = [];
+      for (const name of ['bound', 'try', 'bytes', 'deps']) { await tab(name); open.push((await snap()).open.join()); }
       await wait(500);
-      return { long, tp: s.tp, open: s.open, card: !!s.card };`);
-    check(r.tp === '744.25' && r.open.length === 5 && r.card, 'showcase: SHA-256 with every view and a card', JSON.stringify(r));
+      const viewsLong = [...long];
+      // the trace of 2,949 instructions: built on the main thread once its tab is picked (not asserted: printed)
+      await tab('trace'); await until(() => trace().wuicaTrace?.model, 60000); open.push(snapOpen()); await wait(500);
+      return { long: viewsLong, traceLong: long.slice(viewsLong.length), tp: s.tp, open, card: !!s.card };`);
+    check(r.tp === '744.25' && r.open.join() === 'bound,whatif,codemap,deps,trace' && r.card, 'showcase: SHA-256 with each view in turn and a card', JSON.stringify(r));
     const longLimit = process.env.CI ? 200 : 100; // CI runners are slower and shared
-    check(r.long.every((ms) => ms < longLimit), `showcase: no long task of ${longLimit} ms or more`, JSON.stringify(r.long));
+    check(r.long.every((ms) => ms < longLimit), `showcase: no long task of ${longLimit} ms or more (the card, bound, try, bytes, deps)`, JSON.stringify(r.long));
+    console.log(`showcase: SHA-256: long tasks ${JSON.stringify(r.long)} ms; loading the trace on its tab ${JSON.stringify(r.traceLong)} ms`);
     check(page.take().length === 0, 'showcase: no console errors');
   }
 

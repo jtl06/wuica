@@ -1,7 +1,9 @@
 // End-to-end test of the cycle range of the trace (web/js/trace-range-view.js) in the built site (web/dist), in headless
 // Chrome (--headless, --remote-debugging-port: tests-js/cdp.mjs) with the real analyzer: a drag over the head of the trace
 // selects cycles, the bound view shows their ports and issue slots (checked against trace-range.js on the same trace made
-// under Node), [ and ] select from the keyboard, Esc, × and closing the trace clear it. Run web/build.sh first.
+// under Node), [ and ] select from the keyboard, Esc and × clear it. The trace and the bound view are tabs of the result
+// (workspace.js): the range picked in the trace tab shows in the bound tab, and stays when the trace is closed.
+// Run web/build.sh first.
 //
 //    node tests-js/web_trace_range_browser.mjs [--chrome PATH] [--shots DIR]
 //
@@ -47,13 +49,21 @@ const pageHelpers = `${HELPERS}
 const run = (expr) => page.eval(pageHelpers + expr);
 
 try {
-  await page.goto(`${host.origin}/?nosw=1#v=1&a=${ARCH}&c=${b64(ex.hex)}&trace=1&bound=1`);
+  // the trace and the bound view are tabs of the result (workspace.js): one shows at a time
+  const tab = (name) => run(`[...document.querySelectorAll('.view-tab')].find((b) => b.textContent === '${name}').click();
+    await until(() => document.querySelector('.view-tab[aria-selected="true"]')?.textContent === '${name}');
+    ${name === 'trace' ? `await until(() => panel().open && viewer() && viewer().viewW > 0);` : name === 'bound' ? `await until(() => $('bound').open && bodyB()?.querySelector('.bd-group'));` : ''}
+    await wait(50);`);
+  await page.goto(`${host.origin}/?nosw=1#v=1&a=${ARCH}&c=${b64(ex.hex)}&trace=1`);
   await page.ready();
-  await run(`await until(() => viewer() && viewer().viewW > 0 && bodyB()?.querySelector('.bd-group'));`);
-  const before = await run(`return { items: document.querySelectorAll('#bound button.bd-item').length, range: !!rangeView(), chip: chip()?.hidden, bound: $('results').querySelector('[data-bound]')?.dataset.bound ?? document.querySelector('[data-bound]')?.dataset.bound };`);
-  check(before.items > 0 && !before.range && before.chip === true, 'steady state: the bound view, no range, the chip hidden', JSON.stringify(before));
+  await run(`await until(() => viewer() && viewer().viewW > 0);`);
+  const chip0 = await run(`return chip()?.hidden;`);
+  await tab('bound');
+  const before = await run(`return { items: document.querySelectorAll('#bound button.bd-item').length, range: !!rangeView(), trace: panel().open };`);
+  check(before.items > 0 && !before.range && chip0 === true && !before.trace, 'steady state: the bound view, no range, the chip hidden', JSON.stringify([before, chip0]));
 
-  // a drag over the cycle axis, from cycle a to cycle b (real mouse events)
+  // a drag over the cycle axis of the trace tab, from cycle a to cycle b (real mouse events)
+  await tab('trace');
   const geo = await run(`
     const v = viewer();
     v.canvas.scrollIntoView({ block: 'center' });
@@ -69,78 +79,102 @@ try {
   for (const x of [geo.xm, geo.xb]) await page.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y: geo.y, button: 'left', buttons: 1 });
   await page.cmd('Input.dispatchMouseEvent', { type: 'mouseReleased', x: geo.xb, y: geo.y, button: 'left', buttons: 0, clickCount: 1 });
   // (the range follows the pointer once per frame: the last one comes after the release)
+  await run(`try { await until(() => viewer().root.dataset.range === '${geo.a}-${geo.b}', 5000); } catch { /* checked below */ }`);
+  const inTrace = await run(`return { chip: chip().hidden ? null : chip().querySelector('.tr-c').textContent, dataRange: viewer().root.dataset.range };`);
+  await shot('range-drag.png');
+  // the bound tab: the range's ports and slots
+  await tab('bound');
   await run(`try { await until(() => rangeView()?.dataset.range === '${geo.a}-${geo.b}', 5000); } catch { /* checked below */ }`);
   const got = await run(`
     const rv = rangeView();
-    return { range: rv.dataset.range, chip: chip().hidden ? null : chip().querySelector('.tr-c').textContent, label: rv.querySelector('.tr-c').textContent,
-      ports: Object.fromEntries([...rv.querySelectorAll('.tr-item')].map((x) => [x.dataset.port, x.querySelector('.bd-pct').textContent])),
-      slots: [...rv.querySelectorAll('.sl-k')].map((x) => x.dataset.key + ' ' + x.textContent.replace(/^.* /, '')),
-      shaded: document.querySelectorAll('table.uops tr.bd-hot').length, dataRange: viewer().root.dataset.range };`);
-  await shot('range-drag.png');
+    return { range: rv?.dataset.range, label: rv?.querySelector('.tr-c').textContent,
+      ports: Object.fromEntries([...(rv?.querySelectorAll('.tr-item') ?? [])].map((x) => [x.dataset.port, x.querySelector('.bd-pct').textContent])),
+      slots: [...(rv?.querySelectorAll('.sl-k') ?? [])].map((x) => x.dataset.key + ' ' + x.textContent.replace(/^.* /, '')),
+      shaded: document.querySelectorAll('table.uops tr.bd-hot').length };`);
   if (shots) {
-    await run(`$('bound').scrollIntoView(); await wait(50);`); await shot('range-bound.png');
+    await shot('range-bound.png');
     await run(`document.documentElement.setAttribute('data-theme', 'light'); await wait(100);`); await shot('range-bound-light.png');
     await run(`document.documentElement.setAttribute('data-theme', 'dark'); await wait(100);`);
   }
   const want = rangeStats(model, geo.a, geo.b);
   const pct = (x) => `${Math.round(x * 100)}%`;
-  check(got.range === `${geo.a}-${geo.b}` && got.dataRange === got.range, 'drag: the range of the dragged cycles', JSON.stringify([got.range, geo]));
-  check(got.chip === `c ${geo.a}–${geo.b}` && got.label === got.chip, 'drag: the chip in the trace and in the bound view', JSON.stringify(got));
+  check(inTrace.dataRange === `${geo.a}-${geo.b}` && got.range === inTrace.dataRange, 'drag: the range of the dragged cycles (in the trace, then in the bound tab)', JSON.stringify([inTrace, got.range, geo]));
+  check(inTrace.chip === `c ${geo.a}–${geo.b}` && got.label === inTrace.chip, 'drag: the chip in the trace and in the bound view', JSON.stringify([inTrace, got]));
   check(JSON.stringify(got.ports) === JSON.stringify(Object.fromEntries(want.ports.map((p) => [p.name, pct(p.share)]))), 'bound view: the ports of the range', JSON.stringify([got.ports, want.ports]));
   const issued = want.slots.issued / (want.slots.width * want.slots.cycles);
   check(got.slots.some((s) => s === `issued ${pct(issued)}`), 'bound view: the issued slots of the range', JSON.stringify([got.slots, want.slots]));
   check(got.shaded === 0, 'bound view: no shading of the table for a range');
 
-  // Esc on the focused timeline clears: the steady state again
+  // Esc on the focused timeline clears: the steady state again (in the bound tab too)
+  await tab('trace');
+  await run(`viewer().canvas.focus();`);
   await page.key('Escape', { code: 'Escape', keyCode: 27 });
-  await run(`await until(() => !rangeView() && document.querySelector('#bound button.bd-item'));`);
-  check(await run(`return chip().hidden && viewer().root.dataset.range === '';`), 'Esc: cleared, the steady state back');
+  await run(`await until(() => viewer().root.dataset.range === '');`);
+  const esc = await run(`return chip().hidden;`);
+  await tab('bound');
+  check(esc && await run(`return !rangeView() && !!document.querySelector('#bound button.bd-item');`), 'Esc: cleared, the steady state back');
 
   // keyboard: [ and ] with no uop focused (the first and the last cycle in view)
+  await tab('trace');
   await run(`const v = viewer(); v.canvas.focus(); v.active = -1; v.pinned = false;`);
   await page.key('[', { code: 'BracketLeft', keyCode: 219 });
-  await run(`await until(() => rangeView());`);
-  const kb = await run(`const v = viewer(); return { range: rangeView().dataset.range, v0: Math.max(v.c0, v.cycleAt(v.G)), v1: Math.min(v.c1, v.cycleAt(v.viewW - 1)) };`);
+  await run(`await until(() => viewer().root.dataset.range);`);
+  const kb = await run(`const v = viewer(); return { range: v.root.dataset.range, v0: Math.max(v.c0, v.cycleAt(v.G)), v1: Math.min(v.c1, v.cycleAt(v.viewW - 1)) };`);
   check(kb.range === `${kb.v0}-${kb.v1}`, '[: from the first to the last cycle in view', JSON.stringify(kb));
-  // cycles outside the issue log: lost slots without a cause, drawn in a colour of their own
+  // the bound tab shows it; cycles outside the issue log: lost slots without a cause, drawn in a colour of their own
+  await tab('bound');
+  await run(`await until(() => rangeView()?.dataset.range === '${kb.range}');`);
   const unk = await run(`const k = rangeView().querySelector('.sl-k[data-key="unknown"] .sl-sw'); const seg = rangeView().querySelector('.sl-seg.sl-unknown');
     return k && seg ? [getComputedStyle(k).backgroundColor, getComputedStyle(seg).backgroundColor] : null;`);
   check(unk && unk.every((c) => c && c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent'), 'slots: lost outside the issue log, coloured', JSON.stringify(unk));
-  // ] at a uop: the end moves to its dispatch
+  // ] at a uop (back in the trace tab): the end moves to its dispatch
+  await tab('trace');
+  await run(`viewer().canvas.focus();`);
   const u = await run(`const v = viewer(); let r = 0; while (r < v.rows.length && v.model.uops[v.rows[r]].dispatched === null) r++; v.active = r; const x = v.model.uops[v.rows[r]]; return x.dispatched;`);
   await page.key(']', { code: 'BracketRight', keyCode: 221 });
-  await run(`await until(() => rangeView()?.dataset.range === '${Math.min(kb.v0, u)}-${u}');`);
+  const kbRange = `${Math.min(kb.v0, u)}-${u}`;
+  await run(`await until(() => viewer().root.dataset.range === '${kbRange}');`);
   check(true, ']: the end at the dispatch of the focused uop');
+  await tab('bound');
+  await run(`await until(() => rangeView()?.dataset.range === '${kbRange}');`);
 
   // × in the bound view clears
   await run(`rangeView().querySelector('.tr-x').click(); await until(() => !rangeView());`);
   check(await run(`return chip().hidden;`), '×: cleared');
-  // Esc in the bound view clears; the focus goes to its summary
+  // Esc in the bound view clears; the focus goes to its tab (its summary is hidden while it is open)
+  await tab('trace');
   await run(`viewer().canvas.focus(); viewer().active = -1;`);
   await page.key('[', { code: 'BracketLeft', keyCode: 219 });
+  await run(`await until(() => viewer().root.dataset.range);`);
+  await tab('bound');
   await run(`await until(() => rangeView()); rangeView().querySelector('.tr-x').focus();`);
   await page.key('Escape', { code: 'Escape', keyCode: 27 });
-  check(await run(`await until(() => !rangeView()); return chip().hidden && document.activeElement === document.querySelector('#bound summary');`), 'Esc in the bound view: cleared, the focus on its summary');
+  check(await run(`await until(() => !rangeView()); const a = document.activeElement; return chip().hidden && a?.matches('.view-tab[aria-selected="true"]') && a.textContent === 'bound';`), 'Esc in the bound view: cleared, the focus on its tab');
 
-  // a range, then the trace closed: cleared, the steady state in the bound view
+  // a range, then the trace closed (the table tab): the range stays, the bound tab shows it
+  await tab('trace');
   await run(`viewer().canvas.focus(); viewer().active = -1;`);
   await page.key('[', { code: 'BracketLeft', keyCode: 219 });
-  await run(`await until(() => rangeView()); panel().open = false; await until(() => !rangeView() && document.querySelector('#bound button.bd-item'));`);
-  check(true, 'closing the trace clears the range');
+  const kept = await run(`await until(() => viewer().root.dataset.range); return viewer().root.dataset.range;`);
+  await tab('table');
+  const closed = await run(`return !panel().open && !$('bound').open && viewer().root.dataset.range;`);
+  await tab('bound');
+  check(closed === kept && await run(`await until(() => rangeView()); return rangeView().dataset.range;`) === kept, 'closing the trace keeps the range: the bound tab shows it', JSON.stringify([kept, closed]));
 
-  // narrow: no sideways scroll with a range in both places
-  await run(`panel().open = true; await until(() => viewer() && viewer().viewW > 0); viewer().canvas.focus(); viewer().active = -1;`);
-  await page.key('[', { code: 'BracketLeft', keyCode: 219 });
-  await run(`await until(() => rangeView());`);
+  // narrow and wide: no sideways scroll with a range, in the bound tab and in the trace tab
   for (const w of [320, 2560]) {
     await page.size(w, 900);
-    const o = await run(`await wait(100); return overflow();`);
-    check(o <= 0, `width ${w}: no sideways scroll with a range`, String(o));
-    await shot(`range-${w}.png`);
+    for (const t of ['bound', 'trace']) {
+      await tab(t);
+      const o = await run(`await wait(100); return overflow();`);
+      check(o <= 0, `width ${w}: no sideways scroll with a range (${t})`, String(o));
+      await shot(`range-${w}-${t}.png`);
+    }
   }
   await page.size(1280, 900);
 
-  // SHA-256 (2,949 instructions, a large trace): a drag over the head, the bound view open, no task of 100 ms or more
+  // SHA-256 (2,949 instructions, a large trace): a drag over the head, no task of 100 ms or more; the bound tab shows it
+  await tab('trace');
   await run(`await done(() => set($('examples'), 'sha256')); await until(() => panel()?.querySelector('.trace-msg button') || viewer());
     panel().querySelector('.trace-msg button')?.click();
     await until(() => viewer() && viewer().viewW > 0 && viewer().model.nInstr > 2000, 120000);
@@ -151,8 +185,11 @@ try {
   await page.cmd('Input.dispatchMouseEvent', { type: 'mousePressed', x: g2.x0, y: g2.y, button: 'left', buttons: 1, clickCount: 1 });
   for (let k = 1; k <= 20; k++) await page.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: g2.x0 + ((g2.x1 - g2.x0) * k) / 20, y: g2.y, button: 'left', buttons: 1 });
   await page.cmd('Input.dispatchMouseEvent', { type: 'mouseReleased', x: g2.x1, y: g2.y, button: 'left', buttons: 0, clickCount: 1 });
+  await run(`await until(() => viewer().root.dataset.range); await wait(300);`);
+  // the bound tab paints the range: in the long-task count too
+  await tab('bound');
   const s = await run(`await until(() => rangeView()); await wait(300); return { long: window.__long, range: rangeView().dataset.range, ports: rangeView().querySelectorAll('.tr-item').length };`);
-  check(s.long.every((ms) => ms < 100) && s.ports > 0, 'SHA-256: selecting a range, no task of 100 ms or more', JSON.stringify(s));
+  check(s.long.every((ms) => ms < 100) && s.ports > 0, 'SHA-256: selecting a range, then the bound tab: no task of 100 ms or more', JSON.stringify(s));
   console.log(`SHA-256: range ${s.range}, long tasks while dragging ${JSON.stringify(s.long)} ms`);
   const problems = page.take();
   check(problems.length === 0, 'no console errors', JSON.stringify(problems));
