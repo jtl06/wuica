@@ -205,9 +205,11 @@ try {
     await page.goto(`${origin}/?nosw=1`);
     await page.ready();
     const r = await page.eval(`${HELPERS}
+      const before = { run: $('results').dataset.run, text: $('code').value.slice(0, 40), mode: document.querySelector('input[name="mode"]:checked')?.value ?? null, tp: tp() };
       await done(() => set($('examples'), 'sha256'));
+      const after = { run: $('results').dataset.run, text: $('code').value.slice(0, 40) };
       await wait(100);
-      const out = { tp: tp(), closed: [$('bound').open, document.querySelector('.bd-body').children.length, $('result-body').dataset.bound, hot().length] };
+      const out = { tp: tp(), before, after, closed: [$('bound').open, document.querySelector('.bd-body').children.length, $('result-body').dataset.bound, hot().length] };
       const long = []; new PerformanceObserver((l) => { for (const e of l.getEntries()) long.push(Math.round(e.duration)); }).observe({ type: 'longtask' });
       document.querySelector('#bound summary').click();
       await until(() => document.querySelector('.bd-item'));
@@ -230,7 +232,7 @@ try {
     const lat = new Map();
     for (const e of edges) lat.set(e.from, (lat.get(e.from) ?? 0) + e.latency);
     const order = [...lat].sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, 5).map((x) => x[0]);
-    check(r.tp === '744.25' && r.closed[0] === false && r.closed[1] === 0 && r.closed[2] === 'closed' && r.closed[3] === 0, 'bound: SHA-256: closed, nothing computed or shaded', JSON.stringify([r.tp, r.closed]));
+    check(r.tp === '744.25' && r.closed[0] === false && r.closed[1] === 0 && r.closed[2] === 'closed' && r.closed[3] === 0, 'bound: SHA-256: closed, nothing computed or shaded', JSON.stringify([r.tp, r.closed, r.before, r.after]));
     check(r.long.every((ms) => ms < 100) && r.switchMs < 100 && r.items > 5 && r.hot > 0 && r.rows === 200, 'bound: SHA-256: opening and switching: no task of 100 ms or more', JSON.stringify(r));
     check(r.top === Math.min(5, order.length) && order[0] >= 200 && r.afterJump[0] === 2949 && r.afterJump[1] === order[0], 'bound: SHA-256: a jump to a chain row beyond the drawn ones draws all rows and flashes it', JSON.stringify([r.top, r.afterJump, order]));
     console.log(`bound: SHA-256: long tasks while opening ${JSON.stringify(r.long)} ms, switch ${r.switchMs.toFixed(1)} ms; chain top rows ${order.join(',')}`);
