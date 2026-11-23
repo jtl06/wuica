@@ -191,12 +191,9 @@ task({
   },
 });
 
-const unitTargets = [];
 for (const p of meta.packages) {
   for (const t of p.targets) {
-    const kind = t.kind[0];
-    if (kind === 'lib' || kind === 'bin') { if (t.test !== false) unitTargets.push({ key: `${p.manifest_path}|${t.name}|${kind}`, dir: path.dirname(p.manifest_path) }); continue; }
-    if (kind !== 'test') continue;
+    if (t.kind[0] !== 'test') continue;
     const base = `${p.name}:${t.name}`;
     for (const v of variants(base)) {
       task({
@@ -213,10 +210,11 @@ for (const p of meta.packages) {
 }
 task({
   name: 'rust:unit', kind: 'rust', deps: ['build:rust'], run: async (log) => {
+    // every test executable of the build that is not an integration test: the unit tests of libraries (lib, cdylib, ...) and binaries
     let worst = 0;
-    for (const u of unitTargets) {
-      const exe = executables.get(u.key);
-      if (exe) worst = Math.max(worst, await exec(exe, ['--show-output'], { cwd: u.dir, log }));
+    for (const [key, exe] of executables) {
+      const [manifest, , kind] = key.split('|');
+      if (kind !== 'test') worst = Math.max(worst, await exec(exe, ['--show-output'], { cwd: path.dirname(manifest), log }));
     }
     return { status: worst ? 'fail' : 'pass', count: rustCount(fs.readFileSync(log, 'utf8')) };
   },

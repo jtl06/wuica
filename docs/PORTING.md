@@ -25,6 +25,12 @@ expression) runs some of them and the builds they need.
   copied to `~/wuica-check/` with rsync (`data/` and `fixtures/generated/` are linked to `~/wuica/`), with the WebAssembly
   module built on the Mac (aethia has no wasm32 target). aethia has no Chrome: the browser suites are skipped there.
 
+The browser suites serve `web/dist` with `tests-js/static-host.mjs`, which behaves like the host (Cloudflare): `/index.html`
+redirects to `/` and `/404.html` to `/404` (307), `/404` and missing files get `404.html` with status 404, `_headers` is
+applied. `web_host_browser.mjs` checks the service worker against it (fresh profile, reloads, `/index.html`, offline). A new
+browser suite should use `hostHandler` too, and is recognized as one (at most 2 at a time) if it starts Chrome with
+`--headless` or `--remote-debugging-port`.
+
 What makes it fast:
 - Rust tests use the profile `check-fast` (`Cargo.toml`: release without LTO, 16 codegen units, incremental). The
   WebAssembly module and everything deployed keep `release` (fat LTO).

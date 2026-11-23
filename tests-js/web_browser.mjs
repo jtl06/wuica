@@ -12,6 +12,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { hostHandler } from './static-host.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(here, '..', 'web', 'dist');
@@ -29,23 +30,11 @@ function check(cond, what, detail = '') { count++; if (!cond) { failed++; consol
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---- a static file server that can be stopped and pointed at another directory ---------------------------------------
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8' };
 let root = '';
 const requests = [];
 const sockets = new Set();
-const server = http.createServer((req, res) => {
-  const url = new URL(req.url, 'http://x');
-  requests.push(url.pathname + url.search);
-  let p = path.normalize(path.join(root, decodeURIComponent(url.pathname)));
-  if (!p.startsWith(root)) { res.writeHead(403).end(); return; }
-  if (fs.existsSync(p) && fs.statSync(p).isDirectory()) p = path.join(p, 'index.html');
-  if (!fs.existsSync(p)) { // like Cloudflare Pages with a 404.html
-    res.writeHead(404, { 'content-type': 'text/html; charset=utf-8' }).end(fs.readFileSync(path.join(root, '404.html')));
-    return;
-  }
-  res.writeHead(200, { 'content-type': TYPES[path.extname(p)] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
-  fs.createReadStream(p).pipe(res);
-});
+// like the host (redirects /index.html to /, a 404 page, _headers): see static-host.mjs
+const server = http.createServer(hostHandler(() => root, { onRequest: (p) => requests.push(p) }));
 server.on('connection', (s) => { sockets.add(s); s.on('close', () => sockets.delete(s)); });
 let port = 0;
 const listen = () => new Promise((r) => server.listen(port, '127.0.0.1', () => { port = server.address().port; r(); }));

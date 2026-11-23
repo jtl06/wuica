@@ -2,7 +2,7 @@
 //! the decode fixtures (main and extra set) with every chip name used there and without a chip check, and for pseudo-random
 //! bytes (invalid encodings, instructions that are invalid for the chip, runs of zero bytes).
 
-use std::io::{BufRead, BufReader};
+use std::io::BufRead;
 use wuica_xed::DecodedInstr;
 
 fn via_json(code: &[u8], chip: &str) -> (Vec<DecodedInstr>, u32) {
@@ -23,7 +23,7 @@ fn binary_records_equal_json() {
     let mut codes: Vec<Vec<u8>> = Vec::new();
     for set in ["decode_fixtures", "decode_fixtures_extra"] {
         let path = format!("{}/../../fixtures/{set}.jsonl.gz", env!("CARGO_MANIFEST_DIR"));
-        let reader = BufReader::new(flate2::read::GzDecoder::new(std::fs::File::open(path).expect("fixtures")));
+        let reader = wuica_testkit::open(path);
         for line in reader.lines() {
             let case: serde_json::Value = serde_json::from_str(&line.unwrap()).unwrap();
             let chip = case["chip"].as_str().unwrap().to_string();
