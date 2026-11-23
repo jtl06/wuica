@@ -1,0 +1,15 @@
+# /etc/cloudflared/config.yml: a locally managed Cloudflare tunnel from this VM to api.wuica.jacen.li.
+# cloudflared connects out to Cloudflare; the wuica server listens on 127.0.0.1:8787 only. Replace TUNNEL_ID with the
+# id printed by `cloudflared tunnel create wuica-api` (see README.md).
+tunnel: TUNNEL_ID
+credentials-file: /etc/cloudflared/TUNNEL_ID.json
+
+originRequest:
+  connectTimeout: 10s
+  keepAliveConnections: 100
+  keepAliveTimeout: 30s   # shorter than the server's (65 s): the proxy closes idle connections first
+
+ingress:
+  - hostname: api.wuica.jacen.li
+    service: http://127.0.0.1:8787
+  - service: http_status:404

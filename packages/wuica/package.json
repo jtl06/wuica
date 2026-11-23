@@ -11,6 +11,7 @@
       "types": "./index.d.ts",
       "default": "./lib/index.js"
     },
+    "./mcp": "./lib/mcp.js",
     "./package.json": "./package.json"
   },
   "bin": {
