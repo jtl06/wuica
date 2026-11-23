@@ -205,6 +205,34 @@ def runFresh(args):
    return ([i] if i else []), [s]
 
 
+def runReplay(line):
+   # one case of an existing simulation fixture file, again, with the -json output (REPLAY=FILE)
+   c = json.loads(line)
+   try:
+      r = simCase(c['hex'], c['arch'], c['options'], withJson=True)
+   except BaseException as e:
+      r = {'error': type(e).__name__ + ': ' + str(e)[:200]}
+   base = {'file': c['file'], 'arch': c['arch'], 'options': c['options'], 'hex': c['hex']}
+   return [], [json.dumps(dict(base, **r))]
+
+
+if __name__ == '__main__' and os.environ.get('REPLAY'):
+   # REPLAY=OLD_SIM_FIXTURES [FRESH=1] export_fixtures.py UICA_DIR OUT_FILE: runs the cases of OLD_SIM_FIXTURES (file, arch, options,
+   # hex) again, each with the -json output, and writes them in the same order to OUT_FILE (e.g. the set 'more_sim_fixtures', cases
+   # with options and the -json output)
+   uicaDir, outFile = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
+   with gzip.open(os.environ['REPLAY'], 'rt') as f:
+      tasks = [l for l in f if l.strip()]
+   init(uicaDir)
+   pool = Pool(15, initializer=init, initargs=(uicaDir,), maxtasksperchild=(1 if os.environ.get('FRESH') == '1' else None))
+   nS = errS = 0
+   with pool as p, gzip.open(outFile, 'wt') as fs:
+      for _, simLines in p.imap(runReplay, tasks, chunksize=1):
+         for l in simLines:
+            fs.write(l + '\n'); nS += 1; errS += '"error": ' in l[-300:]
+   print('%d simulation cases (%d errors)' % (nS, errS))
+   sys.exit(0)
+
 if __name__ == '__main__':
    uicaDir, outDir = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
    # a fixed pseudo-random order, so that the first files (which get the extra cases) are a mix of all kinds
