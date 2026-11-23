@@ -21,9 +21,10 @@
 export const SYNTAX = Object.freeze({ intel: 0, att: 1 });
 const ERR_CAP = 16384;
 const OUT_CAP = 1 << 16;
-// At most this much machine code (as in the npm package): a block this large is already more than the analyzer can
-// simulate in its memory.
+// At most this much machine code (as in the npm package), assembled or given as hex: a block this large is already
+// more than the analyzer can simulate in its memory.
 export const MAX_CODE_BYTES = 1 << 20;
+export const tooMuchCode = (bytes) => `Too much machine code: ${bytes.toLocaleString('en-US')} bytes (at most ${MAX_CODE_BYTES.toLocaleString('en-US')})`;
 
 // llvm-mc's diagnostics: "<input>:LINE:COL: error: MESSAGE", followed by the source line and a caret line.
 export function parseDiagnostics(text) {
@@ -144,7 +145,7 @@ export class WasmAssembler {
       if (r.status === -2) {
         const need = Number(/(\d+) bytes needed/.exec(r.message)?.[1]);
         if (need > MAX_CODE_BYTES) {
-          return { ok: false, diagnostics: [{ line: null, column: null, severity: 'error', message: `Too much machine code: ${need.toLocaleString('en-US')} bytes (at most ${MAX_CODE_BYTES.toLocaleString('en-US')})` }] };
+          return { ok: false, diagnostics: [{ line: null, column: null, severity: 'error', message: tooMuchCode(need) }] };
         }
         if (need > OUT_CAP) r = this.#run(source, SYNTAX[syntax], need);
       }

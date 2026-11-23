@@ -8,7 +8,7 @@ import { archGroups, archTitle, DEFAULT_ARCH, ARCH_INFO, PROTOTYPE } from './arc
 import { DEFAULT_STATE, LIMITS, encodeState, decodeState, clampInt } from './url-state.js';
 import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES, MOCK_EXAMPLES } from './examples.js';
 import { fetchBytes, fetchManifest, PATHS, formatSize, whenIdle } from './loader.js';
-import { WasmAssembler, isWasm } from './assembler.js';
+import { WasmAssembler, isWasm, MAX_CODE_BYTES, tooMuchCode } from './assembler.js';
 import { WorkerAssembler, PageAssembler } from './assembler-rpc.js'; // large sources in a worker of its own
 import { renderResult, renderEmpty, renderFailure, copyText, h, row } from './render.js';
 import { latestWins } from './compare.js';
@@ -623,6 +623,10 @@ async function machineCode(id) {
     const p = parseHexInput(text);
     if (!p.ok) {
       showMessages([{ line: p.line ?? null, column: null, severity: 'error', message: p.message }]);
+      return null;
+    }
+    if (p.bytes.length > MAX_CODE_BYTES) { // as for assembly: more than the analyzer can simulate in its memory
+      showMessages([{ line: null, column: null, severity: 'error', message: tooMuchCode(p.bytes.length) }]);
       return null;
     }
     clearMessages();

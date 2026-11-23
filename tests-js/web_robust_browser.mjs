@@ -4,6 +4,7 @@
 //   mode stops it and analyzes the new input at once; Cancel stops it; asm -> hex conversion still works
 // - analyzer memory: after a block that grows the WebAssembly memory beyond 512 MB, the analyzer's worker and the pool's
 //   workers are replaced (the memory never shrinks otherwise); the next runs work, on the same and on other CPUs
+// - hex input: more than 1 MiB of machine code is refused with one line, as assembly is (side A and side B of A–B)
 // Skipped (exit 0) without Chrome.
 //
 //   node tests-js/web_robust_browser.mjs [--chrome PATH]
@@ -143,9 +144,42 @@ try {
       await done(() => { set($('code'), ${JSON.stringify(CHAIN.text.hex)}); $('run').click(); });
       const out = { skl: tp() };
       await done(() => cpus('HSW', 'SKL', 'ZEN3'));
-      return { ...out, rows: [...document.querySelectorAll('#cmp-cpus-body tr')].filter((r) => /\\d\\.\\d\\d/.test(r.textContent)).length };`);
+      const rows = () => [...document.querySelectorAll('#cmp-cpus-body tr')].filter((r) => /\\d\\.\\d\\d/.test(r.textContent)).length;
+      await until(() => rows() >= 3, 60000).catch(() => {});
+      return { ...out, rows: rows() };`);
     check(r3.skl === '2.00', 'the next run after the analyzer was replaced works', JSON.stringify(r3));
     check(r3.rows >= 3, 'the CPU table works afterwards (pool workers replaced)', JSON.stringify(r3));
+  }
+  // ---- 3. the size limit of hex input (1 MiB, as for assembly), in single mode and on both sides of A–B
+  {
+    await page.goto(link({ mode: 'hex', text: CHAIN.text.hex }));
+    await page.ready();
+    await page.waitFor(`document.querySelector('#result-body .tp .value')`, 'the first result', 60000);
+    const r4 = await page.eval(`${HELPERS}
+      const out = {};
+      const big = '90'.repeat(1048577);
+      if ($('live').checked) $('live').click();
+      set($('code'), big);
+      let t0 = performance.now();
+      $('run').click();
+      await until(() => msgs().length > 0, 120000);
+      out.a = msgs().join(' | '); out.aMs = performance.now() - t0; out.aBusy = $('run').textContent;
+      // A–B: A the example, B too large
+      set($('code'), ${JSON.stringify(CHAIN.text.hex)});
+      $('cmp-ab').click();
+      await wait(200);
+      $('b-mode-hex').click();
+      set($('code-b'), big);
+      t0 = performance.now();
+      await done(() => $('run').click(), 120000).catch(() => {});
+      await until(() => /Too much/.test($('b-messages')?.textContent ?? ''), 120000);
+      out.b = $('b-messages').textContent; out.bMs = performance.now() - t0;
+      $('cmp-single').click();
+      if (!$('live').checked) $('live').click();
+      return out;`, { timeout: 300000 });
+    check(r4.a === 'Too much machine code: 1,048,577 bytes (at most 1,048,576)' && r4.aBusy === 'Analyze', 'hex: more than 1 MiB is refused with one line', JSON.stringify(r4));
+    check(r4.aMs < 5000, `hex: ... at once (${Math.round(r4.aMs)} ms), the analyzer is not started`);
+    check(/^Too much machine code: 1,048,577 bytes/.test(r4.b), 'A–B: side B has the same limit', JSON.stringify(r4));
   }
   const problems = page.take();
   check(problems.length === 0, 'no console errors', problems.join('\n'));

@@ -11,6 +11,7 @@ import { h, uopTable, NOTES, LEGEND, rowLimit, moreRows } from './render.js';
 import { GROUP_LABEL } from './archs.js';
 import { compareResponses, signed } from './ab-diff.js';
 import { parseHexInput, toHex } from './hex-input.js';
+import { MAX_CODE_BYTES, tooMuchCode } from './assembler.js';
 
 const PLACEHOLDERS = {
   hex: '48 83 c0 02 49 ff cf 75 f7',
@@ -217,6 +218,7 @@ export function createAB(api) {
     if (state.bMode === 'hex') {
       const p = parseHexInput(text);
       if (!p.ok) { showB([{ line: p.line ?? null, severity: 'error', message: p.message }]); return null; }
+      if (p.bytes.length > MAX_CODE_BYTES) { showB([{ severity: 'error', message: tooMuchCode(p.bytes.length) }]); return null; }
       clearB();
       return p.bytes;
     }
