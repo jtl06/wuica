@@ -85,6 +85,18 @@ added to the list in `ci/make-data-asset.sh`.
   first showcase analysis after it 92 ms, the next 47 ms. The scheduler re-checks no uop: every uop in `nonReadyUops` and
   `pendingUops` is visited once (counted on the blocks of the benchmark), so its work per cycle is proportional to the uops in
   flight, not to the size of the block.
+- Threads and warm-up (aethia, node 22, round 4). The first analysis is slow because V8 compiles each function at its first
+  call with its baseline compiler and optimizes the hot ones in the background later; the compiled code belongs to the
+  `WebAssembly.Module`, so it is shared by the instances in worker threads that were given the same module. One analysis of
+  a 482-instruction block (`WARM_HEX`, ~10 ms) followed by a pause gets most of it optimized: the first showcase analysis
+  then takes 54-61 ms instead of 78-83 (later ones 47-50) in Node, and 58 instead of 66 ms in headless Chrome (Mac; later
+  ones 29 ms); without the pause (the optimizing compiler still running) it gains nothing. Several cold analyses at once are
+  slower than one: in 8 new threads the first showcase analysis takes 210-256 ms (one thread: 112-160; warmed module:
+  85-142), and even warm ones take ~85 instead of ~45 ms with 8 threads busy (shared cores and clock). Starting a thread
+  takes ~80 ms, and stopping threads at exit ~3 ms per thread plus their memory (8 threads after the showcase: 45-60 ms,
+  15: 73 ms). So `-arch all` on the showcase takes 0.60 s with 4 or 8 threads, 0.67 s with 12 and 0.71 s with 15 (1.04 s
+  without), and on a small block 8 threads are as fast as none and 15 are 12% slower; the default is one thread per two
+  microarchitectures. `-arch all` minus `-arch SKL` is the cost of the other 14: 0.73 s before, 0.30 s on threads.
 
 ## The reference
 
