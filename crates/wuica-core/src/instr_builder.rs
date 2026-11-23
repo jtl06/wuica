@@ -1187,6 +1187,15 @@ fn compute_uop_properties(instructions: &mut [Instr], operands: &mut Vec<Operand
                 if non_mem_pcs.len() == 1 && !instr.mem_renaming {
                     props.forward_delay += config.simple_rmw_forward_delay;
                 }
+                if let Some(d) = config.rotate_carry_rmw_forward_delay {
+                    // `ROTATE_CARRY_RMW_RE.match(instr.instrStr)`: r'^(RCL|RCR)[ _]'
+                    if ["RCL", "RCR"]
+                        .iter()
+                        .any(|m| instr.instr_str.strip_prefix(m).map_or(false, |r| r.starts_with(' ') || r.starts_with('_')))
+                    {
+                        props.forward_delay = d;
+                    }
+                }
             }
             load_uop_props.push(props);
         }

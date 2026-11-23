@@ -100,8 +100,9 @@ added to the list in `ci/make-data-asset.sh`.
 
 ## The reference
 
-The reference is [jtl06/uiCA](https://github.com/jtl06/uiCA), branch `improve-r7`, model at commit `f4a7868`: the model changes of
-round 7 (see `docs/ACCURACY.md`) on top of `improve-r6` (`21b0b17`: the model changes of round 6, `9bed908`, merged with branch
+The reference is [jtl06/uiCA](https://github.com/jtl06/uiCA), branch `improve-r8`, model at commit `c899be7`: the model changes of
+round 8 (see `docs/ACCURACY.md`) on top of `improve-r7` (model `f4a7868`: the changes of round 7) on top of `improve-r6`
+(`21b0b17`: the model changes of round 6, `9bed908`, merged with branch
 `crash-fixes`, `f85fcbd`: branch `perf` (`adf62ae`, whose output is identical to that of `8f24bd3`) plus the fixes of the inputs on
 which uiCA raised an exception, `docs/DEVIATIONS.md`). All fixtures in `fixtures/generated` are exported from it
 (`tools/export_all.sh`, and the set `more` with `REPLAY=`).
@@ -110,8 +111,8 @@ which uiCA raised an exception, `docs/DEVIATIONS.md`). All fixtures in `fixtures
   (`git diff adf62ae f85fcbd -- uiCA.py` in the fork). The decoder's C code that produces the decoded records is mirrored in
   `crates/wuica-xed/shim/wuica_xed.c`.
 - Run: on the host `aethia` (`ssh aethia`), the fixed reference is installed in `~/uica-zen/uiCA-crashfix` (branch `crash-fixes`;
-  the unfixed one in `~/uica-zen/uiCA-perf`; `improve-r6` in `~/uica-zen/uiCA-r6`; the reference of this branch, `improve-r7`, in
-  `~/uica-zen/uiCA-r7`; never modify any of them), with the Python interpreter `~/uica-zen/venv/bin/python`. To add debug output, copy the directory (e.g. to `~/uicaspeed/<name>/uiCA`, 60 MB) and
+  the unfixed one in `~/uica-zen/uiCA-perf`; `improve-r6` in `~/uica-zen/uiCA-r6`; `improve-r7` in `~/uica-zen/uiCA-r7`; the
+  reference of this branch, `improve-r8`, in `~/uica-zen/uiCA-r8`; never modify any of them), with the Python interpreter `~/uica-zen/venv/bin/python`. To add debug output, copy the directory (e.g. to `~/uicaspeed/<name>/uiCA`, 60 MB) and
   edit the copy. Example: `cd ~/uica-zen/uiCA-perf && ~/uica-zen/venv/bin/python -c "import xed, uiCA; ..."`; the functions take
   the list returned by `xed.disasHex(hexString, chip=config.XEDName)`.
 - aethia is also a measurement machine. A single short Python run is fine. Anything CPU-heavy (more than a few seconds, or

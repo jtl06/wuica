@@ -20,6 +20,11 @@ in `uiCA.py` (`FrontEnd`: `microcodeBusyCycles`; `Renamer`/`Scheduler`: `foldedI
 `loadOpForwardDelay`), `microArchConfigs.py` (`microcodeOps`, `microcodeWidth`, `foldedShiftDelay`, `loadOpForwardDelay`; ADL-P
 `storeForwardDelay`) and the instruction data (`convertXML.py`: ZEN3 vector-to-GPR moves, `INSTR_CORRECTIONS`).
 
+On the branch `model-r8`, the reference is the fork's branch `improve-r8` (model at `c899be7`: the changes of round 8 on top of
+`improve-r7`). New since round 7: `FrontEnd.afterMicrocode` with `microcodeNextEntryOps` (ZEN3: the first op-cache entry after a
+microcoded instruction holds at most 4 macro-ops), `rotateCarryRMWForwardDelay` (ICX: store-forwarding delay of the loads of
+read-modify-write RCL/RCR) and in the instruction data `AMD_NARROW_RMW_MEM_LATENCY` (ZEN3: ADC/SBB on 8/16-bit memory).
+
 Not ported:
 
 - the `CLX_SimplePorts*` configurations (they use Python's `random.choice`; they are ablation variants of the uiCA paper);

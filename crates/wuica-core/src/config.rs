@@ -148,6 +148,10 @@ pub struct UArchConfig {
     /// macro-ops that the microcode sequencer delivers per cycle (`microcodeWidth`)
     #[serde(rename = "microcodeWidth", default)]
     pub microcode_width: i64,
+    /// AMD op cache: if > 0, the first entry after a microcoded instruction holds at most this many macro-ops
+    /// (`microcodeNextEntryOps`; 0 in data exported before the field existed)
+    #[serde(rename = "microcodeNextEntryOps", default)]
+    pub microcode_next_entry_ops: i64,
     /// `renameImmediateFolding`: additional latency for a shift or rotate that reads a register whose value was computed by the
     /// renamer (`foldedShiftDelay`; 0 in data exported before the field existed)
     #[serde(rename = "foldedShiftDelay", default)]
@@ -156,6 +160,10 @@ pub struct UArchConfig {
     /// `storeForwardDelay`; also in data exported before the field existed)
     #[serde(rename = "loadOpForwardDelay", default)]
     pub load_op_forward_delay: Option<i64>,
+    /// store-forwarding delay for the loads of read-modify-write RCL and RCR, `rotateCarryRMWForwardDelay` (None:
+    /// `rmwForwardDelay`; also in data exported before the field existed)
+    #[serde(rename = "rotateCarryRMWForwardDelay", default)]
+    pub rotate_carry_rmw_forward_delay: Option<i64>,
 }
 
 impl UArchConfig {

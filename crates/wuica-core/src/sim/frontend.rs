@@ -179,6 +179,8 @@ pub(crate) struct FrontEnd {
     op_cache_rnd: i64,
     /// remaining cycles in which the microcode sequencer delivers an instruction (`microcodeBusyCycles`)
     microcode_busy_cycles: i64,
+    /// the next op-cache entry is the first after a microcoded instruction (`afterMicrocode`, see `microcodeNextEntryOps`)
+    after_microcode: bool,
     rsp_offset: i64,
     pub all_generated_instr_instances: Vec<u32>,
     addresses_in_dsb: AddressSet,
@@ -231,6 +233,7 @@ impl FrontEnd {
             op_cache_round: (0, 0),
             op_cache_rnd: 0,
             microcode_busy_cycles: 0,
+            after_microcode: false,
             rsp_offset: 0,
             all_generated_instr_instances: Vec::new(),
             addresses_in_dsb: AddressSet::new(alignment_offset, code_len),
@@ -532,6 +535,11 @@ impl<'a> Sim<'a> {
                 let mut n_ops = 0;
                 let mut n_fields = 0;
                 let mut entry_window: Option<i64> = None;
+                let mut entry_ops = cfg.op_cache_entry_ops;
+                if self.fe.after_microcode {
+                    entry_ops = cfg.microcode_next_entry_ops;
+                    self.fe.after_microcode = false;
+                }
                 loop {
                     if self.fe.op_cache_round.0 == self.fe.op_cache_round.1 {
                         self.fe.op_cache_round = self.new_round();
@@ -542,7 +550,7 @@ impl<'a> Sim<'a> {
                     let window = (self.inst_addr(inst) + self.inst_len(inst) - 1).div_euclid(64);
                     let fields = self.prep.info[ii].op_cache_fields;
                     if let Some(w) = entry_window {
-                        if n_ops + slots > cfg.op_cache_entry_ops
+                        if n_ops + slots > entry_ops
                             || window != w
                             || (cfg.op_cache_entry_fields != 0 && n_fields + fields > self.op_cache_field_capacity(n_ops + slots))
                         {
@@ -565,6 +573,7 @@ impl<'a> Sim<'a> {
                     if cfg.microcode_ops != 0 && n_uops > cfg.microcode_ops {
                         // a microcoded instruction ends the entry; the microcode sequencer delivers its macro-ops
                         self.fe.microcode_busy_cycles = (n_uops + cfg.microcode_width - 1).div_euclid(cfg.microcode_width) - 1;
+                        self.fe.after_microcode = cfg.microcode_next_entry_ops != 0;
                         break;
                     }
                     if self.fe.op_cache_round.0 == self.fe.op_cache_round.1 {
