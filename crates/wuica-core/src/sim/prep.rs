@@ -132,6 +132,8 @@ pub(crate) mod pf {
     pub const ENDS_INSTR: u32 = 1 << 16;
     /// `'M256' in instr.instrStr`
     pub const M256: u32 = 1 << 17;
+    /// `FOLDED_SHIFT_RE.match(instr.instrStr)`: shifts and rotates, see `foldedShiftDelay`
+    pub const FOLD_SHIFT: u32 = 1 << 18;
     pub const STORE: u32 = STORE_ADDR | STORE_DATA;
 }
 
@@ -397,7 +399,20 @@ fn instr_prop_flags(instr: &Instr, flags: u32) -> u32 {
     if has(&instr.instr_str, "M256") {
         f |= pf::M256;
     }
+    if is_folded_shift(&instr.instr_str) {
+        f |= pf::FOLD_SHIFT;
+    }
     f
+}
+
+/// the first word of a uops.info string ends with ' ' or '_' (e.g. 'SHL (R64, I8)', 'SHL_D1 (R64, 1)')
+fn mnemonic_is(s: &str, m: &str) -> bool {
+    s.strip_prefix(m).map_or(false, |r| r.starts_with(' ') || r.starts_with('_'))
+}
+
+/// `re.match(r'^(SHL|SHR|SAR|SAL|ROL|ROR|SHLX|SHRX|SARX|RORX)[ _]', instrStr)`
+fn is_folded_shift(s: &str) -> bool {
+    ["SHL", "SHR", "SAR", "SAL", "ROL", "ROR", "SHLX", "SHRX", "SARX", "RORX"].iter().any(|m| mnemonic_is(s, m))
 }
 
 impl Prep {
@@ -416,6 +431,7 @@ impl Prep {
             mem_renaming_blocked: false,
             forward_fails: false,
             lat_reduced_due_to_fast_ptr_chasing: false,
+            folded_in: 0,
             ready_for_dispatch: UNSET,
             dispatched: UNSET,
             executed: f64::NAN,

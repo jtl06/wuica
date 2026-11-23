@@ -224,6 +224,9 @@ pub(crate) struct SUop {
     pub mem_renaming_blocked: bool,
     pub forward_fails: bool,
     pub lat_reduced_due_to_fast_ptr_chasing: bool,
+    /// `foldedInputs`: bit i is set if renamed input operand i holds a value computed by the renamer (`renameImmediateFolding`) and the
+    /// instruction gets it later (`foldedShiftDelay`)
+    pub folded_in: u32,
     /// UNSET or a cycle
     pub ready_for_dispatch: i64,
     /// UNSET or a cycle
