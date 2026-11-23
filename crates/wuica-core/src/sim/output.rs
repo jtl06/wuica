@@ -7,25 +7,83 @@ use serde_json::{json, Map, Value};
 
 /// `canonicalizeInstrString`: `re.sub('[(){}, ]+', '_', instrString).strip('_')`
 pub fn canonicalize_instr_string(instr_string: &str) -> String {
-    let mut s = String::new();
+    let mut s = String::with_capacity(instr_string.len());
+    canonicalize_into(instr_string, &mut s);
+    s
+}
+
+/// [`canonicalize_instr_string`], appended to `out`
+fn canonicalize_into(instr_string: &str, out: &mut String) {
+    let start = out.len();
     let mut in_run = false;
     for c in instr_string.chars() {
         if matches!(c, '(' | ')' | '{' | '}' | ',' | ' ') {
             if !in_run {
-                s.push('_');
+                out.push('_');
             }
             in_run = true;
         } else {
-            s.push(c);
+            out.push(c);
             in_run = false;
         }
     }
-    s.trim_matches('_').to_string()
+    // strip('_')
+    let end = start + out[start..].trim_end_matches('_').len();
+    out.truncate(end);
+    let leading = out[start..].len() - out[start..].trim_start_matches('_').len();
+    if leading > 0 {
+        out.replace_range(start..start + leading, "");
+    }
+}
+
+/// `formatTableValue` of a number (see [`TableValue::format`]), formatted in `buf`
+fn format_number(v: f64, buf: &mut String) -> &str {
+    use std::fmt::Write;
+    buf.clear();
+    if v.fract() == 0.0 && v.abs() < 1e15 && !(v == 0.0 && v.is_sign_negative()) {
+        // an integer (most values): '{:.2}' gives its digits and ".00", which are removed (and "0" is shown as "")
+        if v == 0.0 {
+            return "";
+        }
+        write!(buf, "{}", v as i64).unwrap();
+        return buf;
+    }
+    write!(buf, "{v:.2}").unwrap();
+    let s = buf.trim_end_matches('0').trim_end_matches('.');
+    if s == "0" {
+        ""
+    } else {
+        s
+    }
+}
+
+/// `sum(v)` of floats: CPython (3.12 and later) adds floats with compensated summation (Neumaier), which the totals of the uop
+/// table depend on in the last digit
+fn py_sum(mut values: impl Iterator<Item = f64>) -> f64 {
+    let mut sum = values.next().unwrap_or(0.0);
+    let mut c = 0.0f64;
+    for x in values {
+        let t = sum + x;
+        if sum.abs() >= x.abs() {
+            c += (sum - t) + x;
+        } else {
+            c += (x - t) + sum;
+        }
+        sum = t;
+    }
+    if c != 0.0 && c.is_finite() {
+        sum += c;
+    }
+    sum
 }
 
 /// `getURL`
 pub fn get_url(instr_str: &str) -> String {
-    format!("https://www.uops.info/html-instr/{}.html", canonicalize_instr_string(instr_str))
+    let mut url = String::with_capacity(40 + instr_str.len());
+    url.push_str("https://www.uops.info/html-instr/");
+    canonicalize_into(instr_str, &mut url);
+    url.push_str(".html");
+    url
 }
 
 /// `getTerminalHyperlink`
@@ -64,14 +122,46 @@ impl TableValue {
     }
 }
 
-/// `TableLineData`
-struct TableLineData<'a> {
-    string: &'a str,
-    /// index of the instruction
-    instr: Option<usize>,
-    url: Option<String>,
-    /// laminated uops for each round
-    uops_for_rnd: Vec<Vec<u32>>,
+/// The kind of a line of the uop table (`TableLineData`): the register merge uops or the stack sync uops of an instruction, or
+/// the instruction itself.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LineKind {
+    RegMerge,
+    StackSync,
+    Instr,
+}
+
+/// A line of the uop table (`TableLineData`); its uops for each round are those of the instances of `instr` in the relevant
+/// rounds.
+#[derive(Clone, Copy)]
+struct TableLine {
+    kind: LineKind,
+    instr: usize,
+}
+
+/// The values of the uop table (`getUopsTableColumns`), by line: the number columns, and the notes.
+pub struct UopsTableData {
+    /// the names of the number columns (all columns but "Notes")
+    pub columns: Vec<String>,
+    /// for each line, the values of the number columns
+    pub rows: Vec<Vec<f64>>,
+    /// for each line, its note ("X", "M", "J" or "")
+    pub notes: Vec<&'static str>,
+    /// whether there is a "Notes" column (a line has a note)
+    pub has_notes: bool,
+    lines: Vec<TableLine>,
+}
+
+impl UopsTableData {
+    /// the kind of a line ("regMerge", "stackSync" or "instr") and, for "instr", the index of the instruction
+    pub fn line(&self, line: usize) -> (&'static str, Option<usize>) {
+        let l = self.lines[line];
+        match l.kind {
+            LineKind::RegMerge => ("regMerge", None),
+            LineKind::StackSync => ("stackSync", None),
+            LineKind::Instr => ("instr", Some(l.instr)),
+        }
+    }
 }
 
 pub(crate) fn build_result(sim: Sim, tp: f64, first_relevant_round: i64, last_relevant_round: i64, max_cycle: i64) -> SimResult {
@@ -144,63 +234,71 @@ impl SimResult {
         &self.ports[port as usize]
     }
 
-    fn table_line_data(&self) -> Vec<TableLineData<'_>> {
-        let mut table_line_data = Vec::new();
-        for (ii, instr) in self.instrs.iter().enumerate() {
-            let instr_instances = &self.relevant_instr_instances_for_instr[ii];
-            let insts = || instr_instances.iter().map(|&i| &self.instr_instances[i as usize]);
+    /// the lines of the uop table: for each instruction, a line for its register merge uops and one for its stack sync uops (if
+    /// any instance in the relevant rounds has such uops), then the instruction
+    fn table_lines(&self) -> Vec<TableLine> {
+        let mut lines = Vec::with_capacity(self.instrs.len());
+        for ii in 0..self.instrs.len() {
+            let insts = || self.relevant_instr_instances_for_instr[ii].iter().map(|&i| &self.instr_instances[i as usize]);
             if insts().any(|i| !i.reg_merge_uops.is_empty()) {
-                let uops = insts().map(|i| i.reg_merge_uops.clone()).collect();
-                table_line_data.push(TableLineData { string: "<Register Merge Uop>", instr: None, url: None, uops_for_rnd: uops });
+                lines.push(TableLine { kind: LineKind::RegMerge, instr: ii });
             }
             if insts().any(|i| !i.stack_sync_uops.is_empty()) {
-                let uops = insts().map(|i| i.stack_sync_uops.clone()).collect();
-                table_line_data.push(TableLineData { string: "<Stack Sync Uop>", instr: None, url: None, uops_for_rnd: uops });
+                lines.push(TableLine { kind: LineKind::StackSync, instr: ii });
             }
-            let uops = insts().map(|i| i.uops().collect()).collect();
-            let url = (!instr.is_unknown).then(|| get_url(&instr.instr_str));
-            table_line_data.push(TableLineData { string: &instr.asm, instr: Some(ii), url, uops_for_rnd: uops });
+            lines.push(TableLine { kind: LineKind::Instr, instr: ii });
         }
-        table_line_data
+        lines
     }
 
-    /// `getUopsTableColumns`: (column name, values of the lines)
-    fn uops_table_columns_for(&self, table_line_data: &[TableLineData]) -> Vec<(String, Vec<TableValue>)> {
-        let mut column_keys: Vec<String> = ["MITE", "MS", "DSB", "LSD", "Issued", "Exec."].iter().map(|s| s.to_string()).collect();
-        column_keys.extend(self.port_columns.iter().cloned());
-        let has_div = table_line_data.iter().any(|tld| {
-            tld.uops_for_rnd.first().is_some_and(|lams| {
-                lams.iter().any(|&l| self.laminated_uops[l as usize].unfused_uops().any(|u| self.uops[u as usize].div_cycles != 0))
+    /// the laminated uops of a line in the round of instance `inst`
+    fn line_uops(&self, kind: LineKind, inst: u32) -> impl Iterator<Item = u32> + '_ {
+        let inst = &self.instr_instances[inst as usize];
+        let (list, range): (&[u32], _) = match kind {
+            LineKind::RegMerge => (&inst.reg_merge_uops, 0..0),
+            LineKind::StackSync => (&inst.stack_sync_uops, 0..0),
+            LineKind::Instr => (&[], inst.uops()),
+        };
+        list.iter().copied().chain(range)
+    }
+
+    /// `getUopsTableColumns`, by line
+    pub fn uops_table_data(&self) -> UopsTableData {
+        let lines = self.table_lines();
+        let mut columns: Vec<String> = Vec::with_capacity(7 + self.port_columns.len());
+        columns.extend(["MITE", "MS", "DSB", "LSD", "Issued", "Exec."].iter().map(|s| s.to_string()));
+        columns.extend(self.port_columns.iter().cloned());
+        let has_div = lines.iter().any(|line| {
+            self.relevant_instr_instances_for_instr[line.instr].first().is_some_and(|&inst| {
+                self.line_uops(line.kind, inst)
+                    .any(|l| self.laminated_uops[l as usize].unfused_uops().any(|u| self.uops[u as usize].div_cycles != 0))
             })
         });
         if has_div {
-            column_keys.push("Div".to_string());
+            columns.push("Div".to_string());
         }
-        column_keys.push("Notes".to_string());
-        let n = column_keys.len();
-        let notes = n - 1;
-        let col = |name: &str| column_keys.iter().position(|k| k == name);
-        let (issued, exec, div) = (4, 5, col("Div"));
-        let mut columns: Vec<Vec<TableValue>> = vec![Vec::new(); n];
-        let mut cur = vec![0.0f64; n];
-        let mut any_notes = false;
+        let n = columns.len();
+        let (issued, exec, div) = (4, 5, has_div.then_some(n - 1));
+        let mut rows: Vec<Vec<f64>> = Vec::with_capacity(lines.len());
+        let mut notes: Vec<&'static str> = Vec::with_capacity(lines.len());
 
-        for tld in table_line_data {
-            cur.iter_mut().for_each(|v| *v = 0.0);
-            let mut note: Option<&str> = None;
-            let instr = tld.instr.map(|i| &self.instrs[i]);
+        for line in &lines {
+            let mut cur = vec![0.0f64; n];
+            let mut note = "";
+            let instr = (line.kind == LineKind::Instr).then(|| &self.instrs[line.instr]);
             let mut skip = false;
             if instr.is_some_and(|i| i.is_unknown) {
-                note = Some("X");
+                note = "X";
             } else if instr.is_some_and(|i| i.macro_fused_with_prev_instr) {
-                note = Some("M");
+                note = "M";
                 skip = true;
             } else if instr.is_some_and(|i| i.cannot_be_in_dsb_due_to_jcc_erratum) {
-                note = Some("J");
+                note = "J";
             }
             if !skip {
-                for lam_uops in &tld.uops_for_rnd {
-                    for &l in lam_uops {
+                let instances = &self.relevant_instr_instances_for_instr[line.instr];
+                for &inst in instances {
+                    for l in self.line_uops(line.kind, inst) {
                         let lam = &self.laminated_uops[l as usize];
                         match lam.uop_source {
                             Some(UopSource::Mite) => cur[0] += 1.0,
@@ -227,52 +325,52 @@ impl SimResult {
                         }
                     }
                 }
-                let n_rnds = tld.uops_for_rnd.len() as f64;
-                for (k, v) in cur.iter_mut().enumerate() {
-                    if k != notes {
-                        *v /= n_rnds;
-                    }
+                let n_rnds = instances.len() as f64;
+                for v in cur.iter_mut() {
+                    *v /= n_rnds;
                 }
             }
-            for (k, c) in columns.iter_mut().enumerate() {
-                if k == notes {
-                    match note {
-                        Some(s) => {
-                            any_notes = true;
-                            c.push(TableValue::Text(s.to_string()));
-                        }
-                        None => c.push(TableValue::Number(0.0)),
-                    }
-                } else {
-                    c.push(TableValue::Number(cur[k]));
-                }
-            }
+            rows.push(cur);
+            notes.push(note);
         }
-
-        let mut result: Vec<(String, Vec<TableValue>)> = column_keys.into_iter().zip(columns).collect();
-        if !any_notes {
-            result.pop();
-        }
-        result
+        let has_notes = notes.iter().any(|n| !n.is_empty());
+        UopsTableData { columns, rows, notes, has_notes, lines }
     }
 
     /// The columns of the uop table (`getUopsTableColumns`): (name, value for each line).
     pub fn uops_table_columns(&self) -> Vec<(String, Vec<TableValue>)> {
-        self.uops_table_columns_for(&self.table_line_data())
+        let t = self.uops_table_data();
+        let mut result: Vec<(String, Vec<TableValue>)> = t
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(k, name)| (name.clone(), t.rows.iter().map(|row| TableValue::Number(row[k])).collect()))
+            .collect();
+        if t.has_notes {
+            let notes = t.notes.iter().map(|&n| if n.is_empty() { TableValue::Number(0.0) } else { TableValue::Text(n.to_string()) }).collect();
+            result.push(("Notes".to_string(), notes));
+        }
+        result
     }
 
     /// What `printUopsTable(tableLineData, uArchConfig)` prints: the legend of the notes (if there are notes) and the table.
     pub fn uops_table(&self) -> String {
-        let table_line_data = self.table_line_data();
-        let columns = self.uops_table_columns_for(&table_line_data);
+        self.format_uops_table(&self.uops_table_data())
+    }
+
+    /// [`SimResult::uops_table`] for the values of [`SimResult::uops_table_data`]
+    pub fn format_uops_table(&self, t: &UopsTableData) -> String {
         let first_port_column = self.port_columns.first().map(|s| s.as_str()).unwrap_or("");
+        let n_lines = t.rows.len();
         let mut out = String::new();
 
-        if let Some((_, notes)) = columns.iter().find(|c| c.0 == "Notes") {
-            let has = |s: &str| notes.iter().any(|v| matches!(v, TableValue::Text(t) if t == s));
+        if t.has_notes {
+            let has = |s: &str| t.notes.iter().any(|&n| n == s);
             if has("J") {
                 let jcc_url = "https://www.intel.com/content/dam/support/us/en/documents/processors/mitigations-jump-conditional-code-erratum.pdf";
-                out += &format!("J - Block not in DSB due to {}\n", get_terminal_hyperlink(jcc_url, "JCC erratum"));
+                out += "J - Block not in DSB due to ";
+                out += &get_terminal_hyperlink(jcc_url, "JCC erratum");
+                out += "\n";
             }
             if has("M") {
                 out += "M - Macro-fused with previous instruction\n";
@@ -283,106 +381,119 @@ impl SimResult {
             out += "\n";
         }
 
-        let column_width_list: Vec<usize> = columns
-            .iter()
-            .map(|(k, lines)| 2 + k.chars().count().max(lines.iter().map(|l| l.format().chars().count()).max().unwrap_or(0)))
-            .collect();
+        // the columns: the number columns, then "Notes" if there are notes
+        let n_cols = t.columns.len() + usize::from(t.has_notes);
+        let name = |k: usize| if k < t.columns.len() { t.columns[k].as_str() } else { "Notes" };
+        // the formatted values (formatTableValue) of the lines and the total, column by column, in one string
+        let mut cells = String::with_capacity(n_cols * (n_lines + 1) * 3);
+        let mut ends: Vec<usize> = Vec::with_capacity(n_cols * (n_lines + 1));
+        let mut tmp = String::with_capacity(32);
+        let mut widths: Vec<usize> = Vec::with_capacity(n_cols);
+        for k in 0..n_cols {
+            let mut w = name(k).chars().count();
+            if k < t.columns.len() {
+                for row in &t.rows {
+                    let s = format_number(row[k], &mut tmp);
+                    w = w.max(s.chars().count());
+                    cells.push_str(s);
+                    ends.push(cells.len());
+                }
+                // the total (not part of the width)
+                cells.push_str(format_number(py_sum(t.rows.iter().map(|row| row[k])), &mut tmp));
+            } else {
+                for &note in &t.notes {
+                    w = w.max(note.chars().count());
+                    cells.push_str(note);
+                    ends.push(cells.len());
+                }
+            }
+            ends.push(cells.len());
+            widths.push(2 + w);
+        }
+        let cell = |k: usize, line: usize| {
+            let i = k * (n_lines + 1) + line;
+            let start = if i == 0 { 0 } else { ends[i - 1] };
+            &cells[start..ends[i]]
+        };
 
-        let get_table_border_line = |first_c: char, middle_c: char, last_c: char| -> String {
-            let mut line = String::new();
-            for ((h, _), &w) in columns.iter().zip(&column_width_list) {
+        let border_line = |out: &mut String, first_c: char, middle_c: char, last_c: char| {
+            for (k, &w) in widths.iter().enumerate() {
+                let h = name(k);
                 if h == "MITE" {
-                    line.push(first_c);
+                    out.push(first_c);
                 } else if h == "Issued" || h == "Exec." || h == first_port_column || h == "Notes" {
-                    line.push(middle_c);
+                    out.push(middle_c);
                 } else {
-                    line.push('\u{2500}');
+                    out.push('\u{2500}');
                 }
                 for _ in 0..w {
-                    line.push('\u{2500}');
+                    out.push('\u{2500}');
                 }
             }
-            line.push(last_c);
-            line
+            out.push(last_c);
+            out.push('\n');
         };
-        let get_table_line = |column_values: Vec<String>| -> String {
-            let mut line = String::new();
-            for (((h, _), &w), val) in columns.iter().zip(&column_width_list).zip(column_values) {
-                if h == "MITE" || h == "Issued" || h == "Exec." || h == first_port_column || h == "Notes" {
-                    line.push('\u{2502}');
-                } else {
-                    line.push(' ');
-                }
-                // '{:^w}'.format(val)
-                let len = val.chars().count();
-                let pad = w.saturating_sub(len);
-                let left = pad / 2;
-                for _ in 0..left {
-                    line.push(' ');
-                }
-                line += &val;
-                for _ in 0..pad - left {
-                    line.push(' ');
-                }
+        // a cell of a line of the table: the separator and the value, centered ('{:^w}'.format(val)); a line ends with '\u{2502}'
+        let table_cell = |out: &mut String, k: usize, val: &str| {
+            let h = name(k);
+            if h == "MITE" || h == "Issued" || h == "Exec." || h == first_port_column || h == "Notes" {
+                out.push('\u{2502}');
+            } else {
+                out.push(' ');
             }
-            line.push('\u{2502}');
-            line
+            let w = widths[k];
+            let pad = w.saturating_sub(val.chars().count());
+            let left = pad / 2;
+            for _ in 0..left {
+                out.push(' ');
+            }
+            out.push_str(val);
+            for _ in 0..pad - left {
+                out.push(' ');
+            }
         };
 
-        out += &get_table_border_line('\u{250c}', '\u{252c}', '\u{2510}');
+        border_line(&mut out, '\u{250c}', '\u{252c}', '\u{2510}');
+        for k in 0..n_cols {
+            table_cell(&mut out, k, name(k));
+        }
+        out.push('\u{2502}');
         out.push('\n');
-        out += &get_table_line(columns.iter().map(|c| c.0.clone()).collect());
-        out.push('\n');
-        out += &get_table_border_line('\u{251c}', '\u{253c}', '\u{2524}');
-        out.push('\n');
+        border_line(&mut out, '\u{251c}', '\u{253c}', '\u{2524}');
 
-        for (i, tld) in table_line_data.iter().enumerate() {
-            let mut line = get_table_line(columns.iter().map(|c| c.1[i].format()).collect());
-            line.push(' ');
-            match &tld.url {
-                Some(url) => line += &get_terminal_hyperlink(url, tld.string),
-                None => line += tld.string,
+        for (i, line) in t.lines.iter().enumerate() {
+            for k in 0..n_cols {
+                table_cell(&mut out, k, cell(k, i));
             }
-            out += &line;
+            out.push('\u{2502}');
+            out.push(' ');
+            match line.kind {
+                LineKind::RegMerge => out.push_str("<Register Merge Uop>"),
+                LineKind::StackSync => out.push_str("<Stack Sync Uop>"),
+                LineKind::Instr => {
+                    let instr = &self.instrs[line.instr];
+                    if instr.is_unknown {
+                        out.push_str(&instr.asm);
+                    } else {
+                        // getTerminalHyperlink(getURL(instr.instrStr), instr.asm)
+                        out.push_str("\x1b]8;;https://www.uops.info/html-instr/");
+                        canonicalize_into(&instr.instr_str, &mut out);
+                        out.push_str(".html\x07");
+                        out.push_str(&instr.asm);
+                        out.push_str("\x1b]8;;\x07");
+                    }
+                }
+            }
             out.push('\n');
         }
 
-        out += &get_table_border_line('\u{251c}', '\u{253c}', '\u{2524}');
-        out.push('\n');
-        let sums: Vec<String> = columns
-            .iter()
-            .map(|(k, v)| {
-                if k == "Notes" {
-                    String::new()
-                } else {
-                    // sum(v): CPython (3.12 and later) adds floats with compensated summation (Neumaier), which the totals
-                    // depend on in the last digit
-                    let mut values = v.iter().map(|x| match x {
-                        TableValue::Number(n) => *n,
-                        TableValue::Text(_) => 0.0,
-                    });
-                    let mut sum = values.next().unwrap_or(0.0);
-                    let mut c = 0.0f64;
-                    for x in values {
-                        let t = sum + x;
-                        if sum.abs() >= x.abs() {
-                            c += (sum - t) + x;
-                        } else {
-                            c += (x - t) + sum;
-                        }
-                        sum = t;
-                    }
-                    if c != 0.0 && c.is_finite() {
-                        sum += c;
-                    }
-                    TableValue::Number(sum).format()
-                }
-            })
-            .collect();
-        out += &get_table_line(sums);
+        border_line(&mut out, '\u{251c}', '\u{253c}', '\u{2524}');
+        for k in 0..n_cols {
+            table_cell(&mut out, k, if k < t.columns.len() { cell(k, n_lines) } else { "" });
+        }
+        out.push('\u{2502}');
         out += " Total\n";
-        out += &get_table_border_line('\u{2514}', '\u{2534}', '\u{2518}');
-        out.push('\n');
+        border_line(&mut out, '\u{2514}', '\u{2534}', '\u{2518}');
         out
     }
 

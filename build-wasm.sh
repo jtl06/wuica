@@ -16,6 +16,11 @@ fi
 export CARGO_ENCODED_RUSTFLAGS="--remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}/registry/src=/cargo-registry\x1f--remap-path-prefix=$PWD=/wuica\x1f--remap-path-prefix=$HOME=/home"
 export CARGO_ENCODED_RUSTFLAGS="$(printf '%b' "$CARGO_ENCODED_RUSTFLAGS")"
 export CFLAGS_wasm32_unknown_unknown="-ffile-prefix-map=$PWD=/wuica"
+# the release profile with one codegen unit (only for this build; the output stays in target/wasm32-unknown-unknown/release):
+# ~1.5% faster and ~20 kB smaller (gzip) than the default 16 units. Measured and not kept: opt-level 2 (no gain), "s" (25%
+# slower), +simd128 (no gain), wasm-opt -O3/-O4 (no gain on the fixture run, a few % worse on the real-code blocks; its size
+# reduction is the name section it drops, which llvm-objcopy --remove-section=name does too).
+export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
 cargo build -p wuica-wasm --target wasm32-unknown-unknown --release
 if strings target/wasm32-unknown-unknown/release/wuica_wasm.wasm | grep -q "$HOME"; then
    echo "error: the module contains local paths" >&2; exit 1

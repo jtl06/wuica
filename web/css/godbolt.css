@@ -1,0 +1,43 @@
+/* Compiler Explorer links in a code box (js/godbolt-ui.js). Colours come only from the theme's custom properties. */
+
+/* the status line under a box */
+.ce-line { margin-top: 0.3rem; color: var(--description); }
+.ce-line:empty { display: none; }
+.ce-line.error { color: var(--caveat); }
+
+/* the picker under a box: pane, function, range */
+.ce-pick { margin-top: 0.4rem; padding: 0.4rem 0.6rem; border: 1px solid var(--border); background: var(--surface); }
+.ce-bar { display: flex; flex-wrap: wrap; gap: 0.35rem 0.75rem; align-items: center; }
+.ce-bar select { max-width: 100%; }
+.ce-bar label.inline { min-width: 0; max-width: 100%; }
+.ce-quick { display: inline-flex; flex-wrap: wrap; gap: 0.35rem 0.5rem; align-items: center; }
+.ce-chip { padding: 0 0.6rem; }
+.ce-chip.on { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+.ce-range { margin-top: 0.35rem; color: var(--description); }
+.ce-range label { cursor: pointer; }
+
+.ce-listing-wrap { max-height: min(40vh, 22rem); overflow: auto; border: 1px solid var(--border); background: var(--background); margin-top: 0.35rem; }
+.ce-listing { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+.ce-listing td { padding: 0.05rem 0.6ch; white-space: pre; }
+.ce-row { cursor: pointer; }
+.ce-row:hover > td { background: var(--accent-dim); }
+.ce-row.on > td, .ce-label.on > td { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.ce-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ce-mark { width: 2ch; color: var(--accent); text-align: center; border-left: 2px solid transparent; }
+.ce-row.loop > .ce-mark { border-left-color: var(--accent); }
+.ce-addr, .ce-line-no { color: var(--subtle); text-align: right; }
+.ce-bytes { color: var(--description); }
+.ce-text { color: var(--code); width: 100%; }
+.ce-label > td { color: var(--heading); padding-top: 0.3rem; }
+
+.ce-messages {
+  white-space: pre;
+  overflow: auto;
+  max-height: 10rem;
+  margin-top: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--background);
+  border: 1px solid var(--border);
+  color: var(--description);
+}
+.ce-messages.error { color: var(--caveat); }

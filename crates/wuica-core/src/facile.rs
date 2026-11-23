@@ -25,8 +25,10 @@
 use crate::config::UArchConfig;
 use crate::decoded::{DecodedInstr, MemAddr};
 use crate::model::{Instr, InstrList, OpId, Operand};
-use crate::x64::{canonical_reg, reg_size};
+use crate::fasthash::FastMap;
+use crate::x64::{canonical_reg_cow, reg_size};
 use indexmap::IndexMap;
+use std::borrow::Cow;
 
 // ---------------------------------------------------------------------------------------------------------------------------
 // Numbers
@@ -168,6 +170,59 @@ pub struct SimSummary {
     pub instances: Vec<Vec<InstrInstanceSummary>>,
 }
 
+/// What the bottleneck analysis reads from a simulation: the questions it asks of a [`SimSummary`]. The analysis
+/// ([`bottleneck_values_for`]) is written against this trait, so that it can also read the result of a simulation directly,
+/// without first making a [`SimSummary`] (which has a `String` for each uop).
+pub trait SimView {
+    /// `TP`
+    fn tp(&self) -> f64;
+    /// `loop`
+    fn is_loop(&self) -> bool;
+    /// `nRounds`
+    fn n_rounds(&self) -> i64;
+    /// the number of instances of instruction `instr` in the relevant rounds (0 for an instruction without an entry)
+    fn n_instances(&self, instr: usize) -> usize;
+    /// the number of uops (`InstrInstanceSummary::uops`, not the other uops) of the instances of `instr` that are not eliminated
+    fn not_eliminated_uops(&self, instr: usize) -> i64;
+    /// whether an instance of an instruction came from `source` (an instruction whose first instance did)
+    fn any_instr_from(&self, source: InstrSource) -> bool;
+    /// over the unfused uops of all instances (`uops` and `other_uops`): (`max(Counter(uop.actualPort for uop in allUnfusedUops
+    /// if uop.actualPort).values())`, `None` if no uop has a port; the sum of their `divCycles`)
+    fn port_and_div_usage(&self) -> (Option<i64>, i64);
+}
+
+impl SimView for SimSummary {
+    fn tp(&self) -> f64 {
+        self.tp
+    }
+    fn is_loop(&self) -> bool {
+        self.is_loop
+    }
+    fn n_rounds(&self) -> i64 {
+        self.n_rounds
+    }
+    fn n_instances(&self, instr: usize) -> usize {
+        self.instances.get(instr).map_or(0, |l| l.len())
+    }
+    fn not_eliminated_uops(&self, instr: usize) -> i64 {
+        let list: &[InstrInstanceSummary] = self.instances.get(instr).map(|l| l.as_slice()).unwrap_or(&[]);
+        list.iter().map(|ii| ii.uops.iter().filter(|u| !u.eliminated).count() as i64).sum()
+    }
+    fn any_instr_from(&self, source: InstrSource) -> bool {
+        self.instances.iter().any(|ii_list| ii_list.first().is_some_and(|ii| ii.source == Some(source)))
+    }
+    fn port_and_div_usage(&self) -> (Option<i64>, i64) {
+        let all_unfused_uops = || self.instances.iter().flatten().flat_map(|ii| ii.uops.iter().chain(&ii.other_uops));
+        let mut port_usage_c: IndexMap<&str, i64> = IndexMap::new();
+        for uop in all_unfused_uops() {
+            if let Some(port) = uop.actual_port.as_deref().filter(|p| !p.is_empty()) {
+                *port_usage_c.entry(port).or_insert(0) += 1;
+            }
+        }
+        (port_usage_c.values().copied().max(), all_unfused_uops().map(|uop| uop.div_cycles).sum())
+    }
+}
+
 // ---------------------------------------------------------------------------------------------------------------------------
 // Limits
 // ---------------------------------------------------------------------------------------------------------------------------
@@ -175,6 +230,16 @@ pub struct SimSummary {
 /// `computePortUsageLimit(instructions, instrInstancesForInstr)`. `instances` is [`SimSummary::instances`]; `None` is Python's
 /// default `{}` (instructions that may be eliminated are then left out).
 pub fn compute_port_usage_limit(instrs: &InstrList, instances: Option<&[Vec<InstrInstanceSummary>]>) -> f64 {
+    port_usage_limit(instrs, |idx| {
+        let list: &[InstrInstanceSummary] = instances.and_then(|i| i.get(idx)).map(|l| l.as_slice()).unwrap_or(&[]);
+        let not_eliminated: i64 = list.iter().map(|ii| ii.uops.iter().filter(|u| !u.eliminated).count() as i64).sum();
+        (list.len(), not_eliminated)
+    })
+}
+
+/// [`compute_port_usage_limit`]; `instances(idx)` is (number of instances of the instruction, number of their uops that are
+/// not eliminated), which is only asked for instructions that may be eliminated
+fn port_usage_limit(instrs: &InstrList, instances: impl Fn(usize) -> (usize, i64)) -> f64 {
     // frozenset(ports) -> number of uops, in the order of insertion; a set of ports is a bit set of the characters
     let mut port_usage: Vec<(u128, Num)> = Vec::new();
     for (idx, instr) in instrs.instrs.iter().enumerate() {
@@ -184,12 +249,11 @@ pub fn compute_port_usage_limit(instrs: &InstrList, instances: Option<&[Vec<Inst
         for (ports, n_uops) in &instr.port_data {
             let mut n_uops = Num::Int(*n_uops);
             if instr.may_be_eliminated {
-                let list: &[InstrInstanceSummary] = instances.and_then(|i| i.get(idx)).map(|l| l.as_slice()).unwrap_or(&[]);
-                if list.is_empty() {
+                let (n_instances, not_eliminated) = instances(idx);
+                if n_instances == 0 {
                     continue;
                 }
-                let not_eliminated: i64 = list.iter().map(|ii| ii.uops.iter().filter(|u| !u.eliminated).count() as i64).sum();
-                n_uops = Num::Float(not_eliminated as f64 / list.len() as f64);
+                n_uops = Num::Float(not_eliminated as f64 / n_instances as f64);
             }
             let set = port_set(ports);
             match port_usage.iter_mut().find(|(s, _)| *s == set) {
@@ -359,31 +423,34 @@ struct AbstractValue {
     offset: i128,
 }
 
-/// `AbstractValueGenerator(initPolicy)` of `utils.py`, without `loadValueNumbering` (which `facile.py` does not use).
-struct AbstractValueGenerator {
-    init_policy: String,
+/// `AbstractValueGenerator(initPolicy)` of `utils.py`, without `loadValueNumbering` (which `facile.py` does not use). The keys
+/// are register names that are borrowed from the operands where possible.
+struct AbstractValueGenerator<'a> {
+    /// `initPolicy == 'diff'`
+    diff: bool,
     next_base: u64,
     init_value: AbstractValue,
-    /// canonical register -> value
-    abstract_value_dict: IndexMap<String, AbstractValue>,
-    cur_instr_rnd_abstract_value_dict: IndexMap<String, AbstractValue>,
+    /// canonical register -> value (only looked up)
+    abstract_value_dict: FastMap<Cow<'a, str>, AbstractValue>,
+    /// in the order of the Python dict
+    cur_instr_rnd_abstract_value_dict: Vec<(Cow<'a, str>, AbstractValue)>,
 }
 
-impl AbstractValueGenerator {
+impl<'a> AbstractValueGenerator<'a> {
     fn new(init_policy: &str) -> Self {
         let mut g = AbstractValueGenerator {
-            init_policy: init_policy.to_string(),
+            diff: init_policy == "diff",
             next_base: 0,
             init_value: AbstractValue { base: 0, offset: 0 },
-            abstract_value_dict: IndexMap::new(),
-            cur_instr_rnd_abstract_value_dict: IndexMap::new(),
+            abstract_value_dict: FastMap::default(),
+            cur_instr_rnd_abstract_value_dict: Vec::new(),
         };
         g.init_value = g.generate_fresh_abstract_value();
         if init_policy == "stack" {
             let v = g.generate_fresh_abstract_value();
-            g.abstract_value_dict.insert("RSP".to_string(), v);
+            g.abstract_value_dict.insert(Cow::Borrowed("RSP"), v);
             let v = g.generate_fresh_abstract_value();
-            g.abstract_value_dict.insert("RBP".to_string(), v);
+            g.abstract_value_dict.insert(Cow::Borrowed("RBP"), v);
         }
         g
     }
@@ -395,19 +462,27 @@ impl AbstractValueGenerator {
     }
 
     /// `getAbstractValueForReg(reg)`
-    fn get_abstract_value_for_reg(&mut self, reg: Option<&str>) -> Option<AbstractValue> {
-        let key = canonical_reg(reg?);
-        if !self.abstract_value_dict.contains_key(&key) {
-            let v = if self.init_policy == "diff" { self.generate_fresh_abstract_value() } else { self.init_value };
-            self.abstract_value_dict.insert(key.clone(), v);
+    fn get_abstract_value_for_reg(&mut self, reg: Option<&'a str>) -> Option<AbstractValue> {
+        Some(self.get_abstract_value_for_canonical_reg(canonical_reg_cow(reg?)))
+    }
+
+    /// `getAbstractValueForReg(reg)`, for the canonical register of `reg`
+    fn get_abstract_value_for_canonical_reg(&mut self, key: Cow<'a, str>) -> AbstractValue {
+        if let Some(&v) = self.abstract_value_dict.get(&*key) {
+            return v;
         }
-        Some(self.abstract_value_dict[&key])
+        let v = if self.diff { self.generate_fresh_abstract_value() } else { self.init_value };
+        self.abstract_value_dict.insert(key, v);
+        v
     }
 
     /// `setAbstractValueForCurInstr(key, instr)`
-    fn set_abstract_value_for_cur_instr(&mut self, key: String, instr: &Instr, operands: &[Operand]) {
-        let v = self.compute_abstract_value(instr, operands);
-        self.cur_instr_rnd_abstract_value_dict.insert(key, v);
+    fn set_abstract_value_for_cur_instr(&mut self, key: Cow<'a, str>, instr: &Instr, canon: &CanonicalRegs<'a>) {
+        let v = self.compute_abstract_value(instr, canon);
+        match self.cur_instr_rnd_abstract_value_dict.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, value)) => *value = v,
+            None => self.cur_instr_rnd_abstract_value_dict.push((key, v)),
+        }
     }
 
     /// `finishCurInstr()`
@@ -418,9 +493,9 @@ impl AbstractValueGenerator {
     }
 
     /// `__computeAbstractValue(instr)`
-    fn compute_abstract_value(&mut self, instr: &Instr, operands: &[Operand]) -> AbstractValue {
+    fn compute_abstract_value(&mut self, instr: &Instr, canon: &CanonicalRegs<'a>) -> AbstractValue {
         if let Some(&first) = instr.input_reg_operands.first() {
-            let abs_val = self.get_abstract_value_for_reg(Some(reg_of(operands, first))).expect("a register");
+            let abs_val = self.get_abstract_value_for_canonical_reg(canon.get(first).clone());
             let s = instr.instr_str.as_str();
             if s.contains("MOV") && !s.contains("CMOV") {
                 abs_val
@@ -437,6 +512,36 @@ impl AbstractValueGenerator {
             }
         } else {
             self.generate_fresh_abstract_value()
+        }
+    }
+}
+
+/// The canonical register of each register operand (`getCanonicalReg(op.reg)`), computed once.
+struct CanonicalRegs<'a> {
+    operands: &'a [Operand],
+    canon: Vec<Option<Cow<'a, str>>>,
+}
+
+impl<'a> CanonicalRegs<'a> {
+    fn new(operands: &'a [Operand]) -> Self {
+        let canon = operands
+            .iter()
+            .map(|o| match o {
+                Operand::Reg { reg, .. } => Some(canonical_reg_cow(reg)),
+                _ => None,
+            })
+            .collect();
+        CanonicalRegs { operands, canon }
+    }
+
+    /// `getCanonicalReg(op.reg)`; Python raises an `AttributeError` for operands that are not registers (see [`reg_of`])
+    fn get(&self, op: OpId) -> &Cow<'a, str> {
+        match &self.canon[op as usize] {
+            Some(c) => c,
+            None => {
+                reg_of(self.operands, op);
+                unreachable!()
+            }
         }
     }
 }
@@ -503,11 +608,78 @@ impl LatencyGraph {
     }
 }
 
+/// What `generateLatencyGraph` produces, as it produces it: the nodes of each instruction and the edges, in order.
+trait GraphSink {
+    /// the nodes that follow are those of the next instruction
+    fn begin_instr(&mut self);
+    fn node(&mut self, op: OpId);
+    fn edge(&mut self, edge: LatGraphEdge);
+}
+
+impl GraphSink for LatencyGraph {
+    fn begin_instr(&mut self) {
+        self.nodes_for_instr.push(Vec::new());
+    }
+    fn node(&mut self, op: OpId) {
+        self.nodes_for_instr.last_mut().expect("begin_instr").push(op);
+    }
+    fn edge(&mut self, edge: LatGraphEdge) {
+        self.edges_for_node.entry(edge.source).or_default().push(edge);
+    }
+}
+
+/// The latency graph in a compact form: the nodes of all instructions in order, and the edges grouped by their source (each
+/// group in the order in which its edges were added).
+struct DenseGraph {
+    nodes: Vec<OpId>,
+    /// the edges in the order in which they were added; after [`DenseGraph::finish`], grouped by their source
+    edges: Vec<LatGraphEdge>,
+    /// after [`DenseGraph::finish`]: the edges of node `n` are `edges[start[n]..start[n + 1]]`
+    start: Vec<u32>,
+}
+
+impl GraphSink for DenseGraph {
+    fn begin_instr(&mut self) {}
+    fn node(&mut self, op: OpId) {
+        self.nodes.push(op);
+    }
+    fn edge(&mut self, edge: LatGraphEdge) {
+        self.edges.push(edge);
+    }
+}
+
+impl DenseGraph {
+    /// groups the edges by their source (a stable counting sort)
+    fn finish(&mut self, n_operands: usize) {
+        let mut start = vec![0u32; n_operands + 1];
+        for e in &self.edges {
+            start[e.source as usize + 1] += 1;
+        }
+        for i in 0..n_operands {
+            start[i + 1] += start[i];
+        }
+        let mut next = start.clone();
+        let mut sorted = vec![LatGraphEdge { source: 0, target: 0, cost: 0, time: 0 }; self.edges.len()];
+        for e in &self.edges {
+            let slot = &mut next[e.source as usize];
+            sorted[*slot as usize] = *e;
+            *slot += 1;
+        }
+        self.edges = sorted;
+        self.start = start;
+    }
+
+    fn edges(&self, node: OpId) -> &[LatGraphEdge] {
+        &self.edges[self.start[node as usize] as usize..self.start[node as usize + 1] as usize]
+    }
+}
+
 /// The value of `getOpKey(op)`: the canonical register of a register operand or the flags of a flag operand (both strings in
-/// Python), the abstract address of a memory operand, and `None` for other operands.
+/// Python), the abstract address of a memory operand, and `None` for other operands. The strings are borrowed from the operands
+/// where possible.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum OpKey {
-    Str(String),
+enum OpKey<'a> {
+    Str(Cow<'a, str>),
     Mem(Option<AbstractValue>, Option<AbstractValue>, Option<i64>, Option<i64>),
     None,
 }
@@ -527,16 +699,19 @@ struct LatencyGraphBuilder<'a> {
     /// move -> the last non-eliminated instruction on the chain of writes that leads to its input
     prev_non_eliminated_write_for_move: Vec<Option<usize>>,
     output_of_move_renamed_by_32bit_move: Vec<bool>,
-    prev_write_to_key: IndexMap<OpKey, PrevWrite>,
-    abs_val_gen: AbstractValueGenerator,
+    /// only looked up
+    prev_write_to_key: FastMap<OpKey<'a>, PrevWrite>,
+    abs_val_gen: AbstractValueGenerator<'a>,
     rsp_implicitly_changed: bool,
+    canon: CanonicalRegs<'a>,
 }
 
-impl LatencyGraphBuilder<'_> {
-    fn get_op_key(&mut self, op: OpId) -> OpKey {
-        match &self.instrs.operands[op as usize] {
-            Operand::Reg { reg, .. } => OpKey::Str(canonical_reg(reg)),
-            Operand::Flag { flags } => OpKey::Str(flags.clone()),
+impl<'a> LatencyGraphBuilder<'a> {
+    fn get_op_key(&mut self, op: OpId) -> OpKey<'a> {
+        let instrs = self.instrs;
+        match &instrs.operands[op as usize] {
+            Operand::Reg { .. } => OpKey::Str(self.canon.get(op).clone()),
+            Operand::Flag { flags } => OpKey::Str(Cow::Borrowed(flags)),
             Operand::Mem { mem_addr } => {
                 let base = self.abs_val_gen.get_abstract_value_for_reg(mem_addr.base.as_deref());
                 let index = self.abs_val_gen.get_abstract_value_for_reg(mem_addr.index.as_deref());
@@ -548,9 +723,9 @@ impl LatencyGraphBuilder<'_> {
 
     /// The instruction that last wrote the register `reg` of an address (looked up by its name as written), with eliminated
     /// moves replaced by the instruction they copy from, and whether it is a move whose output was renamed by a 32-bit move.
-    fn writer_of_addr_reg(&self, reg: Option<&String>) -> (Option<usize>, bool) {
+    fn writer_of_addr_reg(&self, reg: Option<&'a String>) -> (Option<usize>, bool) {
         let key = match reg {
-            Some(r) => OpKey::Str(r.clone()),
+            Some(r) => OpKey::Str(Cow::Borrowed(r)),
             None => OpKey::None,
         };
         match self.prev_write_to_key.get(&key) {
@@ -587,16 +762,20 @@ impl LatencyGraphBuilder<'_> {
             .iter()
             .chain(&instr.mem_addr_operands)
             .chain(&instr.output_reg_operands)
-            .any(|&op| canonical_reg(reg_of(&instrs.operands, op)) == "RSP")
+            .any(|&op| self.canon.get(op) == "RSP")
         {
             self.rsp_implicitly_changed = false;
         }
 
         for &out_op in instr.output_reg_operands.iter().chain(&instr.output_flag_operands).chain(&instr.output_mem_operands) {
             let key = self.get_op_key(out_op);
-            self.prev_write_to_key.insert(key.clone(), PrevWrite { instr: idx, out_op, fast_ptr_chasing, iteration });
-            if let (Operand::Reg { .. }, OpKey::Str(reg)) = (&instrs.operands[out_op as usize], key) {
-                self.abs_val_gen.set_abstract_value_for_cur_instr(reg, instr, &instrs.operands);
+            let write = PrevWrite { instr: idx, out_op, fast_ptr_chasing, iteration };
+            if let (Operand::Reg { .. }, OpKey::Str(reg)) = (&instrs.operands[out_op as usize], &key) {
+                let reg = reg.clone();
+                self.prev_write_to_key.insert(key, write);
+                self.abs_val_gen.set_abstract_value_for_cur_instr(reg, instr, &self.canon);
+            } else {
+                self.prev_write_to_key.insert(key, write);
             }
         }
 
@@ -617,26 +796,37 @@ fn input_operands(instr: &Instr) -> impl Iterator<Item = OpId> + '_ {
 
 /// `generateLatencyGraph(instructions, uArchConfig, initPolicy)`
 pub fn generate_latency_graph(instrs: &InstrList, config: &UArchConfig, init_policy: &str) -> LatencyGraph {
+    let mut graph = LatencyGraph { nodes_for_instr: Vec::with_capacity(instrs.instrs.len()), edges_for_node: IndexMap::new() };
+    build_latency_graph(instrs, config, init_policy, &mut graph);
+    graph
+}
+
+/// `generateLatencyGraph(instructions, uArchConfig, initPolicy)`, with the graph given to `graph` as it is made
+fn build_latency_graph(instrs: &InstrList, config: &UArchConfig, init_policy: &str, graph: &mut impl GraphSink) {
     let n = instrs.instrs.len();
     let ops = &instrs.operands;
     let mut prev_write_for_move: Vec<Option<usize>> = vec![None; n];
     let mut prev_non_eliminated_write_for_move: Vec<Option<usize>> = vec![None; n];
     let mut output_of_move_renamed_by_32bit_move = vec![false; n];
 
-    let mut prev_write_to_reg: IndexMap<String, usize> = IndexMap::new();
+    let canon = CanonicalRegs::new(ops);
+    // only looked up
+    let mut prev_write_to_reg: FastMap<Cow<str>, usize> = FastMap::default();
     for _ in 0..2 {
         for (idx, instr) in instrs.instrs.iter().enumerate() {
             if instr.may_be_eliminated {
-                prev_write_for_move[idx] = prev_write_to_reg.get(&canonical_reg(reg_of(ops, instr.input_reg_operands[0]))).copied();
+                prev_write_for_move[idx] = prev_write_to_reg.get(&**canon.get(instr.input_reg_operands[0])).copied();
             }
             for &out_op in &instr.output_reg_operands {
-                prev_write_to_reg.insert(canonical_reg(reg_of(ops, out_op)), idx);
+                prev_write_to_reg.insert(canon.get(out_op).clone(), idx);
             }
         }
     }
 
+    let mut moves_on_path = Vec::new();
     for mv in (0..n).filter(|&i| instrs.instrs[i].may_be_eliminated) {
-        let mut moves_on_path = vec![false; n];
+        moves_on_path.clear();
+        moves_on_path.resize(n, false);
         let mut cur_instr = Some(mv);
         while let Some(cur) = cur_instr {
             if moves_on_path[cur] {
@@ -660,9 +850,10 @@ pub fn generate_latency_graph(instrs: &InstrList, config: &UArchConfig, init_pol
         config,
         prev_non_eliminated_write_for_move,
         output_of_move_renamed_by_32bit_move,
-        prev_write_to_key: IndexMap::new(),
+        prev_write_to_key: FastMap::default(),
         abs_val_gen: AbstractValueGenerator::new(init_policy),
         rsp_implicitly_changed: false,
+        canon,
     };
 
     for _ in 0..2 {
@@ -671,12 +862,10 @@ pub fn generate_latency_graph(instrs: &InstrList, config: &UArchConfig, init_pol
         }
     }
 
-    let mut graph = LatencyGraph { nodes_for_instr: Vec::with_capacity(n), edges_for_node: IndexMap::new() };
-
     for (idx, instr) in instrs.instrs.iter().enumerate() {
-        let mut nodes = Vec::new();
+        graph.begin_instr();
         for op in input_operands(instr) {
-            nodes.push(op);
+            graph.node(op);
 
             let key = b.get_op_key(op);
             if let Some(&PrevWrite { instr: prev_idx, out_op: prev_out_op, fast_ptr_chasing, iteration: prev_it }) = b.prev_write_to_key.get(&key) {
@@ -697,7 +886,7 @@ pub fn generate_latency_graph(instrs: &InstrList, config: &UArchConfig, init_pol
                             l -= 1;
                         } else if b.rsp_implicitly_changed
                             && instr.input_reg_operands.iter().chain(&instr.mem_addr_operands).any(|&o| o == prev_in_op)
-                            && canonical_reg(reg_of(ops, prev_in_op)) == "RSP"
+                            && b.canon.get(prev_in_op) == "RSP"
                             && !matches!(ops[prev_in_op as usize], Operand::Reg { is_implicit_stack_operand: true, .. })
                         {
                             l += 1;
@@ -707,16 +896,13 @@ pub fn generate_latency_graph(instrs: &InstrList, config: &UArchConfig, init_pol
                         continue;
                     }
 
-                    let edge = LatGraphEdge { source: prev_in_op, target: op, cost: lat, time: if prev_it != 0 { 0 } else { 1 } };
-                    graph.edges_for_node.entry(prev_in_op).or_default().push(edge);
+                    graph.edge(LatGraphEdge { source: prev_in_op, target: op, cost: lat, time: if prev_it != 0 { 0 } else { 1 } });
                 }
             }
         }
-        graph.nodes_for_instr.push(nodes);
 
         b.process_instr_outputs(idx, 1);
     }
-    graph
 }
 
 /// The result of `computeMaximumLatencyForGraph`: `(maxCycleRatio, edgesOnMaxCycle, components)`.
@@ -729,80 +915,109 @@ pub struct MaximumLatency {
     pub components: Vec<Vec<OpId>>,
 }
 
-/// `findStronglyConnectedComponents(nodesForInstr, edgesForNode)` (in `computeMaximumLatencyForGraph`)
-fn find_strongly_connected_components(n_operands: usize, graph: &LatencyGraph) -> Vec<Vec<OpId>> {
+/// `findStronglyConnectedComponents(nodesForInstr, edgesForNode)` (in `computeMaximumLatencyForGraph`): calls `component` for
+/// each strongly connected component, in the order of the reference. `nodes` are the nodes of all instructions in order.
+fn find_strongly_connected_components<'g>(
+    n_operands: usize,
+    nodes: impl Iterator<Item = OpId>,
+    edges_of: impl Fn(OpId) -> &'g [LatGraphEdge],
+    mut component: impl FnMut(&[OpId]),
+) {
     let mut index_dict: Vec<Option<usize>> = vec![None; n_operands];
     let mut n_indexed = 0usize;
     let mut lowlink_dict: Vec<usize> = vec![0; n_operands];
     let mut on_stack_set = vec![false; n_operands];
     let mut s: Vec<OpId> = Vec::new();
-    let mut components = Vec::new();
+    let mut comp: Vec<OpId> = Vec::new();
+    let mut call_stack: Vec<(OpId, usize)> = Vec::new();
 
-    for node_list in &graph.nodes_for_instr {
-        for &n in node_list {
-            if index_dict[n as usize].is_some() {
+    for n in nodes {
+        if index_dict[n as usize].is_some() {
+            continue;
+        }
+        call_stack.clear();
+        call_stack.push((n, 0));
+
+        while let Some((v, mut pi)) = call_stack.pop() {
+            let vi = v as usize;
+            let edges = edges_of(v);
+            if pi == 0 {
+                let index = n_indexed;
+                n_indexed += 1;
+                lowlink_dict[vi] = index;
+                index_dict[vi] = Some(index);
+                s.push(v);
+                on_stack_set[vi] = true;
+            } else {
+                let prev = edges[pi - 1].target as usize;
+                lowlink_dict[vi] = lowlink_dict[vi].min(lowlink_dict[prev]);
+            }
+
+            while pi < edges.len() && index_dict[edges[pi].target as usize].is_some() {
+                let w = edges[pi].target as usize;
+                if on_stack_set[w] {
+                    lowlink_dict[vi] = lowlink_dict[vi].min(index_dict[w].unwrap());
+                }
+                pi += 1;
+            }
+
+            if pi < edges.len() {
+                let w = edges[pi].target;
+                call_stack.push((v, pi + 1));
+                call_stack.push((w, 0));
                 continue;
             }
-            let mut call_stack: Vec<(OpId, usize)> = vec![(n, 0)];
 
-            while let Some((v, mut pi)) = call_stack.pop() {
-                let vi = v as usize;
-                let edges = graph.edges(v);
-                if pi == 0 {
-                    let index = n_indexed;
-                    n_indexed += 1;
-                    lowlink_dict[vi] = index;
-                    index_dict[vi] = Some(index);
-                    s.push(v);
-                    on_stack_set[vi] = true;
-                } else {
-                    let prev = edges[pi - 1].target as usize;
-                    lowlink_dict[vi] = lowlink_dict[vi].min(lowlink_dict[prev]);
-                }
-
-                while pi < edges.len() && index_dict[edges[pi].target as usize].is_some() {
-                    let w = edges[pi].target as usize;
-                    if on_stack_set[w] {
-                        lowlink_dict[vi] = lowlink_dict[vi].min(index_dict[w].unwrap());
+            if Some(lowlink_dict[vi]) == index_dict[vi] {
+                comp.clear();
+                loop {
+                    let w = s.pop().expect("IndexError: pop from empty list");
+                    on_stack_set[w as usize] = false;
+                    comp.push(w);
+                    if v == w {
+                        break;
                     }
-                    pi += 1;
                 }
-
-                if pi < edges.len() {
-                    let w = edges[pi].target;
-                    call_stack.push((v, pi + 1));
-                    call_stack.push((w, 0));
-                    continue;
-                }
-
-                if Some(lowlink_dict[vi]) == index_dict[vi] {
-                    let mut comp = Vec::new();
-                    loop {
-                        let w = s.pop().expect("IndexError: pop from empty list");
-                        on_stack_set[w as usize] = false;
-                        comp.push(w);
-                        if v == w {
-                            break;
-                        }
-                    }
-                    components.push(comp);
-                }
+                component(&comp);
             }
         }
     }
-    components
+}
+
+/// Buffers of [`maximum_cycle_ratio`] (one element per operand), reused for the components of a graph.
+struct CycleRatioBuffers {
+    d: Vec<f64>,
+    p_opt: Vec<Option<LatGraphEdge>>,
+    p: Vec<LatGraphEdge>,
+    visited: Vec<Option<OpId>>,
+}
+
+impl CycleRatioBuffers {
+    fn new(n_operands: usize) -> Self {
+        CycleRatioBuffers {
+            d: vec![0.0; n_operands],
+            p_opt: vec![None; n_operands],
+            p: vec![LatGraphEdge { source: 0, target: 0, cost: 0, time: 0 }; n_operands],
+            visited: vec![None; n_operands],
+        }
+    }
 }
 
 /// `maximumCycleRatio(nodes, edges)` (in `computeMaximumLatencyForGraph`), based on the "VAL" algorithm described in
 /// <https://doi.org/10.1145/1027084.1027085>. Every node must have an edge that leaves it (in the reference, the code fails
 /// otherwise); `d` then never keeps its initial value `sys.maxsize`, and all its values are floats or small integers.
-fn maximum_cycle_ratio(n_operands: usize, nodes: &[OpId], edges: &[LatGraphEdge]) -> (f64, Vec<LatGraphEdge>) {
+fn maximum_cycle_ratio(buf: &mut CycleRatioBuffers, nodes: &[OpId], edges: &[LatGraphEdge]) -> (f64, Vec<LatGraphEdge>) {
     const SYS_MAXSIZE: f64 = i64::MAX as f64;
     let eps = 0.01;
     let mut r = SYS_MAXSIZE;
 
-    let mut d = vec![SYS_MAXSIZE; n_operands];
-    let mut p_opt: Vec<Option<LatGraphEdge>> = vec![None; n_operands];
+    // The buffers have an element for each operand, but only those of the nodes are used: the sources and targets of `edges`
+    // are nodes, and so are the targets of the edges in `p`. Only these elements are reset.
+    let CycleRatioBuffers { d, p_opt, p, visited } = buf;
+    for &v in nodes {
+        d[v as usize] = SYS_MAXSIZE;
+        p_opt[v as usize] = None;
+    }
     for e in edges {
         if ((-e.cost) as f64) < d[e.source as usize] {
             d[e.source as usize] = (-e.cost) as f64;
@@ -810,13 +1025,14 @@ fn maximum_cycle_ratio(n_operands: usize, nodes: &[OpId], edges: &[LatGraphEdge]
         }
     }
     // p[u] of a node without an edge is None in the reference, and `p[u].target` raises an AttributeError
-    let mut p: Vec<LatGraphEdge> = vec![LatGraphEdge { source: 0, target: 0, cost: 0, time: 0 }; n_operands];
     for &v in nodes {
         p[v as usize] = p_opt[v as usize].expect("AttributeError: a node of a strongly connected component has no edge");
     }
 
-    let find_ratio = |mut r: f64, p: &[LatGraphEdge]| -> (f64, Option<OpId>) {
-        let mut visited: Vec<Option<OpId>> = vec![None; n_operands];
+    let find_ratio = |mut r: f64, p: &[LatGraphEdge], visited: &mut [Option<OpId>]| -> (f64, Option<OpId>) {
+        for &v in nodes {
+            visited[v as usize] = None;
+        }
         let mut handle = None;
         for &v in nodes {
             if visited[v as usize].is_some() {
@@ -856,7 +1072,7 @@ fn maximum_cycle_ratio(n_operands: usize, nodes: &[OpId], edges: &[LatGraphEdge]
 
     let mut edges_on_max_cycle = Vec::new();
     loop {
-        let (new_r, handle) = find_ratio(r, &p);
+        let (new_r, handle) = find_ratio(r, p, visited);
         r = new_r;
         if let Some(handle) = handle {
             edges_on_max_cycle.clear();
@@ -887,20 +1103,38 @@ fn maximum_cycle_ratio(n_operands: usize, nodes: &[OpId], edges: &[LatGraphEdge]
 
 /// `computeMaximumLatencyForGraph(instructions, nodesForInstr, edgesForNode)`
 pub fn compute_maximum_latency_for_graph(instrs: &InstrList, graph: &LatencyGraph) -> MaximumLatency {
-    let n_operands = instrs.operands.len();
-    let components = find_strongly_connected_components(n_operands, graph);
+    let mut components = Vec::new();
+    let (max_cycle_ratio, edges_on_max_cycle) = maximum_latency(
+        instrs.operands.len(),
+        graph.nodes_for_instr.iter().flatten().copied(),
+        |n| graph.edges(n),
+        |comp| components.push(comp.to_vec()),
+    );
+    MaximumLatency { max_cycle_ratio, edges_on_max_cycle, components }
+}
 
+/// [`compute_maximum_latency_for_graph`] for a graph given by its nodes and the edges of each node; `component` is called for
+/// each strongly connected component
+fn maximum_latency<'g>(
+    n_operands: usize,
+    nodes: impl Iterator<Item = OpId>,
+    edges_of: impl Fn(OpId) -> &'g [LatGraphEdge] + Copy,
+    mut component: impl FnMut(&[OpId]),
+) -> (f64, Vec<LatGraphEdge>) {
     let mut max_cycle_ratio = 0.0;
     let mut edges_on_max_cycle = Vec::new();
     let mut in_comp = vec![false; n_operands];
-    for comp in &components {
+    let mut buf: Option<CycleRatioBuffers> = None;
+    let mut edges_for_comp: Vec<LatGraphEdge> = Vec::new();
+    find_strongly_connected_components(n_operands, nodes, edges_of, |comp| {
         for &n in comp {
             in_comp[n as usize] = true;
         }
-        let edges_for_comp: Vec<LatGraphEdge> =
-            comp.iter().flat_map(|&n| graph.edges(n)).filter(|e| in_comp[e.target as usize]).copied().collect();
+        edges_for_comp.clear();
+        edges_for_comp.extend(comp.iter().flat_map(|&n| edges_of(n)).filter(|e| in_comp[e.target as usize]).copied());
         if !edges_for_comp.is_empty() {
-            let (cur_max_cycle_ratio, cur_edges_on_max_cycle) = maximum_cycle_ratio(n_operands, comp, &edges_for_comp);
+            let buf = buf.get_or_insert_with(|| CycleRatioBuffers::new(n_operands));
+            let (cur_max_cycle_ratio, cur_edges_on_max_cycle) = maximum_cycle_ratio(buf, comp, &edges_for_comp);
             if cur_max_cycle_ratio > max_cycle_ratio {
                 max_cycle_ratio = cur_max_cycle_ratio;
                 edges_on_max_cycle = cur_edges_on_max_cycle;
@@ -909,15 +1143,26 @@ pub fn compute_maximum_latency_for_graph(instrs: &InstrList, graph: &LatencyGrap
         for &n in comp {
             in_comp[n as usize] = false;
         }
-    }
-
-    MaximumLatency { max_cycle_ratio, edges_on_max_cycle, components }
+        component(comp);
+    });
+    (max_cycle_ratio, edges_on_max_cycle)
 }
 
 /// The limit that `_runSimulation` passes to `printBottlenecks` as `depLimit`:
 /// `computeMaximumLatencyForGraph(instructions, *generateLatencyGraph(instructions, uArchConfig, initPolicy))[0]`
 pub fn compute_dependency_limit(instrs: &InstrList, config: &UArchConfig, init_policy: &str) -> f64 {
-    compute_maximum_latency_for_graph(instrs, &generate_latency_graph(instrs, config, init_policy)).max_cycle_ratio
+    let n_operands = instrs.operands.len();
+    let mut graph = DenseGraph { nodes: Vec::new(), edges: Vec::new(), start: Vec::new() };
+    build_latency_graph(instrs, config, init_policy, &mut graph);
+    graph.finish(n_operands);
+    maximum_latency(n_operands, graph.nodes.iter().copied(), |n| graph.edges(n), |_| {}).0
+}
+
+/// As [`compute_dependency_limit`] (`maximum.max_cycle_ratio` is that limit), with the cycle that gives it and the graph, whose
+/// `nodes_for_instr` map the operands on the cycle back to their instructions.
+pub fn compute_dependency_cycle(instrs: &InstrList, config: &UArchConfig, init_policy: &str) -> (MaximumLatency, LatencyGraph) {
+    let graph = generate_latency_graph(instrs, config, init_policy);
+    (compute_maximum_latency_for_graph(instrs, &graph), graph)
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
@@ -955,32 +1200,67 @@ pub struct BottleneckValues {
 
 /// The text that `printBottlenecks` prints for the given numbers (each line with its newline).
 pub fn format_bottlenecks(v: &BottleneckValues) -> String {
+    format_bottlenecks_with_limits(v).text
+}
+
+/// The text of `printBottlenecks` (see [`format_bottlenecks`]) and what it lists.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BottleneckText {
+    /// the text, each line with its newline
+    pub text: String,
+    /// the bottlenecks (sorted; empty for "unknown")
+    pub bottlenecks: Vec<&'static str>,
+    /// the listed limits: (name, the number as printed)
+    pub limits: Vec<(&'static str, f64)>,
+}
+
+/// [`format_bottlenecks`], with the bottlenecks and the limits that the text lists
+pub fn format_bottlenecks_with_limits(v: &BottleneckValues) -> BottleneckText {
     let tp = v.tp;
-    let mut output: Vec<String> = Vec::new();
-    let mut bottlenecks: Vec<&str> = Vec::new();
+    let mut text = String::new();
+    let mut output = String::new();
+    let mut limits: Vec<(&'static str, f64)> = Vec::new();
+    let mut bottlenecks: Vec<&'static str> = Vec::new();
+
+    // a line "  - name: value" of the list (the lines are joined with "\n")
+    let mut list_entry = |name: &'static str, limit: f64| {
+        use std::fmt::Write;
+        if !output.is_empty() {
+            output.push('\n');
+        }
+        output.push_str("  - ");
+        output.push_str(name);
+        output.push_str(": ");
+        let start = output.len();
+        write!(output, "{limit:.2}").unwrap();
+        // the number as printed, read back
+        if let Ok(value) = output[start..].parse() {
+            limits.push((name, value));
+        }
+    };
 
     // Front End, Issue: round(limit, 2); listed if it is not 0
-    let mut rounded_limit = |name: &'static str, limit: Option<f64>| {
+    let mut rounded_limit = |name: &'static str, limit: Option<f64>, list_entry: &mut dyn FnMut(&'static str, f64)| {
         if let Some(limit) = limit {
             let limit = py_round2(limit);
             if limit != 0.0 {
-                output.push(format!("  - {name}: {}", py_format2(limit)));
+                list_entry(name, limit);
                 if limit >= 0.98 * tp {
                     bottlenecks.push(name);
                 }
             }
         }
     };
-    rounded_limit("Predecoder", v.predec_limit);
-    rounded_limit("Decoder", v.dec_limit);
-    rounded_limit("DSB", v.dsb_limit);
-    rounded_limit("LSD", v.lsd_limit);
-    rounded_limit("Issue", Some(v.issue_limit));
+    rounded_limit("Predecoder", v.predec_limit, &mut list_entry);
+    rounded_limit("Decoder", v.dec_limit, &mut list_entry);
+    rounded_limit("DSB", v.dsb_limit, &mut list_entry);
+    rounded_limit("LSD", v.lsd_limit, &mut list_entry);
+    rounded_limit("Issue", Some(v.issue_limit), &mut list_entry);
 
     // Port Usage
     let port_usage_limit = py_round2(v.port_usage_limit);
     if port_usage_limit != 0.0 {
-        output.push(format!("  - Ports: {}", py_format2(port_usage_limit)));
+        list_entry("Ports", port_usage_limit);
         if port_usage_limit >= 0.98 * tp {
             bottlenecks.push("Ports");
         } else {
@@ -998,24 +1278,31 @@ pub fn format_bottlenecks(v: &BottleneckValues) -> String {
 
     // Dependencies
     if v.dep_limit != 0.0 {
-        output.push(format!("  - Dependencies: {}", py_format2(v.dep_limit)));
+        list_entry("Dependencies", v.dep_limit);
         if v.dep_limit >= 0.98 * tp {
             bottlenecks.push("Dependencies");
         }
     }
 
     bottlenecks.sort();
-    let mut text = format!(
-        "Bottleneck{}: {}\n",
-        if bottlenecks.len() > 1 { "s" } else { "" },
-        if bottlenecks.is_empty() { "unknown".to_string() } else { bottlenecks.join(", ") }
-    );
+    text.push_str(if bottlenecks.len() > 1 { "Bottlenecks: " } else { "Bottleneck: " });
+    if bottlenecks.is_empty() {
+        text.push_str("unknown");
+    } else {
+        for (i, b) in bottlenecks.iter().enumerate() {
+            if i > 0 {
+                text.push_str(", ");
+            }
+            text.push_str(b);
+        }
+    }
+    text.push('\n');
     if !output.is_empty() {
         text.push_str("\nThe following throughputs could be achieved if the given property were the only bottleneck:\n\n");
-        text.push_str(&output.join("\n"));
+        text.push_str(&output);
         text.push('\n');
     }
-    text
+    BottleneckText { text, bottlenecks, limits }
 }
 
 /// The numbers of `printBottlenecks(TP, instructions, instrInstancesForInstr, disas, alignmentOffset, loop, depLimit,
@@ -1028,34 +1315,36 @@ pub fn bottleneck_values(
     dep_limit: f64,
     summary: &SimSummary,
 ) -> BottleneckValues {
-    let all_unfused_uops = || summary.instances.iter().flatten().flat_map(|ii| ii.uops.iter().chain(&ii.other_uops));
+    bottleneck_values_for(instrs, disas, config, alignment_offset, dep_limit, summary)
+}
 
+/// [`bottleneck_values`] for any description of the simulation.
+pub fn bottleneck_values_for(
+    instrs: &InstrList,
+    disas: &[DecodedInstr],
+    config: &UArchConfig,
+    alignment_offset: i64,
+    dep_limit: f64,
+    sim: &(impl SimView + ?Sized),
+) -> BottleneckValues {
     // Front End
-    let any_instr_from =
-        |source: InstrSource| summary.instances.iter().any(|ii_list| ii_list.first().is_some_and(|ii| ii.source == Some(source)));
-    let mite_instrs = any_instr_from(InstrSource::Mite);
-    let dsb_instrs = any_instr_from(InstrSource::Dsb);
-    let lsd_instrs = any_instr_from(InstrSource::Lsd);
+    let mite_instrs = sim.any_instr_from(InstrSource::Mite);
+    let dsb_instrs = sim.any_instr_from(InstrSource::Dsb);
+    let lsd_instrs = sim.any_instr_from(InstrSource::Lsd);
 
-    // Port Usage: Counter(uop.actualPort for uop in allUnfusedUops if uop.actualPort)
-    let mut port_usage_c: IndexMap<&str, i64> = IndexMap::new();
-    for uop in all_unfused_uops() {
-        if let Some(port) = uop.actual_port.as_deref().filter(|p| !p.is_empty()) {
-            *port_usage_c.entry(port).or_insert(0) += 1;
-        }
-    }
+    let (max_port_usage, div_usage) = sim.port_and_div_usage();
 
     BottleneckValues {
-        tp: summary.tp,
-        predec_limit: (mite_instrs && !dsb_instrs && !lsd_instrs).then(|| compute_predec_limit(disas, summary.is_loop, alignment_offset)),
+        tp: sim.tp(),
+        predec_limit: (mite_instrs && !dsb_instrs && !lsd_instrs).then(|| compute_predec_limit(disas, sim.is_loop(), alignment_offset)),
         dec_limit: mite_instrs.then(|| compute_dec_limit(instrs, config)),
         dsb_limit: dsb_instrs.then(|| compute_dsb_limit(instrs, alignment_offset)),
         lsd_limit: lsd_instrs.then(|| compute_lsd_limit(instrs, config)),
         issue_limit: compute_issue_limit(instrs, config),
-        port_usage_limit: compute_port_usage_limit(instrs, Some(&summary.instances)),
-        max_port_usage: port_usage_c.values().copied().max(),
-        div_usage: all_unfused_uops().map(|uop| uop.div_cycles).sum(),
-        n_rounds: summary.n_rounds,
+        port_usage_limit: port_usage_limit(instrs, |idx| (sim.n_instances(idx), sim.not_eliminated_uops(idx))),
+        max_port_usage,
+        div_usage,
+        n_rounds: sim.n_rounds(),
         dep_limit,
     }
 }

@@ -1,0 +1,194 @@
+[
+ {
+  "url": "https://godbolt.org/api/compiler/g82/compile",
+  "method": "POST",
+  "body": {
+   "source": "int countSetBits(unsigned a)\n{\n  int count = 0;\n  while (a != 0)\n  {\n    count++;\n    // clear bottom set bit\n    a &= (a - 1);\n  }\n  return count;\n}\n",
+   "options": {
+    "userArguments": "-O2 -march=haswell -Wall -Wextra -pedantic",
+    "compilerOptions": {
+     "skipAsm": false,
+     "executorRequest": false
+    },
+    "filters": {
+     "binaryObject": true,
+     "binary": false,
+     "execute": false,
+     "intel": true,
+     "demangle": true,
+     "labels": true,
+     "directives": true,
+     "commentOnly": true,
+     "libraryCode": true,
+     "trim": false,
+     "debugCalls": false
+    },
+    "tools": [],
+    "libraries": []
+   },
+   "lang": "c++",
+   "allowStoreCodeDebug": false
+  },
+  "status": 200
+ },
+ {
+  "url": "https://godbolt.org/api/compiler/g132/compile",
+  "method": "POST",
+  "body": {
+   "source": "// flags: -fvisibility=hidden\nint square(int num) __attribute__((visibility(\"default\")));\nint square(int num) {\n    return num * num;\n}\n\nint main() {\n    return square(2);\n}",
+   "options": {
+    "userArguments": "-fvisibility=hidden",
+    "compilerOptions": {
+     "skipAsm": false,
+     "executorRequest": false
+    },
+    "filters": {
+     "binaryObject": true,
+     "binary": false,
+     "execute": false,
+     "intel": true,
+     "demangle": true,
+     "labels": true,
+     "directives": true,
+     "commentOnly": true,
+     "libraryCode": true,
+     "trim": false,
+     "debugCalls": false
+    },
+    "tools": [],
+    "libraries": []
+   },
+   "lang": "c++",
+   "allowStoreCodeDebug": false
+  },
+  "status": 200
+ },
+ {
+  "url": "https://godbolt.org/api/compiler/g142/compile",
+  "method": "POST",
+  "body": {
+   "source": "int sum(const int* a, int n) {\n  int s = 0;\n  for (int i = 0; i < n; i++) s += a[i] * 3;\n  return s;\n}\n\nvoid scale(float* x, int n, float k) {\n  for (int i = 0; i < n; i++)\n    for (int j = 0; j < 4; j++) x[i*4+j] *= k;\n}\n",
+   "options": {
+    "userArguments": "-O2",
+    "compilerOptions": {
+     "skipAsm": false,
+     "executorRequest": false
+    },
+    "filters": {
+     "binaryObject": true,
+     "binary": false,
+     "execute": false,
+     "intel": true,
+     "demangle": true,
+     "labels": true,
+     "directives": true,
+     "commentOnly": true,
+     "libraryCode": true,
+     "trim": false,
+     "debugCalls": false
+    },
+    "tools": [],
+    "libraries": []
+   },
+   "lang": "c++",
+   "allowStoreCodeDebug": false
+  },
+  "status": 200
+ },
+ {
+  "url": "https://godbolt.org/api/compiler/clang1810/compile",
+  "method": "POST",
+  "body": {
+   "source": "int sum(const int* a, int n) {\n  int s = 0;\n  for (int i = 0; i < n; i++) s += a[i] * 3;\n  return s;\n}\n\nvoid scale(float* x, int n, float k) {\n  for (int i = 0; i < n; i++)\n    for (int j = 0; j < 4; j++) x[i*4+j] *= k;\n}\n",
+   "options": {
+    "userArguments": "-O2",
+    "compilerOptions": {
+     "skipAsm": false,
+     "executorRequest": false
+    },
+    "filters": {
+     "binaryObject": false,
+     "binary": false,
+     "execute": false,
+     "intel": true,
+     "demangle": true,
+     "labels": true,
+     "directives": true,
+     "commentOnly": true,
+     "libraryCode": true,
+     "trim": false,
+     "debugCalls": false
+    },
+    "tools": [],
+    "libraries": []
+   },
+   "lang": "c++",
+   "allowStoreCodeDebug": false
+  },
+  "status": 200
+ },
+ {
+  "url": "https://godbolt.org/api/compiler/nasm21601/compile",
+  "method": "POST",
+  "body": {
+   "source": "section .text\nglobal f\nf:\n.loop:\n  add rax, 1\n  vaddps ymm0, ymm1, ymm2\n  dec rcx\n  jnz .loop\n  ret\n",
+   "options": {
+    "userArguments": "",
+    "compilerOptions": {
+     "skipAsm": false,
+     "executorRequest": false
+    },
+    "filters": {
+     "binaryObject": false,
+     "binary": true,
+     "execute": false,
+     "intel": true,
+     "demangle": true,
+     "labels": true,
+     "directives": true,
+     "commentOnly": true,
+     "libraryCode": true,
+     "trim": false,
+     "debugCalls": false
+    },
+    "tools": [],
+    "libraries": []
+   },
+   "lang": "assembly",
+   "allowStoreCodeDebug": false
+  },
+  "status": 200
+ },
+ {
+  "url": "https://godbolt.org/api/compiler/g142/compile",
+  "method": "POST",
+  "body": {
+   "source": "int f( {",
+   "options": {
+    "userArguments": "-O2",
+    "compilerOptions": {
+     "skipAsm": false,
+     "executorRequest": false
+    },
+    "filters": {
+     "binaryObject": true,
+     "binary": false,
+     "execute": false,
+     "intel": true,
+     "demangle": true,
+     "labels": true,
+     "directives": true,
+     "commentOnly": true,
+     "libraryCode": true,
+     "trim": false,
+     "debugCalls": false
+    },
+    "tools": [],
+    "libraries": []
+   },
+   "lang": "c++",
+   "allowStoreCodeDebug": false
+  },
+  "status": 200
+ }
+]

@@ -104,6 +104,26 @@ On success:
 - `text`: the complete report as the command-line tool prints it (without terminal escape sequences).
 - `trace`: with `"includeTrace": true`, the content of uiCA's `-json` output (`{parameters, instructions, cycles}`: the events of
   every cycle); otherwise `null`. It is large.
+- `criticalPath` (optional; present only if the `"Dependencies"` limit is not 0): the loop-carried dependency cycle that gives
+  that limit (`edgesOnMaxCycle` of uiCA's `computeMaximumLatencyForGraph`), in terms of the rows of the uop table:
+
+  ```json
+  "criticalPath": {
+    "ratio": 2.0,
+    "edges": [
+      {"from": 0, "to": 1, "operand": "RAX", "latency": 1, "carried": false},
+      {"from": 1, "to": 0, "operand": "RAX", "latency": 1, "carried": true}
+    ]
+  }
+  ```
+
+  (for `add rax, 1; add rax, 1; dec r15; jnz`). Each edge says that the instruction in row `from` (an index into `rows`) produces
+  a value that the instruction in row `to` reads: `operand` is the register as written in the reading instruction (`"RAX"`,
+  `"EAX"`, `"XMM1"`, ...), `"mem"` (a value passed through memory) or `"flags"`; `latency` is the number of cycles from the input
+  of `from` on the cycle to that input of `to`; `carried` is true if `to` is in the next iteration. The edges are in the order of
+  the cycle (`edges[k].to == edges[k+1].from`, and the last edge leads back to the first), starting after a carried edge.
+  `ratio` = sum of the latencies / number of carried edges (the iterations the cycle spans) = the `"Dependencies"` limit before
+  rounding.
 
 ## Assembler
 

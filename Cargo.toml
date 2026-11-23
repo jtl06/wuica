@@ -19,3 +19,10 @@ lto = "off"
 codegen-units = 16
 incremental = true
 strip = false
+
+# for iterating on performance work: release code without LTO, quicker to rebuild
+[profile.iter]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true

@@ -5,7 +5,7 @@ import zlib from 'node:zlib';
 import readline from 'node:readline';
 import { MockEngine, recordedCases, SYNTHETIC_HEX, MOCK_ERROR_HEX } from '../web/js/engine-mock.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
-import { EXAMPLES, MOCK_EXAMPLES } from '../web/js/examples.js';
+import { EXAMPLES, CLASSIC_EXAMPLES, MOCK_EXAMPLES } from '../web/js/examples.js';
 import { parseHexInput } from '../web/js/hex-input.js';
 import { archGroups, ARCH_ORDER, ARCH_INFO } from '../web/js/archs.js';
 import { DEFAULT_STATE, encodeState, decodeState, clampInt } from '../web/js/url-state.js';
@@ -94,7 +94,7 @@ function checkShape(r, what) {
 // the examples, through the real decoder
 if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
   const real = await WasmEngine.create(fs.readFileSync(new URL('target/wasm32-unknown-unknown/release/wuica_wasm.wasm', root)));
-  for (const ex of [...EXAMPLES, ...MOCK_EXAMPLES]) {
+  for (const ex of [...EXAMPLES, ...CLASSIC_EXAMPLES, ...MOCK_EXAMPLES]) {
     const d = await real.decode(ex.hex, 'SKYLAKE');
     const lines = ex.text.hex.trim().split('\n');
     const listed = lines.length - (ex.id === 'synthetic' ? 1 : 0); // the synthetic one has an undecodable byte
@@ -106,8 +106,11 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
 // --- examples -------------------------------------------------------------------------------------------------------
 {
   const cases = recordedCases();
-  check(EXAMPLES.length >= 3 && new Set([...EXAMPLES, ...MOCK_EXAMPLES].map((e) => e.id)).size === EXAMPLES.length + MOCK_EXAMPLES.length, 'examples: at least three, unique ids');
-  for (const ex of [...EXAMPLES, ...MOCK_EXAMPLES]) {
+  const all = [...EXAMPLES, ...CLASSIC_EXAMPLES, ...MOCK_EXAMPLES];
+  check(EXAMPLES.length >= 3 && CLASSIC_EXAMPLES.length >= 9 && new Set(all.map((e) => e.id)).size === all.length, 'examples: at least three basics, the classic loops, unique ids');
+  for (const ex of CLASSIC_EXAMPLES) check(/^\s+j\w+ loop$/.test(ex.text.intel.trim().split('\n').at(-1)) && ex.text.intel.startsWith('loop:'), `example ${ex.id}: a loop ending in a backward branch`);
+  check(['dot1', 'dot4'].every((id) => CLASSIC_EXAMPLES.some((e) => e.id === id)), 'examples: the A–B demo pair exists');
+  for (const ex of all) {
     const p = parseHexInput(ex.text.hex);
     check(p.ok && p.hex === ex.hex && p.format === 'listing', `example ${ex.id}: the hex text parses to its machine code`, JSON.stringify(p));
     check(ex.text.intel.trim() !== '' && ex.text.att.trim() !== '' && ex.text.intel.split('\n').length === ex.text.att.split('\n').length, `example ${ex.id}: both syntaxes`);
@@ -257,10 +260,10 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
   const realPath = new URL('assembler/dist/wuica_asm.wasm', root);
   if (fs.existsSync(realPath)) {
     const real = await WasmAssembler.create(fs.readFileSync(realPath));
-    for (const ex of EXAMPLES) {
+    for (const ex of [...EXAMPLES, ...CLASSIC_EXAMPLES]) {
       for (const syntax of ['intel', 'att']) {
         const r = await real.assemble(ex.text[syntax], syntax);
-        check(r.ok && r.bytes.length === ex.hex.length / 2, `real assembler: example ${ex.id} (${syntax})`, JSON.stringify(r.ok ? Buffer.from(r.bytes).toString('hex') : r.diagnostics));
+        check(r.ok && (CLASSIC_EXAMPLES.includes(ex) ? Buffer.from(r.bytes).toString('hex') === ex.hex : r.bytes.length === ex.hex.length / 2), `real assembler: example ${ex.id} (${syntax})`, JSON.stringify(r.ok ? Buffer.from(r.bytes).toString('hex') : r.diagnostics));
       }
     }
     const i = await real.assemble(EXAMPLES[0].text.intel, 'intel'), t2 = await real.assemble(EXAMPLES[0].text.att, 'att');

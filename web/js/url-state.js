@@ -1,4 +1,4 @@
-// The state of the page in the URL fragment: input, mode, options and the open compare panels. The fragment, never the query string:
+// The state of the page in the URL fragment: input, mode, options, the open compare panels and side B of an A–B comparison. The fragment, never the query string:
 // a fragment is not sent to the server. No DOM; btoa/atob exist in browsers and in Node.
 
 export const DEFAULT_STATE = Object.freeze({
@@ -15,18 +15,28 @@ export const DEFAULT_STATE = Object.freeze({
   minCycles: 500,
   cmpCpus: false,         // the compare panels that are open (compare-view.js)
   cmpSweep: false,
+  // A–B comparison (ab.js): the fields above are side A and the shared options; these are side B
+  ab: false,              // true: A–B mode
+  bMode: 'hex',           // 'hex' | 'asm'
+  bSyntax: 'intel',       // 'intel' | 'att'
+  bArch: '',              // '' = the same microarchitecture as A
+  bText: '',
+  bScale: 1,              // 1..64: one iteration of B does the work of this many iterations of A (e.g. B is unrolled)
+  cost: false,            // the cost column and its variant (insight-view.js)
+  costNop: false,
 });
 
 export const LIMITS = Object.freeze({
   alignmentOffset: [0, 63],
   minIterations: [1, 10000],
   minCycles: [1, 100000],
+  bScale: [1, 64],
 });
 const MAX_TEXT = 200000; // characters accepted from a link
 
 const INTS = { al: 'alignmentOffset', mi: 'minIterations', mc: 'minCycles' };
 const FLAGS = { sfe: 'simpleFrontEnd', nmi: 'noMicroFusion', nma: 'noMacroFusion' };
-const VIEWS = { cmpcpu: 'cmpCpus', cmpsweep: 'cmpSweep' }; // open panels; not analysis options
+const VIEWS = { cmpcpu: 'cmpCpus', cmpsweep: 'cmpSweep', cost: 'cost', costnop: 'costNop' }; // open panels; not analysis options
 
 function toBase64Url(text) {
   const bytes = new TextEncoder().encode(text);
@@ -58,6 +68,14 @@ export function encodeState(state) {
   for (const [k, name] of Object.entries(FLAGS)) if (s[name]) p.push(`${k}=1`);
   for (const [k, name] of Object.entries(VIEWS)) if (s[name]) p.push(`${k}=1`);
   if (s.text !== '') p.push(`c=${toBase64Url(s.text)}`);
+  if (s.ab) { // side B, only in A–B mode: a single-mode link stays as it was
+    p.push('ab=1');
+    if (s.bMode === 'asm') p.push('bm=asm');
+    if (s.bMode === 'asm' && s.bSyntax === 'att') p.push('bs=att');
+    if (s.bArch) p.push(`ba=${encodeURIComponent(s.bArch)}`);
+    if (s.bScale !== DEFAULT_STATE.bScale) p.push(`bk=${s.bScale}`);
+    if (s.bText !== '') p.push(`bc=${toBase64Url(s.bText)}`);
+  }
   return p.length ? 'v=1&' + p.join('&') : '';
 }
 
@@ -85,11 +103,25 @@ export function decodeState(fragment) {
   if (['same', 'stack'].includes(q.get('ip'))) s.initPolicy = q.get('ip');
   for (const [k, name] of Object.entries(FLAGS)) if (q.get(k) === '1') s[name] = true;
   for (const [k, name] of Object.entries(VIEWS)) if (q.get(k) === '1') s[name] = true;
-  if (q.has('c')) {
+  const text = (k) => {
     try {
-      const t = fromBase64Url(q.get('c'));
-      if (t.length <= MAX_TEXT) s.text = t;
-    } catch { /* not base64 or not UTF-8: no text */ }
+      const t = fromBase64Url(q.get(k));
+      return t.length <= MAX_TEXT ? t : '';
+    } catch { return ''; } // not base64 or not UTF-8: no text
+  };
+  if (q.has('c')) s.text = text('c');
+  if (q.get('ab') === '1') {
+    s.ab = true;
+    if (q.get('bm') === 'asm') s.bMode = 'asm';
+    if (q.get('bs') === 'att') s.bSyntax = 'att';
+    if (q.has('ba')) {
+      try {
+        const a = decodeURIComponent(q.get('ba'));
+        if (/^[A-Za-z0-9_-]{1,32}$/.test(a)) s.bArch = a;
+      } catch { /* the same as A */ }
+    }
+    if (q.has('bk')) s.bScale = clampInt(q.get('bk'), LIMITS.bScale, DEFAULT_STATE.bScale);
+    if (q.has('bc')) s.bText = text('bc');
   }
   return s;
 }

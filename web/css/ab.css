@@ -1,0 +1,92 @@
+/* A–B comparison (js/ab.js). Colours come only from the theme's custom properties, so it follows the theme. */
+
+body:not(.ab-on) .ab-only { display: none !important; }
+/* the compare panels (all CPUs, sweep) belong to single mode; their open state is kept for it */
+body.ab-on #compare { display: none; }
+
+/* the switch */
+.ab-switch .ab-tools { display: inline-flex; flex-wrap: wrap; gap: 0.5rem; }
+
+/* the editors: A (the page's editor, wrapped in .ab-a-col) and B side by side; stacked on narrow screens */
+.ab-a-col { display: contents; }
+.ab-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 1rem; row-gap: 0.75rem; align-items: start; }
+.ab-grid > .ab-a-col { display: block; min-width: 0; }
+.ab-b { min-width: 0; }
+.ab-b > .messages { margin-top: 0.3rem; }
+.ab-head { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 0.3rem 1rem; min-height: 2rem; margin-bottom: 0.3rem; }
+/* side by side, B's controls take two lines: A's caption as well, so that the two text areas line up */
+.ab-grid .ab-head { min-height: 4.1rem; }
+@media (max-width: 800px) {
+  .ab-grid { grid-template-columns: minmax(0, 1fr); }
+  .ab-grid .ab-head { min-height: 2rem; }
+}
+.ab-desc { color: var(--subtle); }
+.ab-head .choice { gap: 0.25rem 1rem; }
+#b-scale { width: 6ch; }
+#b-arch { max-width: 22ch; }
+
+.ab-tag {
+  display: inline-block;
+  min-width: 1.7em;
+  padding: 0 0.3em;
+  text-align: center;
+  line-height: 1.35;
+  color: var(--background);
+  background: var(--accent);
+}
+#ab-b-tag, .ab-tag.b, .ab-col:nth-child(2) .ab-cap .ab-tag { background: var(--code); }
+
+/* ---- the result ---- */
+.ab-tp { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.6rem; }
+.ab-tp .value { font-size: 1.6rem; line-height: 1.2; color: var(--heading); font-variant-numeric: tabular-nums; }
+.ab-tp .value.ab-none { color: var(--subtle); }
+.ab-tp .ab-tag:nth-of-type(2) { background: var(--code); }
+.ab-tp .unit { color: var(--text); }
+.ab-arrow { color: var(--subtle); }
+
+.ab-delta { margin: 0.15rem 0 0.2rem; }
+.ab-verdict { border: 1px solid currentColor; padding: 0 0.4rem; margin-right: 0.25rem; }
+.ab-delta.ab-better { color: var(--accent); }
+.ab-delta.ab-worse { color: var(--caveat); }
+.ab-delta.ab-same { color: var(--description); }
+.ab-side-error { margin-top: 0.3rem; }
+.ab-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+.ab-bn .bn { color: var(--heading); }
+.ab-bn .ab-gone { color: var(--subtle); text-decoration: line-through; }
+.ab-bn .ab-new { color: var(--code); }
+
+/* limits of both, side by side */
+table.grid.ab-limits { width: auto; min-width: min(100%, 36rem); }
+.ab-limits td.is-bottleneck { color: var(--heading); }
+.ab-limits td.ab-g { width: 9rem; }
+.ab-limits .gauge { display: block; width: 8rem; height: 0.55em; background: var(--border); }
+.ab-limits .gauge > span { display: block; height: 100%; background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.ab-limits .gauge.is-bottleneck > span { background: var(--accent); }
+
+/* B − A: lower is better */
+.ab-d.ab-better { color: var(--accent); }
+.ab-d.ab-worse { color: var(--caveat); }
+
+/* the instruction diff */
+.ab-diff .ab-i { text-align: left; color: var(--code); }
+.ab-diff thead .ab-i { color: var(--subtle); }
+.ab-diff td.ab-m { text-align: center; width: 2.5ch; color: var(--subtle); }
+.ab-diff .ab-note { color: var(--description); }
+.ab-diff .ab-x { color: var(--subtle); }
+.ab-diff tr.ab-same .ab-i { color: var(--description); }
+.ab-diff tr.ab-changed td.ab-m { color: var(--heading); }
+.ab-diff tr.ab-modified > * { background-color: color-mix(in srgb, var(--code) 9%, transparent); }
+.ab-diff tr.ab-modified td.ab-m { color: var(--code); }
+.ab-diff tr.ab-added > * { background-color: color-mix(in srgb, var(--accent) 11%, transparent); }
+.ab-diff tr.ab-added td.ab-m { color: var(--accent); }
+.ab-diff tr.ab-removed > * { background-color: color-mix(in srgb, var(--caveat) 10%, transparent); }
+.ab-diff tr.ab-removed td.ab-m { color: var(--caveat); }
+.ab-diff tr.ab-removed .ab-i:not(.ab-empty) span:first-child { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--caveat) 60%, transparent); }
+.ab-diff tfoot .ab-i { color: var(--description); }
+
+/* two tables or reports next to each other */
+.ab-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.75rem 1rem; align-items: start; }
+.ab-col { min-width: 0; }
+.ab-cap { color: var(--description); margin-bottom: 0.3rem; }
+@media (max-width: 900px) { .ab-pair { grid-template-columns: minmax(0, 1fr); } }

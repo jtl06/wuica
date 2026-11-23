@@ -1,0 +1,267 @@
+{
+ "inputFilename": "example.cpp",
+ "code": 0,
+ "okToCache": true,
+ "timedOut": false,
+ "stdout": [],
+ "stderr": [],
+ "truncated": false,
+ "execTime": 75,
+ "processExecutionResultTime": 0.007621000055223703,
+ "instructionSet": "amd64",
+ "compilationOptions": [
+  "-g",
+  "-o",
+  "/app/output.s",
+  "-fno-verbose-asm",
+  "-c",
+  "-fdiagnostics-color=always",
+  "-fvisibility=hidden",
+  "/app/example.cpp"
+ ],
+ "downloads": [],
+ "tools": [],
+ "asmSize": 3176,
+ "asm": [
+  {
+   "labels": [],
+   "source": null,
+   "text": "square(int):"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "55"
+   ],
+   "address": 0,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 3
+   },
+   "text": " push   rbp"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "48",
+    "89",
+    "e5"
+   ],
+   "address": 1,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 3
+   },
+   "text": " mov    rbp,rsp"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "89",
+    "7d",
+    "fc"
+   ],
+   "address": 4,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 3
+   },
+   "text": " mov    DWORD PTR [rbp-0x4],edi"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "8b",
+    "45",
+    "fc"
+   ],
+   "address": 7,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 4
+   },
+   "text": " mov    eax,DWORD PTR [rbp-0x4]"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "0f",
+    "af",
+    "c0"
+   ],
+   "address": 10,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 4
+   },
+   "text": " imul   eax,eax"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "5d"
+   ],
+   "address": 13,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 5
+   },
+   "text": " pop    rbp"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "c3"
+   ],
+   "address": 14,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 5
+   },
+   "text": " ret"
+  },
+  {
+   "labels": [],
+   "source": null,
+   "text": "main:"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "55"
+   ],
+   "address": 15,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 7
+   },
+   "text": " push   rbp"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "48",
+    "89",
+    "e5"
+   ],
+   "address": 16,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 7
+   },
+   "text": " mov    rbp,rsp"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "bf",
+    "02",
+    "00",
+    "00",
+    "00"
+   ],
+   "address": 19,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 8
+   },
+   "text": " mov    edi,0x2"
+  },
+  {
+   "labels": [
+    {
+     "name": "main",
+     "range": {
+      "startCol": 13,
+      "endCol": 17
+     }
+    }
+   ],
+   "opcodes": [
+    "e8",
+    "00",
+    "00",
+    "00",
+    "00"
+   ],
+   "address": 24,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 8
+   },
+   "text": " call   1d <main+0xe>"
+  },
+  {
+   "labels": [],
+   "address": 25,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 8
+   },
+   "text": "    R_X86_64_PLT32 square(int)-0x4"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "90"
+   ],
+   "address": 29,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 8
+   },
+   "text": " nop"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "5d"
+   ],
+   "address": 30,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 9
+   },
+   "text": " pop    rbp"
+  },
+  {
+   "labels": [],
+   "opcodes": [
+    "c3"
+   ],
+   "address": 31,
+   "source": {
+    "file": null,
+    "mainsource": "true",
+    "line": 9
+   },
+   "text": " ret"
+  }
+ ],
+ "labelDefinitions": {
+  "square(int)": 1,
+  "main": 9
+ },
+ "parsingTime": 1,
+ "filteredCount": 15,
+ "externalParserUsed": true,
+ "objdumpTime": 42,
+ "optOutput": [],
+ "popularArguments": {},
+ "retreivedFromCache": true,
+ "retreivedFromCacheTime": 28.49811799824238
+}

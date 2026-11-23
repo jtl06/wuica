@@ -9,8 +9,9 @@
 <meta name="theme-color" content="#090a09" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#fbf6ea" media="(prefers-color-scheme: light)">
 <!-- The page loads only from its own origin, plus Cloudflare Web Analytics (injected by the host). The code
-     you analyze is never sent anywhere. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+     you analyze is never sent anywhere; the one fetch elsewhere: a Compiler Explorer link put into a code box is
+     imported from https://godbolt.org (js/godbolt-ui.js, js/godbolt.js). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com https://godbolt.org; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="description" content="wuica: WebAssembly uiCA, an independent port of uiCA that runs in your browser. Predicts the throughput of x86-64 basic blocks.">
 <title>wuica: WebAssembly uiCA</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -18,6 +19,9 @@
 <script src="js/theme.js"></script>
 <link rel="stylesheet" href="css/style.css">
 <link rel="stylesheet" href="css/trace.css">
+<link rel="stylesheet" href="css/ab.css">
+<link rel="stylesheet" href="css/godbolt.css">
+<link rel="stylesheet" href="css/insight.css">
 <script type="module" src="js/app.js"></script>
 </head>
 <body>
@@ -167,22 +171,16 @@
       <li>all data in L1; no branch mispredictions</li>
       <li>ends in a branch: a loop (branch taken); otherwise unrolled</li>
       <li>prototype models (ZEN3, ADL-P, ICX): from the fork, less validated</li>
-      <li>runs in your browser; your code is not uploaded</li>
+      <li>runs in your browser; your code is not uploaded (only Compiler Explorer links contact godbolt.org)</li>
     </ul>
   </section>
 </main>
 
 <footer class="bottom">
-  <p>Port of <a class="ext" href="https://github.com/andreas-abel/uiCA" rel="noopener noreferrer">uiCA</a> by Andreas Abel and Jan Reineke
-    (<a class="ext" href="https://dl.acm.org/doi/pdf/10.1145/3524059.3532396" rel="noopener noreferrer">paper</a>);
-    prototypes from the fork <a class="ext" href="https://github.com/jtl06/uiCA" rel="noopener noreferrer">jtl06/uiCA</a>; data from
-    <a class="ext" href="https://www.uops.info" rel="noopener noreferrer">uops.info</a>. Not the official uiCA
-    (<a class="ext" href="https://uica.uops.info" rel="noopener noreferrer">uiCA.uops.info</a>).</p>
-  <p><a href="licenses/AGPL-3.0.txt">AGPL-3.0</a> · <a href="#" id="source-link">source</a> ·
-    <a class="ext" href="https://github.com/intelxed/xed" rel="noopener noreferrer">Intel XED</a> (<a href="licenses/XED-Apache-2.0.txt">Apache-2.0</a>) ·
-    modified <a class="ext" href="https://llvm.org" rel="noopener noreferrer">LLVM</a> 22.1.2 (<a href="licenses/LLVM.txt">Apache-2.0 WITH LLVM-exception</a>) ·
-    IBM Plex Mono (<a href="fonts/OFL.txt">OFL-1.1</a>) ·
-    build <span id="build-id">dev</span><span id="update-note" hidden> · new version: <button type="button" class="plain" id="reload">reload</button></span></p>
+  <p>unofficial port of <a class="ext" href="https://github.com/andreas-abel/uiCA" rel="noopener noreferrer">uiCA</a> by Andreas Abel and Jan Reineke.
+    data from <a class="ext" href="https://www.uops.info" rel="noopener noreferrer">uops.info</a>.
+    <a class="gh" id="source-gh" href="https://github.com/jtl06/wuica" rel="noopener noreferrer" aria-label="Source on GitHub" title="Source on GitHub"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a></p>
+  <p class="small">v<span id="app-version"></span> · LLVM 22.1.2 · Intel XED · build <span id="build-id">dev</span><span id="update-note" hidden> · new version: <button type="button" class="plain" id="reload">reload</button></span></p>
 </footer>
 </body>
 </html>

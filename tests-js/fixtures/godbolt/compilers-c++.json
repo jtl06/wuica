@@ -1,0 +1,82 @@
+[
+ {
+  "id": "arm64g1320",
+  "name": "ARM64 gcc 13.2.0",
+  "lang": "c++",
+  "instructionSet": "aarch64",
+  "supportsBinary": true,
+  "supportsBinaryObject": true
+ },
+ {
+  "id": "armv8-clang1810",
+  "name": "armv8-a clang 18.1.0",
+  "lang": "c++",
+  "instructionSet": "aarch64",
+  "supportsBinary": true,
+  "supportsBinaryObject": true
+ },
+ {
+  "id": "cl19_2015_u3_32_exwine",
+  "name": "x86 msvc v19.0 (ex-WINE)",
+  "lang": "c++",
+  "instructionSet": "amd64",
+  "supportsBinary": false,
+  "supportsBinaryObject": false
+ },
+ {
+  "id": "clang1810",
+  "name": "x86-64 clang 18.1.0",
+  "lang": "c++",
+  "instructionSet": "amd64",
+  "supportsBinary": true,
+  "supportsBinaryObject": true
+ },
+ {
+  "id": "clang800",
+  "name": "x86-64 clang 8.0.0",
+  "lang": "c++",
+  "instructionSet": "amd64",
+  "supportsBinary": true,
+  "supportsBinaryObject": true
+ },
+ {
+  "id": "gsnapshot",
+  "name": "x86-64 gcc (trunk)",
+  "lang": "c++",
+  "instructionSet": "amd64",
+  "supportsBinary": true,
+  "supportsBinaryObject": true
+ },
+ {
+  "id": "g132",
+  "name": "x86-64 gcc 13.2",
+  "lang": "c++",
+  "instructionSet": "amd64",
+  "supportsBinary": true,
+  "supportsBinaryObject": true
+ },
+ {
+  "id": "g142",
+  "name": "x86-64 gcc 14.2",
+  "lang": "c++",
+  "instructionSet": "amd64",
+  "supportsBinary": true,
+  "supportsBinaryObject": true
+ },
+ {
+  "id": "g82",
+  "name": "x86-64 gcc 8.2",
+  "lang": "c++",
+  "instructionSet": "amd64",
+  "supportsBinary": true,
+  "supportsBinaryObject": true
+ },
+ {
+  "id": "arm64gm101a2",
+  "name": "ARM64 Morello gcc 10.1 Alpha 2",
+  "lang": "c++",
+  "instructionSet": "aarch64",
+  "supportsBinary": true,
+  "supportsBinaryObject": true
+ }
+]

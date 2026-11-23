@@ -6,18 +6,22 @@ import { WorkerEngine } from './engine-rpc.js';
 import { parseHexInput, toHex } from './hex-input.js';
 import { archGroups, archTitle, DEFAULT_ARCH } from './archs.js';
 import { DEFAULT_STATE, LIMITS, encodeState, decodeState, clampInt } from './url-state.js';
-import { EXAMPLES, MOCK_EXAMPLES } from './examples.js';
+import { EXAMPLES, CLASSIC_EXAMPLES, MOCK_EXAMPLES } from './examples.js';
 import { fetchBytes, fetchManifest, PATHS, formatSize, whenIdle } from './loader.js';
 import { WasmAssembler, isWasm } from './assembler.js';
 import { renderResult, renderEmpty, renderFailure, copyText, h } from './render.js';
 import { latestWins } from './compare.js';
 import { createComparePanels } from './compare-view.js';
 import { createTracePanel } from './trace.js';
+import { createAB } from './ab.js';                 // A–B comparison
+import { createCeImport } from './godbolt-ui.js';   // import from Compiler Explorer
+import { createInsight } from './insight-view.js';
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
 const MOCK = query.get('mock') === '1';       // ?mock=1: do not load the analyzer, use the mock (for work on the page)
 const NO_SW = query.get('nosw') === '1';      // ?nosw=1: do not register the service worker
+const VERSION = '0.1.1';                   // the page's version (footer); bump it here
 
 const el = {
   notice: $('notice'), code: $('code'), codeHint: $('code-hint'), messages: $('input-messages'),
@@ -40,7 +44,7 @@ const PLACEHOLDERS = {
 
 const state = { ...DEFAULT_STATE };
 const buffers = { hex: '', asm: '' }; // the text of each input mode; the text area shows buffers[state.mode]
-const ui = { hideEmpty: true, reportOpen: false, listingOpen: { asm: null, hex: null } }; // per input mode; null: open for assembly
+const ui = { hideEmpty: true, reportOpen: false, listingOpen: { asm: null, hex: null } }; // listing: per input mode; null: closed
 
 let manifest = { version: 'dev', files: {}, tables: [], assembler: null };
 let uarch = null;
@@ -70,7 +74,8 @@ let liveOn = true;
 try { liveOn = localStorage.getItem(LIVE_KEY) !== 'off'; } catch { /* storage unavailable: on */ }
 const liveRunner = latestWins(() => run({ auto: true }));
 
-// The compare panels (compare-view.js): all CPUs, alignment sweep. They get every successful result.
+// The compare panels (compare-view.js): all CPUs, alignment sweep. They get every successful result of single
+// mode; in A–B mode they are hidden (ab.css), keep their open state, and wait for the next single-mode result.
 const panels = createComparePanels({
   els: {
     cpus: $('cmp-cpus'), cpusInfo: $('cmp-cpus-info'), cpusBody: $('cmp-cpus-body'),
@@ -89,9 +94,16 @@ const panels = createComparePanels({
     state.cmpSweep = o.sweep;
     syncUrl(true);
   },
-  wantResult: () => { if (ready && !lastView && el.code.value.trim() !== '') run(); },
+  wantResult: () => { if (ready && !lastView && !ab?.active() && el.code.value.trim() !== '') run(); },
+});
+// The critical chain and the cost column on the result (insight-view.js).
+const insight = createInsight({
+  engine: () => engine,
+  onToggle: () => { const o = insight.open(); state.cost = o.cost; state.costNop = o.cost && o.nop; syncUrl(true); },
 });
 const tracePanel = createTracePanel({ analyze: (request) => engine.analyze(request), config: (v) => uarch?.configs?.[v.archKey] });
+let ab = null; // the A–B comparison (ab.js); in A–B mode lastView is {ab: view} (no trace, no compare panels)
+let ce = null; // the Compiler Explorer import (godbolt-ui.js)
 
 // ---- status line and progress ----------------------------------------------------------------------------------
 
@@ -162,7 +174,9 @@ function writeControls() {
   el.iter.value = state.minIterations;
   el.cycles.value = state.minCycles;
   panels.setOpen({ cpus: state.cmpCpus, sweep: state.cmpSweep });
+  insight.setOpen({ cost: state.cost, nop: state.costNop });
   paintDerived();
+  ab?.paint();
 }
 
 function paintDerived() {
@@ -177,7 +191,7 @@ function paintDerived() {
 }
 
 function runKey() {
-  return JSON.stringify([state.mode, state.mode === 'asm' ? state.syntax : '', el.code.value, state.arch, options()]);
+  return JSON.stringify([state.mode, state.mode === 'asm' ? state.syntax : '', el.code.value, state.arch, options(), ab?.key() ?? '']);
 }
 function paintStale() {
   const stale = !!lastView && runKey() !== lastRunKey;
@@ -346,11 +360,14 @@ function loadExample(ex) {
   run();
 }
 
+const ALL_EXAMPLES = [...EXAMPLES, ...CLASSIC_EXAMPLES, ...MOCK_EXAMPLES];
 function fillExamples() {
-  const list = engine?.capabilities.mock ? [...EXAMPLES, ...MOCK_EXAMPLES] : EXAMPLES;
-  el.examples.replaceChildren(h('option', { value: '', text: 'choose…' }),
-    ...list.map((e) => h('option', { value: e.id, text: e.title })));
+  const group = (label, list) => h('optgroup', { label }, list.map((e) => h('option', { value: e.id, text: e.title })));
+  el.examples.replaceChildren(h('option', { value: '', text: 'choose…' }), group('basics', EXAMPLES), group('classic loops', CLASSIC_EXAMPLES),
+    ...(engine?.capabilities.mock ? [group('mock', MOCK_EXAMPLES)] : []));
 }
+// the code of an example in the current input format
+const exampleCode = (ex) => ({ mode: state.mode, syntax: state.syntax, text: ex.text[state.mode === 'asm' ? state.syntax : 'hex'] });
 
 // ---- microarchitectures and their tables ---------------------------------------------------------------------------
 
@@ -398,8 +415,10 @@ function nextFrame() { // lets the busy state paint before the (synchronous) ana
 
 function draw() {
   if (!lastView) return;
+  if (lastView.ab) { ab.draw(lastView.ab); paintStale(); return; }
   const trace = lastView.response && !lastView.response.error ? tracePanel.update(lastView) : null;
   renderResult(el.body, { ...lastView, trace, ui, onUi: (k, v) => { ui[k] = v; if (k === 'hideEmpty') draw(); } });
+  insight.decorate(el.body, lastView);
   paintStale();
 }
 
@@ -462,11 +481,14 @@ async function run({ auto = false } = {}) {
   clearTimeout(rerunTimer);
   if (!auto) { liveRunner.cancel(); cancelledKey = ''; }
   if (!ready || el.run.disabled) return;
+  if (ce?.linkBox()) return; // a box that holds only a Compiler Explorer link is imported (analyze()), never analyzed
   const key = runKey();
-  if (auto && ((busy && key === inflight.key) || key === cancelledKey || (lastView && key === lastRunKey && !el.messages.firstChild))) return;
+  const messages = !!el.messages.firstChild || !!ab?.hasMessages();
+  if (auto && ((busy && key === inflight.key) || key === cancelledKey || (lastView && key === lastRunKey && !messages))) return;
   if (busy && (!auto || performance.now() - busySince > LONG_RUN_MS)) engine.cancel?.(); // a newer request replaces the one that is running
   const id = ++runSeq;
   if (!auto) clearMessages();
+  if (ab?.active()) { await runCompare(id, key, { auto }); return; } // awaited: live mode runs one comparison at a time
   const archKey = state.arch;
   const opts = options();
   const item = archItems.get(archKey);
@@ -516,6 +538,95 @@ async function run({ auto = false } = {}) {
       el.results.dataset.run = String(id); // the number of the run that is shown (tests wait for it)
     }
   }
+}
+
+// Analyze (button, Ctrl/⌘+Enter): a box that holds only a Compiler Explorer link is imported (the user's own
+// action; nothing else on the page contacts godbolt.org), otherwise the input is analyzed.
+function analyze() {
+  const link = ready ? ce?.linkBox() : null;
+  if (link) ce.start(link); else run();
+}
+
+// A–B mode: both sides, one after the other (ab.js gets the machine code and draws the comparison). auto: as in run().
+async function runCompare(id, key, { auto = false } = {}) {
+  const current = () => id === runSeq;
+  const opts = options();
+  let input;
+  try {
+    input = await ab.inputs(id, current);
+  } catch (e) {
+    showMessages([{ line: null, column: null, severity: 'error', message: `The assembler failed: ${e?.message ?? e}` }]);
+    return;
+  }
+  if (!input || !current()) return;
+  setBusy(true, { defer: auto });
+  inflight = { id, key };
+  try {
+    await Promise.all([...new Set([input.a?.arch, input.b?.arch].filter(Boolean))].map(ensureTable));
+    if (!auto || !engine.capabilities.cancel) await nextFrame();
+    if (!current()) return;
+    const view = await ab.analyze(input, (hex, arch) => engine.analyze(makeRequest(hex, arch, opts)), current);
+    if (!view || !current()) return;
+    lastView = { ab: view };
+    lastRunKey = key;
+    draw();
+    if (!auto) flash(ab.summary(view), { ms: 4000 });
+    syncUrl(true);
+    prefetchTables();
+  } catch (e) {
+    if (!current()) return;
+    lastView = null;
+    renderFailure(el.body, `Comparison failed: ${e?.message ?? e}`);
+  } finally {
+    if (inflight.id === id) inflight = { id: 0, key: '' };
+    if (current()) {
+      setBusy(false);
+      el.results.dataset.run = String(id);
+    }
+  }
+}
+
+// Puts code into the page's editor (side A), e.g. from Compiler Explorer or a swap.
+function importCode({ mode, syntax, text }, { run: andRun = true } = {}) {
+  if (mode === 'asm' || mode === 'hex') setMode(mode);
+  if (syntax === 'intel' || syntax === 'att') state.syntax = syntax;
+  el.code.value = buffers[state.mode] = text;
+  clearMessages();
+  writeControls();
+  changed();
+  if (andRun && ready) run();
+}
+
+function setupFeatures() {
+  ce = createCeImport({
+    sides: () => (state.ab ? ['A', 'B'] : ['A']),
+    getCode: (side) => (side === 'B' ? ab.getB() : { mode: state.mode, syntax: state.syntax, text: el.code.value }),
+    importInto(side, code, { alignment = null, undo = false } = {}) {
+      if (alignment !== null) state.alignmentOffset = alignment;
+      if (side === 'B') { ab.setB(code); writeControls(); if (ready && !undo) run(); } else importCode(code, { run: !undo });
+    },
+  });
+  ab = createAB({
+    state, el: { code: el.code, body: el.body }, archItems: () => archItems, archTitle, ensureAssembler, ensureTable,
+    machineCodeA: machineCode, changed, writeControls,
+    getA: () => ({ mode: state.mode, syntax: state.syntax, text: el.code.value }),
+    setA: importCode,
+    // A–B with the default example (or nothing) in A: the demo pair, one dot-product accumulator vs four
+    demo() {
+      const a = el.code.value.trim();
+      if (a !== '' && !Object.values(EXAMPLES[0].text).some((t) => t.trim() === a)) return null;
+      const [d1, d4] = ['dot1', 'dot4'].map((id) => CLASSIC_EXAMPLES.find((e) => e.id === id));
+      return { a: exampleCode(d1), b: exampleCode(d4) };
+    },
+    toggled() { // single <-> A–B
+      lastView = null;
+      changed();
+      if (ready && !el.run.disabled && el.code.value.trim() !== '') run();
+      else renderEmpty(el.body);
+    },
+    watchLinks: (textarea, side, messages) => ce.watch(textarea, side, messages),
+  });
+  ce.watch(el.code, 'A', el.messages);
 }
 
 // ---- offline: service worker and background caching ------------------------------------------------------------------
@@ -595,12 +706,12 @@ function bind() {
     const old = state.syntax;
     state.syntax = el.syntax.value === 'att' ? 'att' : 'intel';
     // an untouched example follows the syntax
-    const ex = [...EXAMPLES, ...MOCK_EXAMPLES].find((e) => e.text[old] === el.code.value);
+    const ex = ALL_EXAMPLES.find((e) => e.text[old] === el.code.value);
     if (ex && state.mode === 'asm') el.code.value = buffers.asm = ex.text[state.syntax];
     changed();
   });
   el.examples.addEventListener('change', () => {
-    const ex = [...EXAMPLES, ...MOCK_EXAMPLES].find((e) => e.id === el.examples.value);
+    const ex = ALL_EXAMPLES.find((e) => e.id === el.examples.value);
     el.examples.value = '';
     if (ex) loadExample(ex);
   });
@@ -626,10 +737,10 @@ function bind() {
     writeControls();
     changed({ rerun: true });
   });
-  el.run.addEventListener('click', () => (busy && el.run.classList.contains('busy') ? cancelRun() : run()));
+  el.run.addEventListener('click', () => (busy && el.run.classList.contains('busy') ? cancelRun() : analyze()));
   el.live.addEventListener('change', () => setLive(el.live.checked));
   document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); if (!busy) run(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); if (!busy) analyze(); }
   });
   el.copy.addEventListener('click', copyLink);
   el.reload.addEventListener('click', () => location.reload());
@@ -665,11 +776,13 @@ async function start() {
     buffers.hex = EXAMPLES[0].text.hex;
     buffers.asm = EXAMPLES[0].text.intel;
   }
+  $('app-version').textContent = VERSION;
   el.live.checked = liveOn;
   el.results.classList.toggle('live', liveOn);
   writeControls();
   fillExamples();
   bind();
+  setupFeatures();
 
   manifest = await fetchManifest();
   el.buildId.textContent = manifest.version;
