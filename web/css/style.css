@@ -622,7 +622,14 @@ th .cmp-copy { float: right; margin: 0; padding: 0 0 0 1rem; font-weight: normal
   .cpus:not(.open) .cpu-grid label.cpu:not(:has(input:checked)) { display: none; }
   .cpus .cpu-more { display: inline; }
   .cpus { grid-template-columns: repeat(auto-fill, minmax(7ch, 1fr)); }
-  #code { min-height: 7rem; height: 9.5rem; } /* (A–B's: ab.css) */
+  /* about 12 lines (the document scrolls on phones; the result still starts in the first screen); A–B's: ab.css */
+  #code { min-height: 7rem; height: clamp(9.5rem, 36vh, 20rem); }
+  /* every tab in view, on two rows if need be (a strip that scrolled sideways hid the last ones without a cue) */
+  .view-tabs { flex-wrap: wrap; overflow-x: visible; row-gap: 2px; }
+  /* the table of CPUs: why a CPU cannot run the code wraps in its cell, not cut at the screen's edge; the name goes */
+  .cmp-cpus td.cmp-bn { white-space: normal; min-width: 12ch; }
+  .cmp-cpus td.cmp-bar { width: 3rem; }
+  .cmp-cpus .cmp-name { display: none; }
 }
 
 /* ---- no scrolling (from 1200 × 700): the window is the page; the top bar, the panes and a one-line footer fill it

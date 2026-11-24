@@ -321,6 +321,27 @@ try {
     await page.close();
   }
 
+  // ---- phones (390 × 844): a code box of about 12 lines, every tab in view, the CPU table's notes not cut --------------
+  {
+    const page = await fresh({ width: 390, height: 844, mobile: true });
+    const r = await page.eval(`${W}
+      const c = $('code'), lines = c.clientHeight / parseFloat(getComputedStyle(c).lineHeight);
+      const strip = document.querySelector('#result-body > .view-tabs');
+      const tabsIn = [...strip.querySelectorAll('.view-tab')].every((t) => { const b = t.getBoundingClientRect(); return b.left >= 0 && b.right <= innerWidth; });
+      const out = { lines: Math.round(lines * 10) / 10, tabsIn, strip: [strip.scrollWidth, strip.clientWidth], top: Math.round($('results').getBoundingClientRect().top + scrollY), h: innerHeight };
+      pasteInto(c, ${js(fx('avx512.s'))}); await settle();
+      $('cpu-all').click(); await until(() => $('cmp-cpus').dataset.state === 'done', 90000); await wait(300);
+      const wrap = document.querySelector('#cmp-cpus .table-wrap'), bn = document.querySelector('table.cmp-cpus tr[data-arch="SKL"] .cmp-bn');
+      out.table = { wrap: [wrap.scrollWidth, wrap.clientWidth], bn: bn.textContent, bnRight: Math.round(bn.getBoundingClientRect().right), w: innerWidth, page: document.documentElement.scrollWidth - innerWidth };
+      return out;`, { timeout: 200000 });
+    check(r.lines >= 11, 'phone: the code box shows about 12 lines (was about 5)', js(r));
+    check(r.tabsIn && r.strip[0] <= r.strip[1], 'phone: every tab of the result is in view (no strip scrolled sideways)', js(r));
+    check(r.top < r.h, 'phone: the result still starts in the first screen', js([r.top, r.h]));
+    check(r.table.wrap[0] <= r.table.wrap[1] && r.table.bnRight <= r.table.w && /needs AVX-512 · 12 undecodable skipped/.test(r.table.bn) && r.table.page <= 0, 'phone: the CPU table fits; its notes wrap instead of being cut', js(r.table));
+    check(page.take().length === 0, 'phone: no errors', '');
+    await page.close();
+  }
+
   // ---- B6: an assembler error of the old code goes when a Compiler Explorer link replaces it (A, and B) ----------------
   {
     const page = await fresh();
