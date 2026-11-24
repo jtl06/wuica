@@ -72,7 +72,7 @@ fn python_json(v: &Value, out: &mut String) {
                     '\t' => out.push_str("\\t"),
                     '\u{8}' => out.push_str("\\b"),
                     '\u{c}' => out.push_str("\\f"),
-                    c if (c as u32) < 0x20 || (c as u32) > 0x7f => {
+                    c if (c as u32) < 0x20 || (c as u32) > 0x7e => {
                         let mut buf = [0u16; 2];
                         for u in c.encode_utf16(&mut buf) {
                             write!(out, "\\u{:04x}", u).unwrap();
@@ -308,4 +308,22 @@ pub fn run(engine: &Engine, path: &str) -> Result<(), String> {
         writeln!(out, "{v}").map_err(|e| e.to_string())?;
     }
     out.flush().map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The expected texts are Python's `json.dumps(..., sort_keys=True)` of the same values.
+    #[test]
+    fn writes_json_as_python_does() {
+        let vals = [0.5, 1.0, 1e16, 1.5e-07, 0.0001, 1e-05, 123456789012345.6, -2.5, 1e15, 2.675, 1.0 / 3.0, 7.0e22, 5e-324, f64::MAX];
+        let mut out = String::new();
+        python_json(&json!(vals), &mut out);
+        assert_eq!(out, "[0.5, 1.0, 1e+16, 1.5e-07, 0.0001, 1e-05, 123456789012345.6, -2.5, 1000000000000000.0, 2.675, \
+                         0.3333333333333333, 7e+22, 5e-324, 1.7976931348623157e+308]");
+        let mut out = String::new();
+        python_json(&json!({"b": ["\u{e9}\u{1F600}\u{7f}\u{1}\"\\\n"], "a": {"z": 1, "y": null, "x": true}}), &mut out);
+        assert_eq!(out, r#"{"a": {"x": true, "y": null, "z": 1}, "b": ["\u00e9\ud83d\ude00\u007f\u0001\"\\\n"]}"#);
+    }
 }
