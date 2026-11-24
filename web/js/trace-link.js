@@ -39,8 +39,10 @@ export function createTraceLink(env) {
     tr.classList.toggle('tl-sel', k === selRow);
     if (k === selRow) tr.setAttribute('aria-current', 'true'); else tr.removeAttribute('aria-current');
     tr.classList.toggle('tl-linked', k === linkedRow);
-    // one row is in the tab order (the selected one, else the first): arrows move between rows
+    // one row is in the tab order (the selected one, else the first): arrows move between rows; the links of that row
+    // only (its instruction's uops.info page: Tab from the row), so the table is one stop, not one per instruction
     tr.setAttribute('tabindex', k === roveRow ? '0' : '-1');
+    for (const a of tr.querySelectorAll('a[href]')) a.setAttribute('tabindex', k === roveRow ? '0' : '-1');
     const td = tr.querySelector(':scope > td.tl-wait');
     if (!waits) td?.remove();
     else if (!td) tr.insertBefore(waitCell(k), at(tr));
@@ -231,6 +233,8 @@ export function createTraceLink(env) {
     groups = rowGroups(v.response.rows);
     t.classList.add('tl-linkable');
     t.vr?.decorate('tl', paintRow);
+    // (the rows are the table's stop: its scroller is not one more; a row's arrows and focus scroll it)
+    t.closest('.table-wrap')?.setAttribute('tabindex', '-1');
     // a selection beyond the rows of this result (e.g. from a link to another block) is dropped
     let sel = env.getSel();
     if (sel >= groups.length) { env.setSel(-1); sel = -1; }

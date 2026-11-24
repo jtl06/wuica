@@ -247,6 +247,33 @@ try {
     await page.close();
   }
 
+  // ---- keyboard: the uop table is one tab stop (the focused row, then its link); j/k and the arrows inside -----------------
+  {
+    const page = await fresh();
+    await page.eval(`${W} const s = $('examples'); s.value = 'sha256'; s.dispatchEvent(new Event('change', { bubbles: true }));
+      await until(() => Number(tp()) > 100, 90000); await settle(); document.activeElement?.blur(); return 1;`, { timeout: 120000 });
+    const where = () => page.eval(`${W} const a = document.activeElement, t = document.querySelector('table.uops');
+      return { tag: a?.tagName, inTable: !!t?.contains(a), row: a?.closest?.('tbody tr') ? t.vr.index(a.closest('tbody tr')) : -1, link: a?.tagName === 'A',
+        stops: [...document.querySelectorAll('#result-body .table-wrap, #result-body table.uops a, #result-body table.uops tr')].filter((e) => e.tabIndex >= 0 && e.closest('.table-wrap') === t.closest('.table-wrap')).length };`);
+    await page.key('j'); await page.key('j'); await page.key('j');
+    const j3 = await where();
+    await page.key('ArrowDown', { keyCode: 40 });
+    const down = await where();
+    await page.key('Tab', { keyCode: 9 });
+    const tab1 = await where();
+    await page.key('Tab', { keyCode: 9 });
+    const tab2 = await where();
+    await page.key('Tab', { keyCode: 9, modifiers: 8 }); // Shift+Tab: back to the row's link
+    const back = await where();
+    check(j3.inTable && j3.row === 2 && down.row === 3, 'keys: j/k and ↓ move the focused row', js([j3, down]));
+    check(down.stops === 2, 'keys: the table has two stops in the tab order (the focused row and its link), not one per instruction', js(down));
+    check(tab1.link && tab1.row === 3, 'keys: Tab from the row: its uops.info link', js(tab1));
+    check(!tab2.inTable, 'keys: Tab again leaves the table', js(tab2));
+    check(back.link && back.row === 3, 'keys: Shift+Tab comes back to the row\'s link', js(back));
+    check(page.take().length === 0, 'keys: no errors', '');
+    await page.close();
+  }
+
   // ---- B6: an assembler error of the old code goes when a Compiler Explorer link replaces it (A, and B) ----------------
   {
     const page = await fresh();
