@@ -132,6 +132,29 @@ try {
     await browser.send('Target.disposeBrowserContext', { browserContextId: ctx });
   }
 
+  // ---- a text longer than a link holds (200,000 characters: url-state.js): no automatic reload (it would lose the
+  // text); the note instead
+  {
+    root = A;
+    const { browserContextId: ctx } = await browser.send('Target.createBrowserContext');
+    const w = await open(ctx);
+    await w.goto(`${origin}/?nosw=0`);
+    await w.ready();
+    await w.waitFor(`navigator.serviceWorker.controller && (await caches.keys()).length === 1`, 'the worker of A in control', 60000);
+    const len = await w.eval(`const c = document.getElementById('code'); if (document.getElementById('live').checked) document.getElementById('live').click();
+      c.value = Array.from({ length: 21000 }, (_, i) => '  nop # ' + String(i).padStart(6, '0')).join('\\n'); c.dispatchEvent(new Event('input', { bubbles: true })); await new Promise((r) => setTimeout(r, 800)); return c.value.length;`);
+    root = B;
+    await w.eval(`await (await navigator.serviceWorker.getRegistration()).update().catch(() => {}); return 1;`);
+    let s3 = null;
+    for (let k = 0; k < 60 && !s3?.note; k++) {
+      await sleep(250);
+      try { s3 = await w.read(`return { note: !document.getElementById('update-note').hidden, mark: sessionStorage.getItem('wuica-update-reload'), length: document.getElementById('code').value.length, build: document.getElementById('build-id').textContent };`, { ready: `document.getElementById('update-note') && document.getElementById('code')`, ms: 5000 }); } catch { /* reloading */ }
+    }
+    await sleep(3000); // (idle long enough for a reload, if one came)
+    const s4 = await w.read(`return { note: !document.getElementById('update-note').hidden, mark: sessionStorage.getItem('wuica-update-reload'), length: document.getElementById('code').value.length, build: document.getElementById('build-id').textContent };`, { ready: `document.getElementById('update-note') && document.getElementById('code')` });
+    check(len > 200000 && s4.note && s4.mark === null && s4.length === len && s4.build === vA, 'a text of over 200,000 characters: no automatic reload (the text would be lost), the note instead', JSON.stringify({ len, s3, s4: { ...s4, build: name(s4.build) } }));
+    await browser.send('Target.disposeBrowserContext', { browserContextId: ctx });
+  }
 } catch (e) {
   check(false, 'the test ran to the end', e?.stack ?? String(e));
 } finally {

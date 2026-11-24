@@ -1318,6 +1318,10 @@ async function updated() {
   while (!ready || busy || pool?.busy || performance.now() - lastInput < UPDATE_QUIET_MS) await sleep(250);
   syncUrl(true);
   if (location.hash.replace(/^#/, '') !== lastFragment) return; // the address does not hold the state
+  // and the state comes back from it as it is: a link carries at most 200,000 characters of text (url-state.js), so a
+  // longer text would be lost by the reload: the note stays instead
+  const want = collectState(), back = lastFragment ? decodeState(lastFragment) : { ...DEFAULT_STATE };
+  if (!back || back.text !== want.text || (want.ab && back.bText !== want.bText)) return;
   try {
     sessionStorage.setItem(UPDATE_KEY, mark);
     if (sessionStorage.getItem(UPDATE_KEY) !== mark) return;
