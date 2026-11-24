@@ -1,6 +1,6 @@
 // wuica: x86-64 basic-block throughput prediction (a Rust/WebAssembly port of uiCA) for Node.
 //
-//   import { createWuica } from '@jtl06/wuica';
+//   import { createWuica } from 'wuica-cli';
 //   const w = await createWuica();
 //   const r = await w.analyze('SKL', { source: 'add rax, rbx\nadd rbx, rax' });
 //   console.log(r.code, r.tp, r.bottlenecks, r.text);

@@ -4,9 +4,9 @@ Throughput prediction for x86-64 basic blocks, running locally in Node. **wuica*
 Rust/WebAssembly port of [uiCA](https://github.com/andreas-abel/uiCA). Its reports are bit-identical to the Python uiCA on the
 port's test corpus. The package contains:
 
-- a **library**: `import { createWuica } from '@jtl06/wuica'`
-- a **command-line tool**: `npx @jtl06/wuica loop.s -arch SKL`
-- a local **MCP server** (stdio) for AI agents: `npx @jtl06/wuica mcp`
+- a **library**: `import { createWuica } from 'wuica-cli'`
+- a **command-line tool**: `npx wuica-cli loop.s -arch SKL`
+- a local **MCP server** (stdio) for AI agents: `npx wuica-cli mcp`
 
 This is **not the official uiCA** (that is [uiCA.uops.info](https://uiCA.uops.info) and the
 [uiCA repository](https://github.com/andreas-abel/uiCA)). The instruction data (latencies, throughputs, port usage) comes
@@ -16,11 +16,11 @@ experimental models of the fork [jtl06/uiCA](https://github.com/jtl06/uiCA): **A
 
 Everything runs offline. The two WebAssembly modules (the analyzer, and LLVM's x86 assembler for assembly input) and the
 instruction tables are shipped brotli-compressed. A table is loaded the first time its microarchitecture is used.
-Requirements: Node.js 20 or later. **No dependencies**: `npm install @jtl06/wuica` (or `npx @jtl06/wuica`) adds this one
+Requirements: Node.js 20 or later. **No dependencies**: `npm install wuica-cli` (or `npx wuica-cli`) adds this one
 package, 2.3 MB unpacked; the MCP server is part of it.
 
-The commands are `wuica` and `wuica-mcp`. Install them with `npm install -g @jtl06/wuica`, or run without installing
-with `npx @jtl06/wuica ...`. The examples below write `wuica`.
+The commands are `wuica` and `wuica-mcp`. Install them with `npm install -g wuica-cli`, or run without installing
+with `npx wuica-cli ...`. The examples below write `wuica`.
 
 ## The CLI in five minutes
 
@@ -91,7 +91,7 @@ Decoder or DSB. `limits` gives the throughput each component alone would allow. 
 ## Library
 
 ```js
-import { createWuica } from '@jtl06/wuica';
+import { createWuica } from 'wuica-cli';
 
 const w = await createWuica();
 const r = await w.analyze('SKL', { source: 'loop:\n add rax, [rsi]\n add rsi, 8\n dec rcx\n jnz loop\n' });
@@ -182,7 +182,7 @@ claude mcp add wuica -- node /absolute/path/to/packages/wuica/bin/wuica.js mcp
 Once the package is published on npm:
 
 ```
-claude mcp add wuica -- npx -y @jtl06/wuica mcp
+claude mcp add wuica -- npx -y wuica-cli mcp
 ```
 
 Other MCP clients (Claude Desktop, Cursor, VS Code, ...) use the same command in their JSON configuration:
