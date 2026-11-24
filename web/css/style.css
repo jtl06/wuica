@@ -495,6 +495,7 @@ table.cmp-cpus { width: 100%; }
 /* the copy control of the shown tab: the end of the row (after A–B's side switch) */
 .ws-copy { flex: none; margin: 0 0 0.2rem auto; padding-left: 1rem; }
 .ws-side + .ws-copy { margin-left: 0; }
+th .cmp-copy { float: right; margin: 0; padding: 0 0 0 1rem; font-weight: normal; }
 /* A–B: the side the views show, at the end of the row */
 .ws-side { flex: none; display: inline-flex; gap: 2px; margin: 0 0 0.2rem auto; padding-left: 1rem; }
 .ws-side .ws-side-btn { padding: 0 0.45em; border: 0; min-width: 1.9em; opacity: 0.4; } /* (.ws-side: over .ab-tag's padding) */

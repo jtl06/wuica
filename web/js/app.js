@@ -1045,24 +1045,29 @@ const summaryOf = (r) => ({ tp: Number(r.tp), bottlenecks: r.bottlenecks ?? [], 
 // comparison of A–B's first tab.
 const linkNow = () => { const f = encodeState(collectState()); return location.origin + location.pathname + (f ? '#' + f : ''); };
 const sideMeta = (s, work) => ({ arch: s.archKey, archTitle: s.archTitle, per: work, config: uarch?.configs?.[s.archKey] ?? null, shown: s.shown ?? null });
+const codeOf = ({ mode, text }) => ({ code: String(text ?? '').replace(/\s+$/, ''), lang: mode === 'hex' ? '' : 'asm' });
 function copySingle(v) {
   setCopy('diff', null);
   const r = v.response;
   if (!r) { setCopy('all', null); return; }
   const work = state.aWork;
   setCopy('all', { what: 'the whole result', md: () => {
-    const all = report(r, { ...sideMeta(v, work), link: linkNow() });
+    const all = report(r, { ...sideMeta(v, work), ...codeOf({ mode: state.mode, text: el.code.value }), link: linkNow() });
     const cpus = panels.cpuResults();
-    return cpus ? `${all}\n${cpuTable(cpus, { per: work })}` : all;
+    if (!cpus) return all;
+    // the table of the checked CPUs after the headline and limits
+    const k = all.indexOf('\n\n');
+    return k < 0 ? `${all}\n${cpuTable(cpus, { per: work })}` : `${all.slice(0, k + 2)}${cpuTable(cpus, { per: work })}\n${all.slice(k + 2)}`;
   } });
 }
 function copyAB(view) {
   const meta = { workA: view.workA, workB: view.workB, archA: view.a?.archKey, archB: view.b?.archKey, shownA: view.a?.shown ?? null, shownB: view.b?.shown ?? null };
-  setCopy('diff', view.cmp?.okA && view.cmp?.okB ? { what: 'the A–B comparison', md: () => compare(view.a.response, view.b.response, meta) } : null);
+  setCopy('diff', view.cmp?.okA && view.cmp?.okB ? { what: 'the A–B comparison', md: () => compare(view.a.response, view.b.response, { ...meta, cpus: abCpus.rows() }) } : null);
+  setCopy('cpus', null); // (A–B: the table of A and B per CPU is copied with the diff)
   setCopy('all', { what: 'the whole A–B result', md: () => [
     compare(view.a?.response, view.b?.response, { ...meta, cpus: abCpus.rows() }),
-    report(view.a?.response, { title: 'A', ...(view.a ? sideMeta(view.a, view.workA) : {}) }),
-    report(view.b?.response, { title: 'B', ...(view.b ? sideMeta(view.b, view.workB) : {}) }),
+    report(view.a?.response, { title: 'A', ...(view.a ? sideMeta(view.a, view.workA) : {}), ...codeOf({ mode: state.mode, text: el.code.value }) }),
+    report(view.b?.response, { title: 'B', ...(view.b ? sideMeta(view.b, view.workB) : {}), ...codeOf(ab.getB()) }),
     `[open in wuica](${linkNow()})\n`,
   ].join('\n') });
 }

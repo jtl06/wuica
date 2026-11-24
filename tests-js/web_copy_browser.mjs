@@ -25,7 +25,8 @@ const PRE = `${HELPERS}
   const copied = async (start) => { window.__copied = null; start(); await until(() => window.__copied !== null, 20000); return window.__copied; };
   const ready = { trace: () => document.querySelector('details.trace-panel')?.wuicaTrace || document.querySelector('details.trace-ab')?.wuicaTraces,
     deps: () => ['done', 'error'].includes(document.querySelector('#deps .dp-body')?.dataset.state), mca: () => document.querySelector('.mca-head'),
-    sweep: () => document.querySelector('.sweep-head') };`;
+    sweep: () => document.querySelector('.sweep-head') && !/ pending/.test(reg.getCopy('sweep')?.md().split('\\n')[0] ?? ' pending'),
+    try: () => ['done', 'waiting'].includes(document.querySelector('#whatif-row .wi-body')?.dataset.state) };`;
 
 const { CLASSIC_EXAMPLES } = await import(pathToFileURL(path.join(ROOT, 'web/js/examples.js')).href);
 const { encodeState } = await import(pathToFileURL(path.join(ROOT, 'web/js/url-state.js')).href);
@@ -55,7 +56,7 @@ try {
     out.key = await copied(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', bubbles: true }))) === reg.getCopy('table').md();
     // the whole result
     const all = reg.getCopy('all') ? await copied(() => document.querySelector('.copy-all').click()) : null;
-    out.all = all !== null && all === reg.getCopy('all').md() && /^\\*\\*/.test(all) && /\\[open in wuica\\]/.test(all) ? true : (all ?? 'no provider').slice(0, 200);
+    out.all = all !== null && all === reg.getCopy('all').md() && /^\\*\\*/.test(all) && /\\[open in wuica\\]/.test(all) && /\\n\\x60{3}asm\\nloop:\\n/.test(all) ? true : (all ?? 'no provider').slice(0, 200);
     // no clipboard: a message, no error
     navigator.clipboard.writeText = async () => { throw new Error('denied'); };
     document.execCommand = () => false;
@@ -83,10 +84,13 @@ try {
   await p.goto(`${srv.origin}/?nosw=1#${encodeState({ mode: 'hex', text: d1.text.hex, arch: 'SKL', cpus: 'SKL,ZEN3' })}`);
   await p.ready();
   const cpus = await p.eval(`${PRE}
-    await settle(); await until(() => document.querySelectorAll('#cmp-cpus tbody tr .cmp-tp, #cmp-cpus tbody td').length && reg.getCopy('all')?.md().includes('| ZEN3'), 120000).catch(() => null);
+    await settle(); await until(() => reg.getCopy('cpus') && !reg.getCopy('all').md().includes('not analyzed yet') && /\\| ZEN3 /.test(reg.getCopy('all').md()), 120000);
     const t = await copied(() => document.querySelector('.copy-all').click());
-    return { same: t === reg.getCopy('all').md(), cpus: /\\| CPU +\\| Model/.test(t) && /\\| SKL /.test(t) && /\\| ZEN3 /.test(t) };`, { timeout: 300000 });
+    const c = await copied(() => document.querySelector('#cmp-cpus .cmp-copy').click());
+    return { same: t === reg.getCopy('all').md(), cpus: /\\| CPU +\\| Model/.test(t) && /\\| SKL +\\| Skylake +\\| 2015 /.test(t) && /\\| ZEN3 /.test(t),
+      table: c === reg.getCopy('cpus').md() && t.includes(c.split('\\n')[0]), status: $('status').textContent };`, { timeout: 300000 });
   check(cpus.same && cpus.cpus, 'several CPUs: "copy all" has the table of the checked CPUs', JSON.stringify(cpus));
+  check(cpus.table && /^copied: the table of the checked CPUs/.test(cpus.status), 'several CPUs: the table\'s own control copies it (markdown.js cpuTable)', JSON.stringify(cpus));
   await p.goto(`${srv.origin}/?nosw=1#${encodeState({ mode: 'hex', text: d1.text.hex, ab: true, bMode: 'hex', bText: d4.text.hex, arch: 'SKL' })}`);
   await p.ready();
   const ab = await p.eval(`${PRE}
@@ -94,7 +98,7 @@ try {
     tab('diff'); await settle(200);
     const d = await copied(() => document.querySelector('#result-body .view-tabs .ws-copy').click());
     const a = await copied(() => document.querySelector('.copy-all').click());
-    return { diff: d === reg.getCopy('diff').md(), head: d.split('\\n')[0], all: a === reg.getCopy('all').md(), sides: /^## A$/m.test(a) && /^## B$/m.test(a) && a.startsWith(d.split('\\n')[0]), status: $('status').textContent };`, { timeout: 300000 });
+    return { diff: d === reg.getCopy('diff').md(), head: d.split('\\n')[0], all: a === reg.getCopy('all').md(), sides: /^## A$/m.test(a) && /^## B$/m.test(a) && a.startsWith(d.split('\\n')[0]) && (a.match(/^\\x60{3}/gm) ?? []).length === 4, status: $('status').textContent };`, { timeout: 300000 });
   check(ab.diff && /^\*\*A [\d.]+ · B [\d.]+ cycles per iteration\*\*/.test(ab.head), 'A–B: the diff tab copies the comparison (markdown.js compare)', JSON.stringify(ab));
   check(ab.all && ab.sides && /^copied: the whole A–B result/.test(ab.status), 'A–B: "copy all" copies the comparison, then A and B', JSON.stringify(ab));
   check(p.problems.length === 0, 'no console errors', p.problems.join('\n'));
