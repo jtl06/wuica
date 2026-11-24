@@ -169,6 +169,23 @@ try {
     check((r.inWindow || r.scrolls) && r.about !== 'fixed', 'at 1200 × 600: Analyze in reach (the pane or the page scrolls); the limitations in the page', JSON.stringify(r));
     await page.close();
   }
+  // the status line in the top bar stays one line in the window with a long text (a CPU that cannot run the code, all
+  // CPUs checked): cut with …, the whole text in its title
+  for (const [w, h] of [[1440, 900], [1200, 700]]) {
+    const page = await Page.open(browser, { width: w, height: h });
+    await page.goto(`${srv.origin}/?nosw=1`);
+    await page.ready();
+    const avx = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/dogfood/avx512.s'), 'utf8');
+    const r = await page.eval(`${SETTLE}
+      $('cpu-all').click(); set($('code'), ${JSON.stringify(avx)}); await done(() => $('run').click()); await settle();
+      await until(() => document.querySelector('table.cmp-cpus tr[data-arch="ZEN3"]'), 90000);
+      document.querySelector('table.cmp-cpus tr[data-arch="ZEN3"]').click(); await until(() => /ZEN3/.test($('status').textContent)); await wait(200);
+      const s = $('status').getBoundingClientRect(), lh = parseFloat(getComputedStyle($('status')).lineHeight);
+      return { text: $('status').textContent, title: $('status').title, top: Math.round(s.top), height: Math.round(s.height), lh: Math.round(lh) };`, { timeout: 200000 });
+    check(/not a result/.test(r.text) && r.title === r.text && r.top >= 0 && r.height <= r.lh + 1, `${w}×${h}: the status line is one line in the window (cut with …, its text in the title)`, JSON.stringify(r));
+    check(page.take().length === 0, `${w}×${h}: status line: no errors`);
+    await page.close();
+  }
 } catch (e) {
   check(false, 'the test ran to the end', e?.stack ?? String(e));
 } finally {

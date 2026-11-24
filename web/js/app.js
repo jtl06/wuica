@@ -236,6 +236,7 @@ function paintStatus() {
     el.statusBar.style.width = total ? `${Math.min(100, (100 * got) / total).toFixed(1)}%` : '0';
   } else {
     el.status.textContent = idleStatus;
+    el.status.title = idleStatus;
     el.statusBar.style.width = '0';
     el.statusWrap.classList.add('idle'); // (hidden while idle: the result says the same)
   }
@@ -253,6 +254,7 @@ function flash(text, { error = false, ms = 2500, key = null } = {}) {
   flashKey = key;
   el.statusWrap.classList.remove('idle');
   el.status.textContent = text;
+  el.status.title = text; // (the line is cut with … when long: style.css)
   el.statusWrap.classList.toggle('error', error);
   flashTimer = setTimeout(() => { flashTimer = 0; flashKey = null; paintStatus(); }, ms);
 }

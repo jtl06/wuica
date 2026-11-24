@@ -346,6 +346,9 @@ fieldset.opt > label { clear: both; padding-left: 1.5ch; }
     display: flex; align-items: center; max-width: 40vw; z-index: 30; }
   .result-head .status { text-align: center; }
 }
+/* one line, cut with … (the whole text in its title): a long one ("… (not a result: needs AVX-512) · 15 CPUs") must not
+   wrap above the top of the window */
+#status { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .status .bar { display: block; height: 2px; margin-top: 2px; background: transparent; }
 .status .bar > span { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.15s linear; }
 .status.error { color: var(--caveat); }
