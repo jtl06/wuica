@@ -238,7 +238,34 @@ export async function bytesToAsm(bytes, { decode, assemble, pause = null }) {
   const r = await assemble(text);
   if (!r?.ok || !same(Array.from(r.bytes), want)) return { ok: false, why: 'does not assemble to the same bytes' };
   const fallback = items.flatMap((it, k) => (final[k].kind === 'byte' && it.asm !== null ? [{ asm: it.asm, line: final[k].text }] : []));
-  return { ok: true, text, instructions: instrs.length, fallback, checks, stage };
+  return { ok: true, text, instructions: instrs.length, fallback, checks, stage, mca: await toolText(items, final, total, assemble) };
+}
+
+// The same block for a tool that reads instructions, not bytes (llvm-mca, mca.js): a .byte line is no instruction to it,
+// so every decoded instruction that became one is written as an instruction again, in any encoding: a branch to its
+// label, a branch out of the block to the symbol OUT (llvm-mca needs no definition), anything else as its disassembly if
+// that assembles on its own (else it stays .byte). Returns the text, or null if the whole does not assemble.
+const OUT = 'out';
+async function toolText(items, lines, total, assemble) {
+  if (!items.some((it, k) => lines[k].kind === 'byte' && it.asm !== null)) return null; // the same as text
+  const labels = labelsOf(items, total);
+  const out = [], alone = new Map(); // text -> whether it assembles on its own
+  for (const [k, it] of items.entries()) {
+    let l = lines[k];
+    if (l.kind === 'byte' && it.asm !== null) {
+      if (it.target !== null) l = { kind: 'branch', text: `${it.mnemonic} ${it.external ? EXT : labels.get(it.target) ?? OUT}` };
+      else if (it.text) {
+        if (!alone.has(it.text)) alone.set(it.text, !!(await assemble(it.text + '\n'))?.ok);
+        if (alone.get(it.text)) l = { kind: 'instr', text: it.text };
+      }
+    }
+    out.push(l);
+  }
+  // labels only where a branch goes
+  const used = new Set(items.map((it, k) => (out[k].kind === 'branch' && !it.external ? it.target : null)));
+  for (const t of [...labels.keys()]) if (!used.has(t)) labels.delete(t);
+  const text = render(items, out, labels, total);
+  return (await assemble(text))?.ok ? text : null;
 }
 
 // An objdump-like listing of machine code (what the hex input reads back), with the decoder's disassembly; branch
@@ -269,7 +296,7 @@ export function createConverter({ decoder, assembler }) {
     const [d, a] = await Promise.all([decoder(), assembler()]);
     if (!d || !a) return null;
     const r = await bytesToAsm(bytes, { decode: (hex) => d.decode(hex, 'ALL'), assemble: (text) => a.assemble(text, 'intel'), pause });
-    return r.ok ? { mode: 'asm', syntax: 'intel', text: r.text } : null;
+    return r.ok ? { mode: 'asm', syntax: 'intel', text: r.text, ...(r.mca ? { mca: r.mca } : {}) } : null;
   }
   async function convert({ mode, syntax, text }, to, other = '') {
     if (mode === to || String(text).trim() === '') return null;

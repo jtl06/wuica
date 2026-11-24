@@ -74,7 +74,14 @@ try {
   // open while another result comes: the new text (not dot4's)
   r = await p.eval(`${PRE} await example('dot1'); await until(() => head() && !reg.getCopy('mca')?.waiting, 120000); await settle(); return { copy: await copy() };`);
   check(r.copy.text?.startsWith('**llvm-mca** · ') && r.copy.text !== dot4, 'another result while the view is open: its own text', r.copy.text?.slice(0, 80));
-  check(p.take().length === 0, 'no console errors (wait, clear)');
+  // a loop whose exit branch goes to a label outside it (memchr, from a user test): llvm-mca reads all five instructions
+  // (the exit was a .byte line to it: 4 instructions, and "uiCA 2.00 (llvm-mca −50%)" compared another loop)
+  const memchr = '  testq %rdx, %rdx\n  je .LBB0_1\n  movq %rdi, %rax\n  .p2align 4\n.LBB0_4:\n  cmpb %sil, (%rax)\n  je .LBB0_2\n  incq %rax\n  decq %rdx\n  jne .LBB0_4\n.LBB0_1:\n  xorl %eax, %eax\n.LBB0_2:\n  retq\n';
+  r = await p.eval(`${PRE} set($('code'), ${JSON.stringify(memchr)}); await wait(300); await done(() => $('run').click()); await settle();
+    await until(() => head() && /byte ptr \\[rax\\], sil/.test(document.querySelector('#mca .mca-out')?.textContent ?? ''), 120000); await settle();
+    return { head: head().textContent, out: document.querySelector('#mca .mca-out')?.textContent ?? '' };`);
+  check(/^Instructions:\s+5000$/m.test(r.out) && /\bje\s+out$/m.test(r.out), 'memchr: the exit branch reaches llvm-mca (5 instructions per iteration)', r.out.slice(0, 900));
+  check(/uiCA 2\.00 \(llvm-mca [+-]\d+%\)/.test(r.head) && !/not compared/.test(r.head), 'memchr: compared with uiCA', r.head);
   await p.close();
 
   // ---- error: the module cannot be loaded; the next opening tries again

@@ -4,7 +4,7 @@
 // {name, cpu, iterations, text, out} records from a native llvm-mca-22), the outputs must be identical.
 //   node tests-js/web_mca.mjs [--native FILE]
 import fs from 'node:fs';
-import { MCPU, parseMca, mcaIterations } from '../web/js/mca.js';
+import { MCPU, parseMca, mcaIterations, versusUica } from '../web/js/mca.js';
 import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
 import { SHA256_BLOCK_ASM } from '../web/js/showcase-asm.js';
 
@@ -77,6 +77,16 @@ for (const [arch, cpu] of Object.entries(MCPU)) {
   const m = parseMca(r.out);
   check(r.code === 0 && m.instructions === 2949 * m.iterations && m.perIteration > 400, 'SHA-256 on skylake', JSON.stringify(m) + r.err.slice(0, 200));
   console.log(`  SHA-256: ${m.perIteration?.toFixed(2)} cycles/iteration over ${m.iterations} iterations, ${r.ms.toFixed(0)} ms`);
+}
+// compared with uiCA only when llvm-mca read as many instructions (the memchr loop of a user test lost its exit branch:
+// 4 of 5 instructions, "llvm-mca -50%" for another loop)
+{
+  const four = parseMca('Iterations:        1000\nInstructions:      4000\nTotal Cycles:      1008\n');
+  const r = versusUica(four, 5, 2);
+  check(!r.same && r.text === 'llvm-mca read 4 of the 5 instructions: not compared' && !('diff' in r), 'fewer instructions than uiCA analyzed: said, no percentage', JSON.stringify(r));
+  const five = versusUica(parseMca('Iterations:        1000\nInstructions:      5000\nTotal Cycles:      1340\n'), 5, 2);
+  check(five.same && Math.abs(five.diff - -33) < 1e-9, 'as many instructions: the difference in percent', JSON.stringify(five));
+  check(!versusUica(parseMca(''), 5, 2).same, 'no numbers from llvm-mca: not compared');
 }
 check(mcaIterations(4) === 1000 && mcaIterations(2949) === 101 && mcaIterations(100000) === 100, 'iterations: 100 to 1000, about 300,000 instructions');
 

@@ -39,6 +39,13 @@ const back = async (text) => { const r = await assembler.assemble(text, 'intel')
   check(f.ok && same(await back(ft), fwd), 'branches: the text assembles to the same bytes', ft);
   check(/^loop:\n/.test(ft) && /\n {2}jz L1\n/.test(ft) && /\n {2}jmp L2\n/.test(ft) && /\nL1:\n {2}dec rax\n {2}jnz loop\n/.test(ft), 'branches: targets inside the block are labels', ft);
   check(/\n {2}\.byte 0xe9, 0xdc, 0xff, 0xff, 0xff {2}# jmp -0x10\nL2:\n$/.test(ft) && f.fallback.length === 1, 'branches: a branch out of the block is a .byte line with its disassembly', ft);
+  // for llvm-mca (mca.js), which skips .byte lines: the same instructions, the branch out of the block to a symbol
+  check(r.mca === null, 'a text without .byte lines is its own text for llvm-mca', r.mca);
+  check(f.mca === ft.replace(/\.byte 0xe9, 0xdc, 0xff, 0xff, 0xff {2}# jmp -0x10/, 'jmp out') && (await assembler.assemble(f.mca, 'intel')).ok,
+    'branches: for llvm-mca the branch out of the block is an instruction (jmp out)', f.mca);
+  // the memchr loop of the user test: cmp; je (out of the loop); inc; dec; jne
+  const scan = await bytesToAsm(hexToBytes('403830740a48ffc048ffca75f3'), io);
+  check(scan.ok && scan.mca === 'loop:\n  cmp byte ptr [rax], sil\n  jz out\n  inc rax\n  dec rdx\n  jnz loop\n', 'memchr: every instruction reaches llvm-mca', JSON.stringify(scan));
 
   // a long branch whose target would fit a short one: {disp32}
   const long = hexToBytes('4883c0010f85f6ffffff');
@@ -107,7 +114,7 @@ for (const name of fs.readdirSync(new URL('tests-js/fixtures/godbolt/', root)).f
     if (p.ok) blocks.set(p.hex, `${name}: ${fn.name}`);
   }
 }
-let n = 0, fallback = 0, bad = 0, ms = 0;
+let n = 0, fallback = 0, bad = 0, ms = 0, short = 0;
 const kinds = new Map(), stages = [0, 0, 0, 0];
 for (const [hex, source] of blocks) {
   const bytes = hexToBytes(hex);
@@ -120,12 +127,17 @@ for (const [hex, source] of blocks) {
   n += r.instructions;
   stages[r.stage]++;
   fallback += r.fallback.length;
+  // llvm-mca's text: one instruction line per decoded instruction
+  const decoded = r.instructions;
+  const tool = (r.mca ?? r.text).split('\n').filter((l) => /^ {2}(?!\.byte )\S/.test(l)).length;
+  if (tool !== decoded) { short++; if (short <= 5) console.log(`llvm-mca text short: ${source}: ${tool} of ${decoded}`); }
   for (const f of r.fallback) {
     const k = f.asm.replace(/ .*/, '') + (/^\S+ [a-z0-9]+, [a-z0-9]+$/.test(f.asm) ? ' reg, reg' : '');
     kinds.set(k, (kinds.get(k) ?? 0) + 1);
   }
 }
 check(bad === 0, `round trip: every block comes back as the same bytes (${blocks.size} blocks)`, `${bad} did not`);
+check(short === 0, 'every decoded instruction is an instruction in the text for llvm-mca', `${short} blocks`);
 check(stages[2] === 0 && stages[3] === 0, 'round trip: no block needed its branches (or everything) as bytes', JSON.stringify(stages));
 console.log(`${blocks.size} blocks, ${n} instructions (${(ms / 1000).toFixed(1)} s): ${fallback} as .byte (${(100 * fallback / Math.max(1, n)).toFixed(1)}%); blocks by stage ${stages.join(' / ')}`);
 console.log(`.byte by kind: ${[...kinds].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, c]) => `${k} ${c}`).join(', ')}`);

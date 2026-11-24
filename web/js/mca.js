@@ -3,7 +3,9 @@
 // (several MB) is downloaded on first use and runs in a worker (mca-worker.js).
 //
 // The input is the analyzed bytes as Intel assembly (asm-text.js: assembles back to exactly these bytes), so llvm-mca
-// sees what uiCA saw, whether it was typed as assembly or hex. The CPU is the uiCA microarchitecture's LLVM
+// sees what uiCA saw, whether it was typed as assembly or hex; an instruction that became a .byte line there (a branch
+// out of the block, another encoding) is an instruction again in its text for tools (`mca`), since llvm-mca skips data.
+// uiCA's number is compared only when llvm-mca read as many instructions as uiCA analyzed (versusUica). The CPU is the uiCA microarchitecture's LLVM
 // counterpart (MCPU below). The cycles per iteration are llvm-mca's Total Cycles / Iterations.
 //
 // env: { available(), module() -> promise of a WebAssembly.Module, toAsm(hex) -> promise of {text} | null,
@@ -34,6 +36,15 @@ export function parseMca(out) {
 export function mcaIterations(instrs) { return Math.max(100, Math.min(1000, Math.floor(300000 / Math.max(1, instrs)))); }
 
 const fmt = (x) => (x === null || x === undefined ? '–' : Number(x).toFixed(2));
+
+// llvm-mca's run against uiCA's prediction: m (parseMca), instrs (the instructions uiCA analyzed), uica (its cycles per
+// iteration). Compared only when llvm-mca saw as many instructions per iteration: else it analyzed another loop.
+//   -> {same: true, diff: % or null} | {same: false, text}
+export function versusUica(m, instrs, uica) {
+  const per = m?.iterations ? m.instructions / m.iterations : null;
+  if (per !== instrs) return { same: false, text: `llvm-mca read ${per === null ? '?' : Number(per.toFixed(2))} of the ${instrs} instructions: not compared` };
+  return { same: true, diff: m.perIteration && uica ? (100 * (m.perIteration - uica)) / uica : null };
+}
 
 export function createMca(env = {}) {
   let open = false, timeline = false, bottleneck = false;
@@ -119,7 +130,7 @@ export function createMca(env = {}) {
       const args = ['-mtriple=x86_64-unknown-linux-gnu', `-mcpu=${cpu}`, `-iterations=${iterations}`, '-'];
       if (timeline) args.splice(-1, 0, '-timeline', '-timeline-max-iterations=3');
       if (bottleneck) args.splice(-1, 0, '-bottleneck-analysis');
-      const res = await run(args, '.intel_syntax noprefix\n' + asm.text);
+      const res = await run(args, '.intel_syntax noprefix\n' + (asm.mca ?? asm.text));
       if (mine !== seq) return;
       if (res.error || res.code !== 0) {
         setCopy('mca', null);
@@ -130,12 +141,14 @@ export function createMca(env = {}) {
       const out = res.out;
       setCopy('mca', { what: "llvm-mca's text", md: () => mcaText(out, `${m.iterations} iterations`) });
       const uica = Number(r.tp ?? r.throughput);
-      const diff = m.perIteration && uica ? (100 * (m.perIteration - uica)) / uica : null;
+      const vs = versusUica(m, instrs, uica);
+      const diff = vs.same ? vs.diff : null;
       hint.textContent = m.perIteration ? ` · ${fmt(m.perIteration)} cycles/iteration` : '';
       const head = h('div', { class: 'mca-head' },
         h('span', { class: 'mca-tp', title: `Total Cycles ${m.cycles} / Iterations ${m.iterations}` }, h('b', { text: fmt(m.perIteration) }), ' cycles/iteration'),
         h('span', { class: 'meta' }, ` · ${cpu} · ${m.iterations} iterations · block rthroughput ${fmt(m.rthroughput)} · IPC ${fmt(m.ipc)}`),
-        Number.isFinite(uica) ? h('span', { class: 'mca-vs', title: "uiCA's prediction for the same code and CPU" },
+        !vs.same ? h('span', { class: 'mca-vs mca-far', text: ` · ${vs.text}` })
+          : Number.isFinite(uica) ? h('span', { class: 'mca-vs', title: "uiCA's prediction for the same code and CPU" },
           ` · uiCA ${fmt(uica)}`, diff !== null ? h('span', { class: Math.abs(diff) > 10 ? 'mca-far' : 'mca-near', text: ` (llvm-mca ${diff >= 0 ? '+' : ''}${diff.toFixed(0)}%)` }) : null) : null,
         h('span', { class: 'hint', text: ` · ${res.ms.toFixed(0)} ms` }));
       body.replaceChildren(...[tools, head, h('pre', { class: 'mca-out', tabindex: '0', text: res.out.replace(/\s+$/, '') }),
