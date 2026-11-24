@@ -322,16 +322,32 @@ export function deps(g, { slack = null, shown = null } = {}) {
   return join([head, arcs, sl]);
 }
 
+// Offsets (ascending integers) with runs of three or more as ranges: [0..7, 9, 10, 32..39] -> "0–7, 9, 10, 32–39".
+/** @param {number[]} list */
+export function offsetRanges(list) {
+  const out = [];
+  for (let i = 0; i < list.length;) {
+    let j = i;
+    while (j + 1 < list.length && list[j + 1] === list[j] + 1) j++;
+    if (j - i >= 2) out.push(`${list[i]}–${list[j]}`); else for (let k = i; k <= j; k++) out.push(String(list[k]));
+    i = j + 1;
+  }
+  return out.join(', ');
+}
+
 // The sweep: cycles/iteration at each alignment offset (the page's compare.js sweepData: {n, values (null: none),
-// failed, pending, complete, min, max, minAt, maxAt}).
+// failed, pending, complete, min, max, minAt, maxAt, flat}).
 /**
  * @param {{n: number, values: (number | null)[], failed: number[], pending: number, complete: boolean, min: number | null,
- *   max: number | null, minAt: number[], maxAt: number[]} | null} d
+ *   max: number | null, minAt: number[], maxAt: number[], flat?: boolean} | null} d
  * @param {string} [arch]
  */
 export function sweep(d, arch = '') {
   if (!d) return '';
-  const head = `**sweep** · alignment 0–${d.n - 1}${arch ? ` · ${text(arch)}` : ''}${d.min !== null ? ` · min ${f2(d.min)} at ${d.minAt.join(', ')} · max ${f2(d.max)} at ${d.maxAt.join(', ')}` : ''}${d.complete ? '' : ` · ${d.pending} pending`}`;
+  // (as the page says it: one value at every offset, else the minimum and the maximum with their offsets as ranges)
+  const spread = d.min === null ? '' : d.flat && d.complete ? ` · ${f2(d.min)} at every offset`
+    : ` · min ${f2(d.min)} at ${offsetRanges(d.minAt)} · max ${f2(d.max)} at ${offsetRanges(d.maxAt)}`;
+  const head = `**sweep** · alignment 0–${d.n - 1}${arch ? ` · ${text(arch)}` : ''}${spread}${d.complete ? '' : ` · ${d.pending} pending`}`;
   return join([head, table(['Offset', 'Cycles/iteration'], d.values.map((v, i) => [String(i), v === null ? (d.failed.includes(i) ? 'failed' : '') : f2(v)]), ['r', 'r'])]);
 }
 

@@ -8,7 +8,7 @@
 import { h, cyc } from './render.js';
 import { makeRequest } from './engine.js';
 import { setCopy } from './copy-view.js';
-import { sweep as sweepText, cpuTable } from './markdown.js';
+import { sweep as sweepText, cpuTable, offsetRanges } from './markdown.js';
 import { ARCH_INFO, PROTOTYPE } from './archs.js';
 import {
   summarize, compareRows, sweepData, sweepLayout, compareKey, sweepKey, resultKey, ResultCache, latestWins, SWEEP_OFFSETS,
@@ -377,9 +377,9 @@ export function createComparePanels(env) {
     else if (d.flat && d.complete) head = h('span', null, h('span', { class: 'v', text: fmtTp(d.min) }), ' at every offset');
     else {
       head = [
-        h('span', { class: 'min', title: `offsets ${d.minAt.join(', ')}` }, 'min ', h('span', { class: 'v', text: fmtTp(d.min) })),
+        h('span', { class: 'min', title: `offsets ${offsetRanges(d.minAt)}` }, 'min ', h('span', { class: 'v', text: fmtTp(d.min) })),
         h('span', { class: 'sep', text: ' · ' }),
-        h('span', { class: 'max', title: `offsets ${d.maxAt.join(', ')}` }, 'max ', h('span', { class: 'v', text: fmtTp(d.max) })),
+        h('span', { class: 'max', title: `offsets ${offsetRanges(d.maxAt)}` }, 'max ', h('span', { class: 'v', text: fmtTp(d.max) })),
       ];
     }
     const parts = [

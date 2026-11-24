@@ -5,7 +5,7 @@
 //
 //   node tests-js/web_md_views.mjs
 import fs from 'node:fs';
-import { bound, bytes, deps, sweep, traceRange, mcaText, shownLabels } from '../web/js/markdown.js';
+import { bound, bytes, deps, sweep, traceRange, mcaText, shownLabels, offsetRanges } from '../web/js/markdown.js';
 import { codeMapModel } from '../web/js/codemap.js';
 import { depGraph } from '../web/js/deps.js';
 import { annotateLatencies, slackOf, fmtSlack } from '../web/js/deps-slack.js';
@@ -19,6 +19,17 @@ let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + String(detail).slice(0, 3000) : ''}`); } }
 const root = new URL('../', import.meta.url);
 const GOLD = new URL('tests-js/fixtures/md-views/', root);
+
+// The sweep's head says what the page says: a flat sweep is one value "at every offset" (not the 64 offsets twice, as a
+// user test copied it), and long lists of offsets are ranges
+{
+  const at = (f) => Array.from({ length: 64 }, (_, k) => ({ tp: f(k) }));
+  const flat = sweep(sweepData(at(() => 16)), 'ZEN3').split('\n')[0];
+  check(flat === '**sweep** · alignment 0–63 · ZEN3 · 16.00 at every offset', 'a flat sweep: one value at every offset', flat);
+  const steps = sweep(sweepData(at((k) => (k % 32 < 8 ? 2 : k === 20 || k === 21 ? 3 : 2.5))), 'SKL').split('\n')[0];
+  check(steps === '**sweep** · alignment 0–63 · SKL · min 2.00 at 0–7, 32–39 · max 3.00 at 20, 21', 'min and max offsets as ranges', steps);
+  check(offsetRanges([]) === '' && offsetRanges([5]) === '5' && offsetRanges([1, 2, 3, 5, 7, 8]) === '1–3, 5, 7, 8', 'offsetRanges: runs of three or more', offsetRanges([1, 2, 3, 5, 7, 8]));
+}
 
 const wasm = new URL('target/wasm32-unknown-unknown/release/wuica_wasm.wasm', root);
 if (!fs.existsSync(wasm)) {
