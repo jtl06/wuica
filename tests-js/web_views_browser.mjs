@@ -554,7 +554,7 @@ try {
       return out;`);
     check(r.label === 'copy' && r.last && !r.old && /^copied/.test(r.flash), 'copy: one control, at the end of the tab row', JSON.stringify(r));
     const [md, csv, json] = r.got;
-    check(md?.startsWith('**2.00 cycles/iteration** · SKL') && /\| `add rax, 0x1` +\|/.test(md) && /\[open in wuica\]\(http:\/\/127\.0\.0\.1:\d+\/\?nosw=1#v=1&c=/.test(md), 'copy: Markdown with a link to the page', md);
+    check(md?.startsWith('**2.00 cycles/iteration** · SKL') && /\| `add rax, 0x1` +\|/.test(md) && /\| \*\*Total\*\* +\|/.test(md), 'copy: Markdown, the headline and the uop table (the whole result with its link: "copy all", web_copy_browser)', md);
     check(csv?.split('\r\n').length === want.rows.length + 2 && csv.startsWith('instruction,opcode,notes,MITE'), 'copy: CSV', csv);
     check(JSON.parse(json ?? '{}').response?.tp === want.tp && JSON.parse(json).request?.hex === chain.hex, 'copy: JSON with the request', (json ?? '').slice(0, 200));
   }
