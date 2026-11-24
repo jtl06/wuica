@@ -210,10 +210,13 @@ export class Facade {
   // options of both blocks are checked before either is analyzed; both analyses within one deadline.
   async diff(arch, request, ctx = {}) {
     if (request !== null && typeof request === 'object') {
+      // the options both blocks share: the request's (no block named), then each block's size and own options
+      const shared = request.options !== null && typeof request.options === 'object' ? this.#check({ options: request.options }) : null;
+      if (shared) return { failure: shared };
       for (const k of ['a', 'b']) {
         const x = request[k];
         if (x === null || typeof x !== 'object') continue;
-        const bad = this.#check(request.options !== undefined && x.options === undefined ? { ...x, options: request.options } : x);
+        const bad = this.#check(x);
         if (bad) { bad.error = `${k.toUpperCase()}: ${bad.error}`; bad.stderr = [{ text: bad.error }]; return { failure: bad }; }
       }
     }

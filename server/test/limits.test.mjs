@@ -119,6 +119,12 @@ test('what-if and diff: the server\'s caps, one deadline for all their analyses,
     const b = await post(s.base, '/api/diff/SKL', { a: { hex: 'zz' }, b: { hex: HEX, options: { minIterations: 5000 } } });
     assert.equal(b.status, 400);
     assert.match(b.json.error, /^B: `options.minIterations` is 5000/);
+    // the options both blocks share: the request's, no block named
+    const o = await post(s.base, '/api/diff/SKL', { a: { hex: HEX }, b: { hex: HEX }, options: { minCycles: 50000 } });
+    assert.equal(o.status, 400);
+    assert.equal(o.json.error, '`options.minCycles` is 50000; the limit of this server is 20000');
+    const ob = await post(s.base, '/api/diff/SKL', { a: { hex: HEX }, b: { hex: HEX, options: { minCycles: 50000 } }, options: { minCycles: 100 } });
+    assert.equal(ob.json.error, 'B: `options.minCycles` is 50000; the limit of this server is 20000');
     // one deadline: the request stops after about one job's budget; what-if returns what finished (the base, simpleFrontEnd)
     // and marks the rest "not run: deadline"
     const t0 = performance.now();
