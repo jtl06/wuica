@@ -63,9 +63,10 @@ Simulation (as in uiCA):
   -minCycles N           simulate at least N cycles (default: 500)
 
 Other:
-  -threads N             with several microarchitectures: analyze them on up to N threads (default: the environment
-                         variable WUICA_THREADS, else one thread per two microarchitectures; 1 = one after another)
-  -data DIR              directory with uarch.json and arch/*.json (default: the tables in the package)
+  -threads N             with several microarchitectures or files: up to N threads (default: the environment variable
+                         WUICA_THREADS, else by the amount of work: none below about 0.3 s, else 2 to 8; 1 = one
+                         after another)
+  -data DIR              directory with uarch.json and arch/*.bin or *.json (default: the tables in the package)
   -h, --help             this text
   -v, --version          the version (with -json: also the uiCA commit of the data and model)
 
