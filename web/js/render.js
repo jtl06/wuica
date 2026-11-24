@@ -5,6 +5,7 @@ import { caveats } from './caveats.js';
 import { formatListing } from './listing.js';
 import { accuracyNote } from './archs.js';
 import { VRows, ALL_UP_TO } from './vrows.js';
+import { colorInstr } from './asm-hl.js';
 
 const UOPS_INFO = 'https://www.uops.info/';
 
@@ -185,6 +186,7 @@ export function uopTable(r, hideEmpty, limit = Infinity, { shown = null } = {}) 
     if (!extra && typeof x.url === 'string' && x.url.startsWith(UOPS_INFO)) {
       label = h('a', { href: x.url, rel: 'noopener noreferrer', target: '_blank', title: `${x.label}\n${x.instrStr ? `${x.instrStr} on uops.info` : 'uops.info'}`, text });
     } else label = h('span', { title: x.label, text }); // (the whole instruction: the column can be cut, on phones)
+    if (!extra && x.notes !== 'X') colorInstr(label, text); // (in colour: an instruction with data; the text stays)
     const tr = h('tr', { class: [extra ? 'extra' : '', x.notes === 'X' ? 'unsupported' : ''].filter(Boolean).join(' ') || null },
       h('th', { scope: 'row', class: 'first' }, label),
       h('td', { class: 'note', title: NOTES[x.notes] ?? null, text: x.notes ?? '' }));

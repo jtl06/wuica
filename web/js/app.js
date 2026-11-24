@@ -32,6 +32,7 @@ import { replacesText, detectSyntax } from './loop-find.js';
 import { createKeys } from './keys.js';           // keyboard shortcuts, the ? overlay
 import { createABCpus } from './ab-cpus.js';       // A–B on every checked CPU
 import { branchLabels, analyzedLines } from './branch-label.js'; // branch targets as labels in the uop table
+import { attachHighlight } from './asm-hl.js';     // the code box in colour
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -52,6 +53,9 @@ const el = {
   results: $('results'), body: $('result-body'), buildId: $('build-id'), updateNote: $('update-note'), reload: $('reload'),
   toolbar: document.querySelector('#input .toolbar'),
 };
+
+// (state: below; read when the layer draws)
+const codeColors = attachHighlight(el.code, { mode: () => state.mode, syntax: () => state.syntax });
 
 const HINTS = { hex: 'hex or objdump -d', asm: '' };
 const PLACEHOLDERS = {
@@ -269,6 +273,7 @@ function writeControls() {
   el.code.setAttribute('aria-label', state.mode === 'asm' ? 'Assembly code' : 'Machine code (hex)');
   el.codeHint.textContent = HINTS[state.mode];
   el.codeHint.hidden = !HINTS[state.mode];
+  codeColors.refresh();
   paintCpus();
   el.align.value = state.alignmentOffset;
   for (const r of document.querySelectorAll('input[name="init"]')) r.checked = r.value === state.initPolicy;
@@ -475,6 +480,7 @@ function clearMessages() {
   el.messages.replaceChildren();
   delete el.messages.dataset.key;
   el.code.removeAttribute('aria-invalid');
+  codeColors.setDiagnostics([]);
 }
 
 function selectLine(line) {
@@ -498,6 +504,7 @@ function showMessages(items) {
   el.messages.replaceChildren(...messageList(items, selectLine));
   el.messages.dataset.key = key;
   if (items.some((d) => d.severity === 'error')) el.code.setAttribute('aria-invalid', 'true'); else el.code.removeAttribute('aria-invalid');
+  codeColors.setDiagnostics(items);
 }
 
 function showAssemblerMissing() {

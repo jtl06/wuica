@@ -214,6 +214,32 @@ export class Page {
   close() { return this.browser.send('Target.closeTarget', { targetId: this.targetId }); }
 }
 
+// A PNG (8-bit RGB or RGBA, not interlaced: Chrome's screenshots) as {width, height, rgba} (no dependencies).
+export async function decodePng(buf) {
+  const { inflateSync } = await import('node:zlib');
+  let at = 8, width = 0, height = 0, type = 0;
+  const idat = [];
+  while (at < buf.length) {
+    const len = buf.readUInt32BE(at), kind = buf.toString('latin1', at + 4, at + 8), data = buf.subarray(at + 8, at + 8 + len);
+    if (kind === 'IHDR') { width = data.readUInt32BE(0); height = data.readUInt32BE(4); type = data[9]; if (data[8] !== 8 || data[12] !== 0 || (type !== 2 && type !== 6)) throw new Error('decodePng: not 8-bit RGB(A), or interlaced'); }
+    if (kind === 'IDAT') idat.push(data);
+    at += 12 + len;
+  }
+  const raw = inflateSync(Buffer.concat(idat)), bpp = type === 6 ? 4 : 3, stride = width * bpp;
+  const px = Buffer.alloc(height * stride), rgba = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    const f = raw[y * (stride + 1)], src = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1)), row = y * stride;
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? px[row + x - bpp] : 0, b = y ? px[row - stride + x] : 0, c = x >= bpp && y ? px[row - stride + x - bpp] : 0;
+      const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+      const pred = f === 0 ? 0 : f === 1 ? a : f === 2 ? b : f === 3 ? (a + b) >> 1 : pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      px[row + x] = (src[x] + pred) & 255;
+    }
+  }
+  for (let i = 0, j = 0; i < width * height; i++, j += bpp) { rgba[4 * i] = px[j]; rgba[4 * i + 1] = px[j + 1]; rgba[4 * i + 2] = px[j + 2]; rgba[4 * i + 3] = bpp === 4 ? px[j + 3] : 255; }
+  return { width, height, rgba };
+}
+
 // Helpers evaluated in the page (prepend to an expression).
 export const HELPERS = `
   const $ = (id) => document.getElementById(id);

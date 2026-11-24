@@ -6,6 +6,7 @@
 // The first half has no DOM (tests-js/web_codemap.mjs runs it under Node).
 
 import { h } from './render.js';
+import { colorInstr } from './asm-hl.js';
 import { jumpToRow } from './rowjump.js';
 import { setCopy } from './copy-view.js';
 import { bytes as bytesText } from './markdown.js';
@@ -132,7 +133,7 @@ export function createCodeMap(env = {}) {
       const g = groups[sel];
       g.classList.add('sel'); g.setAttribute('aria-selected', 'true');
       svg.setAttribute('aria-activedescendant', `ly-i${sel}`);
-      info.textContent = describe(m.instrs[sel]);
+      paintInfo(m.instrs[sel]);
       if (jump) jumpToRow(root, m.instrs[sel].row);
     };
     svg.addEventListener('click', (e) => { const g = e.target.closest?.('.ly-ins'); if (g) select(Number(g.dataset.i), true); });
@@ -141,7 +142,10 @@ export function createCodeMap(env = {}) {
       if (step !== undefined) { e.preventDefault(); select(Number.isFinite(step) ? sel + step : step < 0 ? 0 : m.instrs.length - 1); groups[sel].scrollIntoView?.({ block: 'nearest' }); }
       else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(sel, true); }
     });
-    const info = h('p', { class: 'ly-info code', 'aria-live': 'polite', text: describe(m.instrs[sel]) });
+    const info = h('p', { class: 'ly-info code', 'aria-live': 'polite' });
+    // the instruction in colour, then its place (the text: describe's)
+    const paintInfo = (ins) => info.replaceChildren(colorInstr(h('span'), ins.label), describe(ins).slice(String(ins.label).length));
+    paintInfo(m.instrs[sel]);
 
     const shift = (d) => {
       const b = h('button', { type: 'button', class: 'plain ly-shift', 'aria-label': `alignment offset ${d < 0 ? '−' : '+'}1`, title: `alignment offset ${d < 0 ? '−' : '+'}1 (a new analysis)`, text: d < 0 ? '◂' : '▸', disabled: !env.setAlign || (d < 0 ? m.offset <= 0 : m.offset >= 63) });

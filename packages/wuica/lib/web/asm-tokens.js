@@ -28,6 +28,11 @@
 //   text       anything else: a quoted string, a stray character
 //   error      only where the caller passes diagnostics with a column range (opts.diagnostics); never guessed
 //
+// tokenizeLine(line, syntax, opts) -> {tokens, open}: one line of a text for a caller that tokenizes a text a line at a
+// time (the page's editor: only the lines in view); syntax 'intel' or 'att' (detected once for the text by the caller);
+// opts {objdump: the line is read as objdump's (objdumpLine, when objdumpText says the text is objdump's), block: a block
+// comment is open at its start, diagnostics: the line's}; open: a block comment is open at its end. tokenizeText is the
+// same, line after line.
 // tokenizeText(text, syntax, opts) -> one token list per line: the syntax detected once for the text ('auto':
 // loop-find.js detectSyntax), objdump text recognised once (a line with objdump's indented address and tab, its byte
 // column or its function header; then every address-prefixed line is read as objdump's), block comments followed across
@@ -323,21 +328,30 @@ export function tokenizeText(text, syntax = 'auto', opts = {}) {
   let att = syntax === 'att', od = false;
   try {
     if (syntax !== 'att' && syntax !== 'intel') att = detectSyntax(t) === 'att';
-    od = lines.some(looksObjdump);
+    od = objdumpText(lines);
   } catch { /* plain */ }
   const byLine = new Map();
   for (const d of Array.isArray(opts.diagnostics) ? opts.diagnostics : []) if (d && d.line >= 1) (byLine.get(d.line) ?? byLine.set(d.line, []).get(d.line)).push(d);
   let block = false;
   return lines.map((l, k) => {
-    try {
-      const r = lineTokens(l, att, od && looksObjdumpLine(l), block, byLine.get(k + 1) ?? []);
-      block = r.open;
-      return r.tokens;
-    } catch {
-      block = false;
-      return whole(l);
-    }
+    const r = tokenizeLine(l, att ? 'att' : 'intel', { objdump: od && objdumpLine(l), block, diagnostics: byLine.get(k + 1) ?? [] });
+    block = r.open;
+    return r.tokens;
   });
 }
+
+// One line with the state it starts and ends in (see the top): {tokens, open}; never throws (a line that cannot be
+// read is one text token, and closes a block comment).
+export function tokenizeLine(line, syntax = 'intel', opts = {}) {
+  const s = typeof line === 'string' ? line : String(line ?? '');
+  try {
+    return lineTokens(s, syntax === 'att', !!opts.objdump, !!opts.block, Array.isArray(opts.diagnostics) ? opts.diagnostics : []);
+  } catch {
+    return { tokens: whole(s), open: false };
+  }
+}
+// The text (its lines) is objdump's: one line looks like objdump's on its own (then every line with an address column
+// is read as objdump's: objdumpLine).
+export const objdumpText = (lines) => lines.some(looksObjdump);
 // in objdump text: a line with an address column or the header
-const looksObjdumpLine = (l) => /^[ \t]*[0-9a-fA-F]+:/.test(l) || OD_HEADER.test(l);
+export const objdumpLine = (l) => /^[ \t]*[0-9a-fA-F]+:/.test(l) || OD_HEADER.test(l);

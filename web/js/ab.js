@@ -15,6 +15,7 @@
 // analyze() runs them, draw() shows the result. All text goes in through textContent.
 
 import { h, uopTable, NOTES, watchFit, nearestLimit, columnGroup, copyAllButton, messageList } from './render.js';
+import { attachHighlight, colorInstr } from './asm-hl.js'; // B's code box in colour; the instructions of the Δ table
 import { caveats } from './caveats.js';
 import { GROUP_LABEL } from './archs.js';
 import { compareResponses, signed, cycles, signedCycles } from './ab-diff.js';
@@ -76,7 +77,7 @@ export function createAB(api) {
 
   // ---- side A: the page's toolbar is its row (a tag in front, the elements at the end) ------------------------------
   // The editor's own elements go into a column (display: contents outside A–B mode: the layout does not change).
-  const field = api.el.code.parentElement;
+  const field = api.el.code.closest('.code-field') ?? api.el.code.parentElement; // (the box itself is in asm-hl.js's wrapper)
   const aCol = h('div', { class: 'field ab-a-col' });
   aCol.append(...field.childNodes);
   field.append(aCol);
@@ -105,6 +106,7 @@ export function createAB(api) {
       bWork.label),
     bCode, bMessages);
   field.append(bSide);
+  const bColors = attachHighlight(bCode, { mode: () => state.bMode, syntax: () => state.bSyntax });
 
   // wide (ab.css, from 1200 px): the table per CPU and the headline side by side, only while the headline fits beside it
   // (nothing of its two lines cut); else the headline under the table, as on narrow screens
@@ -176,6 +178,7 @@ export function createAB(api) {
     bCode.setAttribute('aria-label', `B: ${state.bMode === 'asm' ? 'assembly code' : 'machine code (hex)'}`);
     fillArchs();
     bArch.value = archOk(state.bArch) ? state.bArch : '';
+    bColors.refresh();
     aDesc.textContent = `${state.mode === 'asm' ? `asm (${state.syntax === 'att' ? 'AT&T' : 'Intel'})` : 'hex'} · ${state.arch}`;
     paintWork();
   }
@@ -271,6 +274,7 @@ export function createAB(api) {
   function clearB() {
     bMessages.replaceChildren();
     bCode.removeAttribute('aria-invalid');
+    bColors.setDiagnostics([]);
   }
   function selectLine(line) {
     const lines = bCode.value.split('\n');
@@ -282,6 +286,7 @@ export function createAB(api) {
   function showB(items) {
     bMessages.replaceChildren(...messageList(items, selectLine));
     if (items.some((d) => d.severity === 'error')) bCode.setAttribute('aria-invalid', 'true');
+    bColors.setDiagnostics(items);
   }
 
   // The messages are replaced only when there are new ones (no flicker while live mode re-runs).
@@ -508,7 +513,7 @@ export function createAB(api) {
     const extras = u.extras.length ? h('span', { class: 'ab-x', title: `includes ${u.extras.length} uop${u.extras.length === 1 ? '' : 's'} the renamer inserts before it (${u.extras.join(', ')})`, text: ` +${u.extras.length}` }) : null;
     const note = u.notes ? h('span', { class: 'ab-note', title: NOTES[u.notes] ?? null, text: ` ${u.notes}` }) : null;
     const text = shownLabel?.get(u.row) ?? u.label;
-    return h('td', { class: 'ab-i' }, h('span', { title: text !== u.label ? u.label : null, text }), note, extras);
+    return h('td', { class: 'ab-i' }, colorInstr(h('span', { title: text !== u.label ? u.label : null }), text), note, extras);
   }
 
   function diff(view, archA, archB) {

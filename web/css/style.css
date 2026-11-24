@@ -47,6 +47,17 @@
   --page-gutter: clamp(1.25rem, 4vw, 4rem);
   --label-width: 6.5ch;     /* the labels of the result rows: limits, chain, uops, text, trace */
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  /* assembly in colour (asm-hl.js: the code boxes, the instruction columns): a few of the palette's hues, so both themes
+     have them (each AA on --surface and --background); an error is also underlined, never only a colour */
+  --tok-mnemonic: var(--code);
+  --tok-register: var(--text);
+  --tok-number: var(--date);
+  --tok-punct: var(--subtle);
+  --tok-label: var(--heading);
+  --tok-directive: var(--external);
+  --tok-comment: var(--subtle);
+  --tok-size: var(--description);
+  --tok-error: var(--caveat);
   color-scheme: dark;
 }
 /* light: a paper version with darker (AA) versions of the same hues. Follows the system unless the toggle
@@ -247,6 +258,30 @@ textarea {
   overflow: auto;
 }
 textarea::placeholder { color: var(--subtle); opacity: 1; }
+/* a code box in colour (asm-hl.js): the box in a wrapper that takes its place, and a layer of coloured text over the box,
+   which keeps its text transparent; the layer has the box's metrics (copied by asm-hl.js), no pointer events, and its
+   text as generated content (a find-in-page finds the box's) */
+.ed { position: relative; min-width: 0; }
+.ed-hl { display: none; position: absolute; inset: 0; margin: 0; overflow: hidden; pointer-events: none; user-select: none;
+  border: 1px solid transparent; white-space: pre; color: var(--code); background: none; }
+.ed.ed-on > .ed-hl { display: block; }
+.ed.ed-on > textarea { color: transparent; }
+.ed-hl [data-t]::before { content: attr(data-t); }
+/* forced colours (Windows high contrast): the system colours the box's text, so the box shows it, not the layer */
+@media (forced-colors: active) { .ed > .ed-hl { display: none !important; } }
+.ed-size { position: absolute; width: 1px; height: 1px; }
+.ed-err { text-decoration: underline dotted var(--tok-error); text-decoration-skip-ink: none; text-underline-offset: 3px; }
+.ed-warn { text-decoration: underline dotted var(--date); text-decoration-skip-ink: none; text-underline-offset: 3px; }
+/* the tokens (asm-tokens.js kinds): colour and decoration only (the layer must keep the box's glyph positions) */
+.tok-mnemonic, .tok-prefix { color: var(--tok-mnemonic); }
+.tok-register { color: var(--tok-register); }
+.tok-number { color: var(--tok-number); }
+.tok-punct { color: var(--tok-punct); }
+.tok-label, .tok-symbol { color: var(--tok-label); }
+.tok-directive { color: var(--tok-directive); }
+.tok-comment, .tok-address, .tok-bytes { color: var(--tok-comment); }
+.tok-size { color: var(--tok-size); }
+.tok-error { color: var(--tok-error); text-decoration: underline wavy var(--tok-error); text-decoration-skip-ink: none; text-underline-offset: 3px; }
 textarea[aria-invalid="true"] { border-color: var(--caveat); }
 select { max-width: 100%; }
 select:disabled, button:disabled, input:disabled { opacity: 0.55; cursor: not-allowed; }
@@ -540,6 +575,7 @@ th .cmp-copy { float: right; margin: 0; padding: 0 0 0 1rem; font-weight: normal
   .pane { border-bottom: 0; }
   .pane-input { padding-right: 1rem; display: flex; flex-direction: column; min-height: 0; overflow: hidden; position: relative; }
   .pane-input .code-field { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+  .pane-input .ed { flex: 1 1 0; display: flex; flex-direction: column; } /* (the box's place: asm-hl.js) */
   #code, #code-b { flex: 1 1 0; height: auto; min-height: 6rem; resize: none; }
   body:not(.ab-on) #code { height: clamp(14rem, calc(100vh - 13.5rem), 60rem); min-height: 8rem; }
   /* A–B: A over B, each half of what is left */

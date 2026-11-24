@@ -3,7 +3,8 @@
 // file in tests-js/fixtures); the time of a 3,000-line paste (the SHA-256 showcase's instructions, from the analyzer, as
 // Intel text and as objdump lines with their bytes). Usage: node tests-js/web_asm_tokens.mjs
 import fs from 'node:fs';
-import { tokenize, tokenizeText, className, ansi, KINDS, isRegister } from '../web/js/asm-tokens.js';
+import { tokenize, tokenizeText, tokenizeLine, objdumpText, objdumpLine, className, ansi, KINDS, isRegister } from '../web/js/asm-tokens.js';
+import { detectSyntax } from '../web/js/loop-find.js';
 import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES } from '../web/js/examples.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { tableBytes } from './tables.mjs';
@@ -116,6 +117,30 @@ for (let n = 0; n < 3000; n++) {
 check(randomOk, 'random bytes: every character in one token, no throw');
 check(covers('', tokenize('')) && tokenize(null).length === 0 && tokenize(undefined).length === 0 && covers('42', tokenize(42)) && tokenizeText(null).length === 1, 'odd inputs');
 for (const ex of [...EXAMPLES, ...CLASSIC_EXAMPLES, ...SHOWCASE_EXAMPLES]) for (const [k, text] of Object.entries(ex.text ?? {})) for (const syntax of ['auto', 'intel', 'att']) coversText(String(text), syntax, `example ${ex.id} (${k})`);
+
+// ---- tokenizeLine: a line at a time (the page's editor, asm-hl.js: the syntax and objdump decided once for the text,
+// each line with the block-comment state of the line before) gives tokenizeText's tokens
+function lineByLine(text, syntax, diagnostics = []) {
+  const lines = text.split('\n');
+  const syn = syntax === 'auto' ? (detectSyntax(text) === 'att' ? 'att' : 'intel') : syntax;
+  const od = objdumpText(lines);
+  let block = false;
+  return lines.map((l, k) => {
+    const r = tokenizeLine(l, syn, { objdump: od && objdumpLine(l), block, diagnostics: diagnostics.filter((d) => d.line === k + 1) });
+    block = r.open;
+    return r.tokens;
+  });
+}
+const sameAsText = (text, syntax, name, diagnostics = []) => {
+  const a = JSON.stringify(lineByLine(text, syntax, diagnostics)), b = JSON.stringify(tokenizeText(text, syntax, { diagnostics }));
+  check(a === b, `${name} (${syntax}): tokenizeLine line by line = tokenizeText`, a === b ? '' : `${a.slice(0, 300)}\n  vs ${b.slice(0, 300)}`);
+};
+for (const ex of [...EXAMPLES, ...CLASSIC_EXAMPLES, ...SHOWCASE_EXAMPLES]) for (const [k, text] of Object.entries(ex.text ?? {})) for (const syntax of ['auto', 'intel', 'att']) sameAsText(String(text), syntax, `example ${ex.id} (${k})`);
+sameAsText('x /* one\ntwo */ add rax, 1\n/* a */ /* b\n c\n d */ dec rcx # /* not\n\tmovl %eax, %ebx /* e */\n', 'intel', 'block comments over lines');
+sameAsText('  add rax, 1\n  frob rax; add rbx, 2\n  bogus\n', 'intel', 'diagnostics', [{ line: 2, column: 3, severity: 'error', message: 'invalid instruction mnemonic' }, { line: 3, column: 3, endColumn: 8, severity: 'error' }]);
+check(tokenizeLine('/* open', 'intel').open && !tokenizeLine('/* closed */', 'intel').open && tokenizeLine('still */ add', 'intel', { block: true }).tokens[0].kind === 'comment'
+  && !tokenizeLine('# /* in a comment', 'intel').open, 'tokenizeLine: the block-comment state at the end of the line');
+check(objdumpText(['  401120:\t48 83 c0 01          \tadd    $0x1,%rax']) && !objdumpText(['loop:', '  add rax, 1']) && objdumpLine('  401124:\t49 ff cf  dec') && !objdumpLine('  add rax, 1'), 'objdumpText, objdumpLine');
 const fixtures = new URL('tests-js/fixtures/', root);
 const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(new URL(`${e.name}/`, dir)) : [new URL(e.name, dir)]));
 const files = walk(fixtures);
@@ -151,6 +176,7 @@ if (fs.existsSync(wasm) && fs.existsSync(new URL('data/uarch.json', root))) {
   })].join('\n');
   for (const [name, text] of [['Intel', intel], ['objdump', objdump]]) {
     coversText(text, 'auto', `the SHA-256 showcase (${name})`);
+    sameAsText(text, 'auto', `the SHA-256 showcase (${name})`);
     for (let i = 0; i < 5; i++) tokenizeText(text, 'auto'); // warm
     const n = 20, t0 = performance.now();
     for (let i = 0; i < n; i++) tokenizeText(text, 'auto');

@@ -6,6 +6,7 @@
 // The model (no DOM) is bound-core.js, which the npm package shares; this file renders it.
 
 import { h } from './render.js';
+import { colorInstr } from './asm-hl.js';
 import { jumpToRow, finishJump } from './rowjump.js';
 import { portSetBlame, setLine, markPorts } from './portset.js';
 import { slotsLine } from './slots.js';
@@ -136,7 +137,7 @@ export function createBound(env = {}) {
     const top = topRows(b, 5);
     const list = top.map(({ row: k, share }) => {
       const btn = h('button', { type: 'button', class: 'plain bd-row', title: `${r.rows[k].label}: ${f2(b.weights[k])} of ${f2(b.total)} ${b.unit} (${pct(share)} of ${name})` },
-        h('span', { class: 'bd-ins', text: r.rows[k].label }), ' ', h('span', { class: 'bd-share', text: pct(share) }));
+        colorInstr(h('span', { class: 'bd-ins' }), shown?.[k] ?? r.rows[k].label), ' ', h('span', { class: 'bd-share', text: pct(share) }));
       btn.addEventListener('click', () => jumpToRow(root, k));
       return h('li', null, btn);
     });
