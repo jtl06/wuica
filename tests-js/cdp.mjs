@@ -144,10 +144,11 @@ export async function stopChrome(proc, dirs = []) {
 }
 
 /** starts headless Chrome with a fresh profile: { browser, close() } */
-export async function launch(chrome, { extraArgs = [] } = {}) {
+// scrollbars: Chrome without --hide-scrollbars (which makes every scroll bar 0 px, a ::-webkit-scrollbar sheet too)
+export async function launch(chrome, { extraArgs = [], scrollbars = false } = {}) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-chrome-'));
   const proc = spawn(chrome, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run',
-    '--no-default-browser-check', '--disable-extensions', '--hide-scrollbars', ...extraArgs, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+    '--no-default-browser-check', '--disable-extensions', ...(scrollbars ? [] : ['--hide-scrollbars']), ...extraArgs, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
   const wsUrl = await new Promise((resolve, reject) => {
     let err = '';
     const t = setTimeout(() => reject(new Error('Chrome did not start: ' + err.slice(-500))), 30000);

@@ -58,6 +58,7 @@ export function attachHighlight(ta, opts) {
   let diagVersion = 0, diagKey = '';
   let frame = 0;
   let size = '';
+  let barW = 0, barH = 0;       // the box's scroll bars (px; 0 where they are drawn over the content)
 
   const fail = () => {
     dead = true;
@@ -88,6 +89,7 @@ export function attachHighlight(ta, opts) {
     const bt = parseFloat(cs.borderTopWidth) || 0, br = parseFloat(cs.borderRightWidth) || 0;
     const bb = parseFloat(cs.borderBottomWidth) || 0, bl = parseFloat(cs.borderLeftWidth) || 0;
     const sw = Math.max(0, ta.offsetWidth - ta.clientWidth - bl - br), sh = Math.max(0, ta.offsetHeight - ta.clientHeight - bt - bb);
+    barW = sw; barH = sh;
     const key = `${bt} ${br + sw} ${bb + sh} ${bl}`;
     if (key !== size) { size = key; layer.style.clipPath = `inset(${bt}px ${br + sw}px ${bb + sh}px ${bl}px)`; }
   }
@@ -230,10 +232,13 @@ export function attachHighlight(ta, opts) {
       drawn = { version, key, a, b };
     } else drawn.version = version;
     // the same scroll range as the box (the layer is as large as the box with its scroll bars)
-    if (sizer.dataset.at !== `${sw} ${sh}`) {
-      sizer.dataset.at = `${sw} ${sh}`;
-      sizer.style.top = `${sh}px`;
-      sizer.style.left = `${sw}px`;
+    // (the box scrolls to its scroll size less its inside, the layer to its own less its whole inside, which has no scroll
+    // bars: the bars' thickness more)
+    const at = `${sw + barW} ${sh + barH}`;
+    if (sizer.dataset.at !== at) {
+      sizer.dataset.at = at;
+      sizer.style.top = `${sh + barH}px`;
+      sizer.style.left = `${sw + barW}px`;
     }
     if (layer.scrollTop !== st) layer.scrollTop = st;
     if (layer.scrollLeft !== sl) layer.scrollLeft = sl;
