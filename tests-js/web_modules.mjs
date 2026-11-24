@@ -184,6 +184,21 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
 }
 
 // --- objdump listing ------------------------------------------------------------------------------------------------
+// The text expected for instruction k of `instrs` (rows of kind instr), worked out here: a direct branch or call,
+// disassembled at address 0 ("jnz 0xfffffffffffffff5": its target relative to it), at its target in the block, or
+// relative to itself (".+0x5") when the target is outside or the displacement is a relocation's placeholder (rel32 0);
+// other instructions as the analyzer wrote them.
+function listed(instrs, k) {
+  const at = [];
+  let size = 0;
+  for (const x of instrs) { at.push(size); size += x.opcode.length / 2; }
+  const m = /^((?:(?:bnd|notrack) )?(?:j[a-z]{1,4}|loop[a-z]{0,2}|jrcxz|jecxz|xbegin|call)) (0x[0-9a-f]{1,16})$/i.exec(instrs[k].label.trim());
+  if (!m) return instrs[k].label;
+  const rel = Number(BigInt.asIntN(64, BigInt(m[2]))), target = at[k] + rel, op = instrs[k].opcode.toLowerCase();
+  const placeholder = op.length >= 10 && op.endsWith('00000000') && (/^e[89]/.test(op.slice(-10)) || /^0f8/.test(op.slice(-12)));
+  if (target < 0 || target > size || placeholder) return `${m[1]} ${rel < 0 ? '.-0x' + (-rel).toString(16) : '.+0x' + rel.toString(16)}`;
+  return `${m[1]} 0x${target.toString(16)}`;
+}
 {
   const m = new MockEngine();
   await m.loadUarch(JSON.stringify(UARCH));
@@ -203,14 +218,14 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
     const instrs = r.rows.filter((x) => x.kind === 'instr');
     // (each instruction's text; a direct branch with its target in the block, or relative to it: never an address of
     // the branch disassembled at 0)
-    const branch = (x) => /^(?:j[a-z]{1,4}|loop[a-z]{0,2}|jrcxz|jecxz|xbegin|call) 0x[0-9a-f]+$/i.test(x.label);
-    check(t.lines.length === instrs.length && t.lines.every((x, i) => (branch(instrs[i]) ? x.text.startsWith(instrs[i].label.split(' ')[0] + ' ') && !/0x[0-9a-f]{9,}/.test(x.text) : x.text === instrs[i].label)), `listing ${c.source}/${c.arch}: one line per instruction`, t.text);
+    check(t.lines.length === instrs.length && t.lines.every((x, i) => x.text === listed(instrs, i)), `listing ${c.source}/${c.arch}: one line per instruction`, t.text);
     check(parseHexInput(t.text).hex === instrs.map((x) => x.opcode).join('').toLowerCase(), `listing ${c.source}/${c.arch}: round trip through the hex input`);
   }
   const syn = await m.analyze(makeRequest(SYNTHETIC_HEX, 'SKL'));
   const st = formatListing(syn.rows);
   check(syn.rows.some((x) => x.kind !== 'instr') && st.lines.length === syn.rows.filter((x) => x.kind === 'instr').length && !/Uop/.test(st.text), 'listing: regMerge/stackSync rows are not instructions', st.text);
-  check(syn.rows.some((x) => x.notes === 'M') && st.lines.some((x) => x.text.split(' ')[0] === syn.rows.find((y) => y.notes === 'M').label.split(' ')[0]), 'listing: the macro-fused row is listed');
+  const synInstrs = syn.rows.filter((x) => x.kind === 'instr'), fusedAt = synInstrs.findIndex((x) => x.notes === 'M');
+  check(fusedAt >= 0 && st.lines[fusedAt].text === listed(synInstrs, fusedAt), 'listing: the macro-fused row is listed');
   // offsets grow past four digits; a 15-byte instruction; no rows
   const many = Array.from({ length: 5000 }, () => ({ kind: 'instr', opcode: '4883C001', label: 'add rax, 0x1' }));
   many.push({ kind: 'instr', opcode: '26663E2E6567F0F2F348C7841100000000FF', label: 'long' }, { kind: 'stackSync', label: '<Stack Sync Uop>' });
