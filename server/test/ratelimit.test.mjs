@@ -1,5 +1,6 @@
 // The per-IP token bucket: unit behavior and through the server (CF-Connecting-IP, exemptions, compare cost, MCP).
 import test from 'node:test';
+import http from 'node:http';
 import assert from 'node:assert/strict';
 import { RateLimiter } from '../lib/ratelimit.js';
 import { start, post, get, HEX } from './helpers.mjs';
@@ -98,6 +99,35 @@ test('server: a compare costs at least one token per job it can run at once', as
     assert.equal(await left(ip(31)), 28);
     assert.equal((await post(s.base, '/api/compare', { hex: HEX, archs: ['SKL', 'ZEN3'] }, ip(32))).status, 200);
     assert.equal(await left(ip(32)), 29);
+  } finally { await s.close(); }
+});
+
+test('server: a client out of tokens is refused before its body is read; an aborted request is logged once', async () => {
+  const logs = [];
+  const s = await start({ rateBurst: 2, ratePerMinute: 1, log: (o) => logs.push(o) });
+  const { port } = new URL(s.base);
+  // headers only, then nothing: the server answers without the body, or the request waits until the timeout below
+  const headersOnly = (p, ip) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: p, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': '1000', 'CF-Connecting-IP': ip } });
+    const timer = setTimeout(() => { req.destroy(); resolve(null); }, 1500);
+    req.on('response', (res) => { clearTimeout(timer); res.resume(); res.on('end', () => { req.destroy(); resolve(res.statusCode); }); });
+    req.on('error', (e) => { clearTimeout(timer); if (e.code === 'ECONNRESET') resolve(null); else reject(e); });
+    req.flushHeaders();
+  });
+  const wait = async (until) => { for (let k = 0; k < 100 && !until(); k++) await new Promise((r) => setTimeout(r, 20)); };
+  try {
+    const A = '203.0.113.40';
+    for (let i = 0; i < 2; i++) assert.equal((await post(s.base, '/api/analyze/SKL', { hex: HEX }, { 'CF-Connecting-IP': A })).status, 200);
+    for (const p of ['/api/what-if/SKL', '/api/compare', '/api/diff/SKL', '/mcp']) assert.equal(await headersOnly(p, A), 429, p);
+    // a client with tokens: its body is read (here it never comes: no answer)
+    assert.equal(await headersOnly('/api/what-if/SKL', '203.0.113.41'), null);
+    // every request one line: the aborted one with aborted and status 499, after the connection closed
+    await wait(() => logs.length >= 7);
+    assert.deepEqual(logs.map((l) => l.status), [200, 200, 429, 429, 429, 429, 499]);
+    assert.equal(logs[6].aborted, true);
+    assert.ok(logs.slice(0, 6).every((l) => l.aborted === undefined));
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(logs.length, 7, 'one line per request');
   } finally { await s.close(); }
 });
 

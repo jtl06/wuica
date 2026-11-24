@@ -22,7 +22,7 @@ export const DEFAULTS = Object.freeze({
   compareCost: 3,             // tokens a compare costs (at least one per job it runs at once); others: lib/app.js cost
   trustCfHeader: true,        // take the client IP from CF-Connecting-IP (the server sits behind a Cloudflare tunnel)
   shutdownGraceMs: 15_000,
-  log: true,                  // one JSON line per request on stdout
+  log: true,                  // one JSON line per request on stdout (a function: gets each entry)
 });
 
 const ENV = {

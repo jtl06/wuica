@@ -93,7 +93,8 @@ function index() {
 
 export async function createApp(options = {}) {
   const cfg = resolveConfig(options);
-  const log = cfg.log ? (o) => process.stdout.write(JSON.stringify({ time: new Date().toISOString(), ...o }) + '\n') : () => {};
+  // (log: a function gets each entry instead: the tests)
+  const log = typeof cfg.log === 'function' ? cfg.log : cfg.log ? (o) => process.stdout.write(JSON.stringify({ time: new Date().toISOString(), ...o }) + '\n') : () => {};
   const local = await createWuica({ threads: 1, ...(cfg.dataDir ? { dataDir: cfg.dataDir } : {}) });
   const pool = new Pool({
     size: cfg.workers, maxQueue: cfg.maxQueue, timeoutMs: cfg.timeoutMs, log,
@@ -192,6 +193,7 @@ export async function createApp(options = {}) {
       // stateless: no SSE stream to open (GET) and no session to delete (DELETE)
       return send(res, 405, { jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed: this MCP endpoint is stateless; use POST' }, id: null }, { headers: { Allow: 'POST, OPTIONS' } });
     }
+    rateLimit(req, ctx, 1, true);
     let body;
     try {
       body = await readJson(req);
@@ -242,8 +244,10 @@ export async function createApp(options = {}) {
   // a client that goes away before the response: the jobs not yet started are not started (Facade#session)
   const watchGone = (res, ctx) => res.on('close', () => { if (!res.writableFinished) ctx.gone = true; });
 
-  function rateLimit(req, ctx, cost = 1) {
-    const r = limiter.take(clientIp(req), cost);
+  // peek: a client without a token left is refused before its body is read (whose size can raise the cost; nothing is
+  // taken: rateLimit with the cost follows)
+  function rateLimit(req, ctx, cost = 1, peek = false) {
+    const r = limiter.take(clientIp(req), cost, { peek });
     if (!r.ok) {
       ctx.rateLimited = true;
       throw new HttpError(429, 'too many requests; try again later', { 'Retry-After': String(r.retryAfter) });
@@ -322,6 +326,7 @@ export async function createApp(options = {}) {
       let arch;
       try { arch = decodeURIComponent(p.slice('/api/what-if/'.length)).trim(); } catch { arch = ''; }
       if (!arch) throw new HttpError(404, 'give the microarchitecture in the path: POST /api/what-if/<arch> (see GET /api/archs)');
+      rateLimit(req, ctx, 1, true);
       const body = await readJson(req);
       rateLimit(req, ctx, cost(whatIfAnalyses(body?.variants)));
       watchGone(res, ctx);
@@ -336,8 +341,8 @@ export async function createApp(options = {}) {
       let arch;
       try { arch = decodeURIComponent(p.slice('/api/diff/'.length)).trim(); } catch { arch = ''; }
       if (!arch) throw new HttpError(404, 'give the microarchitecture in the path: POST /api/diff/<arch> (see GET /api/archs)');
-      const body = await readJson(req);
       rateLimit(req, ctx, cost(2));
+      const body = await readJson(req);
       watchGone(res, ctx);
       const x = /** @type {any} */ (await facade.diff(arch, body, ctx));
       const r = x.failure ?? x.result;
@@ -348,6 +353,7 @@ export async function createApp(options = {}) {
     }
     if (p === '/api/compare') {
       method(['POST']);
+      rateLimit(req, ctx, 1, true);
       const body = await readJson(req);
       rateLimit(req, ctx, compareTokens(body?.archs));
       const r = await facade.compare(body, ctx);
@@ -376,13 +382,21 @@ export async function createApp(options = {}) {
     } catch {
       url = new URL('http://localhost/');
     }
-    res.on('finish', () => {
-      const entry = { method: req.method, path: url.pathname.slice(0, 200), status: res.statusCode, ms: Math.round((performance.now() - t0) * 10) / 10 };
+    // one log line per request: when the response has been sent, or when the connection closed before that (aborted;
+    // status 499 if no status was sent)
+    let logged = false;
+    const logRequest = () => {
+      if (logged) return;
+      logged = true;
+      const aborted = !res.writableFinished;
+      const entry = { method: req.method, path: url.pathname.slice(0, 200), status: aborted && !res.headersSent ? 499 : res.statusCode, ms: Math.round((performance.now() - t0) * 10) / 10, ...(aborted ? { aborted: true } : {}) };
       for (const k of ['arch', 'instructions', 'bytes', 'code', 'tool', 'rpc', 'queueMs', 'runMs', 'jobs', 'parts', 'timedOut', 'gone', 'rateLimited', 'busy', 'error']) {
         if (ctx[k] !== undefined) entry[k] = typeof ctx[k] === 'number' && k.endsWith('Ms') ? Math.round(ctx[k] * 10) / 10 : ctx[k];
       }
       log(entry);
-    });
+    };
+    res.on('finish', logRequest);
+    res.on('close', logRequest);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     try {
       await route(req, res, url, ctx);
