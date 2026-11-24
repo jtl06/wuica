@@ -189,7 +189,7 @@ export function cpuTable(input, opts = {}) {
 // delta, speedup; the best number of accumulators.
 export function whatIf(x) {
   if (x?.code) return `**What if (${text(x.arch ?? '')}):** ${text(x.error)}\n`;
-  const per = x.elementsPerIteration > 1 ? x.elementsPerIteration : null;
+  const per = x.elementsPerIteration > 0 ? x.elementsPerIteration : null;
   const v = (n) => (per ? cycles(n / per) : f2(n));
   const rows = x.variants.map((y) => (y.error ? [text(y.label), '-', '', '', text(y.error)]
     : [text(y.label), `${y.estimate ? '>=' : ''}${v(y.tp)}`, `${y.delta > 0 ? '+' : ''}${v(y.delta)}`, `${f2(y.speedup ?? 0)}x`, y.estimate ? 'estimate' : '']));
@@ -364,4 +364,19 @@ export function toCSV(r) {
 export function toJSON(r, request) {
   const { trace, text: report_, ...rest } = r;
   return JSON.stringify({ request: request ?? null, response: rest }, null, 1) + '\n';
+}
+
+// ---- the alignment variant of what-if (appended) ----------------------------------------------------------------------
+
+// whatIf's table and, when the result has the variant align, its alignment over the 64 offsets (min, median, max, the
+// best and the worst offset, the spread); the base's warnings (decode errors) as a list.
+export function whatIfAlignment(x) {
+  const md = whatIf(x);
+  const warn = (x?.stderr ?? []).map((l) => `- ${text(l.text)}`).join('\n');
+  const v = x?.variants?.find((y) => y.alignment);
+  if (!v) return md + (warn ? `\n${warn}\n` : '');
+  const per = x.elementsPerIteration > 0 ? x.elementsPerIteration : null;
+  const c = (n) => (per ? cycles(n / per) : Number(n).toFixed(2));
+  const a = v.alignment;
+  return md + `\n**Alignment** over the 64 offsets${per ? ' (cycles per element)' : ''}: min ${c(a.min)} (offset ${a.best}), median ${c(a.median)}, max ${c(a.max)} (offset ${a.worst}), spread ${c(a.spread)}; this block at offset ${a.offset}\n` + (warn ? `\n${warn}\n` : '');
 }

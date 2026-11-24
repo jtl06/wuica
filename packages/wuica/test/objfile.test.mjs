@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createWuica } from '../lib/index.js';
 import { readObject, resolveFunction } from '../lib/objfile.js';
+import { tmpDir } from './tmpdir.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.resolve(HERE, '../bin/wuica.js');
@@ -63,7 +64,7 @@ test('other architectures and formats: what they are and how to get x86-64; -raw
   const arm = run(['kernels.arm64.o']);
   assert.equal(arm.code, 1);
   assert.match(arm.err, /^wuica: kernels\.arm64\.o: an arm64 Mach-O file: wuica analyzes x86-64 code; compile for x86-64: clang --target=x86_64-linux-gnu -c \(Linux objects\) or clang -arch x86_64 -c \(macOS\)$/m);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-obj-'));
+  const dir = tmpDir('wuica-obj-');
   const coff = path.join(dir, 'f.obj');
   fs.writeFileSync(coff, Buffer.from([0x64, 0x86, ...new Array(30).fill(0)]));
   assert.match(run([coff]).err, /a COFF object file: not supported yet; disassemble it and pipe the listing \(llvm-objdump -d FILE \| wuica\)/);

@@ -1,5 +1,7 @@
 //! Command-line tool of wuica: prints the report that uiCA prints for a block of machine code.
 
+mod compare;
+
 use std::path::PathBuf;
 use wuica::{Engine, Request};
 
@@ -22,7 +24,9 @@ Options:
   -simpleFrontEnd        simulate a front end that is only limited by the issue width
   -noMicroFusion, -noMacroFusion
   -minIterations N       simulate at least N iterations (default: 10)
-  -minCycles N           simulate at least N cycles (default: 500)";
+  -minCycles N           simulate at least N cycles (default: 500)
+  -compare FILE|-        compare with the reference's results (tools/fuzz; the format of the simulation fixtures, one case
+                         per line): one verdict per case as a JSON line";
 
 /// The configuration key for an architecture name: the exact key, else the key that matches ignoring case and `-` (as the
 /// npm package, the API server and the page accept them: `adlp` and `adl-p` are `ADL-P`); whitespace around it is ignored.
@@ -50,7 +54,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let mut request = Request::new("SKL");
     let mut data_dir = std::env::var("WUICA_DATA").unwrap_or_else(|_| "data".to_string());
-    let (mut tp_only, mut json, mut hex) = (false, false, None);
+    let (mut tp_only, mut json, mut hex, mut compare) = (false, false, None, None);
     let mut value = |args: &mut dyn Iterator<Item = String>, name: &str| args.next().unwrap_or_else(|| fail(&format!("{name} needs a value")));
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -65,6 +69,7 @@ fn main() {
                 let bytes = std::fs::read(&path).unwrap_or_else(|e| fail(&format!("{path}: {e}")));
                 hex = Some(bytes.iter().map(|b| format!("{b:02x}")).collect::<String>());
             }
+            "-compare" => compare = Some(value(&mut args, "-compare")),
             "-TPonly" => tp_only = true,
             "-json" => json = true,
             "-trace" => request.include_trace = true,
@@ -90,6 +95,19 @@ fn main() {
         for (key, config) in &engine.uarch().unwrap().configs {
             println!("{key}{}", if config.experimental { " (experimental)" } else { "" });
         }
+        return;
+    }
+    if let Some(path) = compare {
+        // all tables: the cases are for any configuration
+        for entry in std::fs::read_dir(data_dir.join("arch")).unwrap_or_else(|e| fail(&format!("{}: {e}", data_dir.display()))) {
+            let path = entry.unwrap_or_else(|e| fail(&e.to_string())).path();
+            if path.extension().is_some_and(|e| e == "json") {
+                let name = path.file_stem().unwrap().to_string_lossy().to_string();
+                let table = std::fs::read_to_string(&path).unwrap_or_else(|e| fail(&format!("{}: {e}", path.display())));
+                engine.load_arch(&name, &table).unwrap_or_else(|e| fail(&e));
+            }
+        }
+        compare::run(&engine, &path).unwrap_or_else(|e| fail(&e));
         return;
     }
     let hex = hex.unwrap_or_else(|| fail(USAGE));

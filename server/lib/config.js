@@ -19,10 +19,10 @@ export const DEFAULTS = Object.freeze({
   splitCompare: true,         // spread a compare over idle workers (lib/facade.js); false: a compare is one job
   rateBurst: 60,              // token bucket per client IP (0 = no rate limit)
   ratePerMinute: 120,
-  compareCost: 3,             // tokens a /api/compare (or compare_archs call) costs; everything else costs 1
+  compareCost: 3,             // tokens a compare costs (at least one per job it runs at once); others: lib/app.js cost
   trustCfHeader: true,        // take the client IP from CF-Connecting-IP (the server sits behind a Cloudflare tunnel)
   shutdownGraceMs: 15_000,
-  log: true,                  // one JSON line per request on stdout
+  log: true,                  // one JSON line per request on stdout (a function: gets each entry)
 });
 
 const ENV = {

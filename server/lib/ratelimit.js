@@ -17,8 +17,9 @@ export class RateLimiter {
   get enabled() { return this.#burst > 0 && this.#rate > 0; }
   get size() { return this.#buckets.size; }
 
-  // Takes `cost` tokens for `key`. Returns {ok: true} or {ok: false, retryAfter: seconds}.
-  take(key, cost = 1) {
+  // Takes `cost` tokens for `key`. Returns {ok: true} or {ok: false, retryAfter: seconds}. peek: only whether it could
+  // (nothing is taken).
+  take(key, cost = 1, { peek = false } = {}) {
     if (!this.enabled) return { ok: true };
     const t = this.now();
     let b = this.#buckets.get(key);
@@ -32,7 +33,7 @@ export class RateLimiter {
     }
     this.#buckets.set(key, b);
     const c = Math.min(cost, this.#burst);
-    if (b.tokens >= c) { b.tokens -= c; return { ok: true }; }
+    if (b.tokens >= c) { if (!peek) b.tokens -= c; return { ok: true }; }
     return { ok: false, retryAfter: Math.max(1, Math.ceil((c - b.tokens) / this.#rate / 1000)) };
   }
 

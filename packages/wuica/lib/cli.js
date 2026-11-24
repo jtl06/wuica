@@ -3,18 +3,22 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { createWuica, normalizeHex, listLoops, whatIf, WHAT_IF_VARIANTS, CODES, examples, findExample, objectKind, markdown } from './index.js';
+import { createWuica, normalizeHex, listLoops, whatIf, WHAT_IF_VARIANTS, WHAT_IF_OPT_IN_VARIANTS, CODES, examples, findExample, objectKind, markdown } from './index.js';
 import { analyzedLines } from './web/branch-label.js';
+import { whatIfPerElement, whatIfText } from './web/whatif-core.js';
+import { diffAnalyses, diffMarkdown, diffText } from './web/block-diff.js';
 
 export const VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 export const USAGE = `Usage: wuica [options] [FILE | - | HEX]
+       wuica diff [options] A B     two blocks (files, - or hex) on one CPU: throughput, bottlenecks, ports, instructions
+                                    changed; -per N or -per A,B (per element), -md, -json, -arch NAME, -loop, the options
        wuica [options] FILE FILE...   several inputs in one run: one table (-files LIST reads the names from a file)
        wuica mcp                start the MCP server (stdio)
 
 Predicts the throughput of an x86-64 basic block with uiCA's pipeline model (this is wuica ${VERSION}, a WebAssembly
-port of uiCA). One input per run: assembly from FILE (gcc -S, clang -S, objdump -d output, or a hand-written loop),
-or from stdin if FILE is - or missing. A HEX argument that is not a file (e.g. 4801d84801c349ffcf75f5) is machine code.
+port of uiCA). Input: assembly from FILE (gcc -S, clang -S, objdump -d or -dS, perf annotate --stdio, a hand-written
+loop), or stdin if FILE is - or missing; several FILEs: one table. A HEX argument that is not a file is machine code.
 Built-in examples (no file needed): -examples lists them, -example saxpy analyzes one (every option applies),
 -example saxpy -show prints its assembly to save and edit.
 
@@ -33,7 +37,8 @@ Input:
                          file: for those, objdump -d FILE | wuica)
   -loops                 list the loops of the assembly (index, label, function, lines, instructions, depth, auto)
   -loop L                what is analyzed: auto (default: the deepest loop, among equals the first; clang's
-                         "Inner Loop Header" notes count), whole (all the text), a loop's index (0-based, as
+                         "Inner Loop Header" notes count; perf annotate: the loop with the most samples of its
+                         own), whole (all the text), a loop's index (0-based, as
                          -loops lists them) or its label (-loop .LBB0_12)
   -func NAME             only the loops of function NAME (with -loop: its index or label among them); in an object
                          file its symbol, or a unique part of it
@@ -50,6 +55,8 @@ Output:
   -per N                 the loop does N elements (bytes, floats, ...) per iteration: also print cycles per element
                          (what-if values too)
   -whatif                the what-if variants (unrolled, N accumulators, front end, fusion) per microarchitecture
+  -variants LIST         with -whatif (implied): these variants only, comma-separated; also align (the 64 alignment
+                         offsets: min, median, max, best and worst offset; 64 analyses, not in the default set)
   -md                    print GitHub-flavoured Markdown instead of the text report (for an issue, a review, a
                          chat): the result with its uop table, the CPU table, the what-if and loop tables; not with
                          -json or -TPonly
@@ -85,7 +92,8 @@ prototype models (from the fork jtl06/uiCA), less validated than the Intel model
 
 export const MCP_USAGE = `Usage: wuica-mcp   (or: wuica mcp)
 
-The wuica MCP server on stdio (JSON-RPC): tools list_archs, analyze, what_if, compare_archs, assemble.
+The wuica MCP server on stdio (JSON-RPC): tools list_archs, analyze, what_if, diff_blocks, compare_archs, list_loops,
+assemble.
 Configure it in an MCP client as the command "wuica-mcp" (or "npx -y wuica-cli mcp"). Options: --help, --version.
 `;
 
@@ -108,7 +116,7 @@ const FLAGS = {
   examples: ['examples'], example: ['example', 1], show: ['show'], files: ['files', 1], report: ['report'], funcs: ['funcs'],
   arch: ['arch', 1], list: ['list'], hex: ['hex'], att: ['att'], intel: ['intel'], raw: ['raw', 1], data: ['data', 1],
   loop: ['loop', 1], loops: ['loops'], func: ['func', 1], per: ['per', 1], whatif: ['whatif'], threads: ['threads', 1],
-  tponly: ['tpOnly'], json: ['json'], md: ['md'], trace: ['trace'], details: ['details'],
+  tponly: ['tpOnly'], json: ['json'], md: ['md'], variants: ['variants', 1], trace: ['trace'], details: ['details'],
   alignmentoffset: ['alignmentOffset', 1], initpolicy: ['initPolicy', 1], simplefrontend: ['simpleFrontEnd'],
   nomicrofusion: ['noMicroFusion'], nomacrofusion: ['noMacroFusion'], miniterations: ['minIterations', 1], mincycles: ['minCycles', 1],
 };
@@ -141,6 +149,15 @@ export function parseArgs(argv) {
     switch (name) {
       case 'att': case 'intel': o.syntax = name; break;
       case 'loop': o.loop = /^\d+$/.test(v) ? Number(v) : v; break;
+      case 'variants': {
+        o.variants = v.split(',').map((x) => x.trim()).filter(Boolean);
+        const known = [...WHAT_IF_VARIANTS, ...WHAT_IF_OPT_IN_VARIANTS];
+        if (!o.variants.length) throw new UsageError(`-variants: no variant in "${v}" (known: ${known.join(', ')})`);
+        const unknown = o.variants.filter((x) => !known.includes(x));
+        if (unknown.length) throw new UsageError(`-variants: unknown variant(s): ${unknown.join(', ')} (known: ${known.join(', ')})`);
+        o.whatif = true;
+        break;
+      }
       case 'per': o.per = Number(v); if (!(o.per > 0)) throw new UsageError(`-per: a positive number of elements per iteration: ${v}`); break;
       case 'threads': o.threads = int(v, name); if (o.threads < 1) throw new UsageError('-threads: at least 1'); break;
       case 'trace': o.options.includeTrace = true; break;
@@ -347,23 +364,9 @@ function diagnosis(ins, r) {
   return lines;
 }
 
-// A what-if result with cycles per element (-per N): elementsPerIteration and perElement on it, perElement on each
-// variant with a tp.
-function whatIfPer(x, per) {
-  if (!per || x.code) return x;
-  return { ...x, elementsPerIteration: per, perElement: x.tp / per, variants: x.variants.map((v) => (v.tp !== undefined ? { ...v, perElement: v.tp / per } : v)) };
-}
-
-const VARIANT_W = 18;
-function whatIfTable(x) {
-  const per = x.elementsPerIteration;
-  const f = per ? (v) => fmtEl(v / per) : fmt;
-  const rows = x.variants.map((v) => (v.error ? `  ${v.label.padEnd(VARIANT_W)} ${'-'.padStart(8)}  ${v.error}`
-    : `  ${v.label.padEnd(VARIANT_W)} ${`${v.estimate ? '>=' : ''}${f(v.tp)}`.padStart(8)} ${`${v.delta > 0 ? '+' : ''}${f(v.delta)}`.padStart(8)} ${`${fmt(v.speedup ?? 0)}x`.padStart(7)}`));
-  return [per ? `What if (${x.arch}), cycles per element (${per} per original iteration; base ${fmtEl(x.tp / per)}):` : `What if (${x.arch}), cycles per original iteration (base ${fmt(x.tp)}):`,
-    `  ${'variant'.padEnd(VARIANT_W)} ${'cycles'.padStart(8)} ${'delta'.padStart(8)} ${'speedup'.padStart(7)}`, ...rows,
-    ...(x.accumulators ? [`  best number of accumulators: ${x.accumulators.best}${x.accumulators.best === 1 ? ' (as it is)' : ''}`] : [])].join('\n') + '\n';
-}
+// what-if results per element and as text: web/js/whatif-core.js (shared with the REST API)
+const whatIfPer = whatIfPerElement;
+const whatIfTable = whatIfText;
 // -TPonly -whatif: one "variant cycles [per element]" line per variant (prefix: the CPU, with several)
 function whatIfTerse(x, prefix = '') {
   if (x.code) return `${prefix}what-if error: ${x.error}\n`;
@@ -400,6 +403,7 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
     else err.write(`${msg}\n`);
     return code;
   };
+  if (argv[0] === 'diff') return diffMain(argv.slice(1), io);
   try {
     o = parseArgs(argv);
     if (o.help) { out.write(USAGE + '\n'); return 0; }
@@ -462,12 +466,12 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
     const bound = { analyze: (a, r) => w.analyze(a, r), assemble: (t) => w.assemble(t, 'intel') };
     const whatIfs = async (archs) => {
       const res = {};
-      for (const a of archs) res[w.resolveArch(a)] = whatIfPer(await whatIf(bound.analyze, a, req, WHAT_IF_VARIANTS, { assemble: bound.assemble }), o.per);
+      for (const a of archs) res[w.resolveArch(a)] = whatIfPer(await whatIf(bound.analyze, a, req, o.variants ?? WHAT_IF_VARIANTS, { assemble: bound.assemble }), o.per);
       return res;
     };
 
     if (o.archs) {
-      const c = await w.compare({ ...req, ...(o.archs.length ? { archs: o.archs } : {}) });
+      const c = await w.compare({ ...req, ...(o.archs.length ? { archs: o.archs } : {}), ...(o.per ? { per: o.per } : {}) });
       const status = c.code || Math.max(0, ...(c.results ?? []).map((r) => r.code));
       if (c.code) {
         if (o.json) { out.write(JSON.stringify(c) + '\n'); return status; }
@@ -490,7 +494,7 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
       if (o.md) {
         const results = c.results.map((r, k) => ({ ...r, ...(extra[k].ins?.caveats ? { caveats: extra[k].ins.caveats } : {}) }));
         out.write(markdown.cpuTable({ ...c, results }, { per: o.per }));
-        for (const x of Object.values(wi ?? {})) out.write('\n' + markdown.whatIf(x));
+        for (const x of Object.values(wi ?? {})) out.write('\n' + markdown.whatIfAlignment(x));
         if (base?.code === 0 && !o.per) { const s = inductionSteps(base); if (s.length) err.write(stepLine(s)); }
         return status;
       }
@@ -533,7 +537,7 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
     printAnalyzed(r, err, o);
     if (o.md) {
       out.write(markdown.report(r, { arch: archTitle(w, r.arch), per: o.per, insights: ins, src: srcOf(req, r), code: analyzedCode(req, r) }));
-      for (const x of Object.values(wi ?? {})) out.write('\n' + markdown.whatIf(x));
+      for (const x of Object.values(wi ?? {})) out.write('\n' + markdown.whatIfAlignment(x));
       const steps = !o.per ? inductionSteps(r) : [];
       if (steps.length) err.write(stepLine(steps));
       return 0;
@@ -560,6 +564,70 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
       return o?.json ? fail(1, `wuica: ${e.message}`) : (err.write(`wuica: ${e.message}\nRun "wuica -h" for the options.\n`), 1);
     }
     return fail(1, `wuica: ${e?.message ?? e}`);
+  }
+}
+
+// ---- wuica diff A B ---------------------------------------------------------------------------------------------------
+// Two blocks (each a file, - for stdin, or hex; object files as for one input) on one microarchitecture (-arch, default
+// SKL): web/js/block-diff.js. -per N (both) or -per A,B: also per element. -md: the Markdown of the page's A–B view;
+// -json: the result object. The other options as for one input (applied to both). Exit status: 0, or the failing side's.
+async function diffMain(argv, io) {
+  const { stdout: out, stderr: err } = io;
+  /** @type {CliOptions} */
+  let o = /** @type {any} */ (null);
+  try {
+    // -per N or -per A,B (parseArgs takes one number)
+    /** @type {number[] | null} */
+    let per = null;
+    const rest = [];
+    for (let i = 0; i < argv.length; i++) {
+      const m = /^--?per(?:=(.*))?$/i.exec(argv[i]);
+      if (!m) { rest.push(argv[i]); continue; }
+      const v = m[1] ?? argv[++i];
+      if (v === undefined) throw new UsageError('-per needs a value');
+      per = String(v).split(',').map(Number);
+      if (per.length === 1) per = [per[0], per[0]];
+      if (per.length !== 2 || !per.every((n) => Number.isFinite(n) && n > 0)) throw new UsageError(`-per: elements per iteration, N or A,B: ${v}`);
+    }
+    o = parseArgs(rest);
+    if (o.help) { out.write(USAGE + '\n'); return 0; }
+    if (o.md && (o.json || o.tpOnly)) throw new UsageError(`-md: Markdown instead of the text report; not with ${o.json ? '-json (JSON is its own format)' : '-TPonly (one number per line)'}`);
+    if (o.inputs.length !== 2) throw new UsageError(`two inputs, A and B (got ${o.inputs.length})`);
+    if (o.archs) throw new UsageError('one microarchitecture (-arch NAME)');
+    const NOT = { whatif: '-whatif', variants: '-variants', loops: '-loops', funcs: '-funcs', example: '-example', files: '-files', raw: '-raw', tpOnly: '-TPonly', report: '-report' };
+    for (const [f, flag] of Object.entries(NOT)) if (o[f] !== undefined && o[f] !== false) throw new UsageError(`${flag} is not available here`);
+    if (o.inputs.filter((n) => n === '-').length > 1) throw new UsageError('stdin (-) can be read only once');
+    const w = await createWuica({ ...(o.data ? { dataDir: o.data } : {}) });
+    if (!w.resolveArch(o.arch)) return failWith(CODES.REQUEST, `unknown microarchitecture: ${o.arch} (known: ${w.archs('id').map((a) => a.id).join(', ')})`);
+    const sides = [];
+    for (const name of o.inputs) {
+      const input = await readInput({ ...o, input: name }, io, w);
+      for (const n of input.notes) err.write(`${name}: ${n}\n`);
+      sides.push(input);
+    }
+    const x = await diffAnalyses(w, o.arch, { a: sides[0].request, b: sides[1].request, options: o.options, ...(per ? { per } : {}) });
+    if (x.failure) {
+      if (o.json) { out.write(JSON.stringify(x.failure) + '\n'); return x.failure.code; }
+      // one message: the assembler's positioned lines with the side's file name, else the error (with the side's name
+      // when it is one side's)
+      const k = /^A: /.test(x.failure.error) ? 0 : /^B: /.test(x.failure.error) ? 1 : -1;
+      const tagged = (x.failure.stderr ?? []).some((l) => l.tag);
+      if (k >= 0 && tagged) printStderr(x.failure, err, o.inputs[k]);
+      else err.write(`${k >= 0 ? o.inputs[k] : 'wuica diff'}: ${String(x.failure.error).replace(/^[AB]: /, '')}\n`);
+      return x.failure.code;
+    }
+    for (const [k, r] of [x.a, x.b].entries()) printStderr(prefixed(r, o.inputs[k]), err, o.inputs[k]);
+    if (o.json) { out.write(JSON.stringify(x.result) + '\n'); return 0; }
+    out.write(o.md ? diffMarkdown(x, { archTitle: archTitle(w, x.result.arch) }) : `A: ${o.inputs[0]}\nB: ${o.inputs[1]}\n${diffText(x.result)}`);
+    return 0;
+  } catch (e) {
+    if (e instanceof UsageError) return failWith(1, `wuica diff: ${e.message}`);
+    return failWith(1, `wuica diff: ${e?.message ?? e}`);
+  }
+  function failWith(code, msg) {
+    if (o?.json) out.write(JSON.stringify({ code, error: msg, stderr: [{ text: msg }] }) + '\n');
+    else err.write(`${msg}\n`);
+    return code;
   }
 }
 
@@ -632,7 +700,7 @@ async function batch(w, o, io) {
   const bound = { analyze: (a, r) => w.analyze(a, r), assemble: (t) => w.assemble(t, 'intel') };
   const whatIfs = async (req, archs) => {
     const res = {};
-    for (const a of archs) res[w.resolveArch(a)] = whatIfPer(await whatIf(bound.analyze, a, req, WHAT_IF_VARIANTS, { assemble: bound.assemble }), o.per);
+    for (const a of archs) res[w.resolveArch(a)] = whatIfPer(await whatIf(bound.analyze, a, req, o.variants ?? WHAT_IF_VARIANTS, { assemble: bound.assemble }), o.per);
     return res;
   };
   const docs = new Map(); // item -> {doc (as a single run's JSON), status, rows: [{cpu, tp, pe, bn, notes, code}], report, wi}
@@ -664,7 +732,7 @@ async function batch(w, o, io) {
       const extra = c.results.map((r) => ({ ins: insOf(r), per: r.code === 0 ? per(r.tp) : undefined }));
       const wi = o.whatif ? await whatIfs(it.req, c.results.filter((r) => r.code === 0).map((r) => r.arch)) : null;
       const results = c.results.map((r, j) => ({ ...r, ...(extra[j].per !== undefined ? { perElement: extra[j].per } : {}), ...(extra[j].ins?.caveats ? { caveats: extra[j].ins.caveats } : {}) }));
-      const doc = { ...c, code: status, results, ...(wi ? { whatIf: wi } : {}) };
+      const doc = { ...c, code: status, ...(o.per ? { elementsPerIteration: o.per } : {}), results, ...(wi ? { whatIf: wi } : {}) };
       docs.set(it, { doc, status, c, wi, rows: c.results.map((r, j) => ({ ...rowOf(r, extra[j].ins, per), cpu: r.arch, prototype: r.prototype })) });
     }
   }
@@ -754,7 +822,7 @@ async function batchMarkdown(w, o, out, items, docs, worst) {
     const wi = docs.get(it).wi;
     if (!wi) continue;
     out.write(`\n### ${markdown.text(it.name)}\n`);
-    for (const x of Object.values(wi)) out.write('\n' + markdown.whatIf(x));
+    for (const x of Object.values(wi)) out.write('\n' + markdown.whatIfAlignment(x));
   }
   return worst;
 }

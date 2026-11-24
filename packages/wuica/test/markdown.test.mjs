@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createWuica, findExample, markdown, whatIf, WHAT_IF_VARIANTS, listLoops } from '../lib/index.js';
 import { analyzedLines } from '../lib/web/branch-label.js';
+import { tmpDir } from './tmpdir.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const GOLDEN = path.join(HERE, 'golden');
@@ -118,6 +119,11 @@ test('loops: a text with two', () => {
   assert.equal(markdown.loops([]), 'no loops\n');
 });
 
+test('whatIf with per 1: per element (as the text form), not ignored', async () => {
+  const x = await whatIf(analyze, 'SKL', { source: ex('dot1') }, ['unroll2'], tools);
+  assert.match(markdown.whatIf({ ...x, elementsPerIteration: 1 }), /cycles per element \(1 per original iteration; base 16\.00\)/);
+});
+
 test('escaping: pipes and backticks in instruction text, cells padded by characters', () => {
   assert.equal(markdown.code('a|b'), '`a\\|b`');
   assert.equal(markdown.code('mov al, `'), '`` mov al, ` ``');
@@ -146,7 +152,7 @@ test('wuica -md: a single run, -arch A,B,C, -whatif, -loops, several files, -per
   assert.equal(loops.code, 0);
   assert.match(loops.out, /^\| +# \| Label +\| Function/);
   // several files (one fails: the largest status, a row that says so)
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'wuica-md-'));
+  const dir = tmpDir('wuica-md-');
   fs.writeFileSync(path.join(dir, 'a.s'), ex('saxpy'));
   fs.writeFileSync(path.join(dir, 'b.s'), 'foo rax\n');
   const many = spawnSync(process.execPath, [BIN, 'a.s', 'b.s', '-arch', 'SKL,ZEN3', '-md', '-per', '8'], { cwd: dir, encoding: 'utf8' });

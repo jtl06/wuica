@@ -6,15 +6,17 @@
 //   GET  /api/archs[?fields=]    microarchitectures
 //   POST /api/analyze/<arch>     analysis
 //   POST /api/compare            one block on several microarchitectures
+//   POST /api/what-if/<arch>     what-if experiments (unrolled, N accumulators, front end, fusion; the MCP tool what_if)
+//   POST /api/diff/<arch>        two blocks, before and after (the MCP tool diff_blocks)
 //   POST /api/assemble           assembly -> hex
 //   GET  /api/version            versions
-//   POST /mcp                    MCP (tools list_archs, analyze, what_if, compare_archs, assemble)
+//   POST /mcp                    MCP (tools list_archs, analyze, what_if, diff_blocks, compare_archs, list_loops, assemble)
 //
-// JSON by default; `Accept: text/plain` gives uiCA's text report (or the stderr lines of a failure); `Accept:
-// text/markdown` on analyze and compare gives the package's Markdown (markdown.report, markdown.cpuTable).
+// JSON by default; `Accept: text/plain` gives uiCA's text report or the CLI's text (or the stderr lines of a failure);
+// `Accept: text/markdown` on analyze, compare, what-if and diff gives the package's Markdown.
 
 import http from 'node:http';
-import { createWuica, ARCH_FIELDS, detailInsights, markdown } from 'wuica';
+import { createWuica, ARCH_FIELDS, detailInsights, markdown, whatIfText, diffMarkdown, diffText, WHAT_IF_VARIANTS } from 'wuica';
 import { createMcpServer } from './mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { resolveConfig } from './config.js';
@@ -45,13 +47,16 @@ function compareText(c) {
   const fmt = (tp) => tp.toFixed(2);
   const kw = Math.max(4, ...c.results.map((r) => r.arch.length));
   const nw = Math.max(5, ...c.results.map((r) => r.name.length));
-  let out = `${'Arch'.padEnd(kw)}  ${'Model'.padEnd(nw)}  Year  ${'TP'.padStart(6)}  Bottlenecks\n`;
+  // with per (elementsPerIteration): cycles per element too, as the CLI prints it (three significant digits below 0.1)
+  const per = c.elementsPerIteration;
+  const fmtEl = (x) => (x !== 0 && Math.abs(x) < 0.1 ? Number(x).toPrecision(3) : fmt(x));
+  let out = `${'Arch'.padEnd(kw)}  ${'Model'.padEnd(nw)}  Year  ${'TP'.padStart(6)}${per ? `  ${'per el'.padStart(6)}` : ''}  Bottlenecks\n`;
   for (const r of c.results) {
     const year = String(r.year ?? '').padEnd(4);
     const rest = r.code ? `error: ${r.error.split('\n')[0]}` : `${r.bottlenecks.join(', ') || '-'}${r.prototype ? '  [prototype]' : ''}`;
-    out += `${r.arch.padEnd(kw)}  ${r.name.padEnd(nw)}  ${year}  ${(r.code ? '-' : fmt(r.tp)).padStart(6)}  ${rest}\n`;
+    out += `${r.arch.padEnd(kw)}  ${r.name.padEnd(nw)}  ${year}  ${(r.code ? '-' : fmt(r.tp)).padStart(6)}${per ? `  ${(r.code ? '-' : fmtEl(r.perElement)).padStart(6)}` : ''}  ${rest}\n`;
   }
-  return out + '\nTP: cycles per iteration. [prototype]: experimental model of the fork jtl06/uiCA.\n';
+  return out + `\nTP: cycles per iteration${per ? `; per el: cycles per element (${per} per iteration)` : ''}. [prototype]: experimental model of the fork jtl06/uiCA.\n`;
 }
 
 function flatText(obj, prefix = '') {
@@ -73,12 +78,14 @@ function index() {
       'GET /api/archs[?fields=id,name]': 'microarchitectures',
       'POST /api/analyze/<arch>': 'analysis: {source | hex, syntax?, options?}',
       'POST /api/compare': 'one block on several microarchitectures: {source | hex, syntax?, archs?, options?}',
+      'POST /api/what-if/<arch>': 'what-if experiments: {source | hex, syntax?, options?, variants?, per?}',
+      'POST /api/diff/<arch>': 'two blocks, before and after: {a: {source | hex, ...}, b: {...}, options?, per?}',
       'POST /api/assemble': 'assembly to machine code: {source, syntax?}',
       'GET /api/version': 'versions',
-      'POST /mcp': 'remote MCP server (Streamable HTTP): tools list_archs, analyze, what_if, compare_archs, assemble',
+      'POST /mcp': 'remote MCP server (Streamable HTTP): tools list_archs, analyze, what_if, diff_blocks, compare_archs, list_loops, assemble',
       'GET /healthz': 'health',
     },
-    formats: 'JSON; send "Accept: text/plain" for uiCA\'s text report, "Accept: text/markdown" (analyze, compare) for Markdown',
+    formats: 'JSON; send "Accept: text/plain" for text (uiCA\'s report for analyze), "Accept: text/markdown" for Markdown (analyze, compare, what-if, diff)',
   };
 }
 
@@ -86,7 +93,8 @@ function index() {
 
 export async function createApp(options = {}) {
   const cfg = resolveConfig(options);
-  const log = cfg.log ? (o) => process.stdout.write(JSON.stringify({ time: new Date().toISOString(), ...o }) + '\n') : () => {};
+  // (log: a function gets each entry instead: the tests)
+  const log = typeof cfg.log === 'function' ? cfg.log : cfg.log ? (o) => process.stdout.write(JSON.stringify({ time: new Date().toISOString(), ...o }) + '\n') : () => {};
   const local = await createWuica({ threads: 1, ...(cfg.dataDir ? { dataDir: cfg.dataDir } : {}) });
   const pool = new Pool({
     size: cfg.workers, maxQueue: cfg.maxQueue, timeoutMs: cfg.timeoutMs, log,
@@ -127,7 +135,10 @@ export async function createApp(options = {}) {
         chunks.push(c);
       });
       req.on('end', () => { if (!done) { done = true; resolve(Buffer.concat(chunks).toString('utf8')); } });
-      req.on('error', (e) => { if (!done) { done = true; reject(e); } });
+      // a connection closed before the end of the body ("aborted", or a close): no body will come, no error of the server
+      const cut = () => new HttpError(400, 'the client closed the connection before the end of the body');
+      req.on('error', (e) => { if (!done) { done = true; reject(/** @type {any} */ (e).code === 'ECONNRESET' ? cut() : e); } });
+      req.on('close', () => { if (!done) { done = true; reject(cut()); } });
     });
   }
 
@@ -185,6 +196,7 @@ export async function createApp(options = {}) {
       // stateless: no SSE stream to open (GET) and no session to delete (DELETE)
       return send(res, 405, { jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed: this MCP endpoint is stateless; use POST' }, id: null }, { headers: { Allow: 'POST, OPTIONS' } });
     }
+    rateLimit(req, ctx, 1, true);
     let body;
     try {
       body = await readJson(req);
@@ -200,8 +212,14 @@ export async function createApp(options = {}) {
     ctx.rpc = msgs.map((m) => (typeof m?.method === 'string' ? m.method.slice(0, 40) : 'response')).join(',').slice(0, 200);
     const call = msgs.find((m) => m?.method === 'tools/call');
     if (call && typeof call.params?.name === 'string') ctx.tool = call.params.name.slice(0, 40);
-    const cost = msgs.reduce((n, m) => n + (m?.method === 'tools/call' && ['compare_archs', 'what_if'].includes(m.params?.name) ? cfg.compareCost : 1), 0);
-    rateLimit(req, ctx, Math.max(1, cost));
+    // the batch costs the sum of its calls; more than the burst could never run (and is not cut to the burst)
+    const total = Math.max(1, msgs.reduce((n, m) => n + toolCost(m), 0));
+    if (cfg.rateBurst > 0 && total > cfg.rateBurst) {
+      ctx.code = 1;
+      return send(res, 400, { jsonrpc: '2.0', error: { code: -32600, message: `this batch costs ${total} tokens, more than the ${cfg.rateBurst} a client can have at once: send its calls in smaller batches` }, id: null });
+    }
+    rateLimit(req, ctx, total);
+    watchGone(res, ctx);
     const server = createMcpServer(facade.forRequest(ctx));
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => { transport.close().catch(() => {}); server.close().catch(() => {}); });
@@ -209,8 +227,36 @@ export async function createApp(options = {}) {
     await transport.handleRequest(req, res, body);
   }
 
-  function rateLimit(req, ctx, cost = 1) {
-    const r = limiter.take(clientIp(req), cost);
+  // Tokens: a request costs in proportion to the analyses it can start, as many as a compare of every microarchitecture
+  // (compareCost) costing compareCost; at least 1 (any request), at most the burst (a request that costs more could
+  // never run). The same for REST and /mcp. Analyses: analyze 1; what-if the base and each variant that analyzes (not
+  // nochain), align 64; diff 2. A compare (any microarchitectures): compareCost, and at least one token per job it can
+  // run at once (Facade#compareLanes).
+  const cap = (n) => Math.max(1, Math.min(cfg.rateBurst || Infinity, n));
+  const cost = (analyses) => cap(Math.ceil((analyses * cfg.compareCost) / Math.max(1, facade.archs().length)));
+  const compareTokens = (archs) => cap(Math.max(cfg.compareCost, facade.compareLanes(archs)));
+  function whatIfAnalyses(variants) {
+    const v = Array.isArray(variants) ? variants : WHAT_IF_VARIANTS;
+    return 1 + v.filter((x) => x !== 'nochain' && x !== 'align').length + (v.includes('align') ? 64 : 0);
+  }
+  function toolCost(m) {
+    if (m?.method !== 'tools/call') return 1;
+    const a = m.params?.arguments ?? {};
+    switch (m.params?.name) {
+      case 'analyze': return cost(1);
+      case 'compare_archs': return compareTokens(a.archs);
+      case 'what_if': return cost(whatIfAnalyses(a.variants));
+      case 'diff_blocks': return cost(2);
+      default: return 1;
+    }
+  }
+  // a client that goes away before the response: the jobs not yet started are not started (Facade#session)
+  const watchGone = (res, ctx) => res.on('close', () => { if (!res.writableFinished) ctx.gone = true; });
+
+  // peek: a client without a token left is refused before its body is read (whose size can raise the cost; nothing is
+  // taken: rateLimit with the cost follows)
+  function rateLimit(req, ctx, cost = 1, peek = false) {
+    const r = limiter.take(clientIp(req), cost, { peek });
     if (!r.ok) {
       ctx.rateLimited = true;
       throw new HttpError(429, 'too many requests; try again later', { 'Retry-After': String(r.retryAfter) });
@@ -284,13 +330,44 @@ export async function createApp(options = {}) {
       }
       return sendResult(res, r, wantText, (x) => x.text, unknownArch ? 404 : undefined);
     }
+    if (p === '/api/what-if' || p.startsWith('/api/what-if/')) {
+      method(['POST']);
+      let arch;
+      try { arch = decodeURIComponent(p.slice('/api/what-if/'.length)).trim(); } catch { arch = ''; }
+      if (!arch) throw new HttpError(404, 'give the microarchitecture in the path: POST /api/what-if/<arch> (see GET /api/archs)');
+      rateLimit(req, ctx, 1, true);
+      const body = await readJson(req);
+      rateLimit(req, ctx, cost(whatIfAnalyses(body?.variants)));
+      watchGone(res, ctx);
+      const r = await facade.whatIf(arch, body, ctx);
+      ctx.code = r.code;
+      const unknownArch = r.code === 1 && facade.resolveArch(arch) === null && /^unknown microarchitecture/.test(r.error ?? '');
+      if (!wantText && wantsMarkdown(req)) return sendMarkdown(res, r, r.code ? markdown.report(r) : markdown.whatIfAlignment(r), unknownArch ? 404 : undefined);
+      return sendResult(res, r, wantText, whatIfText, unknownArch ? 404 : undefined);
+    }
+    if (p === '/api/diff' || p.startsWith('/api/diff/')) {
+      method(['POST']);
+      let arch;
+      try { arch = decodeURIComponent(p.slice('/api/diff/'.length)).trim(); } catch { arch = ''; }
+      if (!arch) throw new HttpError(404, 'give the microarchitecture in the path: POST /api/diff/<arch> (see GET /api/archs)');
+      rateLimit(req, ctx, cost(2));
+      const body = await readJson(req);
+      watchGone(res, ctx);
+      const x = /** @type {any} */ (await facade.diff(arch, body, ctx));
+      const r = x.failure ?? x.result;
+      ctx.code = r.code;
+      const unknownArch = r.code === 1 && facade.resolveArch(arch) === null && /unknown microarchitecture/.test(r.error ?? '');
+      if (!wantText && wantsMarkdown(req)) return sendMarkdown(res, r, diffMarkdown(x, { archTitle: r.code ? undefined : archTitle(r.arch) }), unknownArch ? 404 : undefined);
+      return sendResult(res, r, wantText, diffText, unknownArch ? 404 : undefined);
+    }
     if (p === '/api/compare') {
       method(['POST']);
-      rateLimit(req, ctx, cfg.compareCost);
+      rateLimit(req, ctx, 1, true);
       const body = await readJson(req);
+      rateLimit(req, ctx, compareTokens(body?.archs));
       const r = await facade.compare(body, ctx);
       ctx.code = r.code;
-      if (!wantText && wantsMarkdown(req)) return sendMarkdown(res, r, r.code ? markdown.report(r) : markdown.cpuTable(r));
+      if (!wantText && wantsMarkdown(req)) return sendMarkdown(res, r, r.code ? markdown.report(r) : markdown.cpuTable(r, { per: r.elementsPerIteration }));
       return sendResult(res, r, wantText, compareText);
     }
     if (p === '/api/assemble') {
@@ -314,16 +391,32 @@ export async function createApp(options = {}) {
     } catch {
       url = new URL('http://localhost/');
     }
-    res.on('finish', () => {
-      const entry = { method: req.method, path: url.pathname.slice(0, 200), status: res.statusCode, ms: Math.round((performance.now() - t0) * 10) / 10 };
-      for (const k of ['arch', 'instructions', 'bytes', 'code', 'tool', 'rpc', 'queueMs', 'runMs', 'parts', 'timedOut', 'rateLimited', 'busy', 'error']) {
-        if (ctx[k] !== undefined) entry[k] = typeof ctx[k] === 'number' && k.endsWith('Ms') ? Math.round(ctx[k] * 10) / 10 : ctx[k];
-      }
-      log(entry);
-    });
+    // one log line per request: when the response has been sent, or when the connection closed before that (aborted;
+    // status 499 if no status was sent), then once the request's work has ended (with its jobs, times and gone)
+    let logged = false;
+    /** @type {Promise<void> | null} */
+    let routed = null;
+    const logRequest = () => {
+      if (logged) return;
+      logged = true;
+      const aborted = !res.writableFinished;
+      const status = aborted && !res.headersSent ? 499 : res.statusCode;
+      const write = () => {
+        const entry = { method: req.method, path: url.pathname.slice(0, 200), status, ms: Math.round((performance.now() - t0) * 10) / 10, ...(aborted ? { aborted: true } : {}) };
+        for (const k of ['arch', 'instructions', 'bytes', 'code', 'tool', 'rpc', 'queueMs', 'runMs', 'jobs', 'parts', 'timedOut', 'gone', 'rateLimited', 'busy', 'error']) {
+          if (ctx[k] !== undefined) entry[k] = typeof ctx[k] === 'number' && k.endsWith('Ms') ? Math.round(ctx[k] * 10) / 10 : ctx[k];
+        }
+        log(entry);
+      };
+      if (aborted && routed) routed.then(write); else write();
+    };
+    res.on('finish', logRequest);
+    res.on('close', logRequest);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     try {
-      await route(req, res, url, ctx);
+      const p = route(req, res, url, ctx);
+      routed = p.then(() => {}, () => {});
+      await p;
     } catch (e) {
       const status = e instanceof HttpError ? e.status : 500;
       if (status === 500) ctx.error = String(e?.message ?? e).slice(0, 200);

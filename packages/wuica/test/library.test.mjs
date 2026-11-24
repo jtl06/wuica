@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createWuica, normalizeHex } from '../lib/index.js';
+import { tmpDir } from './tmpdir.mjs';
 
 const DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -72,8 +73,321 @@ test('the work budget: wbinvd (about 10^6 uops) fails at once with code 3; an al
   assert.ok(performance.now() - t0 < 5000, `${Math.round(performance.now() - t0)} ms`);
   const big = await w.analyze('SKL', { hex: HEX, options: { alignmentOffset: 2 ** 62 + 4096 } });
   assert.notEqual(big.code, 0);
-  assert.match(big.error, /alignmentOffset .* out of range|not an integer/);
+  assert.match(big.error, /alignmentOffset\b.* out of range/);
   assert.equal((await w.analyze('SKL', { hex: HEX, options: { alignmentOffset: 2 ** 40 } })).tp, (await w.analyze('SKL', { hex: HEX })).tp);
+});
+
+test('whatIf(arch, request): the what-if experiments with variants and per (the MCP tool and REST give the same)', async () => {
+  const { whatIf, WHAT_IF_VARIANTS, whatIfText } = await import('../lib/index.js');
+  const DOT = 'loop:\n vfmadd231ps ymm0, ymm1, [rdi+rax]\n add rax, 32\n cmp rax, rdx\n jb loop\n';
+  const x = await w.whatIf('SKL', { source: DOT });
+  assert.deepEqual(x, await whatIf((a, r) => w.analyze(a, r), 'SKL', { source: DOT }, WHAT_IF_VARIANTS, { assemble: (t) => w.assemble(t, 'intel') }));
+  const p = await w.whatIf('SKL', { source: DOT, variants: ['acc4'], per: 8 });
+  assert.equal(p.elementsPerIteration, 8);
+  assert.equal(p.perElement, p.tp / 8);
+  assert.equal(p.variants[0].perElement, p.variants[0].tp / 8);
+  assert.match(whatIfText(p), /^What if \(SKL\), cycles per element \(8 per original iteration; base /);
+  assert.equal((await w.whatIf('SKL', { source: DOT, per: -1 })).code, 1);
+  assert.equal((await w.whatIf('SKL', { source: DOT, variants: 'acc2' })).code, 1);
+  assert.equal((await w.whatIf('SKL', { source: DOT, variants: ['acc9'] })).code, 1);
+});
+
+test('otherLoops: the loops not analyzed when the text has more than one (listLoops\' entries), in analyze, summarize, compare', async () => {
+  const { listLoops } = await import('../lib/index.js');
+  const src = 'f:\n.L1:\n add rax, 1\n dec rcx\n jnz .L1\n.L2:\n add rbx, 1\n dec rdx\n jnz .L2\n ret\n';
+  const r = await w.analyze('SKL', { source: src });
+  const all = listLoops(src);
+  assert.equal(r.loop.index, 0);
+  assert.deepEqual(r.otherLoops, all.filter((l) => l.index !== 0).map(({ auto, ...l }) => l));
+  assert.deepEqual(r.otherLoops, [{ index: 1, label: '.L2', function: 'f', line: 6, endLine: 9, instructions: 3, depth: 1 }]);
+  assert.deepEqual((await w.analyze('SKL', { source: src, loop: 1 })).otherLoops.map((l) => l.label), ['.L1']);
+  assert.equal((await w.analyze('SKL', { source: src, loop: 'whole' })).otherLoops, undefined, 'whole: every loop is analyzed');
+  assert.deepEqual(w.summarize(r).otherLoops, r.otherLoops);
+  assert.deepEqual((await w.compare({ source: src, archs: ['SKL'] })).otherLoops, r.otherLoops);
+  // one loop, or machine code: none
+  assert.equal((await w.analyze('SKL', { source: 'l:\n dec rcx\n jnz l\n' })).otherLoops, undefined);
+  assert.equal((await w.analyze('SKL', { hex: HEX })).otherLoops, undefined);
+  assert.equal(listLoops(42).error, '`source` must be assembly text');
+  assert.equal((await w.analyze('SKL', { hex: HEX, options: { minCycles: 2 ** 53 } })).error, 'option minCycles: 9007199254740992 is out of range (at most 2^53 - 1 in magnitude)');
+});
+
+test('compare with per: cycles per element on each row (as the CLI\'s -arch with -per)', async () => {
+  const c = await w.compare({ hex: HEX, archs: ['SKL', 'ZEN3', 'NOPE'], per: 4 });
+  assert.equal(c.elementsPerIteration, 4);
+  assert.deepEqual(c.results.map((r) => r.perElement), [c.results[0].tp / 4, c.results[1].tp / 4, undefined]);
+  assert.equal((await w.compare({ hex: HEX, archs: ['SKL'] })).elementsPerIteration, undefined);
+  for (const per of [0, -1, '4']) assert.equal((await w.compare({ hex: HEX, per })).code, 1, String(per));
+});
+
+test('source lines: line (and loc from .loc) on each instruction row, instructions[], chain[] and hot.instructions[]', async () => {
+  const src = 'f:\n.L1:\n add rax, 1\n dec rcx\n jnz .L1\n ret\n';
+  const r = await w.analyze('SKL', { source: src });
+  assert.deepEqual(r.rows.map((x) => x.line), [3, 4, 5]);
+  const s = w.summarize(r);
+  assert.deepEqual(s.instructions.map((x) => x.line), [3, 4, 5]);
+  assert.deepEqual(s.insights.chain.map((x) => x.line), [3]);
+  assert.ok(s.insights.hot.instructions.every((x) => x.line === r.rows[x.index].line));
+  // the whole text, a picked loop of several, .loc directives
+  // (a stack-synchronization uop before the ret is not an instruction: no line)
+  assert.deepEqual((await w.analyze('SKL', { source: src, loop: 'whole' })).rows.map((x) => x.line), [3, 4, 5, undefined, 6]);
+  const two = 'f:\n.L1:\n add rax, 1\n dec rcx\n jnz .L1\n.L2:\n add rbx, 1\n dec rdx\n jnz .L2\n ret\n';
+  assert.deepEqual((await w.analyze('SKL', { source: two, loop: 1 })).rows.map((x) => x.line), [7, 8, 9]);
+  const loc = '\t.file 1 "sum.c"\nloop:\n\t.loc 1 4 7\n\taddss xmm0, xmm1\n\t.loc 1 3 3\n\tdec rcx\n\tjnz loop\n';
+  const l = await w.analyze('SKL', { source: loc });
+  assert.deepEqual(l.rows.map((x) => [x.line, x.loc]), [[4, 'sum.c:4'], [6, 'sum.c:3'], [7, 'sum.c:3']]);
+  assert.deepEqual(w.summarize(l).instructions.map((x) => x.loc), ['sum.c:4', 'sum.c:3', 'sum.c:3']);
+  // objdump lines: the line of the text
+  const od = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/profiles/objdump-dS.txt'), 'utf8');
+  assert.deepEqual((await w.analyze('SKL', { source: od })).rows.map((x) => x.line), [15, 16, 17, 19, 20, 21]);
+  // machine code: none
+  const h = await w.analyze('SKL', { hex: HEX });
+  assert.ok(h.rows.every((x) => x.line === undefined && x.loc === undefined));
+});
+
+test('what-if stopped part way (an analyzer that says notRun after N analyses): nochain still estimated; no best number of accumulators unless every one ran', async () => {
+  const { whatIf, findExample } = await import('../lib/index.js');
+  const src = findExample('dot1').intel;
+  const stopAfter = (n) => { let k = 0; return (arch, req) => (++k > n ? Promise.resolve({ code: 3, error: 'out of time', notRun: 'deadline' }) : w.analyze(arch, req)); };
+  const all = ['acc2', 'acc4', 'nochain'];
+  const asm = { assemble: (t) => w.assemble(t, 'intel') };
+  const full = await whatIf(stopAfter(99), 'SKL', { source: src }, all, asm);
+  assert.ok(full.accumulators?.best >= 1, JSON.stringify(full));
+  // the base and acc2 finish; acc4 not; nochain needs no analysis
+  const cut = await whatIf(stopAfter(2), 'SKL', { source: src }, all, asm);
+  assert.equal(cut.notRun, 'deadline');
+  assert.deepEqual(cut.variants.map((v) => [v.id, v.error ?? 'ok']), [['acc2', 'ok'], ['acc4', 'not run: deadline'], ['nochain', 'ok']]);
+  assert.equal(cut.variants[2].estimate, true);
+  assert.equal(cut.variants[2].tp, full.variants[2].tp);
+  assert.equal(cut.accumulators, undefined, 'acc4 did not run: no best');
+  assert.deepEqual(cut.stderr.map((l) => l.text).slice(-1), ['Warning: 1 of 3 variant(s) not run: deadline']);
+  // the deadline right after the base: nochain still there
+  const early = await whatIf(stopAfter(1), 'SKL', { source: src }, all, asm);
+  assert.deepEqual(early.variants.map((v) => [v.id, v.error ?? 'ok']), [['acc2', 'not run: deadline'], ['acc4', 'not run: deadline'], ['nochain', 'ok']]);
+});
+
+test('the what-if variant align: the 64 alignment offsets, only when asked for', async () => {
+  const { WHAT_IF_VARIANTS, WHAT_IF_OPT_IN_VARIANTS, whatIfText, markdown, findExample } = await import('../lib/index.js');
+  assert.ok(!WHAT_IF_VARIANTS.includes('align') && WHAT_IF_OPT_IN_VARIANTS.includes('align'));
+  const src = findExample('saxpy').intel;
+  assert.ok(!(await w.whatIf('SKL', { source: src })).variants.some((v) => v.id === 'align'));
+  const x = await w.whatIf('SKL', { source: src, variants: ['align'] });
+  const v = x.variants[0];
+  const tps = [];
+  for (let k = 0; k < 64; k++) tps.push((await w.analyze('SKL', { source: src, options: { alignmentOffset: k } })).tp);
+  const sorted = [...tps].sort((a, b) => a - b);
+  assert.deepEqual(v.alignment, { min: sorted[0], median: Math.round((sorted[31] + sorted[32]) / 2 * 100) / 100, max: sorted[63],
+    best: tps.indexOf(sorted[0]), worst: tps.indexOf(sorted[63]), spread: Math.round((sorted[63] - sorted[0]) * 100) / 100, offset: 0 });
+  assert.equal(v.tp, v.alignment.median);
+  assert.ok(v.alignment.spread > 0, 'saxpy on SKL depends on the alignment');
+  assert.match(whatIfText(x), /^ {2}alignment over 64 offsets: min 1\.50 \(offset \d+\), median 1\.50, max 3\.00 \(offset \d+\), spread 1\.50; this block at offset 0$/m);
+  assert.match(markdown.whatIfAlignment(x), /\*\*Alignment\*\* over the 64 offsets: min 1\.50/);
+  assert.equal((await w.whatIf('SKL', { source: src, variants: ['align'], options: { alignmentOffset: 8 } })).variants[0].alignment.offset, 8);
+  // the median of 64 offsets: the mean of the two middle ones. With an analyzer that gives 2 at the even offsets and 3
+  // at the odd ones, worked out by hand: sorted, 32 times 2 then 32 times 3, the middle two (the 32nd and 33rd) are 2
+  // and 3: median 2.5 (not 3, the upper middle one, nor 2); best 0, worst 1 (the first offsets with 2 and 3)
+  const { whatIf } = await import('../lib/index.js');
+  const fake = async (arch, req) => ({ code: 0, arch, mode: 'loop', bottlenecks: [], rows: [], hex: '4801d8', tp: (req.options?.alignmentOffset ?? 0) % 2 ? 3 : 2 });
+  const h = await whatIf(fake, 'SKL', { hex: '4801d8' }, ['align']);
+  assert.deepEqual(h.variants[0].alignment, { min: 2, median: 2.5, max: 3, best: 0, worst: 1, spread: 1, offset: 0 });
+  assert.equal(h.variants[0].tp, 2.5);
+  // 31 offsets at 1.25, 33 at 1.5: the middle two are 1.5 and 1.5
+  const fake2 = async (arch, req) => ({ ...(await fake(arch, req)), tp: (req.options?.alignmentOffset ?? 0) < 31 ? 1.25 : 1.5 });
+  assert.equal((await whatIf(fake2, 'SKL', { hex: '4801d8' }, ['align'])).variants[0].alignment.median, 1.5);
+  // 33 at 1.25, 31 at 1.5: 1.25; 32 and 32: (1.25 + 1.5) / 2 = 1.375, 1.38 to two decimals
+  const fake3 = async (arch, req) => ({ ...(await fake(arch, req)), tp: (req.options?.alignmentOffset ?? 0) < 33 ? 1.25 : 1.5 });
+  assert.equal((await whatIf(fake3, 'SKL', { hex: '4801d8' }, ['align'])).variants[0].alignment.median, 1.25);
+  const fake4 = async (arch, req) => ({ ...(await fake(arch, req)), tp: (req.options?.alignmentOffset ?? 0) < 32 ? 1.25 : 1.5 });
+  assert.equal((await whatIf(fake4, 'SKL', { hex: '4801d8' }, ['align'])).variants[0].alignment.median, 1.38);
+  // an offset of 64 or more is the same as modulo 64 for the analyzer: also for the offset named
+  assert.equal(tps[8], (await w.analyze('SKL', { source: src, options: { alignmentOffset: 72 } })).tp);
+  assert.equal((await w.whatIf('SKL', { source: src, variants: ['align'], options: { alignmentOffset: 72 } })).variants[0].alignment.offset, 8);
+});
+
+test('profiles: objdump -dS keeps the source lines', async () => {
+  const { listLoops } = await import('../lib/index.js');
+  // real llvm-objdump -dS output (tests-js/fixtures/profiles/sum.c, clang -O1 -g)
+  const od = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/profiles/objdump-dS.txt'), 'utf8');
+  const r = await w.analyze('SKL', { source: od });
+  assert.equal(r.loop.function, 'dot');
+  assert.deepEqual(r.rows.map((x) => x.source), [...Array(3).fill('s += a[i] * b[i];'), ...Array(3).fill('for (long i = 0; i < n; i++)')]);
+  assert.deepEqual(w.summarize(r).instructions.map((x) => x.source), r.rows.map((x) => x.source));
+});
+
+test('profiles, real output (tests-js/fixtures/profiles/make-fixtures.sh): perf annotate --stdio of two hot functions and a nested loop', async () => {
+  const { listLoops } = await import('../lib/index.js');
+  const pf = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/profiles/perf-annotate-hot.txt'), 'utf8');
+  const p = await w.analyze('SKL', { source: pf });
+  assert.equal(p.code, 0, p.error);
+  // the hottest loop by its own samples: the inner loop of matvec (0x1400), not the outer loop around it (0x13c0),
+  // whose samples with those of the inner loop would be the most
+  assert.equal(p.loop.function, 'matvec');
+  assert.equal(p.loop.name, 'loop 0x1400');
+  assert.equal(p.loop.depth, 2);
+  assert.deepEqual(listLoops(pf).filter((l) => l.auto).map((l) => l.label), ['0x1400']);
+  // each block's percentages weighted by its header's samples (matvec 1069, count 58, main 20 of 1147), worked out by
+  // hand: 1430 at 26.33 % of matvec's 26.33 * 1069 / 1147 = 24.54; 1576 at 18.77 % of count's 18.77 * 58 / 1147 = 0.95
+  const cmp = p.rows.find((x) => x.kind === 'instr' && x.samples === 24.54);
+  assert.ok(cmp, JSON.stringify(p.rows.map((x) => x.samples)));
+  assert.equal(cmp.source, 'for (long c = 0; c < cols; c++)');
+  const c = await w.analyze('SKL', { source: pf, loop: listLoops(pf).findIndex((l) => l.label === '0x1500') });
+  assert.equal(c.loop.function, 'count');
+  assert.ok(c.rows.some((x) => x.samples === 0.95), JSON.stringify(c.rows.map((x) => x.samples)));
+  assert.ok(c.rows.some((x) => x.samples === 0.44), '1519 at 8.68 % of count: 0.44');
+  assert.ok(!c.rows.some((x) => x.samples > 1), 'no instruction of count has more than 1 % of all the samples');
+  // hand-edited: a count with a thousands separator ("1,069 samples") is the same count
+  const sep = await w.analyze('SKL', { source: pf.replace('(1069 samples', '(1,069 samples') });
+  assert.deepEqual(sep.rows.map((x) => x.samples), p.rows.map((x) => x.samples));
+  // hand-edited: a header without a count (count's) does not take matvec's: no weighting at all, each symbol's own
+  // percentages (1430: 26.33 as printed), said in a note
+  const nc = await w.analyze('SKL', { source: pf.replace('(58 samples, ', '('), loop: '0x1400' });
+  assert.ok(nc.rows.some((x) => x.samples === 26.33), JSON.stringify(nc.rows.map((x) => x.samples)));
+  assert.match(nc.stderr.map((l) => l.text).join('\n'), /note: perf annotate: a symbol's header has no sample count, so the samples are each symbol's own percentages/);
+  assert.ok(!p.stderr?.some((l) => /no sample count/.test(l.text)));
+  // hand-edited from the real output: two blocks with the same count (count's header says 1069 too) both count:
+  // 26.33 * 1069 / (1069 + 1069 + 20) = 13.04
+  const same = pf.replace('(58 samples,', '(1069 samples,');
+  const sm = await w.analyze('SKL', { source: same, loop: '0x1400' });
+  assert.ok(sm.rows.some((x) => x.samples === 13.04), JSON.stringify(sm.rows.map((x) => x.samples)));
+  // hand-edited: --percent-type global-period (its header says global): the percentages as given
+  const global = pf.replace(/percent: local period/g, 'percent: global period');
+  assert.ok((await w.analyze('SKL', { source: global, loop: '0x1400' })).rows.some((x) => x.samples === 26.33));
+  // --stdio2 has no addresses: said, not analyzed as something else
+  const s2 = await w.analyze('SKL', { source: fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/profiles/perf-annotate-hot-stdio2.txt'), 'utf8') });
+  assert.equal(s2.code, 1);
+  assert.match(s2.error, /perf annotate --stdio2 output.*use perf annotate --stdio$/);
+});
+
+test('profiles, real output: GNU objdump -dS and -dSl, gcc 15 -O2 -g -S (DWARF 5, .file 0, .loc view) in AT&T and Intel syntax', async () => {
+  const F = (f) => fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/profiles', f), 'utf8');
+  for (const f of ['objdump-dS-hot.txt', 'objdump-dSl-hot.txt']) {
+    const r = await w.analyze('SKL', { source: F(f) });
+    assert.equal(r.code, 0, `${f}: ${r.error}`);
+    assert.equal(r.loop.function, 'matvec', f);
+    assert.equal(r.loop.name, 'loop 0x1400', f);
+    const instr = r.rows.filter((x) => x.kind === 'instr');
+    assert.deepEqual([...new Set(instr.map((x) => x.source))], ['s += m[r * cols + c] * v[c];', 'for (long c = 0; c < cols; c++)'], f);
+  }
+  const hex = (await w.analyze('SKL', { source: F('objdump-dS-hot.txt') })).hex;
+  for (const f of ['gcc-hot-att.s', 'gcc-hot-intel.s']) {
+    const text = F(f);
+    assert.match(text, /^\t\.file 0 "\." "hot\.c"$/m, `${f}: DWARF 5`);
+    assert.equal((await w.assemble(text)).code, 0, f);
+    const r = await w.analyze('SKL', { source: text });
+    assert.equal(r.code, 0, `${f}: ${r.error}`);
+    assert.equal(r.loop.function, 'matvec', f);
+    const instr = r.rows.filter((x) => x.kind === 'instr');
+    assert.deepEqual([...new Set(instr.map((x) => x.loc))], ['hot.c:11', 'hot.c:10'], `${f}: the loop body, then the loop control`);
+    assert.ok(instr.every((x) => Number.isInteger(x.line)), f);
+    assert.equal(r.hex, hex, `${f}: the bytes of the binary's loop`);
+  }
+  // the line directives are not assembled, and the bytes stay: clang23-sum-g.s as clang23-sum.s (the same clang, without
+  // -g: no line table); dot-clang-O2-g.s's loop as clang 23 assembles it (clang --target=x86_64-linux-gnu -c, the .text bytes)
+  const F2 = (f) => fs.readFileSync(path.join(ROOT, 'tests-js/fixtures', f), 'utf8');
+  const [g, n] = [F2('profiles/clang23-sum-g.s'), F2('profiles/clang23-sum.s')];
+  assert.equal((await w.analyze('SKL', { source: g })).hex, (await w.analyze('SKL', { source: n })).hex);
+  assert.equal((await w.assemble(g)).hex, (await w.assemble(n)).hex);
+  assert.equal((await w.analyze('SKL', { source: F2('asm/dot-clang-O2-g.s') })).hex,
+    'f20f100ccff20f1054cf08f20f590ccef20f5954ce08f20f58c8f20f105ccf10f20f595cce10f20f58d1f20f1044cf18f20f5944ce18f20f58daf20f58c34883c1044839ca75b9');
+});
+
+test('source lines only when the lines are the instructions: .rept, .irp, .if, .macro; .byte; a NUL in a comment', async () => {
+  const lines = async (source, o = {}) => (await w.analyze('SKL', { source, ...o })).rows.filter((x) => x.kind === 'instr').map((x) => x.line);
+  // an instruction written as bytes: two instructions, one instruction line: no lines (not the jnz's line for the dec)
+  assert.deepEqual(await lines('loop:\n .byte 0x48, 0xff, 0xc9\n jnz loop\n'), [undefined, undefined]);
+  for (const src of ['loop:\n .rept 2\n add rax, 1\n .endr\n dec rcx\n jnz loop\n', 'loop:\n .irp r, rax, rbx\n add \\r, 1\n .endr\n dec rcx\n jnz loop\n',
+    '.if 0\n add rax, 1\n.endif\nloop:\n imul rbx, rbx\n dec rcx\n jnz loop\n', 'x: .rept 2\n nop\n .endr\nloop:\n add rax, 1\n dec rcx\n jnz loop\n']) {
+    const r = await w.analyze('SKL', { source: src });
+    assert.equal(r.code, 0, `${src}: ${r.error}`);
+    assert.ok(r.rows.every((x) => x.line === undefined), src);
+    assert.equal(r.loop, undefined, `${src}: the whole text`);
+    assert.match(r.stderr.map((l) => l.text).join('\n'), /note: \.(?:rept|irp|if): the text repeats or leaves out lines, so a loop cannot be isolated: the whole text is analyzed/, src);
+  }
+  // a loop before which a .rept repeats code: the whole text (said), never a wrong loop
+  const before = '.rept 2\n nop\n.endr\nf:\n mov eax, 1\nloop:\n add rax, 1\n dec rcx\n jnz loop\n ret\n';
+  const r = await w.analyze('SKL', { source: before });
+  assert.equal(r.loop, undefined);
+  assert.equal(r.rows.filter((x) => x.kind === 'instr').length, 7, 'two nops, mov, the loop, ret');
+  // a macro holding a .rept, called in two loops: assembled once each (no "symbol '.Lwuica_0' is already defined")
+  const macro = '.macro body\n .rept 2\n add rax, 1\n .endr\n.endm\nf:\nloop:\n body\n dec rcx\n jnz loop\n ret\nloop2:\n body\n dec rdx\n jnz loop2\n';
+  const m = await w.analyze('SKL', { source: macro });
+  assert.equal(m.code, 0, m.error);
+  assert.ok(m.rows.every((x) => x.line === undefined));
+  // a data directive among the instructions: its bytes are an instruction (or part of one) of their own: no lines, also
+  // where the counts happen to match (the nop of .byte 0x90 is not the lock line); a prefix alone on its line is part
+  // of the next instruction (lock / add: one instruction, the add's line)
+  for (const src of ['loop:\n .byte 0x90\n lock\n add [rdi], eax\n dec rcx\n jnz loop\n', 'loop:\n .zero 1\n lock\n add [rdi], eax\n dec rcx\n jnz loop\n',
+    'loop:\n .fill 1,1,0x90\n rep\n movsb\n dec rcx\n jnz loop\n', 'loop:\n .space 1,0x90\n data16\n add eax, 1\n dec rcx\n jnz loop\n',
+    'loop:\n .byte 0x48,0x01,0xd8\n lock\n add [rdi], eax\n dec rcx\n jnz loop\n']) {
+    const r = await w.analyze('SKL', { source: src });
+    assert.equal(r.code, 0, `${src}: ${r.error}`);
+    assert.ok(r.rows.every((x) => x.line === undefined), `${src}: ${JSON.stringify(r.rows.map((x) => x.line))}`);
+  }
+  assert.deepEqual(await lines('loop:\n lock\n add [rdi], eax\n rep\n movsb\n dec rcx\n jnz loop\n'), [3, 5, 6, 7]);
+  // where the counts match (a REX byte as data: 48 01 d8 is one instruction, as many as the instruction lines): still none
+  const rex = await w.analyze('SKL', { source: 'loop:\n .byte 0x48\n add eax, ebx\n dec rcx\n jnz loop\n' });
+  assert.equal(rex.rows.filter((x) => x.kind === 'instr').length, 3);
+  assert.ok(rex.rows.every((x) => x.line === undefined), JSON.stringify(rex.rows.map((x) => x.line)));
+  // a data directive outside the analyzed loop: the loop's lines stay
+  assert.deepEqual(await lines('f:\n .byte 0x90\nloop:\n add rax, 1\n dec rcx\n jnz loop\n ret\n'), [4, 5, 6]);
+  // a NUL in a comment: the comment ends at the line's end, the instructions stay (6.00: the imul chain, three lines on)
+  const nul = await w.analyze('SKL', { source: 'loop:\n add rax, 1 # a\x00b\n imul rbx, rbx\n imul rbx, rbx\n dec rcx\n jnz loop\n' });
+  assert.equal(nul.code, 0, nul.error);
+  assert.equal(nul.tp, 6);
+  assert.deepEqual(nul.rows.filter((x) => x.kind === 'instr').map((x) => x.line), [2, 3, 4, 5, 6]);
+});
+
+test('clang 23 -S output as is: .prefalign is read as the .p2align clang 22 wrote', async () => {
+  // real output of Homebrew clang 23.1.6: clang --target=x86_64-linux-gnu -O2 -S tests-js/fixtures/profiles/sum.c
+  const s = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/profiles/clang23-sum.s'), 'utf8');
+  assert.match(s, /^\t\.prefalign\t4, \.Lfunc_end0, nop$/m);
+  const r = await w.analyze('SKL', { source: s });
+  assert.equal(r.code, 0, r.error);
+  assert.equal(r.loop.function, 'dot');
+  const p2 = await w.analyze('SKL', { source: s.replace(/\.prefalign\t(\d+).*$/gm, '.p2align $1') });
+  assert.equal(r.tp, p2.tp);
+  assert.equal(r.hex, p2.hex);
+  assert.equal((await w.assemble(s)).code, 0);
+  // what follows a ';' stays; after a label; in upper case
+  const { stripHints } = await import('../lib/web/assembler.js');
+  assert.equal(stripHints('.prefalign 4, .Lend, nop; add rax, 1\n'), '.p2align 4; add rax, 1\n');
+  assert.equal(stripHints('x: .prefalign 4, .Lend, nop # c\n'), 'x: .p2align 4# c\n');
+  assert.equal(stripHints('\t.PREFALIGN\t5, .Lend, nop\n'), '\t.p2align 5\n');
+  const kept = await w.assemble('nop\n.prefalign 4, .Lend, nop; add rax, 1\n.Lend:\n');
+  assert.equal(kept.hex, (await w.assemble('nop\n.p2align 4; add rax, 1\n')).hex);
+  assert.match(kept.hex, /4883c001$/, 'the add is assembled');
+  assert.equal((await w.assemble('nop\nx: .PREFALIGN 4, .Lend, nop\n add rax, 1\n.Lend:\n')).hex, (await w.assemble('nop\nx: .p2align 4\n add rax, 1\n')).hex);
+});
+
+test('what-if carries the base\'s decode errors and warnings (also with align)', async () => {
+  const { whatIfText, markdown, findExample } = await import('../lib/index.js');
+  const x = await w.whatIf('SNB', { source: findExample('dot1').intel, variants: ['unroll2', 'align'] }); // SNB has no FMA
+  assert.equal(x.decodeErrors, 4);
+  assert.deepEqual(x.stderr.map((l) => l.text), ['Warning: 4 position(s) could not be decoded']);
+  assert.match(whatIfText(x), /^ {2}warning: 4 position\(s\) could not be decoded$/m);
+  assert.match(markdown.whatIfAlignment(x), /^- Warning: 4 position\(s\) could not be decoded$/m);
+  assert.equal(x.variants.find((v) => v.id === 'align').alignment.min, 4, 'written out: 4 cycles at the best offset');
+});
+
+test('clang -g -S output (NULs in the .debug_str comments): the library, the CLI and the MCP tool, with lines and .loc', async () => {
+  const { mcpTools, callTool } = await import('../lib/mcp.js');
+  const { execFileSync } = await import('node:child_process');
+  // real clang -O2 -g -S output: clang 22 (dot.c) and clang 23.1.6 (sum.c, -fdebug-prefix-map to /src)
+  for (const [file, src] of [['tests-js/fixtures/asm/dot-clang-O2-g.s', 'dot.c'], ['tests-js/fixtures/profiles/clang23-sum-g.s', 'sum.c']]) {
+    const text = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    assert.ok(text.includes('\0'), `${file} has NUL characters`);
+    assert.equal((await w.assemble(text)).code, 0, file);
+    const r = await w.analyze('SKL', { source: text });
+    assert.equal(r.code, 0, `${file}: ${r.error}`);
+    assert.equal(r.loop.function, 'dot');
+    const instr = r.rows.filter((x) => x.kind === 'instr');
+    assert.ok(instr.every((x) => Number.isInteger(x.line) && /^(dot|sum)\.c:[34]$/.test(x.loc)), file);
+    assert.deepEqual([...new Set(instr.map((x) => x.loc))], [`${src}:4`, `${src}:3`], 'written out: the loop body, then the loop control');
+    const cli = JSON.parse(execFileSync(process.execPath, [path.join(DIR, 'bin/wuica.js'), path.join(ROOT, file), '-json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
+    assert.equal(cli.tp, r.tp, `${file}: the CLI`);
+    const m = await callTool(mcpTools(w), 'analyze', { source: text, format: 'json' });
+    assert.ok(!m.isError, `${file}: the MCP tool`);
+    assert.deepEqual(JSON.parse(m.content[0].text).instructions.map((x) => x.loc), instr.map((x) => x.loc));
+  }
 });
 
 test('SKL result in detail', async () => {
@@ -99,7 +413,7 @@ test('options are passed through and checked', async () => {
   for (const o of [{ alignmentOffset: '3' }, { alignmentOffset: 1.5 }, { minIterations: 2 ** 60 }, { minCycles: NaN }, { simpleFrontEnd: 'yes' }, { noMicroFusion: 1 }, { includeTrace: 'x' }]) {
     const r = await w.analyze('SKL', { hex: '4801d8', options: o });
     assert.equal(r.code, 1, JSON.stringify(o));
-    assert.match(r.error, /^option \w+: .* is not (an integer|true or false)$/);
+    assert.match(r.error, /^option \w+: .* (is not (an integer|true or false)|is out of range \(at most 2\^53 - 1 in magnitude\))$/);
   }
   assert.equal((await w.compare({ hex: '4801d8', options: { minCycles: 'x' } })).code, 1);
   const typo = await w.analyze('SKL', { hex: '4801d8', options: { minIteration: 5 } });
@@ -210,7 +524,7 @@ test('summarize', async () => {
 });
 
 test('a dataDir with plain binary tables works; JSON tables are an error that says how to convert them', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-data-'));
+  const dir = tmpDir('wuica-data-');
   fs.mkdirSync(path.join(dir, 'arch'));
   fs.copyFileSync(path.join(ROOT, 'data/uarch.json'), path.join(dir, 'uarch.json'));
   fs.writeFileSync(path.join(dir, 'arch/SKL.bin'), zlib.brotliDecompressSync(fs.readFileSync(path.join(DIR, 'dist/data/arch/SKL.bin.br'))));

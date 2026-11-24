@@ -264,7 +264,9 @@ if (!QUICK) {
   task({
     name: 'build:npm', kind: 'build', deps: ['build:wasm'],
     run: async (log) => {
-      if (!exists(path.join(PKG, 'node_modules'))) {
+      // (also when the installation predates TypeScript: installing later, in the typecheck task, would replace
+      // node_modules under the package's running tests)
+      if (!exists(path.join(PKG, 'node_modules/typescript'))) {
         const code = await exec('npm', ['ci', '--no-audit', '--no-fund'], { cwd: PKG, log });
         if (code) return { status: 'fail', count: `npm ci: exit ${code}` };
       }
@@ -305,10 +307,6 @@ if (!QUICK) {
   task({
     name: 'typecheck', kind: 'js', deps: ['build:npm', 'build:server'],
     run: async (log) => {
-      if (!exists(path.join(PKG, 'node_modules/typescript'))) {
-        const ci = await exec('npm', ['ci', '--no-audit', '--no-fund'], { cwd: PKG, log });
-        if (ci) return { status: 'fail', count: `npm ci: exit ${ci}` };
-      }
       const code = await exec('node', ['scripts/typecheck.mjs'], { log });
       const m = /(\d+ files type-checked, \d+ errors)/.exec(fs.readFileSync(log, 'utf8'));
       return { status: code ? 'fail' : 'pass', count: m ? m[1] : `exit ${code}` };
@@ -329,7 +327,8 @@ const chrome = findChrome();
 const jsSuites = ['analyze_fixtures', 'decode_fixtures', ...fs.readdirSync(path.join(ROOT, 'tests-js')).filter((f) => /^web_.*\.mjs$/.test(f)).sort().map((f) => f.slice(0, -4))];
 for (const name of jsSuites) {
   const file = path.join(ROOT, 'tests-js', `${name}.mjs`);
-  const browser = /remote-debugging-port|--headless/.test(fs.readFileSync(file, 'utf8'));
+  // (a browser suite by its name too: the newer ones start Chrome through tests-js/cdp.mjs and name no flag)
+  const browser = /_browser$/.test(name) || /remote-debugging-port|--headless/.test(fs.readFileSync(file, 'utf8'));
   const args = ARGS[opts.mode][name] ?? [];
   for (const v of variants(name)) {
     const full = v.tag ? `${name}[${v.tag}]` : name;

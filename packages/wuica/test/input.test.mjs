@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createWuica, insights } from '../lib/index.js';
+import { tmpDir } from './tmpdir.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const fx = (name) => fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/loop-find', name), 'utf8');
@@ -126,7 +127,7 @@ test('CLI: -loop', () => {
   assert.equal(json('-loop', '0', file).loop.index, 0);
   assert.throws(() => run('-loop', 'inner', file), /loop: "inner" is not the label of a loop \(the loops: \.L3\)/);
   // a file with CRLF line ends
-  const crlf = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-cli-')), 'crc_a.s');
+  const crlf = path.join(tmpDir('wuica-cli-'), 'crc_a.s');
   fs.writeFileSync(crlf, fs.readFileSync(file, 'utf8').replace(/\n/g, '\r\n'));
   assert.equal(json(crlf).loop.name, 'loop .L3');
 });

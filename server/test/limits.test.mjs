@@ -3,6 +3,10 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { start, post, HEX, TRAP } from './helpers.mjs';
+import { createWuica, whatIfText } from 'wuica';
+import { Facade } from '../lib/facade.js';
+import { resolveConfig } from '../lib/config.js';
+import { timeoutFailure } from '../lib/pool.js';
 
 let s;
 before(async () => { s = await start(); });
@@ -105,3 +109,106 @@ async function mcpCall(name, args) {
   assert.equal(r.status, 200);
   return r.json;
 }
+
+test('what-if and diff: the server\'s caps, nothing started for a client that has gone, a base that cannot finish', async () => {
+  const s = await start({ timeoutMs: 300, workers: 1 });
+  try {
+    // the caps apply to every analysis of what-if and to both blocks of a diff (checked before either is analyzed)
+    const capped = await post(s.base, '/api/what-if/SKL', { hex: HEX, options: { minCycles: 30000 } });
+    assert.equal(capped.status, 400);
+    const b = await post(s.base, '/api/diff/SKL', { a: { hex: 'zz' }, b: { hex: HEX, options: { minIterations: 5000 } } });
+    assert.equal(b.status, 400);
+    assert.match(b.json.error, /^B: `options.minIterations` is 5000/);
+    // the options both blocks share: the request's, no block named
+    const o = await post(s.base, '/api/diff/SKL', { a: { hex: HEX }, b: { hex: HEX }, options: { minCycles: 50000 } });
+    assert.equal(o.status, 400);
+    assert.equal(o.json.error, '`options.minCycles` is 50000; the limit of this server is 20000');
+    const ob = await post(s.base, '/api/diff/SKL', { a: { hex: HEX }, b: { hex: HEX, options: { minCycles: 50000 } }, options: { minCycles: 100 } });
+    assert.equal(ob.json.error, 'B: `options.minCycles` is 50000; the limit of this server is 20000');
+    // through REST, a base that cannot finish within 300 ms on any machine (2000 divisions, 1000 iterations: seconds;
+    // a loaded machine is only slower): the failure, for what-if and for diff
+    const HUGE = { hex: '48f7f1'.repeat(2000), options: { minIterations: 1000 } };
+    const f = await post(s.base, '/api/what-if/SKL', { ...HUGE, variants: ['simpleFrontEnd'] });
+    assert.equal(f.json.code, 3);
+    assert.equal(f.json.error, 'the what-if took longer than 0.3 s, the limit of this server for all its analyses');
+    assert.equal(f.json.notRun, undefined);
+    const d = await post(s.base, '/api/diff/SKL', { a: HUGE, b: { hex: HEX } });
+    assert.equal(d.json.code, 3);
+    assert.equal(d.json.error, 'the diff took longer than 0.3 s, the limit of this server for all its analyses: neither block was analyzed');
+    // a client that has gone: no job is started
+    const ctx = { gone: true };
+    const g = await s.app.facade.whatIf('SKL', { hex: HEX }, ctx);
+    assert.equal(g.code, 1);
+    assert.equal(ctx.jobs, 0);
+  } finally { await s.close(); }
+});
+
+// A Facade on a clock of its own and a pool that runs each job on the main thread and takes exactly 10 ms of that clock
+// (a job given less than that times out, as the worker pool's would): every state of the one deadline, the same on any
+// machine.
+async function clocked(timeoutMs) {
+  const local = await createWuica({ threads: 1 });
+  const clock = { t: 0 };
+  const pool = {
+    size: 1, idle: 1, queued: 0,
+    async run(op, args, { timeoutMs: left }) {
+      if (left < 10) { clock.t += left; return { result: timeoutFailure(timeoutMs), timedOut: true, queueMs: 0, runMs: left, meta: {} }; }
+      clock.t += 10;
+      const result = op === 'analyze' ? await local.analyze(args.arch, args.req) : await local.assemble(args.source, args.syntax);
+      return { result, queueMs: 0, runMs: 10, meta: {} };
+    },
+  };
+  return new Facade(local, pool, { ...resolveConfig({ timeoutMs }), now: () => clock.t });
+}
+
+test('what-if and diff: one deadline for all their analyses, in each state (a clock of the test\'s own)', async () => {
+  const req = { hex: HEX, variants: ['unroll2', 'simpleFrontEnd', 'align'] };
+  // the deadline before the base has finished: the failure; nothing more started
+  let ctx = {};
+  const f = /** @type {any} */ (await (await clocked(5)).whatIf('SKL', req, ctx));
+  assert.equal(f.code, 3);
+  assert.equal(f.error, 'the what-if took longer than 0.005 s, the limit of this server for all its analyses');
+  assert.equal(f.notRun, undefined);
+  assert.equal(ctx.jobs, 1);
+  assert.equal(ctx.timedOut, true);
+  // between variants: the base and unroll2 (20 ms) finish, the deadline has passed before simpleFrontEnd starts
+  ctx = {};
+  const m = /** @type {any} */ (await (await clocked(20)).whatIf('SKL', req, ctx));
+  assert.equal(m.code, 0);
+  assert.equal(m.notRun, 'deadline');
+  assert.equal(ctx.jobs, 2);
+  assert.ok(m.variants[0].tp > 0 && m.variants[0].id === 'unroll2');
+  assert.deepEqual(m.variants.slice(1).map((v) => [v.id, v.error]), [['simpleFrontEnd', 'not run: deadline'], ['align', 'not run: deadline']]);
+  assert.deepEqual(m.stderr.map((l) => l.text), ['Warning: 2 of 3 variant(s) not run: deadline']);
+  const mt = whatIfText(m);
+  assert.match(mt, /^ {2}simple front end +- {2}not run: deadline$/m);
+  assert.match(mt, /^ {2}alignment 0-63 +- {2}not run: deadline$/m);
+  assert.match(mt, /^ {2}warning: 2 of 3 variant\(s\) not run: deadline$/m);
+  // inside align: the base, unroll2, simpleFrontEnd and offsets 0-4 finish (80 ms), offset 5 gets 5 ms and times out
+  ctx = {};
+  const a = /** @type {any} */ (await (await clocked(85)).whatIf('SKL', req, ctx));
+  assert.equal(a.code, 0);
+  assert.equal(a.notRun, 'deadline');
+  assert.equal(ctx.jobs, 9);
+  assert.ok(a.variants.slice(0, 2).every((v) => v.tp > 0), JSON.stringify(a.variants));
+  assert.equal(a.variants[2].error, 'not run: deadline (5 of the 64 offsets analyzed)');
+  assert.deepEqual(a.stderr.map((l) => l.text), ['Warning: 1 of 3 variant(s) not run: deadline']);
+  const at = whatIfText(a);
+  assert.match(at, /^ {2}alignment 0-63 +- {2}not run: deadline \(5 of the 64 offsets analyzed\)$/m);
+  assert.match(at, /^ {2}warning: 1 of 3 variant\(s\) not run: deadline$/m);
+  // all within the budget: no notRun
+  const ok = /** @type {any} */ (await (await clocked(10 * 67)).whatIf('SKL', req, {}));
+  assert.equal(ok.notRun, undefined);
+  assert.ok(ok.variants.every((v) => v.error === undefined), JSON.stringify(ok.variants));
+  // diff: a deadline is a failure, which says how far it got
+  const two = { a: { hex: HEX }, b: { hex: HEX } };
+  ctx = {};
+  const d = (await (await clocked(15)).diff('SKL', two, ctx)).failure;
+  assert.equal(d.code, 3);
+  assert.equal(d.error, 'the diff took longer than 0.015 s, the limit of this server for all its analyses: A was analyzed, B was not');
+  assert.equal(ctx.jobs, 2);
+  const d2 = (await (await clocked(5)).diff('SKL', two, {})).failure;
+  assert.equal(d2.error, 'the diff took longer than 0.005 s, the limit of this server for all its analyses: neither block was analyzed');
+  const d3 = await (await clocked(20)).diff('SKL', two, {});
+  assert.equal(d3.result.code, 0);
+});

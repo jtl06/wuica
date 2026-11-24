@@ -24,7 +24,7 @@ test('the SDK client: initialize, ping, tools/list, every tool, errors', async (
   assert.deepEqual(client.getServerCapabilities(), { tools: { listChanged: true } });
   assert.deepEqual(await client.ping(), {});
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((t) => t.name), ['list_archs', 'analyze', 'what_if', 'compare_archs', 'assemble']);
+  assert.deepEqual(tools.map((t) => t.name), ['list_archs', 'analyze', 'what_if', 'diff_blocks', 'compare_archs', 'list_loops', 'assemble']);
   for (const [name, args] of [['list_archs', {}], ['analyze', { hex: '4801d84801c349ffcf75f5', format: 'json' }], ['what_if', { hex: '4801d84801c349ffcf75f5', variants: ['unroll2'] }],
     ['compare_archs', { hex: '4801d84801c349ffcf75f5', archs: ['SKL'] }], ['assemble', { source: 'add rax, rbx' }]]) {
     const r = await client.callTool({ name, arguments: args });
@@ -35,8 +35,16 @@ test('the SDK client: initialize, ping, tools/list, every tool, errors', async (
   const bad = await client.callTool({ name: 'analyze', arguments: { hex: '4801d8', bogus: 1 } });
   assert.equal(bad.isError, true);
   assert.equal(bad.content[0].text, 'Invalid arguments for tool analyze: arguments: unknown key "bogus" (known: arch, source, hex, syntax, loop, func, options, format, details)');
-  const range = await client.callTool({ name: 'analyze', arguments: { hex: '4801d8', options: { alignmentOffset: 64 } } });
-  assert.equal(range.content[0].text, 'Invalid arguments for tool analyze: options.alignmentOffset: expected at most 63, got 64');
+  // the option ranges are the library's (README, "Option ranges per interface"): any integer, not a fraction
+  const range = await client.callTool({ name: 'analyze', arguments: { hex: '4801d8', options: { alignmentOffset: 1.5 } } });
+  assert.equal(range.content[0].text, 'Invalid arguments for tool analyze: options.alignmentOffset: expected an integer, got 1.5');
+  const far = await client.callTool({ name: 'analyze', arguments: { hex: '4801d8', format: 'json', options: { alignmentOffset: 64 } } });
+  assert.equal(JSON.parse(far.content[0].text).tp, 1);
+  // the MCP tools keep caps on the simulation length (README: the third difference)
+  const long = await client.callTool({ name: 'analyze', arguments: { hex: '4801d8', options: { minCycles: 10000000 } } });
+  assert.equal(long.content[0].text, 'Invalid arguments for tool analyze: options.minCycles: expected at most 1000000, got 10000000');
+  const it = await client.callTool({ name: 'analyze', arguments: { hex: '4801d8', options: { minIterations: 100001 } } });
+  assert.match(it.content[0].text, /minIterations: expected at most 100000/);
   const miss = await client.callTool({ name: 'assemble', arguments: {} });
   assert.equal(miss.content[0].text, 'Invalid arguments for tool assemble: source: required');
   // an unknown tool and an unknown method: protocol errors
@@ -85,7 +93,7 @@ test('raw lines: version negotiation, parse errors, notifications, batches, EOF'
   // 2025-03-26: the client's version back, and batches
   const b = await rawSession([init('2025-03-26'), '[{"jsonrpc":"2.0","id":2,"method":"ping"},{"jsonrpc":"2.0","method":"notifications/initialized"},{"jsonrpc":"2.0","id":3,"method":"tools/list"}]']);
   assert.equal(b.replies[0].result.protocolVersion, '2025-03-26');
-  assert.ok(Array.isArray(b.replies[1]) && b.replies[1].length === 2 && b.replies[1][1].result.tools.length === 5);
+  assert.ok(Array.isArray(b.replies[1]) && b.replies[1].length === 2 && b.replies[1][1].result.tools.length === 7);
   for (const v of ['2024-11-05', '2025-06-18', '2025-11-25']) assert.equal((await rawSession([init(v)])).replies[0].result.protocolVersion, v);
 });
 
@@ -101,4 +109,9 @@ test('the validator: the keywords of the schemas', () => {
   assert.equal(validate(s, { n: 1, u: -1 }), 'u: expected "auto", or an integer >= 0, got -1');
   assert.equal(validate(s, { n: 1, b: 'yes' }), 'b: expected true or false, got "yes"');
   assert.equal(validate(s, [1]), 'arguments: expected an object, got an array');
+  // anyOf in words, with the article each type takes: diff_blocks' per
+  const per = { anyOf: [{ type: 'number', exclusiveMinimum: 0 }, { type: 'array', items: { type: 'number', exclusiveMinimum: 0 }, minItems: 2, maxItems: 2 }] };
+  assert.equal(validate(per, 'x', 'per'), 'per: expected a number > 0, or an array of 2 numbers > 0, got "x"');
+  assert.equal(validate({ anyOf: [{ type: 'object' }, { type: 'integer' }] }, 'x', 'o'), 'o: expected an object, or an integer, got "x"');
+  assert.equal(validate({ anyOf: [{ type: 'string', minLength: 1 }, { type: 'boolean' }] }, 3, 'z'), 'z: expected a non-empty string, or a boolean, got 3');
 });

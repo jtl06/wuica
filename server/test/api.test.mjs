@@ -1,7 +1,7 @@
 // Every REST endpoint, as JSON and as text, against the library's own results.
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { createWuica, markdown } from 'wuica';
+import { createWuica, markdown, whatIfText, diffAnalyses, diffMarkdown, diffText } from 'wuica';
 import fs from 'node:fs';
 import path from 'node:path';
 import { start, post, get, HEX, ASM, ROOT, plain, rest } from './helpers.mjs';
@@ -85,6 +85,93 @@ test('POST /api/analyze/<arch>: text/plain is uiCA\'s report', async () => {
   assert.match(r.headers.get('content-type'), /^text\/plain/);
   assert.equal(r.text, (await w.analyze('SKL', { hex: HEX })).text);
   assert.match(r.text, /^Throughput \(in cycles per iteration\): /);
+});
+
+test('POST /api/what-if/<arch>: the library\'s whatIf (the MCP tool what_if), per element, text, Markdown, errors', async () => {
+  const DOT = 'loop:\n vfmadd231ps ymm0, ymm1, [rdi+rax]\n add rax, 32\n cmp rax, rdx\n jb loop\n';
+  const body = { source: DOT, variants: ['unroll2', 'acc4', 'nochain'], per: 8 };
+  const r = await post(s.base, '/api/what-if/SKL', body);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json, await w.whatIf('SKL', body));
+  assert.equal(r.json.elementsPerIteration, 8);
+  assert.deepEqual(r.json.variants.map((v) => v.id), ['unroll2', 'acc4', 'nochain']);
+  assert.ok(r.json.variants.every((v) => v.error || v.perElement === v.tp / 8));
+  const t = await post(s.base, '/api/what-if/SKL', body, { Accept: 'text/plain' });
+  assert.match(t.headers.get('content-type'), /^text\/plain/);
+  assert.equal(t.text, whatIfText(r.json));
+  const m = await post(s.base, '/api/what-if/SKL', body, { Accept: 'text/markdown' });
+  assert.match(m.headers.get('content-type'), /^text\/markdown/);
+  assert.equal(m.text, markdown.whatIf(r.json));
+  // errors: the status codes of analyze
+  assert.equal((await post(s.base, '/api/what-if/NOPE', { hex: HEX })).status, 404);
+  assert.equal((await post(s.base, '/api/what-if', { hex: HEX })).status, 404);
+  for (const bad of [{ hex: HEX, variants: ['unroll3'] }, { hex: HEX, variants: 'acc2' }, { hex: HEX, per: 0 }, { hex: HEX, bogus: 1 }]) {
+    const e = await post(s.base, '/api/what-if/SKL', bad);
+    assert.equal(e.status, 400, JSON.stringify(bad));
+    assert.equal(e.json.code, 1);
+  }
+  const asm = await post(s.base, '/api/what-if/SKL', { source: 'frob rax' });
+  assert.equal(asm.status, 200);
+  assert.equal(asm.json.code, 2);
+});
+
+test('POST /api/diff/<arch>: the library\'s diff (the MCP tool diff_blocks), text, Markdown, errors', async () => {
+  const body = { a: { hex: HEX }, b: { source: ASM }, per: [1, 2] };
+  const r = await post(s.base, '/api/diff/SKL', body);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json, await w.diff('SKL', body));
+  assert.equal(r.json.perElement.b, r.json.b.tp / 2);
+  const x = await diffAnalyses(w, 'SKL', body);
+  assert.equal((await post(s.base, '/api/diff/SKL', body, { Accept: 'text/plain' })).text, diffText(x.result));
+  const m = await post(s.base, '/api/diff/SKL', body, { Accept: 'text/markdown' });
+  assert.match(m.headers.get('content-type'), /^text\/markdown/);
+  assert.equal(m.text, diffMarkdown(x, { archTitle: 'SKL · Skylake (2015)' }));
+  assert.equal((await post(s.base, '/api/diff/NOPE', body)).json.error.startsWith('unknown microarchitecture'), true);
+  assert.equal((await post(s.base, '/api/diff/NOPE', body)).status, 404);
+  assert.equal((await post(s.base, '/api/diff', body)).status, 404);
+  const bad = await post(s.base, '/api/diff/SKL', { a: { hex: HEX } });
+  assert.equal(bad.status, 400);
+  const asm = await post(s.base, '/api/diff/SKL', { a: { hex: HEX }, b: { source: 'frob rax' } });
+  assert.equal(asm.status, 200);
+  assert.equal(asm.json.code, 2);
+  assert.match(asm.json.error, /^B: /);
+});
+
+test('POST /api/what-if/<arch> with the variant align (64 analyses)', async () => {
+  const body = { source: ASM, variants: ['align'] };
+  const r = await post(s.base, '/api/what-if/SKL', body);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json, await w.whatIf('SKL', body));
+  assert.equal(r.json.variants[0].id, 'align');
+  const m = await post(s.base, '/api/what-if/SKL', body, { Accept: 'text/markdown' });
+  assert.equal(m.text, markdown.whatIfAlignment(r.json));
+});
+
+test('clang -g -S output (NULs in its comments) through the server: analyze as the library', async () => {
+  const text = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/asm/dot-clang-O2-g.s'), 'utf8');
+  const r = await post(s.base, '/api/analyze/SKL', { source: text });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.code, 0, r.json.error);
+  assert.equal(r.json.tp, (await w.analyze('SKL', { source: text })).tp);
+  assert.ok(r.json.rows.filter((x) => x.kind === 'instr').every((x) => /^dot\.c:[34]$/.test(x.loc)));
+});
+
+test('POST /api/compare with per: cycles per element (one job or split into parts)', async () => {
+  for (const archs of [['SKL', 'ZEN3'], undefined]) {
+    const body = { hex: HEX, per: 4, ...(archs ? { archs } : {}) };
+    const r = await post(s.base, '/api/compare', body);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.json, await w.compare(body));
+    assert.equal(r.json.elementsPerIteration, 4);
+    assert.ok(r.json.results.every((x) => x.code !== 0 || x.perElement === x.tp / 4));
+  }
+  assert.equal((await post(s.base, '/api/compare', { hex: HEX, per: 0 })).status, 400);
+  // per in text and Markdown too
+  const body = { hex: HEX, archs: ['SKL'], per: 4 };
+  assert.match((await post(s.base, '/api/compare', body, { Accept: 'text/plain' })).text, /^SKL +Skylake +2015 +2\.00 +0\.50 +Dependencies$/m);
+  const md = await post(s.base, '/api/compare', body, { Accept: 'text/markdown' });
+  assert.equal(md.text, markdown.cpuTable(await w.compare(body), { per: 4 }));
+  assert.match(md.text, /\| per el \|/);
 });
 
 test('Accept: text/markdown: the package\'s Markdown for analyze and compare', async () => {

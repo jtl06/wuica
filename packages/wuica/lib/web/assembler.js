@@ -38,9 +38,37 @@ export function parseDiagnostics(text) {
   return out;
 }
 
-// Removes GNU as's {load} / {store} pseudo-prefixes at the start of a line (LLVM 22 says "unknown prefix").
+// The text as the module gets it, the one preparation for the page and the npm package (lib/wasm.js): no byte order
+// mark at the start (not code: LLVM would reject it), a NUL character as a space (the module reads a C string, which
+// ends at the first NUL: clang -g -S writes NULs into the comments of its .debug_str bytes, and the text after one,
+// with the labels it defines, would be lost), stripHints, and no line table (withoutLineTable). Lines and columns stay
+// where they are.
+export function prepareSource(text) {
+  return withoutLineTable(stripHints(String(text).replace(/^\uFEFF/, '').replace(/\0/g, ' ')));
+}
+
+// The line table's directives, a `.loc` and a numbered `.file` on a line of their own (after labels), blanked (the columns stay): the
+// bytes of the code do not depend on them (asm-regions.js reads the lines from them before), while LLVM 22 rejects some
+// of gcc's: DWARF 5 (gcc 11 and later -g) with ".file 0" gives "unassigned file number in '.loc'", a "view N" operand
+// "unknown sub-directive". A view's symbol (.LVU3), which the debug sections can use, is defined as 0 after the text.
+const LINE_TABLE = /^([ \t]*(?:[\w.$@]+:[ \t]*)*)(\.loc[ \t][^\n;#]*|\.file[ \t]+\d+[ \t](?:"(?:[^"\\\n]|\\.)*"|[^\n;#"])*)/gm;
+export function withoutLineTable(text) {
+  const views = new Set();
+  const out = text.replace(LINE_TABLE, (_, lead, d) => {
+    const v = /\bview[ \t]+([A-Za-z_.$][\w.$]*)/.exec(d);
+    if (d.startsWith('.loc') && v) views.add(v[1]);
+    return lead + ' '.repeat(d.length);
+  });
+  return views.size ? `${out}\n${[...views].map((n) => `.set ${n}, 0`).join('\n')}\n` : out;
+}
+
+// Removes GNU as's {load} / {store} pseudo-prefixes at the start of a line (LLVM 22 says "unknown prefix"), and reads
+// directives of newer compilers that the bundled LLVM 22 does not know: clang 23's `.prefalign LOG2, END, FILL` (a
+// function's preferred alignment) as `.p2align LOG2`, the alignment clang 22 wrote there (after labels, in any case, up to
+// a ';' or '#': what follows stays). Lines stay where they are.
 export function stripHints(text) {
-  return text.replace(/^([ \t]*)\{(?:load|store)\}[ \t]*/gm, '$1');
+  return text.replace(/^([ \t]*)\{(?:load|store)\}[ \t]*/gm, '$1')
+    .replace(/^([ \t]*(?:[\w.$@]+:[ \t]*)*)\.prefalign[ \t]+(\d+)[^\n#;]*/gim, '$1.p2align $2');
 }
 
 // LLVM (like GNU as) reads ';' as a separator between statements, not as a comment, so "add rax, 1 ; note" fails with
@@ -157,7 +185,7 @@ export class WasmAssembler {
     if (!(syntax in SYNTAX)) throw new TypeError(`unknown syntax: ${syntax}`);
     if (!this.#x) await this.#instantiate();
     // (a byte order mark at the start is not code: LLVM would reject it)
-    const plain = stripHints(String(text).replace(/^\uFEFF/, '').replace(/\0/g, ' '));
+    const plain = prepareSource(text);
     const mode = codeModeError(plain);
     if (mode) return { ok: false, diagnostics: [{ severity: 'error', ...mode }] };
     const source = new TextEncoder().encode(plain + '\0');
