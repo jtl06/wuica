@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createWuica, normalizeHex, listLoops, whatIf, WHAT_IF_VARIANTS, WHAT_IF_OPT_IN_VARIANTS, CODES, examples, findExample, objectKind, markdown } from './index.js';
 import { analyzedLines } from './web/branch-label.js';
-import { whatIfPerElement, whatIfText, shownOutcome } from './web/whatif-core.js';
+import { whatIfPerElement, whatIfText } from './web/whatif-core.js';
 import { diffAnalyses, diffMarkdown, diffText } from './web/block-diff.js';
 
 export const VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
@@ -367,16 +367,10 @@ function diagnosis(ins, r) {
 // what-if results per element and as text: web/js/whatif-core.js (shared with the REST API)
 const whatIfPer = whatIfPerElement;
 const whatIfTable = whatIfText;
-// -TPonly -whatif: one "variant cycles [per element]" line per variant (prefix: the CPU, with several). A variant within
-// sampling of its Ports or Issue limit at that limit, marked ~, as the table, the Markdown and the page show it
-// (whatif-core.js shownOutcome); the JSON keeps the simulated number.
-const terseCycles = (x, v) => {
-  const s = shownOutcome(v, x.tp), mark = v.approx ? '~' : '';
-  return [`${mark}${fmt(s.tp)}`, ...(v.perElement !== undefined ? [`${mark}${fmtEl(v.approx ? s.tp / x.elementsPerIteration : v.perElement)}`] : [])];
-};
+// -TPonly -whatif: one "variant cycles [per element]" line per variant (prefix: the CPU, with several)
 function whatIfTerse(x, prefix = '') {
   if (x.code) return `${prefix}what-if error: ${x.error}\n`;
-  return x.variants.map((v) => `${prefix}${v.id} ${v.error ? 'error' : terseCycles(x, v).join(' ')}\n`).join('');
+  return x.variants.map((v) => `${prefix}${v.id} ${v.error ? 'error' : `${fmt(v.tp)}${v.perElement !== undefined ? ` ${fmtEl(v.perElement)}` : ''}`}\n`).join('');
 }
 
 // -md: "SKL · Skylake (2015)"
@@ -759,7 +753,7 @@ async function batch(w, o, io) {
       for (const row of d.rows) out.write(`${[it.name, ...(o.archs ? [row.cpu ?? '-'] : []), row.code ? 'error' : fmt(row.tp), ...(row.pe !== undefined ? [fmtEl(row.pe)] : [])].join('\t')}\n`);
       for (const [cpu, x] of Object.entries(d.wi ?? {})) {
         if (x.code) { out.write(`${[it.name, ...(o.archs ? [cpu] : []), 'what-if error'].join('\t')}\n`); continue; }
-        for (const v of x.variants) out.write(`${[it.name, ...(o.archs ? [cpu] : []), v.id, ...(v.error ? ['error'] : terseCycles(x, v))].join('\t')}\n`);
+        for (const v of x.variants) out.write(`${[it.name, ...(o.archs ? [cpu] : []), v.id, v.error ? 'error' : fmt(v.tp), ...(v.perElement !== undefined ? [fmtEl(v.perElement)] : [])].join('\t')}\n`);
       }
     }
     return worst;

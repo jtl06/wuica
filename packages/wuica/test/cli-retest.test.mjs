@@ -60,12 +60,6 @@ test('N4/N5. -whatif -TPonly: one "variant cycles" line per variant (per CPU); -
   assert.ok(t.includes('acc2 16.00') && t.includes('acc8 error') && t.includes('nochain 8.00'), t.join('|'));
   assert.equal(t.length, 12); // the throughput and 11 variants
   assert.ok(run([fx('dot.hsw.s'), '-whatif', '-TPonly', '-per', '8']).out.split('\n').includes('acc2 16.00 2.00'));
-  // a variant within sampling of its Ports limit (dot1's 8 accumulators: 3.98 simulated, under 4.00): at the limit,
-  // marked ~, as the table shows it (whatif-core.js shownOutcome); the JSON keeps 3.98
-  const d = run(['-example', 'dot1', '-whatif', '-TPonly']).out.split('\n');
-  assert.ok(d.includes('acc8 ~4.00') && !d.some((l) => /3\.98/.test(l)), d.join('|'));
-  assert.ok(run(['-example', 'dot1', '-whatif', '-TPonly', '-per', '8']).out.split('\n').includes('acc8 ~4.00 ~0.50'));
-  assert.equal(JSON.parse(run(['-example', 'dot1', '-whatif', '-json']).out).whatIf.SKL.variants.find((v) => v.id === 'acc8').tp, 3.98);
   const m = run([fx('dot.hsw.s'), '-whatif', '-TPonly', '-arch', 'SKL,ZEN3']).out.split('\n').filter(Boolean);
   assert.equal(m.length, 24);
   assert.match(m[0], /^SKL {3}32\.00$/);
