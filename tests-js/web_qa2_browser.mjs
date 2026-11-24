@@ -14,6 +14,7 @@
 //
 //   node tests-js/web_qa2_browser.mjs [--chrome PATH]
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { findChrome, launch, serve, copyDist, Page, HELPERS, checker, ROOT, LONG_TASK_MS } from './cdp.mjs';
@@ -32,7 +33,7 @@ await engine.loadUarch(uarchBytes);
 const configs = JSON.parse(uarchBytes).configs;
 async function ref(hex, arch, options = {}) {
   const table = configs[arch].name;
-  if (!engine.hasArch(table)) await engine.loadArch(table, fs.readFileSync(path.join(dir, 'data/arch', `${table}.bin`)));
+  if (!engine.hasArch(table)) await engine.loadArch(table, zlib.gunzipSync(fs.readFileSync(path.join(dir, 'data/arch', `${table}.bin.gz`))));
   return engine.analyze({ ...makeRequest(hex, arch, options), details: true });
 }
 const ex = (id) => [...EXAMPLES, ...CLASSIC_EXAMPLES].find((e) => e.id === id);

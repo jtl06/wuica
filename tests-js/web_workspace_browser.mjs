@@ -11,6 +11,7 @@
 //
 //   node tests-js/web_workspace_browser.mjs [--chrome PATH]
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { findChrome, launch, serve, copyDist, Page, HELPERS, checker, ROOT } from './cdp.mjs';
@@ -31,7 +32,7 @@ await engine.loadUarch(uarchBytes);
 const configs = JSON.parse(uarchBytes).configs;
 async function tpOf(hex, arch) {
   const t = configs[arch].name;
-  if (!engine.hasArch(t)) await engine.loadArch(t, fs.readFileSync(path.join(dir, 'data/arch', `${t}.bin`)));
+  if (!engine.hasArch(t)) await engine.loadArch(t, zlib.gunzipSync(fs.readFileSync(path.join(dir, 'data/arch', `${t}.bin.gz`))));
   return Number((await engine.analyze(makeRequest(hex, arch))).tp);
 }
 const ex = (id) => CLASSIC_EXAMPLES.find((e) => e.id === id);

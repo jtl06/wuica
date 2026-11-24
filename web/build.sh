@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Assembles the deployable site in web/dist/: the page, the analyzer (wuica_wasm.wasm), the data (data/uarch.json and
-# the instruction tables in their binary form, data/arch/<NAME>.bin, written from data/arch/*.json by
-# tools/encode-tables.sh) and, if it has been built, the assembler (assembler/dist/wuica_asm.wasm). Build the analyzer
+# the instruction tables in their binary form, gzip-compressed, data/arch/<NAME>.bin.gz, written from data/arch/*.json
+# by tools/encode-tables.sh and tools/gzip-tables.mjs: the host compresses only text-like content types, so the site
+# compresses its tables itself and the page decompresses them) and, if it has been built, the assembler (assembler/dist/wuica_asm.wasm). Build the analyzer
 # with ./build-wasm.sh and generate data/ with tools/export_data.py first.
 #
 #   web/build.sh                  then serve web/dist/ with any static file server, e.g.
@@ -39,6 +40,7 @@ cp "$root/third_party/xed/LICENSE" "$out/licenses/XED-Apache-2.0.txt"
 [ -f "$root/assembler/LICENSE-LLVM.txt" ] && cp "$root/assembler/LICENSE-LLVM.txt" "$out/licenses/LLVM.txt"
 cp "$root/data/uarch.json" "$out/data/"
 "$root/tools/encode-tables.sh" "$root/data/arch" "$out/data/arch"
+node "$root/tools/gzip-tables.mjs" "$out/data/arch"
 cp "$wasm" "$out/wuica_wasm.wasm"
 assembler=false
 if [ -f "$asm" ]; then cp "$asm" "$out/wuica_asm.wasm"; assembler=true; fi
@@ -71,7 +73,7 @@ version="$( { echo "$files" | while IFS= read -r f; do sha "$f"; done; sha "$her
 {
   printf '{\n  "version": "%s",\n  "assembler": %s,\n  "mca": %s,\n  "tables": [' "$version" "$assembler" "$mcafound"
   sep=''
-  for t in data/arch/*.bin; do n="$(basename "$t" .bin)"; printf '%s"%s"' "$sep" "$n"; sep=', '; done
+  for t in data/arch/*.bin.gz; do n="$(basename "$t" .bin.gz)"; printf '%s"%s"' "$sep" "$n"; sep=', '; done
   printf '],\n  "files": {\n'
   sep=''
   echo "$files" | while IFS= read -r f; do
