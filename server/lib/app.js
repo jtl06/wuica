@@ -135,9 +135,10 @@ export async function createApp(options = {}) {
         chunks.push(c);
       });
       req.on('end', () => { if (!done) { done = true; resolve(Buffer.concat(chunks).toString('utf8')); } });
-      req.on('error', (e) => { if (!done) { done = true; reject(e); } });
-      // (a connection closed before the end of the body: no body will come)
-      req.on('close', () => { if (!done) { done = true; reject(new HttpError(400, 'the client closed the connection before the end of the body')); } });
+      // a connection closed before the end of the body ("aborted", or a close): no body will come, no error of the server
+      const cut = () => new HttpError(400, 'the client closed the connection before the end of the body');
+      req.on('error', (e) => { if (!done) { done = true; reject(/** @type {any} */ (e).code === 'ECONNRESET' ? cut() : e); } });
+      req.on('close', () => { if (!done) { done = true; reject(cut()); } });
     });
   }
 

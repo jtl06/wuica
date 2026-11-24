@@ -160,7 +160,9 @@ export class Facade {
   // runMs, jobs, and the instructions and bytes of the first job. stopped(): that failure or null; done(): the jobs
   // that finished.
   #session(ctx, what) {
-    const deadline = performance.now() + this.#cfg.timeoutMs;
+    // (cfg.now: the clock, a function of the time in ms; the tests give a Facade their own to reach each state)
+    const now = this.#cfg.now ?? (() => performance.now());
+    const deadline = now() + this.#cfg.timeoutMs;
     /** @type {any} */
     let stop = null;
     let done = 0;
@@ -174,7 +176,7 @@ export class Facade {
       if (ctx.gone) return (stop = refuse(499, 'the client closed the connection'));
       const bad = check();
       if (bad) return bad;
-      const left = deadline - performance.now();
+      const left = deadline - now();
       if (left <= 0) return (stop = timeUp());
       /** @type {Record<string, any>} */
       const c = {};
