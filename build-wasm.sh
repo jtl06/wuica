@@ -33,6 +33,16 @@ export CFLAGS_wasm32_unknown_unknown="-ffile-prefix-map=$PWD=/wuica"
 # slower), +simd128 (no gain; measured again in round 3: within 0.5%), wasm-opt -O3/-O4 (no gain on the fixture run, a few %
 # worse on the real-code blocks; its size reduction is the name section it drops, which llvm-objcopy --remove-section=name does
 # too: 4.24 -> 3.03 MB, 616 -> 556 kB with brotli, no change in compile time).
+# Smaller code for the crates that are not hot, measured after 0.1.8 (sizes of the stripped module, 3,093,000 bytes, brotli
+# -q 4 747,612; speed on the measurement machine, Node 22, the median of 10 interleaved runs of 684 fixture requests and of
+# 102 real-code requests (the SHA-256 showcase on three CPUs, the page's examples, every 40th of more_sim_fixtures); every
+# response the same). Not kept:
+#   [profile.release.package.X] opt-level = "z" for serde_json, serde, serde_core and wuica-wasm: -41 kB raw, -13 kB -q 4;
+#     analyses +0.2/+0.5%, but loading the 15 tables +6.4/+7.3% (serde_json parses them; measure again when the tables are
+#     no longer JSON). Also with indexmap, hashbrown, foldhash, equivalent, itoa, memchr, zmij: -59 kB, -12 kB; tables +7.5%.
+#   wuica-xed at "s" (cc takes its opt-level, so XED's C is compiled with -Os too): -78 kB raw, -9 kB -q 4; real-code
+#     analyses +1.5%. At "z": -197 kB, -10 kB; real-code analyses +7.9%, wuica_decode twice as slow.
+#   wasm-opt -Oz: smaller raw (2.71 MB) but larger compressed (-q 11 579 kB, -q 4 772 kB, gzip 818 kB).
 export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
 cargo build -p wuica-wasm --target wasm32-unknown-unknown --release
 out=target/wasm32-unknown-unknown/release

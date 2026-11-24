@@ -140,7 +140,24 @@ Measured on 0.1.8 (sizes in bytes; brotli with the command-line tool, window 24 
   2,084 ms, 4 Mbit/s with 80 ms 5,690 / 5,567 / 4,548 ms; the two modules on the wire 1,848,252 / 1,757,297 / 1,257,315.
   Decompressing in the page instead needs a brotli decoder in JavaScript or WebAssembly in Chrome: `DecompressionStream`
   has no `brotli` in Chrome 157 (Node has it); `gzip` it has everywhere, but gzip -9 of the stripped analyzer (816,848) is
-  larger than the host's brotli of it.
+  larger than the host's brotli of it. A proposal for the Worker: `docs/plans/precompressed-modules.md`.
+- XED's iform names in the analyzer: 219,323 bytes of strings and 54,944 of pointers; the module with them zeroed is 41 kB
+  smaller with brotli -q 11 and 60 kB with -q 4 (the iclass names: 12,566 + 13,968 bytes, 0.5 / 12 kB). Who reads them: the
+  shim writes the iform and iclass of every instruction into the decoded records, as uiCA's `xed` module does; `wuica-core`
+  looks the instruction up in the table by iform name (`instrData`), takes the iclass from the iform's first word (MOV
+  elimination, ADD/SUB/INC/DEC/LEA rules, `memRenamingExcluded`) and matches the serializing and fence iforms by name;
+  `wuica_decode` returns both names (docs/WASM-API.md). The text output and the page do not show them. Dropping the strings
+  needs tables keyed by the numeric iform of this XED version, the iclass rules on numbers, and the names of
+  `wuica_decode` from elsewhere (or that export changed).
+- The page's modules: `js/app.js` imports 51 modules statically, in four levels, and the analyzer's download starts only
+  when app.js runs, after all of them. `web/build.sh` adds a `<link rel="modulepreload">` for each (found from the imports
+  at build time). First result of a fresh visit (everything at brotli -q 2, median of 3): 10 Mbit/s, 40 ms: 2,749 ->
+  2,553 ms; 4 Mbit/s, 80 ms: 5,480 -> 5,503 ms (the bandwidth decides there). A `<link rel="preload" as="fetch">` for the
+  two modules as well: 2,330 ms at 10 Mbit/s (not done: the mock page and visits that never need the assembler would
+  download a module they do not use, and Chrome warns about an unused preload).
+- The default example without the assembler (a visit with the same example as machine code, the proxy for shipping the
+  example's bytes): 1,171,367 instead of 2,153,091 bytes before the first result, 10 Mbit/s: 2,553 -> 1,728 ms, 4 Mbit/s:
+  5,503 -> 3,685 ms.
 
 ## The reference
 
