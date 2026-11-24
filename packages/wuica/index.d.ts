@@ -188,10 +188,13 @@ export interface AnalyzeResult {
   syntax?: 'intel' | 'att';
   /** Assembler warnings, notes (exits taken as not taken), and the decode warning. */
   stderr: StderrLine[];
-  /** Only when this CPU cannot run the code (positions it could not decode, instructions its model has no data for):
-   * why ("needs AVX-512", "12 undecodable"). `tp` is then the reference's number, which leaves that code out: not a
-   * result for this CPU. */
+  /** Only when this CPU cannot run the code (positions its decoder skipped, or an instruction of an extension it lacks,
+   * e.g. AVX-512 on ZEN3): why ("needs AVX-512", "12 undecodable"). `tp` is then the reference's number, which leaves
+   * that code out: not a result for this CPU. */
   unsupported?: string;
+  /** Only when the CPU can run the code but some of its instructions are not in its instruction tables (rows with the
+   * note X: x87 tbyte loads, syscall, ...): their count. The result stands; their cost is left out. */
+  noData?: number;
 }
 
 /** The compact form of an analysis (summarize(); the MCP `analyze` JSON). */
@@ -209,6 +212,8 @@ export interface AnalyzeSummary {
   decodeErrors: number;
   /** As AnalyzeResult's: why this CPU cannot run the code, only then. */
   unsupported?: string;
+  /** As AnalyzeResult's: the instructions without data of code it can run, only if any. */
+  noData?: number;
   hex?: string;
   loop?: LoopInfo;
   /** The loops of the text that were not analyzed, when it has more than one (listLoops without `auto`). */
@@ -289,7 +294,7 @@ export interface AssembleResult {
 }
 
 export type CompareRow =
-  | { arch: string; name: string; year: number | null; prototype: boolean; code: 0; tp: number; mode: 'loop' | 'unroll'; bottlenecks: string[]; limits: Limit[]; decodeErrors: number; unsupported?: string; perElement?: number }
+  | { arch: string; name: string; year: number | null; prototype: boolean; code: 0; tp: number; mode: 'loop' | 'unroll'; bottlenecks: string[]; limits: Limit[]; decodeErrors: number; unsupported?: string; noData?: number; perElement?: number }
   | { arch: string; name: string; year: number | null; prototype: boolean; code: 1 | 2 | 3; error: string };
 
 export interface CompareResult {

@@ -82,6 +82,12 @@ test('3b. code a CPU cannot run (AVX-512 on SKL, ZEN3): not a result in text, Ma
   assert.equal(one.unsupported, 'needs AVX-512');
   assert.match(run([avx, '-arch', 'ZEN3']).out, /^Not a result for ZEN3: needs AVX-512/m);
   assert.match(run([avx, '-arch', 'ZEN3', '-md']).out, /^\*\*~~3\.00~~ cycles\/iteration\*\* \(not a result: needs AVX-512\)/m);
+  // a gap in the tables (x87 tbyte loads: the note X, accepted by every decoder) is not "cannot run": a note, the result stands
+  const ld = path.resolve(FX, '../dogfood/ldouble.s');
+  assert.match(run([ld, '-arch', 'SKL,ZEN3']).out, /^SKL\s+Skylake\s+2015\s+1\.00\s+.*2 without data \(cost left out\)$/m);
+  const lj = JSON.parse(run([ld, '-arch', 'SKL,ZEN3', '-json']).out);
+  assert.deepEqual(lj.results.map((r) => [r.arch, r.unsupported ?? null, r.noData ?? null, 'xOps' in r]), [['SKL', null, 2, false], ['ZEN3', null, 2, false]]);
+  assert.match(run([ld, '-arch', 'SKL']).out, /^2 instructions without data \(not in the instruction tables\): the throughput leaves their cost out$/m);
   const d = run(['diff', avx, avx, '-arch', 'SKL']);
   assert.match(d.out, /^SKL: A 38\.00 {2}B 38\.00 cycles per iteration {2}\(not comparable: A needs AVX-512, B needs AVX-512\)$/m);
 });

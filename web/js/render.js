@@ -1,7 +1,7 @@
 // Builds the result view. All text goes in through textContent: responses, fragments and diagnostics are data.
 
 import { columnKind } from './bound-core.js';
-import { caveats } from './caveats.js';
+import { caveats, noDataText, NO_DATA_TITLE } from './caveats.js';
 import { formatListing } from './listing.js';
 import { accuracyNote } from './archs.js';
 import { VRows, ALL_UP_TO } from './vrows.js';
@@ -304,7 +304,9 @@ export function renderResult(root, view) {
               text: nearestLimit(r, w) ? `unknown · nearest ${nearestLimit(r, w)}` : 'unknown' }))),
       mock ? h('div', { class: 'mock-tag', text: mockLine(mock, view.archKey) }) : null,
       caveatLine(r, view.config),
-      bad ? h('div', { class: 'caveat cannot-run', role: 'alert', title: bad.title, text: `not a result for ${view.archKey}: ${invalidText(bad)}` }) : null));
+      bad ? h('div', { class: 'caveat cannot-run', role: 'alert', title: bad.title, text: `not a result for ${view.archKey}: ${invalidText(bad)}` }) : null,
+      // instructions without data (gaps in the tables, caveats.js noData): a note; the result stands
+      view.noData > 0 ? h('div', { class: 'hint no-data', title: NO_DATA_TITLE, text: noDataText(view.noData) }) : null));
 
     if (r.limits.length) {
       out.push(h('div', { class: 'row', title: 'cycles/iteration if each were the only bottleneck' },

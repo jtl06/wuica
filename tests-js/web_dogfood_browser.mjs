@@ -108,6 +108,23 @@ try {
     await page.close();
   }
 
+  // ---- a gap in the tables (the note X on an instruction the CPU's decoder accepts) is a result with a note -------------
+  {
+    const page = await fresh();
+    const r = await page.eval(`${W}
+      const row = (k) => document.querySelector('table.cmp-cpus tr[data-arch="' + k + '"]');
+      pasteInto($('code'), ${js(fx('ldouble.s'))}); await settle();
+      const lead = document.querySelector('#result-body > .row.lead');
+      const single = { struck: !!lead.querySelector('.value.invalid'), alert: !!lead.querySelector('.cannot-run'), note: lead.querySelector('.no-data')?.textContent ?? '', title: lead.querySelector('.no-data')?.title ?? '' };
+      $('cpu-all').click(); await until(() => $('cmp-cpus').dataset.state === 'done', 90000); await wait(300);
+      const rows = [...document.querySelectorAll('table.cmp-cpus tbody tr')].map((t) => ({ k: t.dataset.arch, invalid: t.classList.contains('invalid'), fastest: t.classList.contains('fastest'), bar: t.querySelector('.gauge > span').style.width, bn: t.querySelector('.cmp-bn').textContent }));
+      return { single, rows };`, { timeout: 200000 });
+    check(!r.single.struck && !r.single.alert && r.single.note === '2 instructions without data' && /cost out/.test(r.single.title), 'gap: the headline stands, with "2 instructions without data"', js(r.single));
+    check(r.rows.length === 15 && r.rows.every((x) => !x.invalid && x.bar !== '0%' && /without data/.test(x.bn)) && r.rows.some((x) => x.fastest), 'gap: all 15 CPUs keep their numbers, bars and a fastest, with the note', js(r.rows));
+    check(page.take().length === 0, 'gap: no errors', '');
+    await page.close();
+  }
+
   // ---- B2: the status line (aria-live) never keeps the result of code that is no longer there ---------------------------
   {
     const page = await fresh();

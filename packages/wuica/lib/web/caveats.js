@@ -220,55 +220,99 @@ export function caveats(response, config = null) {
 }
 
 // ---- code a CPU cannot run ------------------------------------------------------------------------------------------
-// A block with positions the CPU's decoder skipped (decodeErrors: instructions it does not have, e.g. AVX-512 on SKL,
-// whose bytes it then decodes as other instructions) or instructions its model has no data for (notes 'X': ZEN3 decodes
-// AVX-512 but has none of it) still gets the reference's throughput, which leaves them out: a number, but not a result
-// for that CPU. The page (headline, the table of CPUs, A–B), the Markdown and the CLI's text say so with cannotRun's
-// reason, keep the number reachable, and leave such a CPU out of any "fastest". The engine's numbers do not change.
+// A block with positions the CPU's decoder skipped (decodeErrors: instructions its XED chip does not have, e.g. AVX-512
+// on SKL, whose bytes it then decodes as other instructions) still gets the reference's throughput, which leaves them out:
+// a number, but not a result for that CPU. So does a block with an instruction the decoder accepts but that is of an
+// extension the CPU lacks (ZEN3's model decodes with XED's chip ALL, which accepts everything: its AVX-512 instructions
+// get the note X and no data). The page (headline, the table of CPUs, A–B), the Markdown and the CLI's text say so with
+// cannotRun's reason, keep the number reachable, and leave such a CPU out of any "fastest". The engine's numbers do not
+// change.
+// Any other instruction with the note X (accepted by the CPU's decoder, of no extension it lacks: x87 tbyte loads,
+// syscall, endbr64, CLWB on ICX, TSX on HSW, ...) is a gap in the instruction tables: the result stands, with a note
+// (noData: "N instructions without data", whose cost the throughput leaves out).
 //
-// The reason names the extension when it can: from the instructions (the response's unsupported rows; `code`, the
-// analyzed assembly text, for the bytes the decoder skipped, whose rows are not those instructions), only an extension
-// the CPU lacks. Otherwise it counts: "12 undecodable", "3 instructions not supported".
-/** @type {[string, RegExp][]} */
-const EXTENSIONS = [
+// Which extension an instruction with the note X is of comes from its encoding (the row's opcode bytes), as XED's ISA
+// set says (tests-js/web_cannot_run.mjs checks the two agree on the fixtures): extensionOf. The reason names the
+// extension: of such an instruction, or, for the positions the decoder skipped (whose rows are other instructions), from
+// the analyzed assembly text (`code`, comments and strings left out), only an extension the CPU lacks; machine code
+// without text: the count ("12 undecodable").
+const EXTENSIONS = /** @type {[string, RegExp][]} */ ([
   ['AMX', /\btmm\d|\b(?:tdp\w+|tileloadd\w*|tilestored|ldtilecfg|sttilecfg|tilezero|tilerelease)\b/i],
   ['AVX-512', /\bzmm\d|%?\bk[1-7]\b|\{1to\d+\}|\b(?:kmov|kand|kor|kxor|knot|kshift|kunpck|kortest|ktest|kadd)\w*|\bv(?:pternlog|pcompress|pexpand|compress|expand|permt2|permi2|pmov[a-z]*2m|pmovm2|range|reduce|getexp|getmant|scalef|fixupimm|rcp14|rsqrt14|pconflict|plzcnt|dbpsadbw|align[dq]|pror|prol|psrav[wq]|psllv[w]|psrlvw|cvtt?p[sd]2u|cvtu)\w*/i],
+  ['AVX-VNNI', /\bvpdp(?:bus|ws)ds?\b/i],
   ['SHA', /\bsha(?:1|256)\w+/i],
   ['FMA', /\bvf(?:n?m(?:add|sub)|maddsub|msubadd)\w*/i],
-  ['AVX2', /\bv(?:pbroadcast[bwdq]|broadcasti128|perm[dq]\b|permp[sd]|perm2i128|inserti128|extracti128|p?gather\w+|ps[lr]lv[dq]|psravd|pmaskmov[dq]|pblendd)\b|\bvp(?!(?:extr|insr|cmp[ei]str|clmul|ermilp|erm2f128|test))\w+\s[^\n#;]*\bymm/i],
+  ['AVX2', /\bv(?:pbroadcast[bwdq]|broadcasti128|perm[dq]\b|permp[sd]|perm2i128|inserti128|extracti128|p?gather\w+|ps[lr]lv[dq]|psravd|pmaskmov[dq]|pblendd)\b|\bvp(?!(?:extr|insr|cmp[ei]str|clmul|ermilp|erm2f128|test|dp(?:bus|ws)))\w+\s[^\n]*\bymm/i],
   ['BMI2', /\b(?:bzhi|mulx|pdep|pext|rorx|sarx|shlx|shrx)[lq]?\b/i],
   ['BMI1', /\b(?:andn|bextr|blsi|blsmsk|blsr)[lq]?\b/i],
   ['ADX', /\b(?:adcx|adox)[lq]?\b/i],
-];
-const SNB_LACKS = ['AMX', 'AVX-512', 'SHA', 'FMA', 'AVX2', 'BMI2', 'BMI1', 'ADX'];
-const SKL_LACKS = ['AMX', 'AVX-512', 'SHA'];
-const AVX512_LACKS = ['AMX', 'SHA'];
-const ICL_LACKS = ['AMX'];
-const ZEN3_LACKS = ['AMX', 'AVX-512'];
-// the extensions of the list each CPU (the keys of archs.js) does not have
+  ['TSX', /\b(?:xbegin|xend|xabort|xtest)\b/i],
+]);
+const SNB_LACKS = ['AMX', 'AVX-512', 'AVX-VNNI', 'SHA', 'FMA', 'AVX2', 'BMI2', 'BMI1', 'ADX'];
+const SKL_LACKS = ['AMX', 'AVX-512', 'AVX-VNNI', 'SHA'];
+const AVX512_LACKS = ['AMX', 'AVX-VNNI', 'SHA'];
+const ICL_LACKS = ['AMX', 'AVX-VNNI'];
+// the extensions of the list each CPU (the keys of archs.js) does not have (TSX: only where no model of it had it)
 export const LACKS = Object.freeze({
-  SNB: SNB_LACKS, IVB: SNB_LACKS, HSW: ['AMX', 'AVX-512', 'SHA', 'ADX'], BDW: SKL_LACKS, SKL: SKL_LACKS, KBL: SKL_LACKS, CFL: SKL_LACKS,
-  SKX: AVX512_LACKS, CLX: AVX512_LACKS, ICL: ICL_LACKS, TGL: ICL_LACKS, RKL: ICL_LACKS, ICX: ICL_LACKS, ZEN3: ZEN3_LACKS, 'ADL-P': ZEN3_LACKS,
+  SNB: SNB_LACKS, IVB: SNB_LACKS, HSW: ['AMX', 'AVX-512', 'AVX-VNNI', 'SHA', 'ADX'], BDW: SKL_LACKS, SKL: SKL_LACKS, KBL: SKL_LACKS, CFL: SKL_LACKS,
+  SKX: AVX512_LACKS, CLX: AVX512_LACKS, ICL: ICL_LACKS, TGL: ICL_LACKS, RKL: ICL_LACKS, ICX: ICL_LACKS, ZEN3: ['AMX', 'AVX-512', 'AVX-VNNI', 'TSX'], 'ADL-P': ['AMX', 'AVX-512', 'TSX'],
 });
 
+const LEGACY = new Set([0x66, 0x67, 0xf0, 0xf2, 0xf3, 0x2e, 0x36, 0x3e, 0x26, 0x64, 0x65]);
+// The extension of an instruction of the list above that an encoding is of (hex of its bytes), or null: EVEX (AVX-512),
+// VEX map 0F38 0x49/0x4B/0x5C/0x5E (AMX), VEX.66 map 0F38 0x50-0x53 (AVX-VNNI), XBEGIN/XABORT/XEND/XTEST (TSX). The
+// extensions whose instructions any CPU's decoder rejects that lacks them (FMA, AVX2, BMI, SHA, ADX) never get here.
+export function extensionOf(opcode) {
+  const b = String(opcode ?? '').match(/[0-9a-f]{2}/gi)?.map((x) => parseInt(x, 16)) ?? [];
+  let i = 0;
+  while (i < b.length && (LEGACY.has(b[i]) || (b[i] & 0xf0) === 0x40)) i++;
+  const [o, p0, p1, p2] = b.slice(i);
+  if (o === 0x62) return 'AVX-512';
+  if (o === 0xc4 && p0 !== undefined && p1 !== undefined && (p0 & 0x1f) === 2) {
+    if ([0x49, 0x4b, 0x5c, 0x5e].includes(p2)) return 'AMX';
+    if ((p1 & 3) === 1 && p2 >= 0x50 && p2 <= 0x53) return 'AVX-VNNI';
+  }
+  if (o === 0x0f && p0 === 0x01 && (p1 === 0xd5 || p1 === 0xd6)) return 'TSX';
+  if ((o === 0xc7 || o === 0xc6) && p0 === 0xf8) return 'TSX';
+  return null;
+}
+
+// the analyzed text without comments and strings (a "zmm" in a comment names nothing)
+// (a ';' only at the start of a line: elsewhere it can separate statements)
+const codeOnly = (code) => String(code).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/"(?:[^"\\\n]|\\.)*"/g, '""').replace(/(?:#|\/\/)[^\n]*|^\s*;[^\n]*/gm, ' ');
+// the opcodes of a response's rows with the note X, or of a summary's (xOps)
+const xOpsOf = (r) => (Array.isArray(r.rows) ? r.rows.filter((x) => x?.kind === 'instr' && x.notes === 'X').map((x) => String(x.opcode ?? ''))
+  : Array.isArray(r.xOps) ? r.xOps.map(String) : []);
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
 /**
- * @param {any} r a response (rows: notes 'X'), or a summary with decodeErrors and unsupported rows' labels (xLabels)
+ * @param {any} r a response (rows: notes X, opcode), or a summary with decodeErrors and the X rows' opcodes (xOps)
  * @param {{arch?: string | null, code?: string | null}} [opts] the CPU's key; the analyzed assembly text, if any
  * @returns {{reason: string, title: string, decodeErrors: number, unsupported: number, needs: string[]} | null}
  */
 export function cannotRun(r, { arch = null, code = null } = {}) {
   if (!r || typeof r !== 'object' || 'error' in r) return null;
   const decodeErrors = Number(r.decodeErrors) || 0;
-  const xLabels = Array.isArray(r.rows) ? r.rows.filter((x) => x?.kind === 'instr' && x.notes === 'X').map((x) => String(x.label))
-    : Array.isArray(r.xLabels) ? r.xLabels.map(String) : [];
-  const unsupported = Array.isArray(r.rows) || !Number.isInteger(r.unsupportedCount) ? xLabels.length : r.unsupportedCount;
-  if (!decodeErrors && !unsupported) return null;
-  const lacks = arch ? LACKS[arch] ?? null : null;
-  const texts = [...xLabels, ...(decodeErrors && code ? [String(code)] : [])];
-  const needs = lacks ? EXTENSIONS.filter(([name, re]) => lacks.includes(name) && texts.some((t) => re.test(t))).map(([name]) => name) : [];
-  const counts = [decodeErrors ? `${decodeErrors} undecodable` : '', unsupported ? `${unsupported} instruction${unsupported === 1 ? '' : 's'} not supported` : ''].filter(Boolean).join(', ');
-  const reason = needs.length ? `needs ${needs.join(', ')}` : counts;
-  const what = [decodeErrors ? `${decodeErrors} position${decodeErrors === 1 ? '' : 's'} its decoder skipped` : '', unsupported ? `${unsupported} instruction${unsupported === 1 ? '' : 's'} its model has no data for` : ''].filter(Boolean).join(' and ');
+  const lacks = arch ? LACKS[arch] ?? [] : [];
+  // (with skipped positions, the X rows are other instructions than the code's: not counted)
+  const lacked = decodeErrors ? [] : xOpsOf(r).map(extensionOf).filter((x) => x && lacks.includes(x));
+  if (!decodeErrors && !lacked.length) return null;
+  const text = decodeErrors && code ? codeOnly(code) : '';
+  const needs = decodeErrors ? EXTENSIONS.filter(([name, re]) => lacks.includes(name) && re.test(text)).map(([name]) => name)
+    : EXTENSIONS.map(([name]) => name).filter((name) => lacked.includes(name));
+  const unsupported = lacked.length;
+  const reason = needs.length ? `needs ${needs.join(', ')}` : `${decodeErrors} undecodable`;
+  const what = decodeErrors ? plural(decodeErrors, 'position its decoder skipped', 'positions its decoder skipped') : plural(unsupported, 'instruction of an extension it lacks', 'instructions of an extension it lacks');
   const title = `${arch ? `${arch} cannot run this code` : 'code this CPU cannot run'}${needs.length ? ` (it needs ${needs.join(', ')})` : ''}: ${what}. The throughput leaves them out, so it is not a result for this CPU`;
   return { reason, title, decodeErrors, unsupported, needs };
 }
+
+// The instructions with the note X of a block the CPU can run (cannotRun null): gaps in its instruction tables, whose
+// cost the throughput leaves out; 0 if none (or if the CPU cannot run the block: its reason says it).
+/** @param {any} r @param {{arch?: string | null}} [opts] @returns {number} */
+export function noData(r, { arch = null } = {}) {
+  if (!r || typeof r !== 'object' || 'error' in r || cannotRun(r, { arch })) return 0;
+  return xOpsOf(r).length;
+}
+export const noDataText = (n) => plural(n, 'instruction without data', 'instructions without data');
+export const NO_DATA_TITLE = 'not in the instruction tables of this CPU (uops.info has no data for them): the throughput leaves their cost out';

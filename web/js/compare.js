@@ -6,7 +6,7 @@
 //   compareKey / sweepKey, ResultCache   results are reused across views and redraws
 //   latestWins     debounced, single-flight scheduling: never queues work, runs only the latest request
 
-import { cannotRun } from './caveats.js';
+import { cannotRun, noData } from './caveats.js';
 
 export const SWEEP_OFFSETS = 64;
 
@@ -23,8 +23,8 @@ export function summarize(response) {
     // (the limits, for what-if: a variant is not shown under its Ports or Issue limit, whatif-core.js hardLimit)
     limits: Array.isArray(response.limits) ? response.limits.map((l) => ({ name: String(l.name), tp: Number(l.tp) })) : [],
     decodeErrors: Number(response.decodeErrors) || 0, // positions this CPU's decoder skipped (e.g. AVX2 on SNB)
-    // the instructions its model has no data for (notes X: AVX-512 on ZEN3), by their text (caveats.js cannotRun)
-    xLabels: Array.isArray(response.rows) ? response.rows.filter((x) => x?.kind === 'instr' && x.notes === 'X').map((x) => String(x.label)) : [],
+    // the encodings of the instructions without data (note X: AVX-512 on ZEN3, syscall on SKL): caveats.js cannotRun, noData
+    xOps: Array.isArray(response.rows) ? response.rows.filter((x) => x?.kind === 'instr' && x.notes === 'X').map((x) => String(x.opcode ?? '')) : [],
     mock: !!response.mock,
   };
 }
@@ -54,6 +54,7 @@ export function compareRows(items, results, { sort = 'menu', current = null, cod
       error: state === 'error' ? r.error : null,
       decodeErrors: state === 'ok' ? r.decodeErrors ?? 0 : 0,
       invalid: bad,
+      noData: state === 'ok' && !bad ? noData(r, { arch: it.key }) : 0, // (instructions without data: a note; the row stands)
       bar: state === 'ok' && !bad && max > 0 ? r.tp / max : 0,
       fastest: state === 'ok' && !bad && round2(r.tp) === min,
       current: it.key === current,

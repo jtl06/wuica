@@ -16,7 +16,7 @@
 
 import { h, uopTable, NOTES, watchFit, nearestLimit, columnGroup, copyAllButton, messageList, invalidText, alignButton } from './render.js';
 import { attachHighlight, colorInstr } from './asm-hl.js'; // B's code box in colour; the instructions of the Δ table
-import { caveats, cannotRun } from './caveats.js';
+import { caveats, cannotRun, noData, noDataText, NO_DATA_TITLE } from './caveats.js';
 import { GROUP_LABEL } from './archs.js';
 import { compareResponses, signed, cycles, signedCycles } from './ab-diff.js';
 import { parseHexInput, toHex } from './hex-input.js';
@@ -359,7 +359,7 @@ export function createAB(api) {
       const code = analyzedText(src);
       // invalid: code this CPU cannot run (caveats.js): its number is no result, and A–B no comparison
       return { side: s, response, shown: ok(response) ? branchLabels(response.rows, src) : null, code, invalid: ok(response) ? cannotRun(response, { arch: x.arch, code }) : null,
-        text: s === 'a' ? api.getA().text : bCode.value, loop: api.picks?.()[s] ?? null,
+        text: s === 'a' ? api.getA().text : bCode.value, loop: api.picks?.()[s] ?? null, noData: ok(response) ? noData(response, { arch: x.arch }) : 0,
         elapsedMs: performance.now() - t0, hex, byteCount: x.bytes.length, archKey: x.arch,
         archTitle: api.archTitle(x.arch, !!item?.experimental), experimental: !!item?.experimental,
         inputMode: s === 'a' ? state.mode : state.bMode };
@@ -419,7 +419,8 @@ export function createAB(api) {
     const title = [s.archTitle, plural(instrs, 'instruction'), plural(s.byteCount, 'byte'), r.mock ? 'mock data' : ms(s)].join(' · ');
     return h('span', { class: 'ab-side', title }, tag(t), ` ${s.archKey} `, h('span', { class: 'tag', text: r.mode === 'loop' ? 'loop' : 'unrolled' }),
       r.mock ? h('span', { class: 'mock-tag', text: ' mock' }) : null,
-      s.invalid ? h('span', { class: 'caveat', title: s.invalid.title, text: ` not a result: ${invalidText(s.invalid)}` }) : null);
+      s.invalid ? h('span', { class: 'caveat', title: s.invalid.title, text: ` not a result: ${invalidText(s.invalid)}` }) : null,
+      s.noData ? h('span', { class: 'hint', title: NO_DATA_TITLE, text: ` ${noDataText(s.noData)}` }) : null);
   }
 
   function bottlenecks(view) {

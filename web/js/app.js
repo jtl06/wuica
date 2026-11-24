@@ -29,7 +29,7 @@ import { createCopy, setCopy } from './copy-view.js';
 import { report, cpuTable, compare } from './markdown.js';          // copying a view, or the whole result, as text
 import { createRegionChip, createLoopChip } from './region-chip.js';
 import { replacesText, detectSyntax } from './loop-find.js';
-import { cannotRun } from './caveats.js';     // code a CPU cannot run
+import { cannotRun, noData } from './caveats.js';     // code a CPU cannot run
 import { createKeys } from './keys.js';           // keyboard shortcuts, the ? overlay
 import { createABCpus } from './ab-cpus.js';       // A–B on every checked CPU
 import { branchLabels, analyzedLines, analyzedText } from './branch-label.js'; // branch targets as labels in the uop table
@@ -965,6 +965,7 @@ async function run({ auto = false } = {}) {
       shown: response && !response.error && Array.isArray(response.rows) ? branchLabels(response.rows, srcA) : null,
       // code this CPU cannot run (caveats.js): its number is not a result
       invalid: cannotRun(response, { arch: archKey, code: analyzedText(srcA) }),
+      noData: noData(response, { arch: archKey }), // (instructions without data: a note, caveats.js)
     };
     lastView.snap = snapshotOf(input, null);
     lastRunKey = key;
@@ -1096,7 +1097,7 @@ function snapshotOf(input, inputB) {
 }
 // the link of the result shown, with the elements per iteration it shows
 const linkNow = (snap) => linkOf(snap ? { ...snap.state, aWork: state.aWork, bWork: state.bWork } : collectState());
-const sideMeta = (s, work) => ({ arch: s.archKey, archTitle: s.archTitle, per: work, config: uarch?.configs?.[s.archKey] ?? null, shown: s.shown ?? null, invalid: s.invalid ?? null });
+const sideMeta = (s, work) => ({ arch: s.archKey, archTitle: s.archTitle, per: work, config: uarch?.configs?.[s.archKey] ?? null, shown: s.shown ?? null, invalid: s.invalid ?? null, noData: s.noData ?? 0 });
 const codeOf = (c) => (c ? { code: String(c.text ?? '').replace(/\s+$/, ''), lang: c.mode === 'hex' ? '' : 'asm' } : {});
 function copySingle(v) {
   setCopy('diff', null);

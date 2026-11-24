@@ -8,7 +8,7 @@
 //
 //   node tests-js/web_cannot_run.mjs
 import fs from 'node:fs';
-import { cannotRun, LACKS } from '../web/js/caveats.js';
+import { cannotRun, noData, extensionOf, LACKS } from '../web/js/caveats.js';
 import { summarize, compareRows } from '../web/js/compare.js';
 import { abCpuRows } from '../web/js/ab-cpus.js';
 import { cpuTable, report, compare } from '../web/js/markdown.js';
@@ -30,8 +30,14 @@ const root = new URL('../', import.meta.url);
 {
   check(cannotRun({ tp: 1, decodeErrors: 0, rows: [{ kind: 'instr', label: 'add rax, 1' }] }) === null, 'a block it can run: null');
   check(cannotRun({ error: 'x' }) === null && cannotRun(null) === null, 'a failure: null');
-  const x = cannotRun({ tp: 3, decodeErrors: 0, rows: [{ kind: 'instr', notes: 'X', label: 'vaddps zmm0, zmm1, zmm2' }, { kind: 'instr', label: 'dec r15' }] }, { arch: 'ZEN3' });
-  check(x?.reason === 'needs AVX-512' && x.unsupported === 1 && x.decodeErrors === 0, 'ZEN3: an instruction without data, named from its text', j(x));
+  // an instruction without data is a cannot-run case only when it is of an extension the CPU lacks (by its encoding:
+  // EVEX is AVX-512); otherwise a gap in the tables (noData), and the result stands
+  const zmm = { kind: 'instr', notes: 'X', label: 'vaddps zmm0, zmm1, zmm2', opcode: '62F1744858C2' };
+  const x = cannotRun({ tp: 3, decodeErrors: 0, rows: [zmm, { kind: 'instr', label: 'dec r15', opcode: '49FFCF' }] }, { arch: 'ZEN3' });
+  check(x?.reason === 'needs AVX-512' && x.unsupported === 1 && x.decodeErrors === 0, 'ZEN3: an AVX-512 instruction without data: cannot run, named from its encoding', j(x));
+  const fld = { kind: 'instr', notes: 'X', label: 'fld tbyte ptr [rdi]', opcode: 'DB2F' };
+  check(cannotRun({ tp: 3, decodeErrors: 0, rows: [fld] }, { arch: 'SKL' }) === null && noData({ tp: 3, decodeErrors: 0, rows: [fld] }, { arch: 'SKL' }) === 1, 'x87 tbyte load without data: a gap (a note), not "cannot run"');
+  check(noData({ tp: 3, decodeErrors: 0, rows: [zmm] }, { arch: 'ZEN3' }) === 0, 'noData: 0 for a block it cannot run (the reason says it)');
   const d = cannotRun({ tp: 3, decodeErrors: 4, rows: [] }, { arch: 'SKL' });
   check(d?.reason === '4 undecodable' && d.needs.length === 0, 'undecodable positions without the code: counted', j(d));
   const named = cannotRun({ tp: 3, decodeErrors: 4, rows: [] }, { arch: 'SKL', code: 'vaddps (%rdi), %zmm0, %zmm0' });
@@ -39,7 +45,16 @@ const root = new URL('../', import.meta.url);
   // only an extension the CPU lacks is named: SKL has FMA, so FMA code that SKL cannot decode says the count
   check(cannotRun({ decodeErrors: 2, rows: [] }, { arch: 'SKL', code: 'vfmadd231ps ymm0, ymm1, ymm2' })?.reason === '2 undecodable', 'an extension the CPU has is not named');
   check(cannotRun({ decodeErrors: 2, rows: [] }, { arch: 'IVB', code: 'vfmadd231ps ymm0, ymm1, ymm2\nrorx rax, rbx, 3' })?.reason === 'needs FMA, BMI2', 'IVB: FMA and BMI2');
-  check(cannotRun({ decodeErrors: 0, xLabels: ['vmovups zmm0, zmmword ptr [rsi]', 'vmovups zmm1, zmmword ptr [rsi+0x40]'] }, { arch: 'ZEN3' })?.reason === 'needs AVX-512', 'a summary (xLabels) as a response');
+  // the review's cases: AVX-VNNI is not AVX2; a comment names nothing; one skipped instruction is one count; X rows of
+  // other instructions (the decoder's junk after a skipped position) name nothing
+  check(cannotRun({ decodeErrors: 1, rows: [] }, { arch: 'SNB', code: '{vex} vpdpbusd ymm0, ymm1, ymm2' })?.reason === 'needs AVX-VNNI', '{vex} vpdpbusd ymm on SNB: needs AVX-VNNI (not AVX2)');
+  const cm = cannotRun({ decodeErrors: 2, rows: [] }, { arch: 'SNB', code: 'vfmadd231ps ymm0, ymm1, ymm2 # not zmm0\n// zmm1 too\n/* zmm2 */ mov eax, "zmm3"' });
+  check(cm?.reason === 'needs FMA', 'comments and strings name nothing', j(cm));
+  check(cannotRun({ decodeErrors: 1, rows: [{ ...zmm, opcode: '0F0B' }] }, { arch: 'IVB' })?.reason === '1 undecodable', 'one skipped position, junk X rows: one count');
+  check(cannotRun({ decodeErrors: 3, rows: [zmm] }, { arch: 'IVB' })?.reason === '3 undecodable', 'machine code (no text): counts only, not named from the junk', j(cannotRun({ decodeErrors: 3, rows: [zmm] }, { arch: 'IVB' })));
+  check(cannotRun({ decodeErrors: 0, xOps: ['62F17C481006', '62F17C48104E01'] }, { arch: 'ZEN3' })?.reason === 'needs AVX-512', 'a summary (xOps) as a response');
+  check(extensionOf('C4E27550C2') === 'AVX-VNNI' && extensionOf('C4E27D4904') === 'AMX' && extensionOf('0F01D5') === 'TSX' && extensionOf('C7F800000000') === 'TSX'
+    && extensionOf('660F3A0FC104') === null && extensionOf('F30F1EFA') === null && extensionOf('0F05') === null, 'extensionOf: by the encoding');
   check(ARCH_ORDER.every((k) => Array.isArray(LACKS[k])), 'every CPU of the menu has its list of missing extensions', ARCH_ORDER.filter((k) => !LACKS[k]).join());
 }
 
@@ -47,10 +62,10 @@ const root = new URL('../', import.meta.url);
 {
   const items = ['SKL', 'ICL', 'ZEN3', 'ADL-P'].map((key) => ({ key, title: key }));
   const res = new Map([
-    ['SKL', { tp: 38, bottlenecks: [], decodeErrors: 12, xLabels: [] }],
-    ['ICL', { tp: 4, bottlenecks: ['Ports'], decodeErrors: 0, xLabels: [] }],
-    ['ZEN3', { tp: 3, bottlenecks: [], decodeErrors: 0, xLabels: ['vaddps zmm0, zmm0, zmmword ptr [rdi+rcx*4]'] }],
-    ['ADL-P', { tp: 11725, bottlenecks: [], decodeErrors: 12, xLabels: [] }],
+    ['SKL', { tp: 38, bottlenecks: [], decodeErrors: 12, xOps: [] }],
+    ['ICL', { tp: 4, bottlenecks: ['Ports'], decodeErrors: 0, xOps: [] }],
+    ['ZEN3', { tp: 3, bottlenecks: [], decodeErrors: 0, xOps: ['62F17C485807'] }],
+    ['ADL-P', { tp: 11725, bottlenecks: [], decodeErrors: 12, xOps: [] }],
   ]);
   const rows = compareRows(items, res, { code: 'vaddps (%rdi,%rcx,4), %zmm0, %zmm0' });
   const by = Object.fromEntries(rows.map((r) => [r.key, r]));
@@ -61,7 +76,7 @@ const root = new URL('../', import.meta.url);
   const all = compareRows(items.filter((i) => i.key !== 'ICL'), res);
   check(all.every((r) => !r.fastest && r.bar === 0), 'every row unable to run the code: none is the fastest');
   // A–B per CPU: a side that cannot run on a CPU: no verdict on that row
-  const ab = abCpuRows(items, new Map([...res].flatMap(([k, v]) => [[`a:${k}`, v], [`b:${k}`, { tp: v.tp / 2, bottlenecks: [], decodeErrors: 0, xLabels: [] }]])), { codeA: 'vaddps %zmm1, %zmm0, %zmm0' });
+  const ab = abCpuRows(items, new Map([...res].flatMap(([k, v]) => [[`a:${k}`, v], [`b:${k}`, { tp: v.tp / 2, bottlenecks: [], decodeErrors: 0, xOps: [] }]])), { codeA: 'vaddps %zmm1, %zmm0, %zmm0' });
   const abBy = Object.fromEntries(ab.map((r) => [r.key, r]));
   check(abBy.SKL.state === 'invalid' && abBy.SKL.verdict === null && abBy.SKL.invalidA?.reason === 'needs AVX-512' && abBy.ICL.verdict === 'better', 'A–B per CPU: no verdict where A cannot run', j(ab.map((r) => [r.key, r.state, r.verdict])));
   // the Markdown table: struck through, why
@@ -111,6 +126,66 @@ if (!fs.existsSync(asmPath) || !fs.existsSync(wasmPath)) {
     const c = cannotRun(r, { arch: 'SNB', code: ex.text.intel });
     check(r.decodeErrors > 0 && /^needs (?:AVX2, )?FMA|^needs FMA/.test(c?.reason ?? '') && c.reason.includes('FMA'), `${id} on SNB: needs FMA`, j([r.decodeErrors, c]));
     check(cannotRun(await run(ex.hex, 'HSW'), { arch: 'HSW', code: ex.text.intel }) === null, `${id} on HSW: runs it`);
+  }
+
+  // the review's cases: instructions the decoder accepts but the tables lack are gaps, not "cannot run"
+  const loop = async (body) => { const t = `  fldz\n.L:\n${body.map((l) => `  ${l}\n`).join('')}  dec rsi\n  jne .L\n`; const a = await A.assemble(t, 'intel', { loop: 'auto' }); if (!a.ok) throw new Error(`${body}: ${j(a.diagnostics)}`); return { hex: Buffer.from(a.bytes).toString('hex'), text: t }; };
+  const gapCases = [
+    [['fld tbyte ptr [rdi]', 'faddp st(1), st', 'add rdi, 16'], ARCH_ORDER],
+    [['endbr64', 'add rax, 1'], ARCH_ORDER], [['cldemote byte ptr [rdi]', 'add rax, 1'], ARCH_ORDER], [['ud2', 'add rax, 1'], ARCH_ORDER],
+    [['int3', 'add rax, 1'], ARCH_ORDER], [['syscall', 'add rax, 1'], ARCH_ORDER],
+    [['clwb byte ptr [rdi]', 'add rax, 1'], ['ICX']], [['rdfsbase rax', 'add rbx, rax'], ['IVB', 'HSW', 'BDW']],
+    [['xend', 'add rax, 1'], ['HSW', 'BDW', 'SKL', 'KBL', 'SKX', 'CFL', 'CLX', 'ICL', 'TGL', 'RKL', 'ICX']], [['xtest', 'add rax, 1'], ['HSW', 'SKL', 'ICX']],
+    [['tpause eax', 'add rbx, 1'], ['ADL-P']],
+  ];
+  for (const [body, archs] of gapCases) {
+    const { hex, text } = await loop(body);
+    const items = [], res = new Map(), struck = [], noted = [];
+    for (const arch of archs) {
+      const r = await run(hex, arch);
+      if (r.error) continue;
+      if (cannotRun(r, { arch, code: text })) struck.push(`${arch}:${r.decodeErrors}`);
+      if (noData(r, { arch })) noted.push(arch);
+      items.push({ key: arch, title: arch }); res.set(arch, summarize(r));
+    }
+    const rows = compareRows(items, res, { code: text });
+    check(struck.filter((x) => x.endsWith(':0')).length === 0, `${body[0]}: never struck where the decoder accepts it (${archs.length} CPUs)`, j(struck));
+    if (archs === ARCH_ORDER && /fld|syscall/.test(body[0])) check(noted.length > 0 && rows.some((r) => r.fastest) && rows.filter((r) => r.noData).every((r) => r.bar > 0), `${body[0]}: "without data" noted, the rows keep their bars and a fastest`, j([noted, rows.map((r) => [r.key, r.fastest, r.noData])]));
+  }
+  // AVX-VNNI ({vex} vpdpbusd) on ZEN3, decoded and without data: cannot run, named from the encoding
+  { const { hex } = await loop(['{vex} vpdpbusd ymm0, ymm1, ymm2']); check(cannotRun(await run(hex, 'ZEN3'), { arch: 'ZEN3' })?.reason === 'needs AVX-VNNI', '{vex} vpdpbusd on ZEN3: needs AVX-VNNI'); }
+
+  // the fixture corpus (the reference's simulation cases, default options, the menu's CPUs): every result struck either
+  // had positions its decoder skipped, or an instruction without data whose ISA set (XED's own, decoded with chip ALL)
+  // is of an extension that CPU lacks; and each such instruction makes its result struck (the encoding rule agrees)
+  const corpus = [new URL('fixtures/generated/sim_fixtures.jsonl.gz', root), new URL('fixtures/generated/extra_sim_fixtures.jsonl.gz', root)].filter((u) => fs.existsSync(u));
+  if (!corpus.length) console.log('(the simulation fixtures are missing: no corpus check)');
+  else {
+    const { createGunzip } = await import('node:zlib');
+    const readline = await import('node:readline');
+    const ISA = [[/^AVX512/, 'AVX-512'], [/^AMX/, 'AMX'], [/^AVX_VNNI/, 'AVX-VNNI'], [/^RTM$/, 'TSX']];
+    const isaOf = async (op) => { const d = await e.decode(new Uint8Array(Buffer.from(op, 'hex')), 'ALL'); const set = Array.isArray(d) ? d[0]?.['isa-set'] ?? '' : ''; return ISA.find(([re]) => re.test(set))?.[1] ?? null; };
+    const seen = new Set();
+    let n = 0, struck = 0, wrong = 0, missed = 0, gaps = 0;
+    const bad = [];
+    for (const u of corpus) {
+      for await (const line of readline.createInterface({ input: fs.createReadStream(u).pipe(createGunzip()), crlfDelay: Infinity })) {
+        const cut = line.indexOf(', "stdout"');
+        const c = JSON.parse(cut < 0 ? line : line.slice(0, cut) + '}');
+        if (Object.keys(c.options ?? {}).length || !ARCH_ORDER.includes(c.arch) || seen.has(`${c.hex}|${c.arch}`)) continue;
+        seen.add(`${c.hex}|${c.arch}`);
+        const r = await e.analyze({ ...makeRequest(c.hex, c.arch), minIterations: 1, minCycles: 1 }); // (the rows' notes and the decode errors do not depend on them)
+        if (r.error) continue;
+        n++;
+        const x = cannotRun(r, { arch: c.arch });
+        if (noData(r, { arch: c.arch })) gaps++;
+        const lacked = [];
+        if (!r.decodeErrors) for (const row of r.rows) if (row.kind === 'instr' && row.notes === 'X') { const ext = await isaOf(row.opcode); if (ext && LACKS[c.arch].includes(ext)) lacked.push(ext); }
+        if (x) { struck++; if (!r.decodeErrors && !lacked.length) { wrong++; bad.push(`${c.arch} ${c.hex.slice(0, 40)}`); } }
+        else if (lacked.length) { missed++; bad.push(`missed ${c.arch} ${c.hex.slice(0, 40)}`); }
+      }
+    }
+    check(n > 5000 && wrong === 0 && missed === 0, `corpus: ${n} results, ${struck} struck (each with skipped positions or an instruction of an extension its CPU lacks), ${gaps} with instructions without data (not struck)`, j({ wrong, missed, bad: bad.slice(0, 10) }));
   }
 }
 

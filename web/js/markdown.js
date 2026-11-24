@@ -17,7 +17,7 @@ import { insights, boundModel, blame, topRows } from './bound-core.js';
 import { compareResponses, cycles, signed, signedCycles, MINOR } from './ab-diff.js';
 import { branchLabels, analyzedLines } from './branch-label.js';
 import { shownOutcome } from './whatif-core.js';
-import { cannotRun } from './caveats.js';
+import { cannotRun, noData, noDataText } from './caveats.js';
 
 export { cycles, signedCycles };
 
@@ -146,6 +146,7 @@ export function report(r, meta = {}) {
   if (r.limits?.length) lines.push(`limits: ${r.limits.map((l) => `${l.name} ${per > 1 ? cycles(Number(l.tp) / per) : f2(l.tp)}`).join(' · ')}`);
   if (ins?.next && ins.binding.length) lines.push(`next limit: ${ins.next.limit} ${per > 1 ? cycles(ins.next.tp / per) : f2(ins.next.tp)} (at most ${f2(ins.next.maxSpeedup)}x faster without ${ins.binding.join(', ')})`);
   if (r.decodeErrors > 0) lines.push(`${r.decodeErrors} position(s) could not be decoded: the throughput leaves them out`);
+  { const n = meta.noData ?? r.noData ?? noData(r, { arch: meta.arch ?? r.arch ?? null }); if (n > 0) lines.push(`${noDataText(n)}: not in the instruction tables, their cost is left out`); }
   blocks.push(lines.join(BR));
   if (ins?.caveats?.length) blocks.push(ins.caveats.map((c) => `- **not modelled:** ${text(c.text)}: ${text(c.title)}`).join('\n'));
   if (ins?.chain?.length) {
@@ -189,7 +190,8 @@ export function cpuTable(input, opts = {}) {
       // a CPU that cannot run the code (caveats.js cannotRun): its number struck through, and why
       const bad = cannotRunOf(r, {});
       invalid ||= !!bad;
-      const notes = [bad ? `not a result: ${bad.reason}` : null, r.decodeErrors ? `${r.decodeErrors} undecodable (left out)` : null, ...cav, r.prototype ? '[prototype]' : null].filter(Boolean).map(text).join('; ');
+      const gaps = bad ? 0 : Number(r.noData) || 0;
+      const notes = [bad ? `not a result: ${bad.reason}` : null, r.decodeErrors ? `${r.decodeErrors} undecodable (left out)` : null, gaps ? `${noDataText(gaps)} (cost left out)` : null, ...cav, r.prototype ? '[prototype]' : null].filter(Boolean).map(text).join('; ');
       const strike = (t) => (bad ? `~~${t}~~` : t);
       rows.push([...lead, text(r.arch), text(r.name ?? ''), String(r.year ?? ''), `${strike(f2(r.tp))}${r.decodeErrors ? '*' : ''}`, ...(per ? [strike(cycles(Number(r.tp) / per))] : []), text(bn), notes]);
     });

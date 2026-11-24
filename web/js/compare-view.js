@@ -10,7 +10,7 @@ import { makeRequest } from './engine.js';
 import { setCopy } from './copy-view.js';
 import { sweep as sweepText, cpuTable, offsetRanges } from './markdown.js';
 import { ARCH_INFO, PROTOTYPE } from './archs.js';
-import { cannotRun } from './caveats.js';
+import { cannotRun, noData, noDataText, NO_DATA_TITLE } from './caveats.js';
 import {
   summarize, compareRows, sweepData, sweepLayout, compareKey, sweepKey, resultKey, ResultCache, latestWins, SWEEP_OFFSETS,
 } from './compare.js';
@@ -237,8 +237,8 @@ export function createComparePanels(env) {
       const info = ARCH_INFO[it.key];
       const row = { arch: it.key, name: info?.name ?? '', year: info?.year ?? '' };
       if (!r || r.error) return { ...row, code: 1, error: r?.error ?? 'not analyzed yet' };
-      const bad = cannotRun(r, { arch: it.key, code: input.code ?? null });
-      return { ...row, tp: r.tp, bottlenecks: r.bottlenecks, decodeErrors: r.decodeErrors, ...(bad ? { unsupported: bad.reason } : {}), ...(it.experimental ? { prototype: true } : {}) };
+      const bad = cannotRun(r, { arch: it.key, code: input.code ?? null }), gaps = noData(r, { arch: it.key });
+      return { ...row, tp: r.tp, bottlenecks: r.bottlenecks, decodeErrors: r.decodeErrors, ...(bad ? { unsupported: bad.reason } : {}), ...(gaps ? { noData: gaps } : {}), ...(it.experimental ? { prototype: true } : {}) };
     });
   }
 
@@ -269,7 +269,9 @@ export function createComparePanels(env) {
         h('td', { class: 'cmp-bar', 'aria-hidden': 'true' }, gauge),
         // a CPU that cannot run the code (caveats.js cannotRun): why, instead of a bottleneck
         h('td', { class: 'cmp-bn' }, r.state !== 'ok' ? '' : r.invalid ? invalidNote(r) : r.bottlenecks.length ? r.bottlenecks.join(', ')
-          : h('span', { class: 'hint', title: 'no single limit explains the throughput', text: 'unknown' })));
+          : h('span', { class: 'hint', title: 'no single limit explains the throughput', text: 'unknown' }),
+        // instructions without data (gaps in the tables): a note; the row keeps its bar and rank
+        r.noData ? h('span', { class: 'hint', title: NO_DATA_TITLE, text: ` · ${noDataText(r.noData)}` }) : null));
       tr.addEventListener('click', () => env.onArch(r.key));
       body.append(tr);
     }

@@ -513,7 +513,7 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
         }
         const year = String(r.year ?? '').padEnd(4);
         const tp = (r.code ? '-' : `${fmt(r.tp)}${r.decodeErrors || r.unsupported ? '*' : ''}`).padStart(6);
-        const notes = [r.unsupported ? `not a result: ${r.unsupported}` : null, r.decodeErrors ? `${r.decodeErrors} undecodable (left out)` : null, ...(ins?.caveats ?? []).map((x) => x.text), r.prototype ? '[prototype]' : null].filter(Boolean).join('; ');
+        const notes = [r.unsupported ? `not a result: ${r.unsupported}` : null, r.decodeErrors ? `${r.decodeErrors} undecodable (left out)` : null, r.noData ? `${r.noData} without data (cost left out)` : null, ...(ins?.caveats ?? []).map((x) => x.text), r.prototype ? '[prototype]' : null].filter(Boolean).join('; ');
         out.write(`${r.arch.padEnd(kw)}  ${r.name.padEnd(nw)}  ${year}  ${tp}${o.per ? `  ${(pe !== undefined ? fmtEl(pe) : '-').padStart(6)}` : ''}  ${bns[k].padEnd(bw)}${notes ? `  ${notes}` : ''}`.trimEnd() + '\n');
       });
       if (!o.tpOnly) {
@@ -553,6 +553,7 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
     if (ins?.largest && /^Bottleneck: unknown$/m.test(text)) text = text.replace(/^Bottleneck: unknown$/m, d.shift());
     out.write(text);
     if (r.unsupported) d.unshift(`Not a result for ${r.arch}: ${r.unsupported} (the throughput leaves out what it cannot run)`);
+    else if (r.noData) d.push(`${r.noData} instruction${r.noData === 1 ? '' : 's'} without data (not in the instruction tables): the throughput leaves their cost out`);
     if (o.per) d.push(`Per element: ${fmtEl(per(r.tp))} cycles (${fmt(r.tp)} cycles/iteration, ${o.per} elements per iteration)`);
     if (d.length) out.write(`\n${d.join('\n')}\n`);
     const steps = !o.per ? inductionSteps(r) : [];
@@ -834,7 +835,7 @@ function rowOf(r, ins, per) {
   return {
     code: 0, tp: r.tp, pe: per(r.tp), decodeErrors: r.decodeErrors, unsupported: r.unsupported ?? null,
     bn: r.bottlenecks.join(', ') || (ins?.largest ? `- (nearest ${ins.largest.join(', ')})` : '-'),
-    notes: [r.unsupported ? `not a result: ${r.unsupported}` : null, r.decodeErrors ? `${r.decodeErrors} undecodable (left out)` : null, ...(ins?.caveats ?? []).map((x) => x.text)].filter(Boolean),
+    notes: [r.unsupported ? `not a result: ${r.unsupported}` : null, r.decodeErrors ? `${r.decodeErrors} undecodable (left out)` : null, r.noData ? `${r.noData} without data (cost left out)` : null, ...(ins?.caveats ?? []).map((x) => x.text)].filter(Boolean),
   };
 }
 

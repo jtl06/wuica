@@ -469,10 +469,13 @@ The fields from `arch` to `trace` are the analysis response of the WebAssembly m
 repository: `rows[].values[i]` belongs to `columns[i]`, and `notes` is `M` macro-fused, `J` JCC erratum or `X`
 unsupported). `hex` is present when `source` was given and holds the assembled bytes. `stderr` holds the assembler's
 warnings, the notes on exits taken as not taken, and the warning "N position(s) could not be decoded". `unsupported` is
-present only when the CPU cannot run the code (positions its decoder skipped, instructions its model has no data for:
-AVX-512 on SKL or ZEN3): its reason, `"needs AVX-512"` when the analyzed text names an extension the CPU lacks, else
-`"12 undecodable"` or `"3 instructions not supported"`; `tp` is then the reference's number, which leaves that code out,
-and the text, the Markdown and the page do not present it as a result (compare's rows have it too). `insights` (REST only; the library's `analyze()` result
+present only when the CPU cannot run the code: positions its decoder skipped (AVX-512 on SKL), or an instruction of an
+extension it lacks that its decoder accepts (AVX-512 on ZEN3, by the instruction's encoding). It holds the reason:
+`"needs AVX-512"` when the extension is known (from the instruction, or from the analyzed assembly text without its
+comments), else `"12 undecodable"`; `tp` is then the reference's number, which leaves that code out, and the text, the
+Markdown and the page do not present it as a result. `noData` is present only when the CPU can run the code but some of
+its instructions are not in its tables (the note X: x87 tbyte loads, syscall, CLWB on ICX): their count; the result
+stands, without their cost. compare's rows have both. `insights` (REST only; the library's `analyze()` result
 does not have it, `w.insights(r)` computes it) is the diagnosis described under the compact form below, with `portSet`
 and `issueSlots` when `options.details` is true.
 
