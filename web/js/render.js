@@ -14,7 +14,6 @@ export const NOTES = Object.freeze({
   J: 'block not in the DSB (uop cache) because of the JCC erratum',
   X: 'instruction not supported (no data)',
 });
-export const LEGEND = Object.freeze({ M: 'macro-fused', J: 'JCC erratum', X: 'no data' });
 
 export function h(tag, attrs, ...children) {
   const el = document.createElement(tag);
@@ -137,7 +136,7 @@ const MIN_INSTR_PX = { uops: 120, 'ab-diff': 80 };
 const fitting = typeof ResizeObserver === 'function' ? new ResizeObserver((entries) => {
   for (const e of entries) requestAnimationFrame(() => fitInstr(e.target)); // (outside the observer's delivery)
 }) : null;
-// Measured, not computed: the instructions' texts (dense.css caps them, not the cells: a table cell's max-width does not
+// Measured, not computed: the instructions' texts (style.css caps them, not the cells: a table cell's max-width does not
 // bind its column) start uncut and are cut until nothing sticks out of the wrap (scrollWidth also counts what overflows
 // the table: borders, a group's name over a narrow last column, rounding), a few times at most.
 export function fitInstr(wrap) {
@@ -226,15 +225,6 @@ export function uopTable(r, hideEmpty, limit = Infinity, { shown = null } = {}) 
   return { table, hidden: n - cols.length, notes: new Set(r.rows.map((x) => x.notes).filter((k) => NOTES[k])), more: 0 };
 }
 
-// (A long block is drawn in a window of rows, vrows.js: every row is a scroll away; nothing waits for "show all".)
-export const ROWS_AT_ONCE = Infinity;
-export const ROWS_FIRST = Infinity;
-export const rowLimit = () => Infinity;
-export function moreRows(more, total, onAll) {
-  const b = h('button', { type: 'button', class: 'plain', text: `show all ${total.toLocaleString('en-US')} rows` });
-  b.addEventListener('click', onAll);
-  return h('p', { class: 'more-rows hint' }, `${more.toLocaleString('en-US')} more rows · `, b);
-}
 
 function mockLine(m, archKey) {
   if (m.synthetic) return 'mock data: synthetic, not a prediction';
@@ -249,7 +239,7 @@ function mockLine(m, archKey) {
 //   byteCount, hex,           the machine code that was analyzed
 //   inputMode,                'asm' | 'hex': the listing remembers its open state per input mode
 //   elapsedMs,                (the cycle-by-cycle trace is drawn by app.js below the result, full width)
-//   ui: { hideEmpty, reportOpen, listingOpen: {asm, hex} (null: closed), allRows }, onUi(name, value)
+//   ui: { hideEmpty, reportOpen, listingOpen: {asm, hex} (null: closed) }, onUi(name, value)
 //   config,                   the CPU's configuration in uarch.json (configs[archKey]), for the caveats (optional)
 // }
 // Known blind spots of the model that the block meets (caveats.js): one small line, the details in the tooltips.
@@ -318,14 +308,11 @@ export function renderResult(root, view) {
     }
 
     // empty columns are left out, as in uiCA's table
-    const { table, notes, more } = uopTable(r, view.ui.hideEmpty ?? true, rowLimit(r.rows.length, view.ui.allRows), { shown: view.shown });
+    const { table } = uopTable(r, view.ui.hideEmpty ?? true, Infinity, { shown: view.shown });
     out.push(leadRow('uops', // the table says what it is: it gets the whole width
       h('div', { class: 'table-tools' }), // filled by other views (e.g. the cost toggle of insight-view.js); empty otherwise
       watchFit(h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Uops per instruction, average per iteration',
-        title: 'average uops per iteration' }, table)),
-      more ? moreRows(more, r.rows.length, () => view.onUi('allRows', true)) : null,
-      notes.size ? h('p', { class: 'legend' },
-        [...notes].map((k) => h('span', { title: NOTES[k] }, h('b', { text: k }), ` ${LEGEND[k]}`))) : null));
+        title: 'average uops per iteration' }, table))));
 
     const listingOpen = view.ui.listingOpen?.[view.inputMode] ?? false; // collapsed until opened
     out.push(h('div', { class: 'row text-row' }, h('div', { class: 'label', text: 'text' }), h('div', { class: 'field' },

@@ -157,9 +157,9 @@ try {
       await until(() => (runAnyway(), document.querySelector('.tp .value') && body().dataset.cost === 'done'));
       const out = { tp: document.querySelector('.tp .value').textContent, cost: cost(), top: top(), head: head(), hash: location.hash };
       const chain = document.querySelector('.ins-chain-row');
-      // the chain on one line; its length (the hint) is hidden in the dense layout, the Dependencies limit says it
+      // the chain on one line; its length in the tooltip (the Dependencies limit says it too)
       out.chain = [chain?.querySelector('.label').textContent, chain?.querySelector('.field').innerText.replace(/\\s+/g, ' ').trim(),
-        chain?.querySelector('.hint')?.textContent.replace(/\\s+/g, ' ').trim(), chain && getComputedStyle(chain.querySelector('.field')).whiteSpace];
+        /^2\\.00 cycles\\/iteration;/.test(chain?.title ?? '') ? '2.00 cycles/iteration' : chain?.title, chain && getComputedStyle(chain.querySelector('.field')).whiteSpace];
       out.afterLimits = chain?.previousElementSibling?.querySelector('.limits') !== null;
       out.marked = instrRows().map((tr) => tr.classList.contains('ins-on-chain') ? tr.cells[0].dataset.chain : '');
       out.title = instrRows()[0].cells[0].title;

@@ -5,7 +5,6 @@
 .ins-chain { color: var(--description); }
 .ins-chain .ins-step { color: var(--code); }
 .ins-chain .ins-arrow { color: var(--date); cursor: help; }
-.grid tbody tr.ins-on-chain > th:first-child { box-shadow: inset 2px 0 var(--date); }
 .grid tbody th[data-chain]::after { content: " " attr(data-chain); color: var(--date); }
 
 /* the cost column: Δ cycles/iteration without the instruction */
@@ -13,7 +12,7 @@
 .ins-cost-tools label { cursor: pointer; }
 .ins-cost-tools label:has(input:checked) { color: var(--accent); }
 .ins-cost-tools label:has(input:disabled) { cursor: not-allowed; }
-.ins-variant { padding: 0 0.25rem; color: var(--text); }
+.ins-variant { color: var(--text); }
 .grid th.ins-cost, .grid td.ins-cost { border-left: 1px solid var(--border); text-align: right; min-width: 6ch; }
 .grid thead th.ins-cost { cursor: help; }
 .grid td.ins-cost { color: var(--subtle); }

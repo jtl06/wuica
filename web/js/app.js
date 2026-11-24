@@ -218,7 +218,7 @@ function paintStatus() {
   } else {
     el.status.textContent = idleStatus;
     el.statusBar.style.width = '0';
-    el.statusWrap.classList.add('idle'); // dense mode hides it: the result says the same
+    el.statusWrap.classList.add('idle'); // (hidden while idle: the result says the same)
   }
 }
 function setIdle(text) { idleStatus = text; paintStatus(); }
@@ -750,7 +750,7 @@ function draw() {
   }
   tracePanel.setOpen(state.trace); // (opened or closed in A–B mode meanwhile)
   const trace = lastView.response && !lastView.response.error && Array.isArray(lastView.response.rows) ? tracePanel.update(lastView) : null;
-  const onUi = (k, v) => { ui[k] = v; if (k === 'hideEmpty' || k === 'allRows') draw(); };
+  const onUi = (k, v) => { ui[k] = v; if (k === 'hideEmpty') draw(); };
   renderResult(el.body, { ...lastView, config: uarch?.configs?.[lastView.archKey], ui, onUi, work: state.aWork, workFlag: !!ab?.flagged?.('a') && state.aWork !== 1 });
   showTrace(trace);
   insight.decorate(el.body, lastView);
@@ -1019,7 +1019,7 @@ function abView() {
   if (!v) return null;
   return okSide(v[abSide]) ? v[abSide] : null; // (never the other side's: its views say there is none)
 }
-// A–B, the side the views show has no result: one line instead of the views (dense.css hides them while one is picked)
+// A–B, the side the views show has no result: one line instead of the views (style.css hides them while one is picked)
 let sideEmpty = null;
 function paintSideEmpty(empty) {
   el.results.classList.toggle('side-empty', empty);
@@ -1334,7 +1334,7 @@ function bind() {
   el.cpuGrid.addEventListener('change', cpusChanged);
   el.cpuAll.addEventListener('click', () => { setChecked([...archItems.keys()]); paintDerived(); syncUrl(true); });
   el.cpuClear.addEventListener('click', () => { setChecked([state.arch]); paintDerived(); syncUrl(true); });
-  // phones: only the checked CPUs show (dense.css); "more" shows them all
+  // phones: only the checked CPUs show (style.css); "more" shows them all
   $('cpu-more')?.addEventListener('click', (e) => {
     const open = el.cpus.classList.toggle('open');
     e.currentTarget.textContent = open ? 'less' : 'more';

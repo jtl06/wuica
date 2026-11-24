@@ -52,13 +52,11 @@ export function createInsight(env) {
         h('span', { class: 'ins-arrow', title: `${s.operand}, ${s.latency} cycle${s.latency === 1 ? '' : 's'}${s.arrow === '↻' ? ', into the next iteration' : ''}`, text: s.arrow }), ' ');
     }
     if (info.steps.length > shown.length) parts.push(h('span', { class: 'hint', text: `… +${info.steps.length - shown.length} ` }));
-    const bottleneck = r.bottlenecks.includes('Dependencies');
-    return h('div', { class: 'row ins ins-chain-row', title: `→ same iteration · ↻ next iteration\n\n${info.lines.join('\n')}` },
+    // (one line: its length is the Dependencies limit; the whole chain and its length are in the tooltip)
+    const length = `${info.ratio.toFixed(2)} cycles/iteration${info.iterations > 1 ? ` (over ${info.iterations} iterations)` : ''}`;
+    return h('div', { class: 'row ins ins-chain-row', title: `${length}; → same iteration · ↻ next iteration\n\n${info.lines.join('\n')}` },
       h('div', { class: 'label', text: 'chain' }),
-      h('div', { class: 'field' },
-        h('span', { class: 'ins-chain' }, parts),
-        h('span', { class: 'hint' }, `${info.ratio.toFixed(2)} cycles/iteration${info.iterations > 1 ? ` (over ${info.iterations} iterations)` : ''}`,
-          bottleneck ? null : h('span', { class: 'aside', text: ' · not the bottleneck' }))));
+      h('div', { class: 'field' }, h('span', { class: 'ins-chain' }, parts)));
   }
 
   function markChain(t, r, info) {
@@ -172,7 +170,7 @@ export function createInsight(env) {
       for (const x of todo) {
         const rk = jobKey(j, x);
         const c = cache.get(rk);
-        if (c) results.set(x.unit, c); else if (same.has(rk)) same.get(rk).units.push(x.unit); else same.set(rk, { rk, units: [x.unit], request: makeRequest(x.hex, j.arch, j.options) });
+        if (c) results.set(x.unit, c); else if (same.has(rk)) same.get(rk).units.push(x.unit); else same.set(rk, { rk, units: [x.unit], arch: j.arch, request: () => makeRequest(x.hex, j.arch, j.options) }); // (made when it runs)
       }
       paint();
       const ok = await pool.run([...same.values()], {

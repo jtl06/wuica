@@ -14,7 +14,7 @@
 // carries both sides. The page (app.js) runs the analyses: inputs() gets the machine code of both sides,
 // analyze() runs them, draw() shows the result. All text goes in through textContent.
 
-import { h, uopTable, NOTES, LEGEND, watchFit, nearestLimit, columnGroup } from './render.js';
+import { h, uopTable, NOTES, watchFit, nearestLimit, columnGroup } from './render.js';
 import { caveats } from './caveats.js';
 import { GROUP_LABEL } from './archs.js';
 import { compareResponses, signed, cycles, signedCycles } from './ab-diff.js';
@@ -582,7 +582,7 @@ export function createAB(api) {
       markChanges(r.table, s, t === 'A' ? 'a' : 'b', view);
       col.append(...[h('div', { class: 'ab-cap' }, tag(t), ` ${s.archKey} · ${two(Number(s.response.tp))} cycles/iteration`),
         watchFit(h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': `Uops per instruction of ${t}, average per iteration` }, r.table)),
-        r.notes.size ? h('p', { class: 'legend' }, [...r.notes].map((k) => h('span', { title: NOTES[k] }, h('b', { text: k }), ` ${LEGEND[k]}`))) : null].filter(Boolean));
+].filter(Boolean));
       return col;
     };
     const stack = h('div', { class: 'ab-stack' }, side('A', view.a), side('B', view.b));

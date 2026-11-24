@@ -1,6 +1,5 @@
-// The workspace: loaded synchronously in <head>, like theme.js. The page is dense (index.html sets class "dense" on
-// <html>; css/dense.css), and the result pane is a tabbed workspace: the summary (CPUs, throughput, limits, chain)
-// stays on top; under it a row of tabs, the first one the result's own ("table": the uop table; in A–B mode "diff":
+// The workspace: loaded synchronously in <head>, like theme.js. The result pane is a tabbed workspace (style.css): the
+// summary (CPUs, throughput, limits, chain) stays on top; under it a row of tabs, the first one the result's own ("table": the uop table; in A–B mode "diff":
 // the uop tables of A and B and their difference, ab.js) and the views (bound, try, bytes, deps, mca, sweep, trace, and
 // source after an import: always in this order, source last); one tab's content shows at a time. A view tab opens that
 // view's own <details> and closes the others, so the views, their keys and the address behave as before. A picked view
@@ -60,10 +59,10 @@
     return body && (body.querySelector(':scope > .ws-main') || body.querySelector(':scope > .row.lead:has(> .field > .table-wrap)'));
   }
 
-  // Wide screens: the panes are the window's height (dense.css). The shown tab's scrollers (the uop tables, A–B's two
+  // Wide screens: the panes are the window's height (style.css). The shown tab's scrollers (the uop tables, A–B's two
   // tables and its open folds, the report under the table, the trace, the dependency graph, the bytes, mca's text)
   // share what the result pane has left: each as tall as its content up to an equal share, scrollers side by side
-  // count once; so the pane itself does not scroll. From 1200 × 700 the page does not either (dense.css); in shorter
+  // count once; so the pane itself does not scroll. From 1200 × 700 the page does not either (style.css); in shorter
   // windows the scrollers keep a floor and the pane scrolls.
   var wide = window.matchMedia ? window.matchMedia('(min-width: 1200px)') : null;
   var still = window.matchMedia ? window.matchMedia('(min-width: 1200px) and (min-height: 700px)') : null;
@@ -336,7 +335,7 @@
     });
   }
 
-  // From 1200 × 700 the page does not scroll (dense.css): the limitations ("limitations" in the top bar) are a popover
+  // From 1200 × 700 the page does not scroll (style.css): the limitations ("limitations" in the top bar) are a popover
   function bindAbout() {
     var about = document.getElementById('about');
     var link = document.querySelector('.top nav a[href="#about"]');

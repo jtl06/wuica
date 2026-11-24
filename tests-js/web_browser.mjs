@@ -200,7 +200,7 @@ try {
       for (const id of ['loadstore', 'avx', 'stack', 'synthetic']) { await example(id); out[id] = [tp(), focused(), document.querySelector('.mock-tag').textContent.slice(0, 44), document.querySelectorAll('table.uops tr.extra').length, overflow()]; }
       out.reportStaysOpen = document.querySelector('details.report-wrap').open;
       out.synthetic2 = { notes: [...document.querySelectorAll('table.uops td.note')].map((td) => td.textContent).join(''), nolink: !document.querySelector('table.uops tr.unsupported a'), caveat: caveats(), mode: mode() === 'unrolled',
-        listing: listing().trimEnd().split('\\n'), instrs: document.querySelectorAll('table.uops tbody tr:not(.extra)').length, legend: document.querySelector('.legend').innerText };
+        listing: listing().trimEnd().split('\\n'), instrs: document.querySelectorAll('table.uops tbody tr:not(.extra)').length, legend: [...new Set([...document.querySelectorAll('table.uops td.note[title]')].map((td) => `${td.textContent} ${td.title}`))].join('\\n'), noLegend: !document.querySelector('#result-body .legend') };
       out.columns = [document.querySelectorAll('table.uops thead th').length, !!$('hide-empty')];
       await example('error'); out.error = document.querySelector('.error-box')?.textContent;
       return out;`);
@@ -226,7 +226,7 @@ try {
     check([r.loadstore, r.avx, r.stack, r.synthetic].every((x) => x[4] <= 0), 'mock: the page never scrolls sideways at 1280px', JSON.stringify([r.loadstore[4], r.avx[4], r.stack[4], r.synthetic[4]]));
     check(r.synthetic[0] === '23.57' && r.synthetic[3] === 2 && r.synthetic2.notes === 'XJM' && r.synthetic2.nolink && r.synthetic2.mode && /1 undecodable position skipped/.test(r.synthetic2.caveat), 'mock: synthetic case (extra rows, notes, unrolled, decode errors)', JSON.stringify([r.synthetic, r.synthetic2]));
     check(r.synthetic2.listing.length === r.synthetic2.instrs && r.synthetic2.listing.every((l) => /^ *[0-9a-f]+:  [0-9a-f]{2}( [0-9a-f]{2})* +\S/.test(l)) && !r.synthetic2.listing.some((l) => /Uop/.test(l)), 'mock: the listing has the instructions only (no inserted uops)', JSON.stringify(r.synthetic2.listing));
-    check(/X no data/.test(r.synthetic2.legend) && /J JCC erratum/.test(r.synthetic2.legend) && /M macro-fused/.test(r.synthetic2.legend), 'mock: the legend lists the notes that occur', r.synthetic2.legend);
+    check(/^X /m.test(r.synthetic2.legend) && /^J .*JCC/im.test(r.synthetic2.legend) && /^M .*macro-fused/im.test(r.synthetic2.legend) && r.synthetic2.noLegend, 'mock: the notes say what they are in their titles (no legend line)', r.synthetic2.legend);
     check(!r.columns[1], 'mock: no "hide empty columns" control (empty columns stay hidden, as in uiCA)', JSON.stringify(r.columns));
     check(/Analysis failed: mock/.test(r.error ?? ''), 'mock: an analysis error is shown', r.error);
 

@@ -14,11 +14,11 @@
 .trace-mode label { cursor: pointer; }
 .trace-mode label:has(input:checked) { color: var(--accent); }
 .trace-zoomtools { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; min-width: 0; }
-.trace-zoom { padding: 0 0.6rem; min-width: 2.4rem; }
+.trace-zoom { min-width: 2.4rem; }
 .trace-scale { color: var(--subtle); margin-left: 0.5ch; font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* the controls next to the zoom (trace.js traceControls): toggles, and ? for the legend in a popover */
 .trace-toggles { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin-left: 1ch; }
-.trace-toggle { padding: 0 0.6rem; color: var(--subtle); }
+.trace-toggle { color: var(--subtle); }
 .trace-toggle[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 .trace-viewer { position: relative; }
 .trace-legend-pop {

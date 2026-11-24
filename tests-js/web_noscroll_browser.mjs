@@ -1,4 +1,4 @@
-// From 1200 × 700 up the page is a fixed frame and only its sections scroll (web/css/dense.css, web/js/workspace.js):
+// From 1200 × 700 up the page is a fixed frame and only its sections scroll (web/css/style.css, web/js/workspace.js):
 // at 1440 × 900 and 1200 × 700, single and A–B, with a small loop and with the showcase (SHA-256, 2,949 instructions),
 // every tab: the document does not scroll; Analyze and the CPUs are in the window; with the tab's sections scrolled to
 // their ends the headline, the tab strip and the view's controls stay in the window. Also: the table with the uiCA
