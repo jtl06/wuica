@@ -1,30 +1,11 @@
 // The details of an analysis ("details": true; docs/WASM-API.md) in the compact form (summarize(), the MCP `analyze`
 // JSON): per instruction its allowed ports in uops.info's notation, its latencies and front-end facts; the port set behind
-// the Ports limit with the instructions that load it; the issue slots per cause. As the web page shows them (web/js/
-// details.js, portset.js, slots.js); tests-js/web_details.mjs checks that they agree.
+// the Ports limit with the instructions that load it; the issue slots per cause. The notation and the latencies shown are
+// the page's (web/details.js, shared).
 
-// "1*p0156+1*p23"; non-Intel port names listed: "1*[ALU0 ALU1]"
-export function portString(portData) {
-  if (!Array.isArray(portData) || !portData.length) return '';
-  return portData.map((p) => {
-    const names = p.ports ?? [];
-    const intel = names.every((n) => /^Port \w$/.test(n));
-    return `${p.uops}*${intel ? 'p' + names.map((n) => n.slice(5)).join('') : `[${names.join(' ')}]`}`;
-  }).join('+');
-}
+import { portString, latencyPairs } from './web/details.js';
 
-// the latencies per (input, output) pair, without the flag outputs of an instruction that writes a register too
-export function latencyPairs(det) {
-  const all = Array.isArray(det?.latencies) ? det.latencies : [];
-  const isFlags = (x) => String(x).startsWith('flags');
-  const regOut = all.some((l) => !isFlags(l.to));
-  const out = [];
-  for (const l of all) {
-    if (regOut && isFlags(l.to)) continue;
-    if (!out.some((x) => x.from === l.from && x.to === l.to)) out.push(l);
-  }
-  return out;
-}
+export { portString, latencyPairs };
 
 const round = (x) => Math.round(x * 100) / 100;
 

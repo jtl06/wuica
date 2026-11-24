@@ -4,7 +4,7 @@
 // Usage: node tests-js/web_bound.mjs
 import fs from 'node:fs';
 import { boundModel, blame, topRows, shortPort, defaultResource } from '../web/js/bound.js';
-import { insights } from '../packages/wuica/lib/insights.js';
+import { insights } from '../web/js/bound-core.js';
 import { nearestLimit } from '../web/js/render.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
@@ -127,22 +127,20 @@ if (!fs.existsSync(wasm) || !fs.existsSync(new URL('data/uarch.json', root))) {
         const b = blame(r, it.id);
         if (b) ok &&= near([...b.weights].reduce((s, x) => s + x, 0) / b.total, 1) && b.weights.length === r.rows.length;
       }
-      // the npm package's insights (the MCP analyze JSON) say what the page says
-      const ins = insights(r);
-      const r2 = (x) => Math.round(x * 100) / 100;
-      const same = m.items.filter((x) => x.id !== 'other').every((x) => ins.utilization[x.id.startsWith('col:') ? x.id.slice(4) : x.id] === r2(x.util))
-        && JSON.stringify([...ins.binding, ...(ins.largest ?? [])].map((b) => (b === 'Divider' ? 'col:Div' : b))) === JSON.stringify(m.binding)
-        && JSON.stringify(ins.binding) === JSON.stringify(r.bottlenecks)
-        && (ins.binding.length ? ins.largest === undefined : ins.largest.length > 0)
-        && (m.next ? ins.next.limit === m.next.name && ins.next.maxSpeedup === r2(m.next.speedup) : !ins.next)
-        && (m.gap ? ins.unexplained === r2(m.gap) : ins.unexplained === undefined);
-      const pageTop = topRows(blame(r, m.binding[0]), 5);
-      const sameTop = JSON.stringify((ins.hot?.instructions ?? []).map((x) => [x.index, x.share])) === JSON.stringify(pageTop.map((x) => [x.row, r2(x.share)]));
-      check(same && sameTop, `${ex.id} on ${arch}: the package's insights agree with the page`, JSON.stringify([ins, m.items.map((x) => [x.id, x.util]), m.next, pageTop]));
       check(ok, `${ex.id} on ${arch}: utilization from the report`, JSON.stringify({ tp, items: m.items.map((x) => [x.id, x.cycles]), repLimits, portTotals }));
     }
   }
   check(cases > 150, 'examples analyzed', String(cases));
+  // a bottleneck without a limit of its own (uiCA's "Scheduling", ex:loadstore on ICL without macro-fusion): no resource
+  // binds and there is no next limit (until 0.1.9 the page took the largest limits as binding and showed the limit below
+  // them; the package's insights had no next limit)
+  {
+    const r = { tp: 1.2, bottlenecks: ['Scheduling'], limits: [{ name: 'LSD', tp: 1 }, { name: 'Issue', tp: 1 }, { name: 'Ports', tp: 0.75 }, { name: 'Dependencies', tp: 1 }],
+      columns: ['Issued', 'Port 0'], rows: [{ kind: 'instr', label: 'add rax, 1', opcode: '4883c001', values: [1, 0.75] }] };
+    const m = boundModel(r), ins = insights(r);
+    check(m.binding.length === 0 && m.next === null && defaultResource(m) === null, 'a bottleneck without a limit: nothing binds, no next limit', JSON.stringify([m.binding, m.next]));
+    check(JSON.stringify(ins.binding) === '["Scheduling"]' && ins.next === undefined && ins.largest === undefined && ins.hot === undefined && ins.unexplained === 0.2, 'a bottleneck without a limit: the insights say the same', JSON.stringify(ins));
+  }
 }
 
 console.log(`${count} bound checks, ${failed} failed`);

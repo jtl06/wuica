@@ -168,8 +168,6 @@ if (!fs.existsSync(wasm) || !fs.existsSync(new URL('data/uarch.json', root))) {
           const ms = r.rows[row].values[r.columns.indexOf('MS')] || 0;
           if (ms > 0) check(det.uopsMS > 0, `${what}: row ${row} µ badge only for microcoded instructions`);
           if (x.notes !== 'X') check(det.portData.length === 0 || portString(det.portData).length > 0, `${what}: row ${row} ports`);
-          // the MCP summary (packages/wuica/lib/details.js) says what the card says
-          check(pkg.portString(det.portData) === portString(det.portData) && JSON.stringify(pkg.latencyPairs(det)) === JSON.stringify(latencyPairs(det)), `${what}: row ${row}: the package's ports and latencies are the page's`);
         });
         if (d.ports) {
           const pb = portSetBlame(r, d.ports);

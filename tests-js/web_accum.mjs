@@ -9,7 +9,7 @@ import { experiments, outcome, bestOf } from '../web/js/whatif.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { WasmAssembler } from '../web/js/assembler.js';
 import { withRegions } from '../web/js/asm-regions.js';
-import { whatIf } from '../packages/wuica/lib/whatif.js';
+import { whatIf } from '../web/js/whatif-core.js';
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }

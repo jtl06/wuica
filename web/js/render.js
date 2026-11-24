@@ -1,11 +1,10 @@
 // Builds the result view. All text goes in through textContent: responses, fragments and diagnostics are data.
 
+import { columnKind } from './bound-core.js';
 import { caveats } from './caveats.js';
 import { formatListing } from './listing.js';
 import { accuracyNote } from './archs.js';
 
-const FRONT_END = ['MITE', 'MS', 'DSB', 'LSD'];
-const COUNTS = ['Issued', 'Exec.'];
 const UOPS_INFO = 'https://www.uops.info/';
 
 export const NOTES = Object.freeze({
@@ -36,11 +35,7 @@ export function fmt(v) {
   return String(Math.round(v * 100) / 100);
 }
 
-export function columnKind(name) {
-  if (FRONT_END.includes(name)) return 'front';
-  if (COUNTS.includes(name)) return 'count';
-  return 'port'; // "Port 0", "ALU0", "FP2", "Div", ...: every other column is an execution resource
-}
+export { columnKind }; // (bound-core.js: the page and the npm package share it)
 
 export function row(label, ...content) {
   return h('div', { class: 'row' }, h('div', { class: 'label', text: label }), h('div', { class: 'field' }, ...content));

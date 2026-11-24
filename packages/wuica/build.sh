@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Builds the contents of the npm package that are generated from the rest of the repository:
+#   lib/web/*.js                    the page's modules it uses (web-modules.json; copy-web.mjs; committed, so that the
+#                                   package works from a git checkout)
 #   dist/wuica_wasm.wasm.br         the analyzer (crates/wuica-wasm), brotli-compressed
 #   dist/wuica_asm.wasm.br          the assembler (assembler/dist), brotli-compressed
 #   dist/data/uarch.json.br         the configurations (data/uarch.json)
@@ -20,6 +22,9 @@ ROOT="$(cd "$PKG/../.." && pwd)"
 WASM="${WUICA_WASM:-$ROOT/target/wasm32-unknown-unknown/release/wuica_wasm.wasm}"
 ASM_WASM="${WUICA_ASM_WASM:-$ROOT/assembler/dist/wuica_asm.wasm}"
 DATA="${WUICA_DATA:-$ROOT/data}"
+
+# the page's modules the package uses (web-modules.json), copied from web/js to lib/web
+node "$PKG/copy-web.mjs"
 
 if [ ! -f "$WASM" ]; then
   echo "building the analyzer module (./build-wasm.sh)"

@@ -3,152 +3,23 @@
 // (VTune's locator metrics: a shade on the rows of the uop table, and the top rows).
 // Everything is derived from the response (no analysis), and only while the view is open.
 //
-// The first half has no DOM (tests-js/web_bound.mjs runs it under Node).
+// The model (no DOM) is bound-core.js, which the npm package shares; this file renders it.
 
-import { h, columnKind } from './render.js';
+import { h } from './render.js';
 import { jumpToRow, finishJump } from './rowjump.js';
 import { portSetBlame, setLine, markPorts } from './portset.js';
 import { slotsLine } from './slots.js';
 import { rangeGroup, onRange } from './trace-range-view.js'; // a cycle range of the trace replaces the steady state
+import { boundModel, blame, topRows, defaultResource } from './bound-core.js';
+
+export { shortPort, boundModel, blame, topRows, defaultResource } from './bound-core.js';
 
 const EPS = 0.005; // values are shown with two decimals
 const GROUPS = Object.freeze([['front', 'front end'], ['issue', 'issue'], ['ports', 'ports'], ['deps', 'chain'], ['other', 'other']]);
-const LIMIT_GROUP = { Issue: 'issue', Ports: 'ports', Dependencies: 'deps' }; // the rest: front end
-const FE_COLUMN = { DSB: 'DSB', LSD: 'LSD', MS: 'MS' };
-const SATURATED = 0.95; // "Ports": the ports at least this busy relative to the busiest one
 const DETAILS_DELAY = 300; // ms after a result before its details are fetched (the port set, the issue slots)
 
-const sum = (a) => a.reduce((s, x) => s + x, 0);
 const pct = (u) => `${Math.round(u * 100)}%`;
 const f2 = (x) => Number(x).toFixed(2);
-
-// "Port 0" -> "p0"; Zen 3's names (ALU0, FP2, ...) and Div as they are
-export function shortPort(name) {
-  const m = /^Port (\w+)$/.exec(name);
-  return m ? `p${m[1]}` : name === 'Div' ? 'div' : name;
-}
-
-function columnTotal(r, i) {
-  let t = 0;
-  for (const x of r.rows) t += Number(x.values?.[i]) || 0;
-  return t;
-}
-
-// The resources of a response:
-// {tp, items: [{id, name, title, group, cycles, util, limit, bottleneck}], binding: [ids], next: {name, tp, speedup} | null,
-//  gap}. util = cycles / tp (1: busy every cycle; above 1: uiCA's bound is above the simulated throughput).
-// next: the largest limit below the binding one; speedup = tp / next.tp is an upper bound (the next limit is a lower
-// bound of the cycles). gap: cycles that no single limit explains (interactions), 0 if none.
-export function boundModel(r) {
-  const tp = Number(r?.tp);
-  if (!(tp > 0) || !Array.isArray(r.limits) || !Array.isArray(r.columns) || !Array.isArray(r.rows)) return null;
-  const bottlenecks = Array.isArray(r.bottlenecks) ? r.bottlenecks : [];
-  const items = [];
-  for (const l of r.limits) {
-    const c = Number(l.tp);
-    if (!Number.isFinite(c)) continue;
-    items.push({
-      id: l.name, name: l.name, group: LIMIT_GROUP[l.name] ?? 'front', cycles: c, util: c / tp, limit: true,
-      bottleneck: bottlenecks.includes(l.name),
-      title: `${l.name}: ${f2(c)} cycles/iteration if it were the only bottleneck (${pct(c / tp)} of ${f2(tp)})`,
-    });
-  }
-  r.columns.forEach((name, i) => {
-    if (columnKind(name) !== 'port') return;
-    const c = columnTotal(r, i);
-    if (c <= 0) return;
-    const div = name === 'Div';
-    items.push({
-      id: `col:${name}`, name: shortPort(name), group: 'ports', cycles: c, util: c / tp, limit: false, bottleneck: false,
-      title: div ? `divider: busy ${f2(c)} cycles/iteration (${pct(c / tp)})` : `${name}: ${f2(c)} uops/iteration, busy ${pct(c / tp)} of the cycles`,
-    });
-  });
-  const limits = items.filter((x) => x.limit);
-  const max = limits.length ? Math.max(...limits.map((x) => x.cycles)) : 0;
-  const gap = limits.length && tp - max > EPS ? tp - max : 0;
-  if (gap) {
-    items.push({ id: 'other', name: 'unexplained', group: 'other', cycles: gap, util: gap / tp, limit: false, bottleneck: false,
-      title: `${f2(gap)} cycles/iteration that no single limit explains (interactions between front end, ports and dependencies)` });
-  }
-  // (the divider has no limit of its own: its bottleneck is the Div column)
-  const binding = bottlenecks.map((b) => (b === 'Divider' && items.some((x) => x.id === 'col:Div') ? 'col:Div' : b)).filter((b) => items.some((x) => x.id === b));
-  if (!binding.length) for (const x of limits) if (x.cycles >= max - EPS) binding.push(x.id);
-  const bindValue = Math.max(...binding.map((b) => items.find((x) => x.id === b).cycles), 0);
-  let next = null;
-  for (const x of limits) if (!binding.includes(x.id) && x.cycles < bindValue - EPS && (!next || x.cycles > next.tp)) next = { name: x.name, tp: x.cycles };
-  if (next) next.speedup = next.tp > 0 ? tp / next.tp : Infinity;
-  return { tp, items, binding, next, gap };
-}
-
-// The share of each row of the response in a resource: {weights, total, unit} or null (nothing to attribute).
-//   col:<name>  the row's uops on that port (or cycles on the divider)
-//   Ports       its uops on the saturated ports (at least 95 % as busy as the busiest port)
-//   Issue       its issued (fused) uops; DSB, LSD, MS: its uops from there
-//   Decoder     its uops from the legacy decoders (MITE); every instruction once if none come from there
-//   Predecoder  its bytes
-//   Dependencies  the latency of the chain's edges that start at it
-export function blame(r, id) {
-  const n = r.rows.length;
-  const w = new Float64Array(n);
-  const col = (name) => r.columns.indexOf(name);
-  const fromColumn = (i) => { for (let k = 0; k < n; k++) w[k] = Number(r.rows[k].values?.[i]) || 0; };
-  let unit = 'uops';
-  if (id.startsWith('col:')) {
-    const i = col(id.slice(4));
-    if (i < 0) return null;
-    fromColumn(i);
-    if (id === 'col:Div') unit = 'cycles';
-  } else if (id === 'Ports') {
-    const ports = r.columns.map((name, i) => ({ i, name, t: columnKind(name) === 'port' && name !== 'Div' ? columnTotal(r, i) : 0 })).filter((p) => p.t > 0);
-    if (!ports.length) return null;
-    const top = Math.max(...ports.map((p) => p.t));
-    const hot = ports.filter((p) => p.t >= SATURATED * top);
-    for (let k = 0; k < n; k++) w[k] = sum(hot.map((p) => Number(r.rows[k].values?.[p.i]) || 0));
-    return finish(w, unit, hot.map((p) => shortPort(p.name)));
-  } else if (id === 'Issue') {
-    const i = col('Issued');
-    if (i < 0) return null;
-    fromColumn(i);
-  } else if (FE_COLUMN[id]) {
-    const i = col(FE_COLUMN[id]);
-    if (i < 0) return null;
-    fromColumn(i);
-  } else if (id === 'Decoder') {
-    const i = col('MITE');
-    if (i >= 0 && columnTotal(r, i) > 0) fromColumn(i);
-    else { unit = 'instructions'; r.rows.forEach((x, k) => { w[k] = x.kind === 'instr' && x.notes !== 'M' ? 1 : 0; }); }
-  } else if (id === 'Predecoder') {
-    unit = 'bytes';
-    r.rows.forEach((x, k) => { w[k] = x.kind === 'instr' ? String(x.opcode ?? '').length / 2 : 0; });
-  } else if (id === 'Dependencies') {
-    const edges = r.criticalPath?.edges;
-    if (!Array.isArray(edges) || !edges.length) return null;
-    unit = 'cycles';
-    for (const e of edges) if (e.from >= 0 && e.from < n) w[e.from] += Number(e.latency) || 0;
-  } else {
-    return null;
-  }
-  return finish(w, unit, null);
-}
-
-function finish(w, unit, ports) {
-  let total = 0, max = 0;
-  for (const x of w) { total += x; if (x > max) max = x; }
-  if (!(total > 0)) return null;
-  return { weights: w, total, max, unit, ports };
-}
-
-// The rows with the largest shares: [{row, share}], largest first (ties: in table order).
-export function topRows(b, count = 5) {
-  if (!b) return [];
-  const out = [];
-  b.weights.forEach((x, row) => { if (x > 0) out.push({ row, share: x / b.total }); });
-  out.sort((a, c) => c.share - a.share || a.row - c.row);
-  return out.slice(0, count);
-}
-
-// The resource selected by default: the first bottleneck (or the largest limit).
-export const defaultResource = (m) => m?.binding[0] ?? null;
 
 // ---- the view ----------------------------------------------------------------------------------------------------
 
