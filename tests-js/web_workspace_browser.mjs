@@ -31,7 +31,7 @@ await engine.loadUarch(uarchBytes);
 const configs = JSON.parse(uarchBytes).configs;
 async function tpOf(hex, arch) {
   const t = configs[arch].name;
-  if (!engine.hasArch(t)) await engine.loadArch(t, fs.readFileSync(path.join(dir, 'data/arch', `${t}.json`)));
+  if (!engine.hasArch(t)) await engine.loadArch(t, fs.readFileSync(path.join(dir, 'data/arch', `${t}.bin`)));
   return Number((await engine.analyze(makeRequest(hex, arch))).tp);
 }
 const ex = (id) => CLASSIC_EXAMPLES.find((e) => e.id === id);

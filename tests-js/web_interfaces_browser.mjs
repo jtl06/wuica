@@ -57,7 +57,7 @@ try {
       const out = [];
       for (const c of cases) {
         const t = configs[c.arch].name;
-        if (!e.hasArch(t)) await e.loadArch(t, await bytes('/data/arch/' + t + '.json'));
+        if (!e.hasArch(t)) await e.loadArch(t, await bytes('/data/arch/' + t + '.bin'));
         out.push(await e.analyze(makeRequest(c.hex, c.arch, c.options)));
       }
       return out;

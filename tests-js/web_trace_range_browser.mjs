@@ -30,7 +30,7 @@ const ex = EXAMPLES.find((e) => e.id === 'loadstore') ?? EXAMPLES[0];
 const engine = await WasmEngine.create(fs.readFileSync(path.join(DIST, 'wuica_wasm.wasm')));
 const uarchBytes = fs.readFileSync(path.join(DIST, 'data', 'uarch.json'));
 await engine.loadUarch(uarchBytes);
-await engine.loadArch(ARCH, fs.readFileSync(path.join(DIST, 'data', 'arch', `${ARCH}.json`)));
+await engine.loadArch(ARCH, fs.readFileSync(path.join(DIST, 'data', 'arch', `${ARCH}.bin`)));
 const request = makeRequest(ex.hex, ARCH);
 const response = await engine.analyze(request);
 const { model } = await loadTrace({ response, request }, { analyze: (q) => engine.analyze(q), config: () => JSON.parse(uarchBytes).configs[ARCH] });
