@@ -52,6 +52,7 @@ body.ab-on .toolbar .choice, .ab-head .choice { gap: 0.25rem 0.8rem; }
 .ab-tp .unit { color: var(--text); }
 .ab-tp .unit.caveat { color: var(--caveat); cursor: help; }
 .ab-arrow { color: var(--subtle); }
+.ab-odd { border: 1px dashed currentColor; padding: 0 0.3rem; cursor: help; }
 
 .ab-delta { margin-left: 1ch; }
 .ab-verdict { border: 1px solid currentColor; padding: 0 0.4rem; margin-right: 0.25rem; }

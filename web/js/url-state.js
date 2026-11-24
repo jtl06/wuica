@@ -6,7 +6,7 @@
  * @typedef {{mode: 'asm' | 'hex', syntax: 'intel' | 'att', arch: string, cpus: string, text: string, loop: 'auto' | 'whole' | number,
  *   alignmentOffset: number, initPolicy: 'diff' | 'same' | 'stack', simpleFrontEnd: boolean, noMicroFusion: boolean,
  *   noMacroFusion: boolean, minIterations: number, minCycles: number, cmpSweep: boolean, ab: boolean, bMode: 'asm' | 'hex',
- *   bSyntax: 'intel' | 'att', bArch: string, bText: string, aWork: number, bWork: number, abSide: 'a' | 'b', cost: boolean,
+ *   bSyntax: 'intel' | 'att', bArch: string, bText: string, bLoop: 'auto' | 'whole' | number, aWork: number, bWork: number, abSide: 'a' | 'b', cost: boolean,
  *   costNop: boolean, trace: boolean, waits: boolean, sel: number, bound: boolean, whatif: boolean, codemap: boolean,
  *   deps: boolean, srcmap: boolean, mca: boolean}} PageState
  */
@@ -32,6 +32,7 @@ export const DEFAULT_STATE = Object.freeze({
   bSyntax: 'intel',       // 'intel' | 'att'
   bArch: '',              // '' = the same microarchitecture as A
   bText: '',
+  bLoop: 'auto',          // what of B's assembly is analyzed, as loop for A
   aWork: 1,               // the elements (or bytes) one iteration of A processes: A–B compares cycles per element
   bWork: 1,               // the same for B (an old link's bk=N, "B unrolled ×N", is bWork N)
   abSide: 'a',            // 'a' | 'b': the side the views (bound, try, ...) show in A–B mode
@@ -118,6 +119,7 @@ export function encodeState(state) {
     if (s.bMode === 'asm' && s.bSyntax === 'att') p.push('bs=att');
     if (s.bArch) p.push(`ba=${encodeURIComponent(s.bArch)}`);
     if (s.bWork !== DEFAULT_STATE.bWork) p.push(`bw=${s.bWork}`);
+    if (s.bLoop === 'whole' || Number.isInteger(s.bLoop)) p.push(`blp=${s.bLoop}`);
     if (s.abSide === 'b') p.push('sd=b');
     if (s.bText !== '') p.push(`bc=${toBase64Url(s.bText)}`);
   }
@@ -183,6 +185,8 @@ export function decodeState(fragment) {
     }
     if (q.has('bk')) s.bWork = clampInt(q.get('bk'), [1, 64], DEFAULT_STATE.bWork); // older links: B unrolled ×N
     if (q.has('bw')) s.bWork = clampInt(q.get('bw'), LIMITS.bWork, DEFAULT_STATE.bWork);
+    if (q.get('blp') === 'whole') s.bLoop = 'whole';
+    else if (q.has('blp')) s.bLoop = clampInt(q.get('blp'), LIMITS.loop, DEFAULT_STATE.bLoop);
     if (q.get('sd') === 'b') s.abSide = 'b';
     if (q.has('bc')) s.bText = text('bc');
   }

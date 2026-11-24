@@ -175,14 +175,16 @@ const loopChip = createLoopChip(el.advanced, (v) => { if (state.loop === v) retu
 // back to the default for a text without addresses), 'manual' (by hand, a link, an import: kept until the text is
 // replaced), or null (the default).
 let alignBy = null;
-// Side B of A–B: its own pick (not in the link) and its loop chip (made with the A–B view)
-let bLoop = 'auto';
+// Side B of A–B: its own pick (state.bLoop, in the link) and its loop chip (made with the A–B view)
 let bLoopChip = null;
+// what each side's assembly analyzed last ("loop .LBB0_8", "body", null: all of it): A–B says when A and B analyze
+// other loops of the same text (ab.js)
+const picks = { a: null, b: null };
 // (a text that replaces the box's text: loop-find.js, replacesText)
 let textA = '', textB = '';
 let syntaxChosen = false; // the user picked the syntax (not the page from a pasted text)
 function newTextA() { state.loop = 'auto'; if (alignBy === 'manual') alignBy = null; textA = el.code.value; }
-function newTextB() { bLoop = 'auto'; textB = /** @type {HTMLTextAreaElement | null} */ (document.getElementById('code-b'))?.value ?? ''; }
+function newTextB() { state.bLoop = 'auto'; textB = /** @type {HTMLTextAreaElement | null} */ (document.getElementById('code-b'))?.value ?? ''; }
 const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o),
   work: (v) => (v?.side === 'b' ? state.bWork : state.aWork), // elements per iteration of the shown result (its side in A–B)
   assemble: async (text) => { const a = await ensureAssembler(); return a ? a.assemble(text, 'intel') : null; }, cpus: () => checked, onToggle: (open) => { Object.assign(state, open); syncUrl(true); if ('bound' in open) cmpSlots.decorate(); }, getSel: () => state.sel, getSource: () => (ceSource && (!pastedSource || ceSource.hex === lastView?.hex) ? ceSource : pastedSource),
@@ -324,7 +326,7 @@ function paintDerived() {
 // The input of a run. input: the parts a run captured at its start ({mode, syntax, text, arch, ab}); the loop and the
 // options are always the current ones (the assembly can set the loop back to auto and the alignment offset).
 function runInput() {
-  return { mode: state.mode, syntax: state.syntax, text: el.code.value, arch: state.arch, ab: `${ab?.key() ?? ''}|${state.ab ? bLoop : ''}` };
+  return { mode: state.mode, syntax: state.syntax, text: el.code.value, arch: state.arch, ab: `${ab?.key() ?? ''}|${state.ab ? state.bLoop : ''}` };
 }
 function runKey(input = runInput()) {
   return JSON.stringify([input.mode, input.mode === 'asm' ? input.syntax : '', input.text, input.mode === 'asm' ? state.loop : '', input.arch, options(), input.ab]);
@@ -608,10 +610,11 @@ async function assemblerForRun() {
   const a = await ensureAssembler();
   if (!a) return a;
   const assemble = async (text, syntax) => {
-    let r = await a.assemble(text, syntax, { signal, loop: bLoop });
+    let r = await a.assemble(text, syntax, { signal, loop: state.bLoop });
     // a loop picked for another text: the first one again
-    if (!r.ok && bLoop !== 'auto' && r.diagnostics.some((d) => /^loop: /.test(d.message))) { bLoop = 'auto'; r = await a.assemble(text, syntax, { signal, loop: bLoop }); }
+    if (!r.ok && state.bLoop !== 'auto' && r.diagnostics.some((d) => /^loop: /.test(d.message))) { state.bLoop = 'auto'; r = await a.assemble(text, syntax, { signal, loop: state.bLoop }); }
     bLoopChip?.show(r.choosable ? r : null, text);
+    picks.b = r.ok ? r.loop?.name ?? null : null;
     if (!textB) textB = text; // (B's text from a link or a swap, before any input in its box)
     return r;
   };
@@ -792,7 +795,7 @@ function untilAborted(p, signal) {
 }
 async function machineCode(id) {
   const text = el.code.value;
-  pastedSource = null; regionChip.show(null); loopChip.show(null); srcA = null;
+  pastedSource = null; regionChip.show(null); loopChip.show(null); srcA = null; picks.a = null;
   if (state.mode === 'hex') {
     const p = parseHexInput(text);
     if (!p.ok) {
@@ -847,6 +850,7 @@ async function machineCode(id) {
   if (r.ok && r.bytes.length === 0) items.push({ line: null, column: null, severity: 'error', message: 'No machine code' });
   if (r.ok && r.bytes.length && mock) items.push({ line: null, column: null, severity: 'note', message: 'mock assembler' });
   if (items.length) showMessages(items); else clearMessages();
+  picks.a = r.ok ? r.loop?.name ?? null : null;
   if (r.ok && r.bytes.length) { regionChip.show(r.region ?? null, text); loopChip.show(r, text); pastedSource = r.source ? { ...r.source, hex: toHex(r.bytes) } : null; srcA = analyzedLines(text, r); }
   else if (r.choosable) loopChip.show(r, text); // the pick does not assemble: "whole" (or another loop) stays reachable
   return r.ok && r.bytes.length ? r.bytes : null;
@@ -1256,6 +1260,11 @@ function setupFeatures() {
     srcA: () => srcA,
     state, el: { code: el.code, body: el.body, toolbar: el.toolbar }, archItems: () => archItems, archTitle, ensureAssembler: assemblerForRun, ensureTable,
     machineCodeA: machineCode, changed, writeControls,
+    picks: () => picks,
+    // A → B: B analyzes what A does (its loop too); swap: the picks change sides. B's text is B's own now (an edit is
+    // an edit, not a new text that starts with its first loop)
+    copiedA() { state.bLoop = state.loop; textB = state.bText; bLoopChip?.sync(null); },
+    swapped({ loopA, loopB }) { state.loop = loopB; state.bLoop = loopA; textB = state.bText; textA = el.code.value; },
     getA: () => ({ mode: state.mode, syntax: state.syntax, text: el.code.value }),
     setA: importCode,
     // A–B with the default example (or nothing) in A: the demo pair, one dot-product accumulator vs four
@@ -1282,7 +1291,7 @@ function setupFeatures() {
   // side B's loop chip, and its pick back to the first loop when B's text is replaced
   const bCode = /** @type {HTMLTextAreaElement | null} */ (document.getElementById('code-b'));
   if (bCode) {
-    bLoopChip = createLoopChip(document.getElementById('b-arch').closest('label'), (v) => { if (bLoop === v) return; bLoop = v; changed({ rerun: true }); }, 'loop-chip-b', () => [document.getElementById('b-messages')]); // (in B's row, else under its editor)
+    bLoopChip = createLoopChip(document.getElementById('b-arch').closest('label'), (v) => { if (state.bLoop === v) return; state.bLoop = v; changed({ rerun: true }); }, 'loop-chip-b', () => [document.getElementById('b-messages')]); // (in B's row, else under its editor)
     textB = bCode.value;
     bCode.addEventListener('input', () => {
       if (replacesText(textB, bCode.value)) newTextB(); else textB = bCode.value;

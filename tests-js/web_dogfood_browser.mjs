@@ -131,6 +131,47 @@ try {
     await page.close();
   }
 
+  // ---- B7: A → B copies the loop picked; other loops of one text, or other sizes at the same elems, are said ---------
+  {
+    const page = await fresh();
+    const r = await page.eval(`${W}
+      const odd = () => document.querySelector('#result-body .ab-odd')?.textContent ?? '';
+      const speed = () => /([\\d.]+)× (faster|slower)/.exec(headline())?.slice(1).join(' ') ?? headline();
+      const out = {};
+      pasteInto($('code'), ${js(fx('saxpy.s'))}); await settle();
+      pick('loop-chip', optionOf('loop-chip', /\\.LBB0_8\\b/)); await settle();
+      set($('a-work'), '32'); await settle();
+      $('cmp-ab').click(); await settle();
+      // B, another text first (so that A → B replaces it), then A → B
+      pasteInto($('code-b'), ${js(fx('fnv.s'))}); await settle();
+      $('ab-copy').click(); await settle(); pick('b-arch', 'ICL'); await settle();
+      out.copy = { bLoop: $('loop-chip-b')?.selectedOptions[0]?.textContent, bWork: $('b-work').value, speed: speed(), odd: odd() };
+      // B's loop picked other than A's: said in the headline (the same text)
+      pick('loop-chip-b', optionOf('loop-chip-b', /\\.LBB0_16\\b/)); await settle();
+      out.other = { odd: odd(), title: document.querySelector('#result-body .ab-odd')?.title ?? '', speed: speed() };
+      pick('loop-chip-b', optionOf('loop-chip-b', /\\.LBB0_8\\b/)); await settle();
+      // an edit of B keeps its loop (A → B's text is B's own)
+      $('code-b').focus(); $('code-b').setSelectionRange(0, 0); document.execCommand('insertText', false, '# edited\\n'); await settle();
+      out.edited = $('loop-chip-b')?.selectedOptions[0]?.textContent;
+      // the link keeps B's loop
+      $('copy-link').click(); await wait(200); out.hash = location.hash;
+      return out;`, { timeout: 200000 });
+    check(/\.LBB0_8\b/.test(r.copy.bLoop) && r.copy.bWork === '32', 'B7: A → B copies the loop picked and the elems', js(r.copy));
+    check(r.copy.speed === '1.50 faster' && r.copy.odd === '', 'B7: B on ICL: 1.50× faster (not 4.51×), nothing odd', js(r.copy));
+    check(/\.LBB0_8\b/.test(r.edited), 'B7: an edit of B keeps its loop', r.edited);
+    check(/[&#]blp=\d/.test(r.hash), 'B7: the link has B\'s loop (blp)', r.hash);
+    check(r.other.odd === 'other loops' && /A \.LBB0_8, B \.LBB0_16/.test(r.other.title), 'B7: other loops of the same text: said in the headline', js(r.other));
+    // a fresh tab with the link: B analyzes the loop the link names
+    const p2 = await Page.open(browser, { width: 1440, height: 900, intercept });
+    await p2.goto(`${srv.origin}/?nosw=1${r.hash.replace(/blp=\d+/, (m) => m)}`);
+    await p2.waitFor(`document.getElementById('results').dataset.run && document.querySelector('#result-body .ab-tp')`, 'the A–B result', 60000);
+    const back = await p2.eval(`${W} await settle(); return { bLoop: $('loop-chip-b')?.selectedOptions[0]?.textContent, speed: /([\\d.]+)× (faster|slower)/.exec(headline())?.slice(1).join(' ') };`);
+    check(/\.LBB0_8\b/.test(back.bLoop) && back.speed === '1.50 faster', 'B7: the link in a fresh tab: B\'s loop and the 1.50×', js(back));
+    check(page.take().length === 0 && p2.take().length === 0, 'B7: no errors', '');
+    await p2.close();
+    await page.close();
+  }
+
   // ---- B6: an assembler error of the old code goes when a Compiler Explorer link replaces it (A, and B) ----------------
   {
     const page = await fresh();

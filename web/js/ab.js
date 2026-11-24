@@ -198,7 +198,7 @@ export function createAB(api) {
     if (on === state.ab) return;
     state.ab = on;
     const demo = on && state.bText.trim() === '' ? api.demo?.() : null; // the default example in A, B empty: a demo pair
-    if (demo) { api.setA(demo.a, { run: false }); setB(demo.b); state.aWork = 1; settle('a'); } else if (on && state.bText.trim() === '') setB(api.getA(), { work: state.aWork }); // start from a copy of A
+    if (demo) { api.setA(demo.a, { run: false }); setB(demo.b); state.aWork = 1; settle('a'); } else if (on && state.bText.trim() === '') { setB(api.getA(), { work: state.aWork }); api.copiedA?.(); } // start from a copy of A (its loop too)
     paint();
     api.toggled();
   }
@@ -253,6 +253,7 @@ export function createAB(api) {
   bCode.addEventListener('input', (e) => { state.bText = buffers[state.bMode] = bCode.value; paintWork(); api.changed({ now: !!api.replaced?.(e) }); });
   copy.addEventListener('click', () => {
     setB(api.getA(), { work: state.aWork });
+    api.copiedA?.(); // (A's loop too)
     paint();
     api.changed({ rerun: true, now: true });
     bCode.focus();
@@ -261,9 +262,11 @@ export function createAB(api) {
     const a = api.getA();
     const b = { mode: state.bMode, syntax: state.bSyntax, text: state.bText };
     const works = [state.bWork, state.aWork];
+    const loops = { loopA: state.loop, loopB: state.bLoop };
     if (archOk(state.bArch) && state.bArch !== state.arch) [state.arch, state.bArch] = [state.bArch, state.arch];
     setB(a, { work: works[1] });
     api.setA(b, { run: false });
+    api.swapped?.(loops); // (the loops change sides too)
     state.aWork = works[0];
     settle('a');
     paint();
@@ -355,6 +358,7 @@ export function createAB(api) {
       const code = analyzedText(src);
       // invalid: code this CPU cannot run (caveats.js): its number is no result, and A–B no comparison
       return { side: s, response, shown: ok(response) ? branchLabels(response.rows, src) : null, code, invalid: ok(response) ? cannotRun(response, { arch: x.arch, code }) : null,
+        text: s === 'a' ? api.getA().text : bCode.value, loop: api.picks?.()[s] ?? null,
         elapsedMs: performance.now() - t0, hex, byteCount: x.bytes.length, archKey: x.arch,
         archTitle: api.archTitle(x.arch, !!item?.experimental), experimental: !!item?.experimental,
         inputMode: s === 'a' ? state.mode : state.bMode };
@@ -454,6 +458,22 @@ export function createAB(api) {
         sides.length === 1 ? [' ', tag(sides[0])] : null]));
   }
 
+  // {text, title} when A and B analyze loops with other labels of one text, or other instruction counts with the same
+  // elements per iteration; else null
+  function mismatch(view) {
+    const { a, b, cmp } = view;
+    if (!ok(a?.response) || !ok(b?.response)) return null;
+    const label = (s) => String(s.loop ?? 'all of it').replace(/^loop /, '');
+    if (a.text === b.text && a.loop !== b.loop) {
+      return { text: 'other loops', title: `A and B are the same text but analyze other loops: A ${label(a)}, B ${label(b)} (each side's loop menu picks one)` };
+    }
+    const n = (s) => s.response.rows.filter((x) => x.kind === 'instr').length;
+    if (cmp.workA === cmp.workB && n(a) !== n(b)) {
+      return { text: `${n(a)} vs ${n(b)} instr`, title: `A has ${n(a)} instructions, B ${n(b)}, with the same elements per iteration (${cmp.workA}): if an iteration of one does more work, set each side's elems` };
+    }
+    return null;
+  }
+
   function headline(view) {
     const { a, b, cmp } = view;
     const t = cmp.tp;
@@ -480,6 +500,10 @@ export function createAB(api) {
         h('span', { class: 'ab-verdict', text: t.verdict === 'better' ? 'B better' : t.verdict === 'worse' ? 'B worse' : 'no change' }),
         t.verdict === 'same' ? null : ` Δ ${sign2(t.delta)} (${percent(t.pct)}) · ${speed}`));
     }
+    // A and B analyze other loops of the same text, or blocks of other sizes counted with the same elements per iteration:
+    // said, as that is rarely what is meant (A → B of a file, then B's loop picked by default)
+    const odd = mismatch(view);
+    if (odd) line.insertBefore(h('span', { class: 'ab-odd caveat', title: odd.title, text: odd.text }), line.querySelector('.ab-delta'));
     line.append(copyAllButton());
     const meta = h('div', { class: 'meta ab-meta' }, sideMeta('A', a), sep(), sideMeta('B', b), cmp.okA && cmp.okB ? [sep(), bottlenecks(view), notModelled(view)] : null);
     meta.title = meta.textContent; // (one line on wider screens, cut with …: the whole of it here)
