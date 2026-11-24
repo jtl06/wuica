@@ -431,17 +431,22 @@ export type WhatIfPerElement = WhatIfResult & { elementsPerIteration?: number; p
 /** The request of Wuica.diff: two blocks (each as analyze's request), `options` for both (unless a block has its own),
  * `per` elements per iteration (N for both, or [A, B]). */
 export interface DiffRequest { a: AnalyzeRequest; b: AnalyzeRequest; options?: AnalysisOptions; per?: number | [number, number] }
-/** The result of Wuica.diff. Numbers are cycles per iteration (perElement: per element) rounded to two decimals. */
+/** One side of a DiffResult: as analyze gives it; perElement = tp / per (unrounded, as compare's and what-if's). */
+export interface DiffSide { tp: number; mode: 'loop' | 'unroll'; bottlenecks: string[]; decodeErrors: number; perElement?: number; loop?: LoopInfo; stderr?: StderrLine[] }
+/** The result of Wuica.diff. tp and limits as analyze gives them; delta (B − A, 0 when the same within 0.25 %) and
+ * speedup (A / B) rounded to two decimals; perElement's a, b and delta unrounded; uop changes rounded to two decimals.
+ * Both blocks must be analyzed the same way (both loops, or both unrolled): else a Failure "not comparable". */
 export interface DiffResult {
   code: 0;
   arch: string;
-  a: { tp: number; mode: 'loop' | 'unroll'; bottlenecks: string[]; perElement?: number; loop?: LoopInfo };
-  b: { tp: number; mode: 'loop' | 'unroll'; bottlenecks: string[]; perElement?: number; loop?: LoopInfo };
-  /** B − A (0 when the same within 0.25 %); speedup A / B. */
+  a: DiffSide;
+  b: DiffSide;
   delta: number;
   speedup: number | null;
   verdict: 'better' | 'worse' | 'same';
   perElement?: { a: number; b: number; delta: number; speedup: number | null; verdict: 'better' | 'worse' | 'same' };
+  /** The warnings of both sides (decode errors, assembler warnings), each starting with "A: " or "B: ". */
+  stderr?: StderrLine[];
   bottlenecks: { a: string[]; b: string[]; gone: string[]; new: string[] };
   limits: { name: string; a: number | null; b: number | null; delta: number | null }[];
   /** uops per iteration of each execution port (both sides' ports; [] if they differ). */
@@ -456,8 +461,8 @@ export function diffRequest(w: Pick<Wuica, 'analyze'>, arch: string, request: Di
 export function diffAnalyses(w: Pick<Wuica, 'analyze'>, arch: string, request: DiffRequest): Promise<{ result: DiffResult; a: AnalyzeResult; b: AnalyzeResult; per: [number, number] | null; sourceA: string | null; sourceB: string | null } | { failure: Failure }>;
 /** The result from two analyze() responses. */
 export function diffResult(a: AnalyzeResult, b: AnalyzeResult, options?: { per?: [number, number] | null; sourceA?: string | null; sourceB?: string | null }): DiffResult;
-/** Markdown of diffAnalyses' result (the page's A–B tables; markdown.compare). */
-export function diffMarkdown(x: Awaited<ReturnType<typeof diffAnalyses>>): string;
+/** Markdown of diffAnalyses' result (the page's A–B tables; markdown.compare), naming the microarchitecture (archTitle, else its id), with the warnings. */
+export function diffMarkdown(x: Awaited<ReturnType<typeof diffAnalyses>>, options?: { archTitle?: string }): string;
 /** The result as text (wuica diff; REST text/plain). */
 export function diffText(result: DiffResult | Failure): string;
 /** The request of Wuica.whatIf, the MCP tool what_if and POST /api/what-if/<arch>. */

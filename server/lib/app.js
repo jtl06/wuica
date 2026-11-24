@@ -341,7 +341,7 @@ export async function createApp(options = {}) {
       const r = x.failure ?? x.result;
       ctx.code = r.code;
       const unknownArch = r.code === 1 && facade.resolveArch(arch) === null && /unknown microarchitecture/.test(r.error ?? '');
-      if (!wantText && wantsMarkdown(req)) return sendMarkdown(res, r, diffMarkdown(x), unknownArch ? 404 : undefined);
+      if (!wantText && wantsMarkdown(req)) return sendMarkdown(res, r, diffMarkdown(x, { archTitle: r.code ? undefined : archTitle(r.arch) }), unknownArch ? 404 : undefined);
       return sendResult(res, r, wantText, diffText, unknownArch ? 404 : undefined);
     }
     if (p === '/api/compare') {

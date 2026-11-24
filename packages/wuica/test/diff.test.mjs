@@ -21,6 +21,7 @@ test('diff: throughput, per element, bottlenecks, limits, ports, instructions', 
   assert.equal(r.code, 0);
   assert.deepEqual([r.a.tp, r.b.tp, r.delta, r.speedup, r.verdict], [16, 4, -12, 4, 'better']);
   assert.deepEqual(r.perElement, { a: 0.5, b: 0.125, delta: -0.375, speedup: 4, verdict: 'better' });
+  assert.deepEqual([r.a.perElement, r.b.perElement, r.a.decodeErrors, r.b.decodeErrors], [0.5, 0.125, 0, 0]);
   assert.deepEqual(r.bottlenecks, { a: ['Dependencies'], b: ['Dependencies', 'Ports'], gone: [], new: ['Ports'] });
   assert.deepEqual(r.limits.find((l) => l.name === 'Dependencies'), { name: 'Dependencies', a: 16, b: 4, delta: -12 });
   assert.ok(r.ports.length > 0 && r.ports.every((p) => Math.abs(p.b - p.a - p.delta) < 0.011));
@@ -32,8 +33,39 @@ test('diff: throughput, per element, bottlenecks, limits, ports, instructions', 
   assert.equal(same.verdict, 'same');
   assert.equal(same.perElement, undefined);
   assert.equal(same.instructions.changes.length, 0);
-  // per [A, B]: each side's own
-  assert.equal((await w.diff('SKL', { ...REQ, per: [8, 32] })).perElement.a, 2);
+  // per [A, B]: each side's own (written out: dot1 16 cycles / 8, dot4 4 cycles / 32)
+  const pp = await w.diff('SKL', { ...REQ, per: [8, 32] });
+  assert.deepEqual([pp.a.perElement, pp.b.perElement, pp.perElement.a, pp.perElement.b], [2, 0.125, 2, 0.125]);
+  // per element unrounded, as compare and what-if give it: 16 / 3
+  const p3 = await w.diff('SKL', { ...REQ, per: [3, 3] });
+  assert.equal(p3.a.perElement, 16 / 3);
+  assert.equal(p3.perElement.a, 16 / 3);
+});
+
+test('diff: each instruction\'s uop change is B - A, from two separate analyses, rounded as the uop table', async () => {
+  const ra = await w.analyze('SKL', { source: DOT1 }), rb = await w.analyze('SKL', { source: DOT4 });
+  const port0 = ra.columns.indexOf('Port 0');
+  // the second vfmadd231ps: ymm0 in A, ymm1 in B (row 5 of both), Port 0 0.4 in A, 0.58 in B (written out)
+  assert.deepEqual([ra.rows[5].values[port0], rb.rows[5].values[port0]].map((v) => Math.round(v * 100) / 100), [0.4, 0.58]);
+  const r = await w.diff('SKL', REQ);
+  const x = r.instructions.changes.find((c) => c.status === 'modified' && /ymm1, ymm5/.test(c.b));
+  assert.equal(x.uops['Port 0'], 0.18);
+  assert.equal(x.uops['Port 0'], Math.round((rb.rows[5].values[port0] - ra.rows[5].values[port0]) * 100) / 100);
+  assert.ok(r.instructions.changes.every((c) => Object.values(c.uops).every((v) => Math.round(v * 100) / 100 === v)));
+  // the ports: A's and B's totals (written out from the two uop tables)
+  assert.deepEqual(r.ports.find((p) => p.port === 'Port 5'), { port: 'Port 5', a: 0.2, b: 1, delta: 0.8 });
+});
+
+test('diff: decode errors and warnings of each side; a loop against an unrolled block is not comparable', async () => {
+  const s = await w.diff('SNB', REQ); // SNB has no FMA: 4 positions of each block cannot be decoded
+  assert.equal(s.code, 0);
+  assert.deepEqual([s.a.decodeErrors, s.b.decodeErrors], [4, 4]);
+  assert.deepEqual(s.stderr.map((l) => l.text), ['A: Warning: 4 position(s) could not be decoded', 'B: Warning: 4 position(s) could not be decoded']);
+  assert.match(diffText(s), /^warning: A: 4 position\(s\) could not be decoded$/m);
+  assert.match(diffMarkdown(await diffAnalyses(w, 'SNB', REQ)), /^- B: Warning: 4 position\(s\) could not be decoded$/m);
+  const m = await w.diff('SKL', { a: { source: DOT1 }, b: { hex: '4801d8' } });
+  assert.equal(m.code, 1);
+  assert.equal(m.error, 'not comparable: A is analyzed as a loop, B unrolled (it does not end with a branch)');
 });
 
 test('diff: failures say which side; bad requests are code 1', async () => {
@@ -43,7 +75,12 @@ test('diff: failures say which side; bad requests are code 1', async () => {
   for (const bad of [{}, { a: { source: DOT1 } }, { a: 1, b: { hex: '4801d8' } }, { ...REQ, per: 0 }, { ...REQ, per: [1] }, { ...REQ, bogus: 1 }]) {
     assert.equal((await w.diff('SKL', bad)).code, 1, JSON.stringify(bad).slice(0, 60));
   }
-  assert.equal((await w.diff('NOPE', REQ)).code, 1);
+  const nope = await w.diff('NOPE', REQ);
+  assert.equal(nope.code, 1);
+  assert.match(nope.error, /^unknown microarchitecture: NOPE/, 'not a side\'s error');
+  const opt = await w.diff('SKL', { ...REQ, options: { minCycles: 'x' } });
+  assert.match(opt.error, /^option minCycles/, 'the shared options are the request\'s');
+  assert.match((await w.diff('SKL', { ...REQ, b: { source: DOT4, options: { minCycles: 'x' } } })).error, /^B: option minCycles/);
 });
 
 test('the MCP tool diff_blocks gives the library\'s result', async () => {
@@ -93,15 +130,20 @@ test('wuica diff A B: text, -json, -md (golden), exit codes', () => {
   if (process.env.UPDATE_GOLDEN) fs.writeFileSync(file, md.stdout);
   assert.equal(md.stdout, fs.readFileSync(file, 'utf8'));
   // hex for one side; the other side failing: its code; usage errors: 1
+  // hex: a loop against a block without a branch is not comparable (one message, once)
   const hex = run('dot1.s', '4801d8');
-  assert.equal(hex.status, 0);
-  assert.match(hex.stdout, /^B: 4801d8$/m);
+  assert.equal(hex.status, 1);
+  assert.equal(hex.stderr.split('\n').filter((l) => /not comparable/.test(l)).length, 1);
+  const hh = run('4801d8', '48 01 d8');
+  assert.equal(hh.status, 0);
+  assert.match(hh.stdout, /^B: 48 01 d8$/m);
   fs.writeFileSync(path.join(dir, 'bad.s'), 'frob rax\n');
   assert.equal(run('dot1.s', 'bad.s').status, 2);
-  for (const args of [['dot1.s'], ['dot1.s', 'dot4.s', '-arch', 'SKL,ZEN3'], ['dot1.s', 'dot4.s', '-md', '-json'], ['dot1.s', 'dot4.s', '-per', '0']]) {
+  for (const args of [['dot1.s'], ['dot1.s', 'dot4.s', '-arch', 'SKL,ZEN3'], ['dot1.s', 'dot4.s', '-md', '-json'], ['dot1.s', 'dot4.s', '-per', '0'], ['dot1.s', 'dot4.s', '-per', 'Infinity'], ['dot1.s', 'dot4.s', '-TPonly']]) {
     const e = run(...args);
     assert.equal(e.status, 1, args.join(' '));
-    assert.match(e.stderr, /^wuica diff: /);
+    assert.match(e.stderr, /^wuica diff: (?!diff:)/);
+    assert.equal(e.stderr.trim().split("\n").length, 1, `one message: ${e.stderr}`);
   }
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -109,7 +151,8 @@ test('wuica diff A B: text, -json, -md (golden), exit codes', () => {
 test('diffMarkdown: the page\'s A–B tables with branch targets as labels', async () => {
   const x = await diffAnalyses(w, 'SKL', REQ);
   const md = diffMarkdown(x);
-  assert.match(md, /^\*\*A 0\.50 · B 0\.13 cycles per element\*\*/);
+  assert.match(md, /^\*\*A–B on SKL\*\*\n\n\*\*A 0\.50 · B 0\.13 cycles per element\*\*/);
+  assert.match(diffMarkdown(x, { archTitle: 'SKL · Skylake (2015)' }), /^\*\*A–B on SKL · Skylake \(2015\)\*\*/);
   assert.match(md, /`jb loop`/);
   assert.equal(diffMarkdown({ failure: { code: 2, error: 'B: assembly failed' } }), '**diff failed:** B: assembly failed\n');
 });

@@ -1,3 +1,5 @@
+**A–B on SKL · Skylake (2015)**
+
 **A 0.50 · B 0.13 cycles per element** (Δ −0.38, −75%)\
 bottleneck: A Dependencies → B Dependencies, Ports
 

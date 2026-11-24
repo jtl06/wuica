@@ -576,14 +576,15 @@ async function diffMain(argv, io) {
       if (v === undefined) throw new UsageError('-per needs a value');
       per = String(v).split(',').map(Number);
       if (per.length === 1) per = [per[0], per[0]];
-      if (per.length !== 2 || !per.every((n) => n > 0)) throw new UsageError(`-per: elements per iteration, N or A,B: ${v}`);
+      if (per.length !== 2 || !per.every((n) => Number.isFinite(n) && n > 0)) throw new UsageError(`-per: elements per iteration, N or A,B: ${v}`);
     }
     o = parseArgs(rest);
     if (o.help) { out.write(USAGE + '\n'); return 0; }
     if (o.md && (o.json || o.tpOnly)) throw new UsageError(`-md: Markdown instead of the text report; not with ${o.json ? '-json (JSON is its own format)' : '-TPonly (one number per line)'}`);
-    if (o.inputs.length !== 2) throw new UsageError(`diff: two inputs, A and B (got ${o.inputs.length})`);
-    if (o.archs) throw new UsageError('diff: one microarchitecture (-arch NAME)');
-    for (const f of ['whatif', 'loops', 'funcs', 'example', 'files', 'raw', 'tpOnly']) if (o[f] !== undefined && o[f] !== false) throw new UsageError(`diff: -${f} is not available here`);
+    if (o.inputs.length !== 2) throw new UsageError(`two inputs, A and B (got ${o.inputs.length})`);
+    if (o.archs) throw new UsageError('one microarchitecture (-arch NAME)');
+    const NOT = { whatif: '-whatif', variants: '-variants', loops: '-loops', funcs: '-funcs', example: '-example', files: '-files', raw: '-raw', tpOnly: '-TPonly', report: '-report' };
+    for (const [f, flag] of Object.entries(NOT)) if (o[f] !== undefined && o[f] !== false) throw new UsageError(`${flag} is not available here`);
     if (o.inputs.filter((n) => n === '-').length > 1) throw new UsageError('stdin (-) can be read only once');
     const w = await createWuica({ ...(o.data ? { dataDir: o.data } : {}) });
     if (!w.resolveArch(o.arch)) return failWith(CODES.REQUEST, `unknown microarchitecture: ${o.arch} (known: ${w.archs('id').map((a) => a.id).join(', ')})`);
@@ -595,15 +596,18 @@ async function diffMain(argv, io) {
     }
     const x = await diffAnalyses(w, o.arch, { a: sides[0].request, b: sides[1].request, options: o.options, ...(per ? { per } : {}) });
     if (x.failure) {
-      const k = /^B: /.test(x.failure.error) ? 1 : 0;
       if (o.json) { out.write(JSON.stringify(x.failure) + '\n'); return x.failure.code; }
-      printStderr({ stderr: (x.failure.stderr ?? []).length ? x.failure.stderr : [{ text: x.failure.error }] }, err, o.inputs[k]);
-      if ((x.failure.stderr ?? []).length) err.write(`${o.inputs[k]}: ${x.failure.error.replace(/^[AB]: /, '')}\n`);
+      // one message: the assembler's positioned lines with the side's file name, else the error (with the side's name
+      // when it is one side's)
+      const k = /^A: /.test(x.failure.error) ? 0 : /^B: /.test(x.failure.error) ? 1 : -1;
+      const tagged = (x.failure.stderr ?? []).some((l) => l.tag);
+      if (k >= 0 && tagged) printStderr(x.failure, err, o.inputs[k]);
+      else err.write(`${k >= 0 ? o.inputs[k] : 'wuica diff'}: ${String(x.failure.error).replace(/^[AB]: /, '')}\n`);
       return x.failure.code;
     }
     for (const [k, r] of [x.a, x.b].entries()) printStderr(prefixed(r, o.inputs[k]), err, o.inputs[k]);
     if (o.json) { out.write(JSON.stringify(x.result) + '\n'); return 0; }
-    out.write(o.md ? diffMarkdown(x) : `A: ${o.inputs[0]}\nB: ${o.inputs[1]}\n${diffText(x.result)}`);
+    out.write(o.md ? diffMarkdown(x, { archTitle: archTitle(w, x.result.arch) }) : `A: ${o.inputs[0]}\nB: ${o.inputs[1]}\n${diffText(x.result)}`);
     return 0;
   } catch (e) {
     if (e instanceof UsageError) return failWith(1, `wuica diff: ${e.message}`);

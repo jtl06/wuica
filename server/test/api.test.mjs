@@ -125,7 +125,8 @@ test('POST /api/diff/<arch>: the library\'s diff (the MCP tool diff_blocks), tex
   assert.equal((await post(s.base, '/api/diff/SKL', body, { Accept: 'text/plain' })).text, diffText(x.result));
   const m = await post(s.base, '/api/diff/SKL', body, { Accept: 'text/markdown' });
   assert.match(m.headers.get('content-type'), /^text\/markdown/);
-  assert.equal(m.text, diffMarkdown(x));
+  assert.equal(m.text, diffMarkdown(x, { archTitle: 'SKL · Skylake (2015)' }));
+  assert.equal((await post(s.base, '/api/diff/NOPE', body)).json.error.startsWith('unknown microarchitecture'), true);
   assert.equal((await post(s.base, '/api/diff/NOPE', body)).status, 404);
   assert.equal((await post(s.base, '/api/diff', body)).status, 404);
   const bad = await post(s.base, '/api/diff/SKL', { a: { hex: HEX } });
