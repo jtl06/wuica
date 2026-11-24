@@ -509,7 +509,7 @@ export function createAB(api) {
     line.append(copyAllButton());
     // (the tags start the second line: the first keeps its room for the verdict)
     const tags = [odd ? h('span', { class: 'ab-odd caveat', title: odd.title, text: odd.text }) : null, at].filter(Boolean).flatMap((t) => [t, ' ']);
-    const meta = h('div', { class: 'meta ab-meta' }, ...tags, sideMeta('A', a), sep(), sideMeta('B', b), cmp.okA && cmp.okB ? [sep(), bottlenecks(view), notModelled(view)] : null);
+    const meta = h('div', { class: 'meta ab-meta' }, ...tags, sideMeta('A', a), sep(), sideMeta('B', b), cmp.okA && cmp.okB && !bad.length ? [sep(), bottlenecks(view), notModelled(view)] : null);
     meta.title = meta.textContent; // (one line on wider screens, cut with …: the whole of it here)
     // the same in one line, for screen readers and for copying
     const sr = t ? h('p', { class: 'ab-sr', text: `A: ${two(t.a)} cycles, B: ${two(t.b)} cycles${per ? ' per element' : ''}, ${bad.length ? 'not comparable' : `Δ = ${t.verdict === 'same' ? '0' : `${sign2(t.delta)} (${percent(t.pct)})`}`}` }) : null;

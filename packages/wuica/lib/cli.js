@@ -481,7 +481,7 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
       // the caveats per CPU: one analysis for the instructions, each CPU's configuration (the split-load cost)
       const first = c.results.find((r) => r.code === 0);
       const base = !o.tpOnly && first ? await w.analyze(first.arch, req) : null;
-      const insOf = (r) => (base?.code === 0 && r.code === 0 ? w.insights({ ...base, arch: r.arch, tp: r.tp, limits: r.limits, bottlenecks: r.bottlenecks }) : null);
+      const insOf = (r) => (base?.code === 0 && r.code === 0 && !r.unsupported ? w.insights({ ...base, arch: r.arch, tp: r.tp, limits: r.limits, bottlenecks: r.bottlenecks }) : null);
       const extra = c.results.map((r) => ({ ins: insOf(r), per: r.code === 0 ? per(r.tp) : undefined }));
       const wi = o.whatif ? await whatIfs(c.results.filter((r) => r.code === 0).map((r) => r.arch)) : null;
       if (o.json) {
@@ -500,7 +500,7 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
       }
       const kw = Math.max(4, ...c.results.map((r) => r.arch.length));
       const nw = Math.max(5, ...c.results.map((r) => r.name.length));
-      const bns = c.results.map((r, k) => (r.code ? `error: ${r.error.split('\n')[0]}` : r.bottlenecks.join(', ') || (extra[k].ins?.largest ? `- (nearest ${extra[k].ins.largest.join(', ')})` : '-')));
+      const bns = c.results.map((r, k) => (r.code ? `error: ${r.error.split('\n')[0]}` : r.unsupported ? '-' : r.bottlenecks.join(', ') || (extra[k].ins?.largest ? `- (nearest ${extra[k].ins.largest.join(', ')})` : '-')));
       // the Bottlenecks column as wide as its widest entry (an error's message, the last thing on its row, not counted)
       const bw = Math.max(11, ...bns.filter((b, k) => !c.results[k].code).map((b) => b.length));
       if (!o.tpOnly) out.write(`${'Arch'.padEnd(kw)}  ${'Model'.padEnd(nw)}  Year  ${'TP'.padStart(6)}${o.per ? `  ${'per el'.padStart(6)}` : ''}  ${'Bottlenecks'.padEnd(bw)}  Notes\n`);
@@ -526,7 +526,7 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
     }
 
     const r = await w.analyze(o.arch, req);
-    const ins = r.code === 0 ? w.insights(r) : null;
+    const ins = r.code === 0 && !r.unsupported ? w.insights(r) : null; // (none for a result its CPU cannot run)
     const wi = o.whatif && r.code === 0 ? await whatIfs([o.arch]) : null;
     if (o.json) {
       out.write(JSON.stringify(r.code ? r : { ...r, ...(o.per ? { perElement: per(r.tp) } : {}), ...(ins ? { insights: ins } : {}), ...(wi ? { whatIf: wi } : {}) }) + '\n');

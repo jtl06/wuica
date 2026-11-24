@@ -109,7 +109,7 @@ export function headline(r, meta = {}) {
   const head = (per > 1 ? `**${strike(cycles(tp / per))} cycles/element** (${f2(tp)} cycles/iteration, ${per} elements per iteration)` : `**${strike(f2(tp))} cycles/iteration**`)
     + (bad ? ` (not a result: ${text(bad.reason)})` : '');
   const bn = r.bottlenecks?.length ? r.bottlenecks.join(', ') : `unknown${nearest(r, per) ? ` · nearest ${nearest(r, per)}` : ''}`;
-  return `${head} · ${text(meta.archTitle ?? meta.arch ?? r.arch)} · ${r.mode === 'loop' ? 'loop' : 'unrolled'} · bottleneck: ${bn}`;
+  return `${head} · ${text(meta.archTitle ?? meta.arch ?? r.arch)} · ${r.mode === 'loop' ? 'loop' : 'unrolled'}${bad ? '' : ` · bottleneck: ${bn}`}`;
 }
 
 // The uop table: every row (branch targets as shownLabels), the columns that are used, the totals.
@@ -140,10 +140,13 @@ export function report(r, meta = {}) {
     return join(blocks);
   }
   const per = meta.per > 1 ? meta.per : 1;
-  const ins = meta.insights ?? insights(r, meta.config ?? null);
+  // a result its CPU cannot run: the headline with the reason, none of the diagnosis (limits, next limit, caveats,
+  // chain) of rows that are not that code
+  const bad = cannotRunOf(r, meta);
+  const ins = bad ? null : meta.insights ?? insights(r, meta.config ?? null);
   const labels = shownLabels(r, meta);
   const lines = [headline(r, meta)];
-  if (r.limits?.length) lines.push(`limits: ${r.limits.map((l) => `${l.name} ${per > 1 ? cycles(Number(l.tp) / per) : f2(l.tp)}`).join(' · ')}`);
+  if (r.limits?.length && !bad) lines.push(`limits: ${r.limits.map((l) => `${l.name} ${per > 1 ? cycles(Number(l.tp) / per) : f2(l.tp)}`).join(' · ')}`);
   if (ins?.next && ins.binding.length) lines.push(`next limit: ${ins.next.limit} ${per > 1 ? cycles(ins.next.tp / per) : f2(ins.next.tp)} (at most ${f2(ins.next.maxSpeedup)}x faster without ${ins.binding.join(', ')})`);
   if (r.decodeErrors > 0) lines.push(`${r.decodeErrors} position(s) could not be decoded: the throughput leaves them out`);
   { const n = meta.noData ?? r.noData ?? noData(r, { arch: meta.arch ?? r.arch ?? null }); if (n > 0) lines.push(`${noDataText(n)}: not in the instruction tables, their cost is left out`); }
@@ -184,11 +187,11 @@ export function cpuTable(input, opts = {}) {
     cpuRows(it.result).forEach((r, k) => {
       const lead = batch ? [k ? '' : text(it.file), k ? '' : text(loopOf(it.result))] : [];
       if (r.code) { rows.push([...lead, text(r.arch ?? ''), text(r.name ?? ''), String(r.year ?? ''), '-', ...(per ? ['-'] : []), `error: ${text(String(r.error).split('\n')[0])}`, '']); return; }
-      const bn = r.bottlenecks?.length ? r.bottlenecks.join(', ') : nearest(r) ? `- (nearest ${nearest(r).replace(/ [\d.]+$/, '')})` : '-';
-      const cav = (r.caveats ?? r.insights?.caveats ?? []).map((c) => (typeof c === 'string' ? c : c.text));
-      prototype ||= !!r.prototype;
-      // a CPU that cannot run the code (caveats.js cannotRun): its number struck through, and why
+      // a CPU that cannot run the code (caveats.js cannotRun): its number struck through, and why (no bottleneck, no caveats)
       const bad = cannotRunOf(r, {});
+      const bn = bad ? '-' : r.bottlenecks?.length ? r.bottlenecks.join(', ') : nearest(r) ? `- (nearest ${nearest(r).replace(/ [\d.]+$/, '')})` : '-';
+      const cav = bad ? [] : (r.caveats ?? r.insights?.caveats ?? []).map((c) => (typeof c === 'string' ? c : c.text));
+      prototype ||= !!r.prototype;
       invalid ||= !!bad;
       const gaps = bad ? 0 : Number(r.noData) || 0;
       const notes = [bad ? `not a result: ${bad.reason}` : null, r.decodeErrors ? `${r.decodeErrors} undecodable (left out)` : null, gaps ? `${noDataText(gaps)} (cost left out)` : null, ...cav, r.prototype ? '[prototype]' : null].filter(Boolean).map(text).join('; ');

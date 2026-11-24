@@ -88,7 +88,8 @@ try {
         fastest: row(k).classList.contains('fastest'), bar: row(k).querySelector('.gauge > span').style.width }]));
       out.fastest = [...document.querySelectorAll('table.cmp-cpus tr.fastest')].map((t) => t.dataset.arch).join();
       row('ZEN3').click(); await settle();
-      out.zen3 = { head: headline(), struck: lead().querySelector('.tp .value').classList.contains('invalid'), status: $('status').textContent };
+      out.zen3 = { head: headline(), struck: lead().querySelector('.tp .value').classList.contains('invalid'), status: $('status').textContent,
+        diag: [...document.querySelectorAll('#result-body .bn-line, #result-body .cv-line, #result-body .limits, #result-body .ins-chain-row')].map((e) => e.className) };
       // A–B: A on ZEN3, B the same code on ICL
       $('cpu-clear').click(); await wait(200);
       $('cmp-ab').click(); await settle(); $('ab-copy').click(); await settle(); pick('b-arch', 'ICL'); await settle();
@@ -103,6 +104,7 @@ try {
     check(t['ADL-P'].invalid && t['ADL-P'].bar === '0%' && t.ICL.bar === '66.7%' && !t.ICL.invalid, 'B1: table: no bar for ADL-P\'s 11725, which does not set the scale', js([t['ADL-P'], t.ICL]));
     check(r.fastest === 'ICL,TGL,RKL,ICX', 'B1: table: the fastest are CPUs that run the code', r.fastest);
     check(r.zen3.struck && /not a result for ZEN3: needs AVX-512 · 12 instructions not supported/.test(r.zen3.head), 'B1: ZEN3 headline: struck, why', js(r.zen3));
+    check(r.zen3.diag.length === 0 && !/nearest|bottleneck|not modelled/.test(r.zen3.head), 'B1: a struck result shows no bottleneck, nearest, caveat, limits or chain line', js(r.zen3));
     check(r.ab.struckA && r.ab.verdict === 'invalid' && /not comparable: A needs AVX-512 on ZEN3/.test(r.ab.head) && !/faster|better/.test(r.ab.head), 'B1: A–B: no verdict, "not comparable"', js(r.ab));
     check(page.take().length === 0, 'B1: no errors', '');
     await page.close();

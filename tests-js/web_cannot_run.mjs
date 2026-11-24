@@ -113,6 +113,11 @@ if (!fs.existsSync(asmPath) || !fs.existsSync(wasmPath)) {
   check(cannotRun(sum, { arch: 'ZEN3' })?.reason === 'needs AVX-512', 'the summaries of the views keep what names it');
   // the report and the A–B Markdown
   const md = report(out.ZEN3, { arch: 'ZEN3' });
+  // none of the diagnosis of rows that are not that code: no bottleneck, limits, next limit, caveats, chain
+  const mdSkl = report(out.SKL, { arch: 'SKL', analyzed: code });
+  check(/not a result: needs AVX-512/.test(mdSkl) && !/bottleneck|limits:|next limit|not modelled|critical chain/.test(mdSkl), 'Markdown report of a struck result: the reason only, no diagnosis', mdSkl.split('\n').slice(0, 6).join(' / '));
+  const tbl = cpuTable([{ arch: 'SKL', name: 'Skylake', year: 2015, tp: 38, bottlenecks: [], decodeErrors: 12, unsupported: 'needs AVX-512', caveats: [{ text: 'store forwarding' }], limits: [{ name: 'Issue', tp: 34 }] }]);
+  check(/\| SKL .*~~38\.00~~\* \| - +\| not a result: needs AVX-512; 12 undecodable \(left out\) +\|/.test(tbl), 'Markdown table: a struck row has no bottleneck and no caveats', tbl);
   check(/^\*\*~~3\.00~~ cycles\/iteration\*\* \(not a result: needs AVX-512\)/m.test(md), 'Markdown report: the number struck, the reason', md.split('\n')[0]);
   const cmd = compare(out.SKL, out.ICL, { archA: 'SKL', archB: 'ICL', invalidA: skl, invalidB: null });
   check(/^\*\*A ~~38\.00~~ · B 4\.00 cycles per iteration\*\* \(not comparable: A needs AVX-512 on SKL\)/.test(cmd), 'Markdown A–B: not comparable', cmd.split('\n')[0]);

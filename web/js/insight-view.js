@@ -241,7 +241,8 @@ export function createInsight(env) {
     clean();
     table.vr?.decorate('ins', paintRow);
 
-    const info = chainInfo(r);
+    // (no chain for a result its CPU cannot run: v.invalid, caveats.js cannotRun: its rows are not that code)
+    const info = v.invalid ? null : chainInfo(r);
     if (info) {
       const after = root.querySelector('.limits')?.closest('.row');
       const row = chainRow(r, info);

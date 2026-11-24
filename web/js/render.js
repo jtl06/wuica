@@ -298,17 +298,18 @@ export function renderResult(root, view) {
         h('span', { class: 'meta', title: details }, mode, sep(), h('span', { class: view.experimental ? 'caveat' : null, text: view.archTitle })),
         alignButton(view.alignTag),
         copyAllButton(),
-        h('span', { class: 'bn-line' }, h('span', { class: 'k', text: bnKey }), ' ',
+        // (a result its CPU cannot run: only the reason, none of the diagnosis of rows that are not that code)
+        bad ? null : h('span', { class: 'bn-line' }, h('span', { class: 'k', text: bnKey }), ' ',
           r.bottlenecks.length ? h('span', { class: 'bn', text: r.bottlenecks.join(', ') })
             : h('span', { class: 'hint', title: `no single limit explains the throughput${nearestLimit(r, w) ? `; the nearest is ${nearestLimit(r, w)} (the API's insights.largest)` : ''}`,
               text: nearestLimit(r, w) ? `unknown · nearest ${nearestLimit(r, w)}` : 'unknown' }))),
       mock ? h('div', { class: 'mock-tag', text: mockLine(mock, view.archKey) }) : null,
-      caveatLine(r, view.config),
+      bad ? null : caveatLine(r, view.config),
       bad ? h('div', { class: 'caveat cannot-run', role: 'alert', title: bad.title, text: `not a result for ${view.archKey}: ${invalidText(bad)}` }) : null,
       // instructions without data (gaps in the tables, caveats.js noData): a note; the result stands
       view.noData > 0 ? h('div', { class: 'hint no-data', title: NO_DATA_TITLE, text: noDataText(view.noData) }) : null));
 
-    if (r.limits.length) {
+    if (r.limits.length && !bad) {
       out.push(h('div', { class: 'row', title: 'cycles/iteration if each were the only bottleneck' },
         h('div', { class: 'label', text: 'limits' }), h('div', { class: 'field' }, limitsView(r, w))));
     }
