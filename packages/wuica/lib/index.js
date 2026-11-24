@@ -21,7 +21,7 @@ import { CODES, WARM_HEX, failure, tableFailure, analysisResult, compareFields }
 import { ThreadPool, threadLimit, threadOption, threadsForWork } from './threads.js';
 // the web page's reading of pasted assembly (copies of web/js in lib/web: tests-js/web_pkg_copies.mjs): the loop of a whole function, objdump lines,
 // exits as not taken, ';' comments, region markers
-import { assembleMarked, commentFixes, separatorNotes } from './web/asm-regions.js';
+import { assembleMarked, commentFixes, separatorNotes, spanLines } from './web/asm-regions.js';
 import { normalizeText, detectSyntax, preparePaste, syntaxSigns } from './web/loop-find.js';
 export { detectSyntax };
 
@@ -29,13 +29,23 @@ export { detectSyntax };
 // instructions, depth, auto}] (auto: the one "auto" analyzes) or {error}. No assembling.
 /** @param {string} source @param {{func?: string | null}} [opts] @returns {any} (index.d.ts: LoopListing[] | {error}) */
 export function listLoops(source, { func = null } = {}) {
+  if (typeof source !== 'string') return { error: '`source` must be assembly text' };
   const p = preparePaste(normalizeText(source), { loop: 'auto', func });
   if (p.error) return { error: p.error };
-  return p.loops.map((l, index) => ({ index, label: l.label, function: l.function, line: l.begin, endLine: l.end, instructions: l.instructions, depth: l.depth, auto: p.choice === index }));
+  return loopListing(p.loops, p.choice);
+}
+
+// The loops of a text (loop-find.js preparePaste's, or what an assembly of it found) as listLoops gives them; the one
+// implementation behind -loops, the MCP tool list_loops and the analyze response's otherLoops.
+function loopListing(loops, choice) {
+  return loops.map((l, index) => ({ index, label: l.label, function: l.function, line: l.begin, endLine: l.end, instructions: l.instructions, depth: l.depth, auto: choice === index }));
 }
 
 export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, CODES, WARM_HEX, parseDiagnostics, insights };
-export { whatIf, VARIANTS as WHAT_IF_VARIANTS } from './web/whatif-core.js';
+export { whatIf, VARIANTS as WHAT_IF_VARIANTS, OPT_IN_VARIANTS as WHAT_IF_OPT_IN_VARIANTS, whatIfPerElement, whatIfText, whatIfRequest } from './web/whatif-core.js';
+export { diffResult, diffAnalyses, diffRequest, diffMarkdown, diffText } from './web/block-diff.js';
+import { diffRequest } from './web/block-diff.js';
+import { whatIfRequest } from './web/whatif-core.js';
 export { examples, findExample } from './examples.js';
 export * as markdown from './web/markdown.js';
 export { objectKind } from './objfile.js';
@@ -152,12 +162,40 @@ function pickOptions(req, extraKeys) {
     // a value of the wrong kind is a bad request (code 1), like an unknown option, not a failed analysis
     const bad = typeof d === 'number' ? !Number.isSafeInteger(v) : typeof d === 'boolean' ? typeof v !== 'boolean'
       : k === 'initPolicy' && !['diff', 'same', 'stack'].includes(v);
+    if (bad && typeof d === 'number' && Number.isInteger(v)) return { error: `option ${k}: ${v} is out of range (at most 2^53 - 1 in magnitude)` };
     if (bad) return { error: `option ${k}: ${JSON.stringify(v)} is not ${typeof d === 'number' ? 'an integer' : typeof d === 'boolean' ? 'true or false' : 'one of "diff", "same", "stack"'}` };
     out[k] = v;
   }
   return { options: out };
 }
 
+
+// A compare() result with cycles per element (`per` elements per iteration, as the CLI's -arch with -per):
+// elementsPerIteration on it and perElement (tp / per) on each row that has a tp. Unchanged without `per`.
+export function comparePerElement(c, per) {
+  if (!per || c.code) return c;
+  return { ...c, elementsPerIteration: per, results: c.results.map((r) => (r.code === CODES.OK ? { ...r, perElement: r.tp / per } : r)) };
+}
+
+// The rows of an analysis with where each instruction came from (assembly input): `line` (1-based, of the text as given)
+// and `loc` ("file.c:12", from .loc/.file directives). Only when the counts fit the instruction rows exactly (from the
+// loop finder and the assembler, never by matching text); unchanged otherwise.
+function withSourceLines(r, src) {
+  if (!src || !Array.isArray(r.rows)) return r;
+  const instr = r.rows.filter((x) => x.kind === 'instr');
+  const lines = Array.isArray(src.lines) && src.lines.length === instr.length ? src.lines : null;
+  const locs = src.loc?.spans?.length ? spanLines(r.rows, src.loc.spans) : null;
+  const file = src.loc?.file ?? null;
+  if (!lines && !(locs && file)) return r;
+  let k = 0;
+  const rows = r.rows.map((x) => {
+    if (x.kind !== 'instr') return x;
+    const i = k++;
+    const info = lines && src.info ? src.info.get(lines[i]) : undefined; // objdump -S, perf annotate: source, samples
+    return { ...x, ...(lines ? { line: lines[i] } : {}), ...(locs && file && locs[i] ? { loc: `${file}:${locs[i]}` } : {}), ...(info ?? {}) };
+  });
+  return { ...r, rows };
+}
 
 // A list of arch names without repeats (the same id, or the same unknown name), in the order of their first appearance.
 function uniqueArchs(list, resolve) {
@@ -298,7 +336,7 @@ class Wuica {
     const r = await assembleMarked(assemble, text, { loop: loopChoice(loop), func });
     if (trap) return failure(CODES.ASSEMBLER, trap, undefined, { trapped: true });
     if (!r.ok) {
-      const bad = r.diagnostics.find((d) => /^(?:loop|func): /.test(d.message));
+      const bad = r.diagnostics.find((d) => /^(?:loop|func|input): /.test(d.message));
       if (bad) return failure(CODES.REQUEST, bad.message);
       if (looksAArch64(text)) return failure(CODES.ASSEMBLER, 'this looks like AArch64 assembly; wuica analyzes x86-64 (compile with --target=x86_64-linux-gnu)');
       const first = r.diagnostics.find((d) => d.severity === 'error');
@@ -315,7 +353,12 @@ class Wuica {
     const loopInfo = picked && { index: picked.index, count: picked.count, name: picked.name, line: picked.line, endLine: picked.endLine, ...(picked.lines ? { lines: picked.lines } : {}),
       ...(info ? { function: info.function, depth: info.depth, instructions: info.instructions } : {}),
       ...(picked.address !== null && picked.address !== undefined ? { address: picked.address } : {}), ...(r.alignment !== null ? { alignmentOffset: r.alignment } : {}) };
-    return { code: CODES.OK, hex: Buffer.from(r.bytes).toString('hex'), bytes: r.bytes, stderr: diagnosticLines(r.diagnostics), loop: loopInfo, syntax: { name: syn.name, detected: syn.detected } };
+    // the other loops of the text, when it has more than one and one of them was analyzed (with -loop whole every loop
+    // is in the analyzed code; a marked region has none)
+    const otherLoops = r.loops.length > 1 && Number.isInteger(picked?.index) ? loopListing(r.loops, null).filter((l) => l.index !== picked?.index).map(({ auto, ...l }) => l) : null;
+    // where each instruction came from: its line of the text (the loop finder's), and its .loc line (the assembler's)
+    const sourceLines = { lines: r.lines ?? null, loc: r.source ?? null, info: r.lineInfo ?? null };
+    return { code: CODES.OK, hex: Buffer.from(r.bytes).toString('hex'), bytes: r.bytes, stderr: diagnosticLines(r.diagnostics), loop: loopInfo, syntax: { name: syn.name, detected: syn.detected }, ...(otherLoops ? { otherLoops } : {}), sourceLines };
   }
 
   // {source | asm | hex, syntax, loop} -> {hex, assembled, stderr, loop} or a failure.
@@ -338,7 +381,7 @@ class Wuica {
     const a = await this.machineCode(source, req.syntax ?? 'auto', loopChoice(req.loop), req.func ?? null);
     if (a.code !== CODES.OK) return a;
     if (a.bytes.length === 0) return failure(CODES.REQUEST, 'the source contains no instructions');
-    return { hex: a.hex, assembled: true, stderr: a.stderr, loop: a.loop, syntax: a.syntax.name };
+    return { hex: a.hex, assembled: true, stderr: a.stderr, loop: a.loop, syntax: a.syntax.name, ...(a.otherLoops ? { otherLoops: a.otherLoops } : {}), sourceLines: a.sourceLines };
   }
 
   // The options of a request with the alignment offset of the code's addresses (objdump input), unless it was given.
@@ -374,9 +417,10 @@ class Wuica {
   // analyze()'s result from the code (#code) and the analysis (#run)
   static #analyzeResult(code, r) {
     if (r.code !== undefined) return r;
+    r = withSourceLines(r, code.sourceLines);
     const stderr = [...code.stderr];
     if (r.decodeErrors > 0) stderr.push({ text: `Warning: ${r.decodeErrors} position(s) could not be decoded` });
-    return { code: CODES.OK, ...r, ...(code.assembled ? { hex: code.hex, syntax: code.syntax } : {}), ...(code.loop ? { loop: code.loop } : {}), stderr };
+    return { code: CODES.OK, ...r, ...(code.assembled ? { hex: code.hex, syntax: code.syntax } : {}), ...(code.loop ? { loop: code.loop } : {}), ...(code.otherLoops ? { otherLoops: code.otherLoops } : {}), stderr };
   }
 
   // Several blocks on one microarchitecture: [request] -> [analyze() result] in the same order (each exactly what
@@ -470,13 +514,13 @@ class Wuica {
     // a CPU that could not decode some instructions (FMA on SNB): its throughput leaves them out
     const decode = results.filter((r) => r.code === CODES.OK && r.decodeErrors > 0)
       .map((r) => ({ text: `Warning: ${r.arch}: ${r.decodeErrors} position(s) could not be decoded (instructions it does not have): its throughput leaves them out` }));
-    return { code: CODES.OK, ...(code.assembled ? { hex: code.hex, syntax: code.syntax } : {}), ...(code.loop ? { loop: code.loop } : {}), stderr: [...code.stderr, ...decode], results };
+    return { code: CODES.OK, ...(code.assembled ? { hex: code.hex, syntax: code.syntax } : {}), ...(code.loop ? { loop: code.loop } : {}), ...(code.otherLoops ? { otherLoops: code.otherLoops } : {}), stderr: [...code.stderr, ...decode], results };
   }
 
   // POST /api/compare {source | hex, syntax, archs?, options}: one block on several microarchitectures (default: all).
   /** @param {any} [request] @returns {Promise<any>} */
   async compare(request = {}) {
-    const opts = pickOptions(request, ['archs']);
+    const opts = pickOptions(request, ['archs', 'per']);
     if (opts.error) return failure(CODES.REQUEST, opts.error);
     const code = await this.#code(request);
     if (code.code !== undefined) return code;
@@ -484,8 +528,10 @@ class Wuica {
     const ids = request.archs?.length ? uniqueArchs(request.archs, (a) => this.resolveArch(a)) : this.#archs.map((a) => a.id);
     const options = { ...Wuica.#withAlignment(request, opts.options, code), includeTrace: false, details: false };
     // each microarchitecture as #run() would do it here, on the threads when the work is worth it (#runJobs)
+    const per = request.per;
+    if (per !== undefined && !(typeof per === 'number' && Number.isFinite(per) && per > 0)) return failure(CODES.REQUEST, '`per` must be a positive number (elements per iteration)');
     const fields = await this.#runJobs(ids.map((arch) => ({ hex: code.hex, arch, options })));
-    return this.#compareResult(code, ids, fields);
+    return comparePerElement(this.#compareResult(code, ids, fields), per);
   }
 
   // Stops compare()'s threads, if any (they also stop by themselves when idle, and never keep the process alive while
@@ -499,6 +545,20 @@ class Wuica {
 
   // The derived diagnosis of an analyze() response (web/bound-core.js) with this CPU's configuration (the split-load caveat
   // depends on it); null for a failure.
+  // The what-if experiments of a block (web/js/whatif-core.js whatIfRequest): request as analyze's, with `variants` and
+  // `per`. The MCP tool what_if and POST /api/what-if/<arch> give the same.
+  /** @param {string} arch @param {any} [request] @returns {Promise<any>} */
+  async whatIf(arch, request = {}) {
+    return whatIfRequest(this, arch, request);
+  }
+
+  // Two blocks on one microarchitecture (web/js/block-diff.js): {a: block, b: block, options?, per?} -> the change of
+  // throughput, bottlenecks, limits, ports and instructions. wuica diff, the MCP tool diff_blocks and POST /api/diff/<arch>.
+  /** @param {string} arch @param {any} request @returns {Promise<any>} */
+  async diff(arch, request) {
+    return diffRequest(this, arch, request);
+  }
+
   insights(r) {
     return r?.code === CODES.OK ? insights(r, this.#configs[r.arch] ?? null) : null;
   }
@@ -511,7 +571,8 @@ class Wuica {
     const round = (x) => Math.round(x * 100) / 100;
     const sources = new Set(['MITE', 'MS', 'DSB', 'LSD']);
     const instructions = r.rows.map((row, k) => {
-      const e = { instr: row.label };
+      /** @type {Record<string, any>} */
+      const e = { instr: row.label, ...(row.line ? { line: row.line } : {}), ...(row.loc ? { loc: row.loc } : {}), ...(row.source !== undefined ? { source: row.source } : {}), ...(row.samples !== undefined ? { samples: row.samples } : {}) };
       if (row.opcode) e.bytes = row.opcode.toLowerCase();
       if (row.kind !== 'instr') e.kind = row.kind;
       const uopSource = {}, ports = {};
@@ -535,7 +596,7 @@ class Wuica {
     const ins = base ? { ...base, ...detailInsights(r) } : null;
     return {
       code: r.code, arch: r.arch, name, year, prototype, tp: r.tp, unit: 'cycles per iteration', mode: r.mode,
-      bottlenecks: r.bottlenecks, limits: r.limits, decodeErrors: r.decodeErrors, ...(r.hex ? { hex: r.hex } : {}), ...(r.loop ? { loop: r.loop } : {}),
+      bottlenecks: r.bottlenecks, limits: r.limits, decodeErrors: r.decodeErrors, ...(r.hex ? { hex: r.hex } : {}), ...(r.loop ? { loop: r.loop } : {}), ...(r.otherLoops ? { otherLoops: r.otherLoops } : {}),
       stderr: r.stderr, instructions, ...(ins ? { insights: ins } : {}),
     };
   }

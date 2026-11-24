@@ -37,7 +37,9 @@ const RET = /^ret[lqw]?$/i;
 const SYMBOL = /^[A-Za-z_.$@][\w.$@]*$/;
 const GPR = /^(?:[re]?(?:ax|bx|cx|dx|si|di|sp|bp|ip)|[abcd][lh]|(?:si|di|sp|bp)l|r(?:[89]|1[0-5])[dwb]?)$/i;
 
-export const OUTSIDE_PREFIX = '.Lwuica_x'; // an objdump branch to an address that is not in the text
+export const OUTSIDE_PREFIX = '.Lwuica_x';
+// directives after which the lines of a text are not its instructions one to one
+const STRUCTURAL = /^[ \t]*(?:[\w.$@]+:[ \t]*)*(\.(?:rept|irpc?|macro|if\w*))\b/im; // an objdump branch to an address that is not in the text
 const ADDR_LABEL = (a) => `.Lwuica_a${a.toString(16)}`;
 
 // Splits a line (block comments already removed) into its statements outside comments: [{at, text}] (at: the column
@@ -120,14 +122,16 @@ function byteColumn(rest) {
 // One-byte instructions that have operands (an objdump step of 1 for an instruction with operands must be one of these).
 const ONE_BYTE = /^(?:push|pop|xchg|in|out|ins\w*|outs\w*|stos\w*|lods\w*|movs\w*|scas\w*|cmps\w*|bswap|int)$/i;
 
-// {text, objdump: true, addresses: Map line -> address, bytes: Map line -> the line as .byte} or {objdump: false}.
+// {text, objdump: true, addresses: Map line -> address, bytes: Map line -> the line as .byte, sources: Map line -> the
+// source line in force (objdump -dS, -S: the interleaved source text, llvm-objdump's after "; ")} or {objdump: false}.
 /** @returns {any} */
 export function fromObjdump(text) {
   const lines = normalizeText(text).split('\n');
   let header = false, symbolic = false, column = false, increasing = true, other = 0, plausible = true;
   const rows = [];
+  let last = -1; // (addresses increase within a function; perf annotate prints its functions in any order)
   for (const l of lines) {
-    if (OD_HEADER.test(l)) { header = true; continue; }
+    if (OD_HEADER.test(l)) { header = true; last = -1; continue; }
     if (OD_NOISE.test(l) || /^\s*(?:$|#|\/\/|;)/.test(l)) continue;
     const m = OD_ADDR.exec(l);
     if (!m) { other++; continue; }
@@ -135,7 +139,8 @@ export function fromObjdump(text) {
     if (/<[^>]*>/.test(m[4])) symbolic = true;
     const bc = byteColumn(m[4]);
     if (bc.bytes && /\t|  /.test(m[4])) column = true;
-    if (rows.length && a <= rows.at(-1).a) increasing = false;
+    if (a <= last) increasing = false;
+    last = a;
     rows.push({ a, rest: bc.rest });
   }
   if (rows.length < 2 || !increasing) return { objdump: false };
@@ -185,6 +190,21 @@ export function fromObjdump(text) {
     else name = `${OUTSIDE_PREFIX}${t.toString(16)}`;
     p.text = `${b[1]}${b[2]}${b[3]}${name}`;
   }
+  // objdump -S: a source line (llvm-objdump: "; text"; GNU objdump: the text itself) holds for the instructions after it,
+  // up to the next one or the next function; GNU's -l lines ("/path/file.c:12", "dot():") are not source text
+  const sources = new Map();
+  /** @type {string | null} */
+  let src = null;
+  lines.forEach((l, k) => {
+    const p = parsed[k];
+    if (p.kind === 'instr') { if (src !== null) sources.set(k + 1, src); return; }
+    if (/^\s*[0-9a-fA-F]+\s+<[^>]*>:\s*$/.test(l)) { src = null; return; }
+    if (OD_HEADER.test(l) || OD_NOISE.test(l) || p.kind === 'more' || /^\s*$/.test(l) || /^\s*\/\//.test(l)) return;
+    // (llvm-objdump's "; " is "# " here: a ';' that starts a line is read as '#', leadingSemicolons)
+    const t = l.replace(/^\s*[;#]\s?/, '').trim();
+    if (!t || /^\S+:\d+(?:\s*\(discriminator \d+\))?$/.test(t) || /^[\w.$]+\(\):$/.test(t)) return;
+    src = t;
+  });
   const addresses = new Map(), byteMap = new Map();
   const out = parsed.map((p, k) => {
     if (p.kind === 'blank' || p.kind === 'more') return '';
@@ -194,7 +214,50 @@ export function fromObjdump(text) {
     if (p.bytes?.length) byteMap.set(k + 1, `${p.indent}${label}.byte ${p.bytes.map((b) => '0x' + b.toString(16).padStart(2, '0')).join(', ')}`);
     return `${p.indent}${label}${p.text}`;
   });
-  return { objdump: true, text: out.join('\n'), addresses, bytes: byteMap };
+  return { objdump: true, text: out.join('\n'), addresses, bytes: byteMap, sources };
+}
+
+// ---- perf annotate --------------------------------------------------------------------------------------------------
+
+// `perf annotate --stdio` output: one block per symbol, each with its header ("Percent | Source code & Disassembly of hot
+// for cycles:u (1069 samples, percent: local period)") and its lines: an instruction "   22.59 :   1413:   movaps ...",
+// anything else after an empty percent column " :" (perf 7 numbers those lines: " : 39   s += m[...]"). Read as the same
+// lines of objdump text (an instruction as "  1413:\tmovaps ...", a source line as "; text", the function header as is),
+// line for line. samples: Map line -> the instruction's percent of all the samples of the output: a block's local
+// percentages (perf's default) are of its own symbol's samples, weighted by the sample count of its header (an
+// approximation of perf's global-period, which weighs by period); global ones, or without a header, as given. {text,
+// perf: true, samples} or {perf: false} (stdio2: true for `perf annotate --stdio2` output, which has no addresses).
+const PERF_INSN = /^\s*(\d+(?:\.\d+)?)\s*:\s+([0-9a-fA-F]+):\s+(\S.*)$/;
+const PERF_OTHER = /^\s*:\s?(.*)$/;
+const PERF_HEADER = /^\s*Percent\s*\|.*?\((\d+) samples(?:, percent: ([^)]*))?/;
+/** @returns {any} */
+export function fromPerfAnnotate(text) {
+  const lines = normalizeText(text).split('\n');
+  if (lines.filter((l) => PERF_INSN.test(l)).length < 2 || !lines.some((l) => /^\s*Percent\s*\|/.test(l) || PERF_OTHER.test(l))) {
+    const stdio2 = /^Samples: .*\[percent: /m.test(lines.slice(0, 5).join('\n')) && lines.some((l) => /^Percent\s{2,}\S/.test(l));
+    return { perf: false, stdio2 };
+  }
+  const local = new Map(); // line -> [percent, the block's samples or null]
+  /** @type {number | null} */
+  let blockSamples = null;
+  let total = 0; // the samples of the blocks with local percentages
+  const out = lines.map((l, k) => {
+    const h = PERF_HEADER.exec(l);
+    // (--percent-type global-*: already of all the samples, as given)
+    if (h) { blockSamples = /global/.test(h[2] ?? '') ? null : Number(h[1]); total += blockSamples ?? 0; return ''; }
+    const m = PERF_INSN.exec(l);
+    if (m) { local.set(k + 1, [Number(m[1]), blockSamples]); return `  ${m[2]}:\t${m[3].trim()}`; }
+    const o = PERF_OTHER.exec(l);
+    if (!o) return ''; // the header's rule, a summary
+    const t = o[1].trim().replace(/^\d+\s+/, ''); // (perf 7: the listing's line number first)
+    if (!t || /^Disassembly of section\b/.test(t)) return '';
+    if (/^[0-9a-fA-F]+\s+<[^>]*>:$/.test(t)) return t;
+    return `; ${t}`;
+  });
+  // the percent of all samples: each block's percentages weighted by its samples
+  const samples = new Map();
+  for (const [line, [p, n]] of local) samples.set(line, total > 0 && n ? Math.round(p * n / total * 100) / 100 : p);
+  return { perf: true, text: out.join('\n'), samples };
 }
 
 // ---- the statements of a text ----------------------------------------------------------------------------------------
@@ -377,7 +440,8 @@ export function functionBody(s) {
 // What to analyze: see the top. text: the pasted assembly; loop: 'auto' (default), 'whole', or the index of a loop.
 // Returns {text, objdump, loops: [{begin, end, label}], choice: index | 'body' | null, choosable (there is code around the
 //   loop or the body: a choice matters), pick: {begin, end, lines: [the line of each instruction]} | null,
-//   body: {begin, end} | null, alignment: number | null, address: number | null, stubs: [names],
+//   body: {begin, end} | null, alignment: number | null, address: number | null, stubs: [names], lines: [the line of each
+//   instruction of the text],
 //   notes: [{line, column, severity, message}], fallback: Map line -> text, error?}
 /**
  * @param {string} text
@@ -385,7 +449,9 @@ export function functionBody(s) {
  * @returns {any}
  */
 export function preparePaste(text, { loop = 'auto', func = null } = {}) {
-  let t = leadingSemicolons(normalizeText(text).replace(/^﻿/, ''));
+  const pf = fromPerfAnnotate(normalizeText(text).replace(/^﻿/, ''));
+  if (pf.stdio2) return { error: 'input: this is perf annotate --stdio2 output, which has no addresses: use perf annotate --stdio', loops: [] };
+  let t = leadingSemicolons(pf.perf ? pf.text : normalizeText(text).replace(/^﻿/, ''));
   const od = fromObjdump(t);
   if (od.objdump) t = od.text;
   // code sections other than .text (gcc's main in .text.startup, -ffunction-sections): into .text, which the assembler
@@ -427,6 +493,31 @@ export function preparePaste(text, { loop = 'auto', func = null } = {}) {
     return out;
   }
   const code = s.instrs;
+  // .rept, .irp, .irpc, .macro and .if* make a line something else than one instruction (repeated, left out, a macro's
+  // call): no source lines then, and no loop picked (it could not be isolated): the whole text, said in a note
+  const structural = STRUCTURAL.exec(t);
+  out.exactLines = !structural;
+  if (structural && loop !== 'whole' && loops.length) {
+    const at = t.slice(0, structural.index).split('\n').length;
+    out.notes.push({ line: at, column: null, severity: 'note', message: `${structural[1]}: the text repeats or leaves out lines, so a loop cannot be isolated: the whole text is analyzed` });
+    loop = 'whole';
+  }
+  out.lines = code.map((x) => x.line);
+  // per instruction line: the interleaved source line (objdump -S, perf annotate) and the percent of samples (perf)
+  out.lineInfo = new Map();
+  for (const x of code) {
+    const source = od.objdump ? od.sources?.get(x.line) : undefined, samples = pf.perf ? pf.samples.get(x.line) : undefined;
+    if (source !== undefined || samples !== undefined) out.lineInfo.set(x.line, { ...(source !== undefined ? { source } : {}), ...(samples !== undefined ? { samples } : {}) });
+  }
+  out.profile = pf.perf ? 'perf' : null;
+  // perf annotate with several loops: "auto" picks the one whose own instructions (not those of a loop nested in it)
+  // have the most samples, the first of equals
+  if (pf.perf && loop === 'auto' && loops.length > 1) {
+    const inside = (a, b) => a !== b && a.begin >= b.begin && a.end <= b.end;
+    const heat = loops.map((l) => code.filter((x) => x.line >= l.begin && x.line <= l.end && !loops.some((n) => inside(n, l) && x.line >= n.begin && x.line <= n.end))
+      .reduce((n, x) => n + (pf.samples.get(x.line) ?? 0), 0));
+    loop = heat.indexOf(Math.max(...heat));
+  }
   if (Number.isInteger(loop) && Number(loop) >= loops.length) {
     out.error = `loop: ${loop} is not the index of a loop (0-based; the text has ${loops.length === 0 ? 'none' : `${loops.length}: 0 to ${loops.length - 1}`})`;
     return out;

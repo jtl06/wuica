@@ -162,11 +162,11 @@ Full contracts: `docs/WASM-API.md` (module), `packages/wuica/README.md` ("API co
 |---|---|---|---|
 | Module `wuica_analyze(request JSON)` | `{hex, arch, alignmentOffset, initPolicy, simpleFrontEnd, noMicroFusion, noMacroFusion, minIterations, minCycles, includeTrace, details}` | Response: `tp`, `mode` (`loop`/`unroll`), `decodeErrors`, `bottlenecks`, `limits`, `columns`/`rows` (uop table), `text` (uiCA's report), `trace` (uiCA's `-json`), `criticalPath`, `details` (not in uiCA; adding it changes no other field) | Assembly; loop finding; insights; tables must be loaded first (`wuica_load_uarch`, `wuica_load_arch_bin`) |
 | Reference/test binary `crates/wuica-cli` (not a product) | Hex argument or `-raw FILE`; `-data DIR` | uiCA's report, `-TPonly`, `-json`, `-trace`, `-details`, uiCA's options | Assembly, objdump text, loop finding, several CPUs per run, what-if, caveats, insights |
-| npm CLI `wuica` | Assembly file (syntax detected), stdin, hex, `-raw`, objdump text, `-example NAME` | Loop finding (`-loops`, `-loop N\|LABEL\|whole`, `-func`), `-arch A,B,…\|all` (one table), `-per N`, `-whatif`, `-json`, caveats and nearest limit after the report, exit codes 0/1/2/3 | One input per run; object files (use `objdump -d`) |
-| Library `createWuica()` | `analyze(arch, {source\|hex, syntax, loop, func, options})`, `compare`, `assemble`, `archs`, `summarize`, `insights`, `whatIf` | Never throws on bad input: resolves to `{code, error, stderr}`; recovers from traps (`trapped: true`) | — |
-| Stdio MCP (`wuica mcp`, `wuica-mcp`) | JSON-RPC 2.0 over stdio, protocol revisions 2025-11-25 … 2024-11-05 | Tools `analyze`, `what_if`, `compare_archs`, `list_archs`, `assemble`; arguments checked against JSON Schemas | Resources, prompts; option ranges narrower than the library's |
-| REST (`server/`) | `GET /api/archs`, `POST /api/analyze/<arch>`, `POST /api/compare`, `POST /api/assemble`, `GET /api/version`; `Accept: text/plain` gives the report | Compiler Explorer–style shapes; `insights` in the response | `what_if` (MCP only); source ≤ 64 KB, ≤ 10,000 instructions, `minIterations` ≤ 1000, `minCycles` ≤ 20,000 |
-| Remote MCP (`/mcp`, Streamable HTTP, stateless) | Same tool table as stdio (`mcpTools` in `packages/wuica/lib/mcp.js`) via the SDK | Same five tools | As REST |
+| npm CLI `wuica` | Assembly file (syntax detected), stdin, hex, `-raw`, objdump text (also `-dS`), `perf annotate --stdio` text, `-example NAME` | Loop finding (`-loops`, `-loop N\|LABEL\|whole`, `-func`), `-arch A,B,…\|all` (one table), `-per N`, `-whatif`, `-variants LIST` (also `align`: the 64 alignment offsets), `diff A B`, `-json`, `-md`, caveats and nearest limit after the report, exit codes 0/1/2/3; several inputs (one table), ELF and Mach-O object files | COFF objects (use `objdump -d`) |
+| Library `createWuica()` | `analyze(arch, {source\|hex, syntax, loop, func, options})`, `compare`, `whatIf`, `diff`, `assemble`, `archs`, `summarize`, `insights` | Never throws on bad input: resolves to `{code, error, stderr}`; recovers from traps (`trapped: true`) | — |
+| Stdio MCP (`wuica mcp`, `wuica-mcp`) | JSON-RPC 2.0 over stdio, protocol revisions 2025-11-25 … 2024-11-05 | Tools `analyze`, `what_if`, `diff_blocks`, `compare_archs`, `list_loops`, `list_archs`, `assemble`; arguments checked against JSON Schemas | Resources, prompts |
+| REST (`server/`) | `GET /api/archs`, `POST /api/analyze/<arch>`, `POST /api/compare`, `POST /api/what-if/<arch>`, `POST /api/diff/<arch>`, `POST /api/assemble`, `GET /api/version`; `Accept: text/plain` gives the report, `text/markdown` Markdown | Compiler Explorer–style shapes; `insights` in the response | Source ≤ 64 KB, ≤ 10,000 instructions, `minIterations` ≤ 1000, `minCycles` ≤ 20,000 |
+| Remote MCP (`/mcp`, Streamable HTTP, stateless) | Same tool table as stdio (`mcpTools` in `packages/wuica/lib/mcp.js`) via the SDK | The same tools | As REST |
 
 Result codes everywhere: 0 ok, 1 bad request, 2 assembler error, 3 analysis failed (`packages/wuica/README.md`, "Failures").
 
@@ -408,9 +408,8 @@ Check this table before suggesting an optimization. "Identical results" means ru
   exist only in JavaScript. A Rust user or a future native server gets less than `npx wuica-cli`.
 - The package's `insights.js` and `whatif.js` re-implement the page's `bound.js` and `whatif.js`; agreement is tested on the
   built-in examples only (`tests-js/web_bound.mjs`, `web_whatif.mjs`).
-- Option ranges differ per interface (library unlimited; stdio MCP 0–63, 1–100,000, 1–1,000,000; REST ≤ 1000, ≤ 20,000;
-  page clamps; `packages/wuica/README.md`, "Option ranges per interface").
-- `what_if` exists in MCP and the library, not in REST.
+- The option ranges are the library's everywhere; the MCP tools and the servers cap `minIterations` and `minCycles`, the page clamps
+  (`packages/wuica/README.md`, "Option ranges per interface").
 
 ### 10.5 Tests
 

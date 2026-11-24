@@ -33,9 +33,11 @@ wuica dot.s -per 8                             # the loop does 8 elements per it
 wuica dot.s -loops                             # the loops in the file; -loop N or -loop .LBB0_12 picks one
 wuica dot.s -whatif                            # unrolled, N accumulators, front end and fusion variants
 wuica dot.s -arch SKL,ZEN3 -md                 # Markdown to paste in an issue or a chat (any mode)
+wuica diff dot.s dot4.s -per 8,32              # before and after: speed-up, bottlenecks, ports, instructions changed
 clang -O3 -c dot.c && wuica dot.o -func dot    # an object file (ELF or Mach-O, x86-64): no objdump needed
 wuica *.s -arch SKL,ZEN3                       # several files in one run: one table (-files LIST for long lists)
 objdump -d dot.o | wuica                       # objdump output: the loop's real alignment from its address
+perf annotate --stdio -s dot | wuica           # a profile: the hottest loop, samples and source lines per instruction
 ```
 
 - **Syntax.** Intel (noprefix) or AT&T is detected from the text (`%rdx`, `$8`, `(%rdi,%rcx,4)` are AT&T);
@@ -173,6 +175,7 @@ wuica loop.s -arch SKL,ZEN3 -md      # Markdown (an issue, a review, a chat); wi
 wuica psum.s -loop whole             # the whole text, not the loop found in it (-loop auto, the default, or -loop N)
 wuica psum.s -loops                  # list the loops; -loop .LBB0_12 or -func psum to choose
 wuica psum.s -whatif -per 8          # what-if variants; cycles per element (8 elements per iteration)
+wuica psum.s -variants align,acc4    # these variants only; align: the 64 alignment offsets (min, median, max)
 wuica dot.o -func dot                # an object file (ELF or Mach-O x86-64); -funcs lists its functions
 wuica a.s b.s c.o -arch SKL,ZEN3     # several inputs: one table, a row per file and CPU
 wuica -files list.txt -TPonly        # the names from a file (- for stdin): file<TAB>cycles lines
@@ -180,6 +183,7 @@ wuica *.s -json                      # {code, files: [{file, ...}]}, each entry 
 wuica -examples                      # the built-in examples (the web page's set)
 wuica -example dot1 -whatif          # one of them, as if it were the input file (every option applies)
 wuica -example dot1 -show > dot.s    # its assembly, to save and edit
+wuica diff a.s b.s -per 8 [-md|-json]  # two blocks (files, - or hex): before and after
 wuica --version
 ```
 
@@ -200,13 +204,15 @@ newline-delimited JSON-RPC 2.0 with the `initialize` handshake of the protocol r
 (`isError`) that says what is wrong, an unknown tool a JSON-RPC error. The server ends with its stdin, and writes only
 protocol messages to stdout. `wuica mcp --help` prints the usage. The tool table itself (names, descriptions, JSON
 Schemas, handlers) is exported as `mcpTools(w)` from `wuica-cli/mcp`, with `callTool` and `validate`; the remote server
-(`server/`) serves the same table over HTTP. It has five tools:
+(`server/`) serves the same table over HTTP. Its tools:
 
 | Tool | What it does |
 |---|---|
 | `analyze` | one block on one microarchitecture: `tp`, bottlenecks, limits, a compact per-instruction table (ports, uop sources, fusion notes) and uiCA's text report (`format`: `json`, `text`, `both`) |
 | `what_if` | one block re-analyzed with one change each (the web page's "try" row): `unroll2`/`unroll4`/`unroll8` (per original iteration), `acc2`/`acc3`/`acc4`/`acc8` (N accumulators: unrolled ×N with the loop-carried register renamed in each copy; `renamed` lists the registers, `accumulators.best` is the best N, 1 = as it is), `simpleFrontEnd`, `noMacroFusion`, `noMicroFusion`, and `nochain` (an estimate without the loop-carried chain); per variant `tp`, `delta`, `speedup` |
+| `diff_blocks` | two blocks, A (before) and B (after), on one microarchitecture: `tp` of each, `delta`, `speedup`, per element with `per`, bottlenecks and limits before and after, each port's uops, the instructions changed, added or removed |
 | `compare_archs` | one block on several or all microarchitectures: `tp` and bottlenecks per microarchitecture |
+| `list_loops` | the loops of assembly text (what `loop` can pick): index, label, function, lines, instructions, depth, the one picked by default |
 | `list_archs` | ids, names, years, prototype flags |
 | `assemble` | assembly → hex bytes, or diagnostics with line/column |
 
@@ -323,9 +329,11 @@ text, and errors with structured stderr.
 | REST | Library | MCP tool |
 |---|---|---|
 | `GET /api/archs[?fields=id,name]` | `w.archs(fields?)` | `list_archs {fields?}` |
+| — | `listLoops(source, {func?})` | `list_loops {source, func?}` |
 | `POST /api/analyze/<arch>` | `w.analyze(arch, request)` | `analyze {arch, ...request, format?}` |
-| `POST /api/compare` | `w.compare(request)` | `compare_archs {...request}` |
-| — | `whatIf((a, r) => w.analyze(a, r), arch, request, variants?, {assemble: (t) => w.assemble(t)})` | `what_if {arch, ...request, variants?}` |
+| `POST /api/compare` | `w.compare({...request, archs?, per?})` | `compare_archs {...request, archs?, per?}` |
+| `POST /api/what-if/<arch>` | `w.whatIf(arch, {...request, variants?, per?})` | `what_if {arch, ...request, variants?, per?}` |
+| `POST /api/diff/<arch>` | `w.diff(arch, {a, b, options?, per?})` | `diff_blocks {arch, a, b, options?, per?}` |
 | `POST /api/assemble` | `w.assemble(source, syntax)` | `assemble {source, syntax?}` |
 
 ### Microarchitectures: `GET /api/archs`
@@ -399,23 +407,37 @@ Request:
   (`{hex, arch, minIterations}`); `options` takes precedence. The MCP tools accept only the nested form.
 - The source must be 64-bit code: `.code16`, `.code16gcc` and `.code32` are an error (code 1), since the analyzer
   only models 64-bit mode. `assemble` alone accepts them.
-- `loop` exists in the library, REST (`/api/analyze`, `/api/compare`), the MCP tools `analyze`, `what_if` and
-  `compare_archs`, and the package's CLI (`wuica -loop auto|whole|N`). The reference/test binary (`crates/wuica-cli`) reads
-  machine code only (hex or `-raw`), so it has no `-loop`.
+- `loop` exists in the library, REST (`/api/analyze`, `/api/compare`, `/api/what-if`, each block of `/api/diff`), the MCP
+  tools `analyze`, `what_if`, `compare_archs` and `diff_blocks` (per block), and the package's CLI (`wuica -loop
+  auto|whole|N`, also for `wuica diff`). The reference/test binary (`crates/wuica-cli`) reads
+  machine code only (hex or `-raw`), so it has no `-loop`. When the text has more than one loop, `otherLoops` lists the others (as `listLoops`
+  and `-loops` give them, without `auto`), in the analyze, summary and compare results.
+- Assembly input: each instruction row (and `instructions[]`, `insights.chain[]`, `insights.hot.instructions[]`) has
+  `line`, its 1-based line in the text, and `loc` ("file.c:12") when the text has `.file`/`.loc` directives: what the
+  loop finder and the assembler record, not a match of the text. Machine code has neither.
+- Profiles are read as they are: `objdump -dS` (or `-S`) output gives each instruction `source`, the interleaved source
+  line in force; `perf annotate --stdio` output gives `samples` (its percent of all the samples of the output: each
+  symbol's percentages weighted by its sample count) and `source`, and when the text has several loops, the one whose
+  own instructions (not those of a loop nested in it) have the most samples is analyzed (`loop` still picks another).
+  `perf annotate --stdio2` output has no addresses: it is refused with a note to use `--stdio`. A text with `.rept`,
+  `.irp`, `.irpc`, `.macro` or `.if` has no `line` (its lines are not its instructions one to one) and is analyzed whole,
+  with a note.
 
 ### Option ranges per interface
 
-All interfaces run the same analyzer, but they accept different ranges for the numeric options. A value outside the
-range is refused (code 1, REST 400; the MCP tools' schema rejects it as invalid arguments), except in the web page,
-which clamps it into its range.
+The numeric options have the same range in the library, the CLI, the MCP tools and the REST API: any integer up to
+2^53 - 1 in magnitude (`alignmentOffset`: negative values and values above 63 are simulated as given; the reference
+binary `crates/wuica-cli` refuses beyond ±2^62). Another value is refused (code 1, REST 400; the MCP tools' schema rejects
+it).
+Everywhere, a block of more than 250,000 uops per iteration is refused (a work budget, code 3), and very large values run
+out of memory (code 3). The differences:
 
-| Interface | `alignmentOffset` | `minIterations` | `minCycles` | Other limits |
-|---|---|---|---|---|
-| library, `wuica` CLI, the reference/test binary (`crates/wuica-cli`) | any integer up to ±2^62 (negative values and values above 63 are simulated as given) | any integer | any integer | at most 250,000 uops per iteration (a work budget: code 3); very large values run out of memory (library: code 3) |
-| MCP tools of `wuica mcp` (stdio) | 0–63 | 1–100000 | 1–1000000 | |
-| REST API (`server/`) | any integer | at most 1000 | at most 20000 | `source` at most 64 KB, `hex` at most 65536 characters, at most 10,000 instructions |
-| remote MCP (`server/`, `/mcp`) | 0–63 | 1–1000 | 1–20000 | as REST |
-| web page | 0–63 | 1–10000 | 1–100000 | at most 1 MiB of machine code (assembled or as hex) |
+| Interface | Limits |
+|---|---|
+| REST API and remote MCP (`server/`) | `minIterations` at most 1000, `minCycles` at most 20000; `source` at most 64 KB, `hex` at most 65536 characters, at most 10,000 instructions |
+| MCP tools (stdio and remote) | `minIterations` 1–100000, `minCycles` 1–1000000 (an agent should not start a 3 GB simulation by accident) |
+| API server, its rate limit | per client, a token bucket (`rateBurst`, `ratePerMinute`); a request costs in proportion to the analyses it can start, as many as a compare of every microarchitecture costing `compareCost` (3): analyze 1 token, what-if `ceil(3 × analyses / 15)` with the base and one analysis per variant (`nochain` none, `align` 64): 3 for the default variants, 13 for `align` alone, 15 for both; diff 1; a compare `compareCost` whatever it lists, and at least one token per job it can run at once (a compare split over idle workers); at least 1 per request, at most the burst; the same in REST and `/mcp`. What-if and diff run all their analyses within one job's time limit and start none once the client has gone: a what-if returns the variants that finished and marks the others `not run: deadline` (`notRun` on the result); a diff fails and says which block was analyzed |
+| web page | clamps `alignmentOffset` to 0–63, `minIterations` to 1–10000, `minCycles` to 1–100000; at most 1 MiB of machine code |
 
 Microarchitecture ids are accepted the same way everywhere: exactly, or case-insensitively with `-` optional (`adlp`,
 `adl-p` → `ADL-P`). Hex may contain spaces, commas and `0x` / `\x` prefixes everywhere.
@@ -501,7 +523,7 @@ Every call can fail like a compiler run in Compiler Explorer, with a non-zero `c
 
 ### Compare: `POST /api/compare`
 
-The request is the same as for analyze, plus an optional `archs` (ids; missing or empty: all listed ones; a repeated id counts once). The response:
+The request is the same as for analyze, plus an optional `archs` (ids; missing or empty: all listed ones; a repeated id counts once) and `per` (elements per iteration: `elementsPerIteration` and each row's `perElement`, as `wuica -arch A,B -per N`). The response:
 
 ```json
 {
@@ -516,6 +538,25 @@ The request is the same as for analyze, plus an optional `archs` (ids; missing o
 
 The top-level `code` is non-zero only if the request or the assembly fails. A failure on one microarchitecture is
 reported in its row.
+
+### What-if: `POST /api/what-if/<arch>`
+
+The request is analyze's plus `variants` (ids, default all: `unroll2`, `unroll4`, `unroll8`, `acc2`, `acc3`, `acc4`,
+`acc8`, `simpleFrontEnd`, `noMacroFusion`, `noMicroFusion`, `nochain`; also `align`, only when asked for: the block at
+each of the 64 alignment offsets, 64 analyses, `tp` the median and `alignment` {min, median, max, best, worst, spread,
+offset}) and `per` (elements per iteration: also cycles per element). The response is the MCP tool's and `wuica -whatif -json`'s (`WhatIfResult`): the base `tp` and per variant
+`tp` per original iteration, `delta`, `speedup`, or `error`; `accumulators.best`. `text/plain` gives the CLI's table,
+`text/markdown` the Markdown one. Each variant is one analysis (`nochain` none, `align` 64), and the request costs tokens
+in proportion (the rate limit above).
+
+### Diff: `POST /api/diff/<arch>`
+
+`{a: block, b: block, options?, per?}`: each block as analyze's request; `options` for both; `per` elements per iteration
+(N for both, or [A, B]). The response (`DiffResult` in index.d.ts; `wuica diff -json`): `a` and `b` (`tp`,
+`bottlenecks`, `perElement`), `delta`, `speedup`, `verdict`, `perElement`, `bottlenecks` (`gone`, `new`), `limits`,
+`ports` (uops per iteration before and after) and `instructions` (`counts`; `changes`: `changed`, `modified`, `added`,
+`removed`, with the change of their uops). A failure's `error` starts with `A: ` or `B: `. `text/plain` gives the
+CLI's text, `text/markdown` the page's A–B tables.
 
 ### Assemble: `POST /api/assemble`
 

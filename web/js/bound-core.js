@@ -175,6 +175,9 @@ export const defaultResource = (m) => m?.binding[0] ?? null;
 //   caveats: [{id, text, title, instructions: [index]}]: known blind spots the block meets (caveats.js); absent if none
 // config: the CPU's configuration in uarch.json (configs[r.arch]), for the caveats; without it, split warns as on a CPU
 // without a split-load cost.
+// where a row's instruction came from, if the response says (the package's analyze: `line`, `loc`)
+const sourceOf = (row) => ({ ...(row?.line ? { line: row.line } : {}), ...(row?.loc ? { loc: row.loc } : {}) });
+
 /** @param {any} r @param {{splitLoadCycles?: number} | null} [config] */
 export function insights(r, config = null) {
   const m = boundModel(r);
@@ -192,13 +195,13 @@ export function insights(r, config = null) {
   if (m.gap) out.unexplained = round(m.gap);
   const edges = r.criticalPath?.edges;
   if (Array.isArray(edges) && edges.length) {
-    out.chain = edges.map((e) => ({ index: e.from, instr: r.rows[e.from]?.label, operand: String(e.operand).toLowerCase(), latency: e.latency, carried: !!e.carried }));
+    out.chain = edges.map((e) => ({ index: e.from, instr: r.rows[e.from]?.label, ...sourceOf(r.rows[e.from]), operand: String(e.operand).toLowerCase(), latency: e.latency, carried: !!e.carried }));
   }
   const top = binding.length ? binding : largest;
   if (top[0]) {
     const b = blame(r, resourceId(r, top[0]));
     if (b) {
-      const instructions = topRows(b).map((x) => ({ index: x.row, instr: r.rows[x.row].label, share: round(x.share) }));
+      const instructions = topRows(b).map((x) => ({ index: x.row, instr: r.rows[x.row].label, ...sourceOf(r.rows[x.row]), share: round(x.share) }));
       out.hot = { resource: top[0], ...(b.portColumns ? { ports: b.portColumns } : {}), instructions };
     }
   }

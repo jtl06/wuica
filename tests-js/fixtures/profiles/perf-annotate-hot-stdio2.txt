@@ -1,0 +1,258 @@
+Samples: 1K of event 'cycles:u', 4000 Hz, Event count (approx.): 1039336104, [percent: local period]
+matvec() ./hot
+Percent         endbr64                           
+                test     %rcx,%rcx                                  
+              ↓ jle      11f                            
+                lea      (%rdx,%rcx,4),%r9                                          
+                test     %r8,%r8                                
+              ↓ jle      100                            
+                mov      %r8,%rcx                                 
+                lea      0x0(,%r8,4),%r11                                         
+                pxor     %xmm3,%xmm3                                    
+                shr      $0x2,%rcx                                  
+                lea      -0x1(%r8),%r10                                       
+                shl      $0x4,%rcx                                  
+                data16   cs nopw 0x0(%rax,%rax,1)                                                 
+          40:   xor      %eax,%eax                                  
+                pxor     %xmm1,%xmm1                                    
+                cmp      $0x2,%r10                                  
+              ↓ jbe      c2                           
+                nop                             
+                data16   cs nopw 0x0(%rax,%rax,1)                                                 
+                data16   cs nopw 0x0(%rax,%rax,1)                                                 
+   0.09         data16   cs nopw 0x0(%rax,%rax,1)                                                 
+                data16   cs nopw 0x0(%rax,%rax,1)                                                 
+          80:   movups   (%rdi,%rax,1),%xmm0                                            
+   1.33         movups   (%rsi,%rax,1),%xmm4                                            
+                add      $0x10,%rax                                   
+   0.46         mulps    %xmm4,%xmm0                                    
+   0.09         addss    %xmm0,%xmm1                                    
+  22.59         movaps   %xmm0,%xmm2                                    
+   0.10         shufps   $0x55,%xmm0,%xmm2                                          
+   0.48         addss    %xmm2,%xmm1                                    
+  23.36         movaps   %xmm0,%xmm2                                    
+   0.46         unpckhps %xmm0,%xmm2                                    
+                shufps   $0xff,%xmm0,%xmm0                                          
+   0.56         addss    %xmm2,%xmm1                                    
+  23.97         addss    %xmm0,%xmm1                                    
+  26.33         cmp      %rcx,%rax                                  
+              ↑ jne      80                           
+                test     $0x3,%r8b                                  
+              ↓ je       d9                           
+                mov      %r8,%rax                                 
+                and      $0xfffffffffffffffc,%rax                                                 
+          c2:   movss    (%rsi,%rax,4),%xmm0                                            
+                mulss    (%rdi,%rax,4),%xmm0                                            
+                add      $0x1,%rax                                  
+                addss    %xmm0,%xmm1                                    
+                cmp      %r8,%rax                                 
+              ↑ jl       c2                           
+          d9:   movss    %xmm1,(%rdx)                                     
+   0.09         add      $0x4,%rdx                                  
+                addss    %xmm1,%xmm3                                    
+   0.09         add      %r11,%rdi                                  
+                cmp      %r9,%rdx                                 
+              ↑ jne      40                           
+                movaps   %xmm3,%xmm0                                    
+              ← ret                               
+                data16   cs nopw 0x0(%rax,%rax,1)                                                 
+         100:   lea      0x4(%rdx),%rax                                       
+                movl     $0x0,(%rdx)                                    
+                cmp      %r9,%rax                                 
+              ↓ je       11f                            
+                movl     $0x0,0x4(%rdx)                                       
+                add      $0x8,%rdx                                  
+                cmp      %rdx,%r9                                 
+              ↑ jne      100                            
+         11f:   pxor     %xmm3,%xmm3                                    
+                movaps   %xmm3,%xmm0                                    
+              ← ret                               
+Samples: 1K of event 'cycles:u', 4000 Hz, Event count (approx.): 1039336104, [percent: local period]
+count() ./hot
+Percent         endbr64                             
+                test      %rsi,%rsi                                   
+              ↓ jle       130                             
+                lea       -0x1(%rsi),%rax                                         
+                cmp       $0xe,%rax                                   
+              ↓ jbe       133                             
+                mov       %rsi,%rdx                                   
+                pxor      %xmm4,%xmm4                                     
+                pcmpeqd   %xmm0,%xmm0                                     
+                mov       %rdi,%rax                                   
+                movdqa    %xmm4,%xmm5                                     
+                pxor      %xmm3,%xmm3                                     
+                pxor      %xmm2,%xmm2                                     
+                and       $0xfffffffffffffff0,%rdx                                                  
+                lea       (%rdi,%rdx,1),%rcx                                            
+                pxor      %xmm9,%xmm9                                     
+                psubb     %xmm0,%xmm5                                     
+                cs        nopw 0x0(%rax,%rax,1)                                               
+          50:   movdqu    (%rax),%xmm1                                      
+   1.70         add       $0x10,%rax                                    
+   1.77         psrlw     $0x7,%xmm1                                    
+   1.77         pand      %xmm5,%xmm1                                     
+                movdqa    %xmm1,%xmm6                                     
+   1.78         punpckhbw %xmm4,%xmm1                                     
+   8.68         punpcklbw %xmm4,%xmm6                                     
+                movdqa    %xmm1,%xmm7                                     
+                punpckhwd %xmm3,%xmm1                                     
+   3.47         movdqa    %xmm6,%xmm8                                     
+                punpckhwd %xmm3,%xmm6                                     
+                punpcklwd %xmm3,%xmm7                                     
+   1.70         punpcklwd %xmm3,%xmm8                                     
+   1.66         movdqa    %xmm8,%xmm0                                     
+   1.72         punpckhdq %xmm2,%xmm8                                     
+   8.63         punpckldq %xmm2,%xmm0                                     
+                paddq     %xmm9,%xmm0                                     
+   5.16         paddq     %xmm8,%xmm0                                     
+   5.13         movdqa    %xmm6,%xmm8                                     
+   1.76         punpckhdq %xmm2,%xmm6                                     
+                punpckldq %xmm2,%xmm8                                     
+                paddq     %xmm8,%xmm0                                     
+   5.23         paddq     %xmm6,%xmm0                                     
+   3.45         movdqa    %xmm7,%xmm6                                     
+   1.57         punpckhdq %xmm2,%xmm7                                     
+                punpckldq %xmm2,%xmm6                                     
+                paddq     %xmm6,%xmm0                                     
+  18.77         movdqa    %xmm1,%xmm6                                     
+                punpckhdq %xmm2,%xmm1                                     
+                paddq     %xmm7,%xmm0                                     
+  10.38         punpckldq %xmm2,%xmm6                                     
+                paddq     %xmm6,%xmm0                                     
+   8.67         paddq     %xmm1,%xmm0                                     
+   7.01         movdqa    %xmm0,%xmm9                                     
+                cmp       %rcx,%rax                                   
+              ↑ jne       50                            
+                psrldq    $0x8,%xmm0                                    
+                paddq     %xmm0,%xmm9                                     
+                movq      %xmm9,%rax                                    
+                cmp       %rsi,%rdx                                   
+              ↓ je        132                             
+                nop                               
+                data16    cs nopw 0x0(%rax,%rax,1)                                                  
+         110:   movsbq    (%rdi,%rdx,1),%rcx                                            
+                add       $0x1,%rdx                                   
+                shr       $0x3f,%rcx                                    
+                add       %rcx,%rax                                   
+                cmp       %rdx,%rsi                                   
+              ↑ jg        110                             
+              ← ret                                 
+                cs        nopw 0x0(%rax,%rax,1)                                               
+         130:   xor       %eax,%eax                                   
+         132: ← ret                                 
+         133:   xor       %edx,%edx                                   
+                xor       %eax,%eax                                   
+              ↑ jmp       110                             
+Samples: 1K of event 'cycles:u', 4000 Hz, Event count (approx.): 1039336104, [percent: local period]
+main() ./hot
+Percent         endbr64                           
+                push     %r15                             
+                push     %r14                             
+                push     %r13                             
+                push     %r12                             
+                push     %rbp                             
+                push     %rbx                             
+                mov      $0xc8,%ebx                                   
+                sub      $0x18,%rsp                                   
+                cmp      $0x1,%edi                                  
+              ↓ jle      2f                           
+                mov      0x8(%rsi),%rdi                                       
+                mov      $0xa,%edx                                  
+                xor      %esi,%esi                                  
+              → call     __isoc23_strtol@plt                                            
+                mov      %rax,%rbx                                  
+          2f:   mov      $0x400000,%edi                                       
+              → call     malloc@plt                                   
+                mov      $0x4000,%edi                                     
+                mov      %rax,%r12                                  
+              → call     malloc@plt                                   
+                mov      $0x400,%edi                                    
+                mov      %rax,%r13                                  
+              → call     malloc@plt                                   
+                mov      $0x100000,%edi                                       
+                mov      %rax,0x8(%rsp)                                       
+              → call     malloc@plt                                   
+                xor      %esi,%esi                                  
+                xor      %ecx,%ecx                                  
+                movabs   $0x4924924924924925,%rdi                                                 
+                mov      %rax,%r14                                  
+                xchg     %ax,%ax                                
+                data16   cs nopw 0x0(%rax,%rax,1)                                                 
+          80:   mov      %rcx,%rax                                  
+  10.41         pxor     %xmm0,%xmm0                                    
+                mov      %sil,(%r14,%rcx,1)                                           
+  14.49         add      $0x25,%esi                                   
+                imul     %rdi                             
+   4.37         mov      %rcx,%rax                                  
+                sar      $0x3f,%rax                                   
+                sar      $1,%rdx                                
+                sub      %rax,%rdx                                  
+  10.51         lea      0x0(,%rdx,8),%rax                                          
+                sub      %rdx,%rax                                  
+                mov      %rcx,%rdx                                  
+  19.97         sub      %rax,%rdx                                  
+   5.42         cvtsi2ss %rdx,%xmm0                                   
+  20.62         movss    %xmm0,(%r12,%rcx,4)                                            
+  14.21         add      $0x1,%rcx                                  
+                cmp      $0x100000,%rcx                                       
+              ↑ jne      80                           
+                movabs   $0xcccccccccccccccd,%rsi                                                 
+                xor      %ecx,%ecx                                  
+                nop                             
+                data16   cs nopw 0x0(%rax,%rax,1)                                                 
+                data16   cs nopw 0x0(%rax,%rax,1)                                                 
+                data16   cs nopw 0x0(%rax,%rax,1)                                                 
+                data16   cs nopw 0x0(%rax,%rax,1)                                                 
+         100:   mov      %rcx,%rax                                  
+                pxor     %xmm0,%xmm0                                    
+                mul      %rsi                             
+                mov      %rdx,%rax                                  
+                and      $0xfffffffffffffffc,%rdx                                                 
+                shr      $0x2,%rax                                  
+                add      %rax,%rdx                                  
+                mov      %rcx,%rax                                  
+                sub      %rdx,%rax                                  
+                cvtsi2ss %rax,%xmm0                                   
+                movss    %xmm0,0x0(%r13,%rcx,4)                                               
+                add      $0x1,%rcx                                  
+                cmp      $0x1000,%rcx                                     
+              ↑ jne      100                            
+                test     %rbx,%rbx                                  
+              ↓ jle      1bc                            
+                xor      %ebp,%ebp                                  
+                xor      %r15d,%r15d                                    
+                pxor     %xmm10,%xmm10                                      
+                nop                             
+         150:   mov      0x8(%rsp),%rdx                                       
+                mov      $0x100,%ecx                                    
+                mov      %r13,%rsi                                  
+                mov      %r12,%rdi                                  
+                mov      $0x1000,%r8d                                     
+                add      $0x1,%rbp                                  
+              → call     matvec                               
+                mov      $0x40000,%esi                                      
+                mov      %r14,%rdi                                  
+                cvtss2sd %xmm0,%xmm0                                    
+                addsd    %xmm0,%xmm10                                     
+              → call     count                              
+                add      %rax,%r15                                  
+                cmp      %rbp,%rbx                                  
+              ↑ jne      150                            
+         18d:   mov      %r15,%rdx                                  
+                movapd   %xmm10,%xmm0                                     
+                mov      $0x2,%edi                                  
+                mov      $0x1,%eax                                  
+                lea      _IO_stdin_used+0x4,%rsi                                                
+              → call     __printf_chk@plt                                         
+                add      $0x18,%rsp                                   
+                xor      %eax,%eax                                  
+                pop      %rbx                             
+                pop      %rbp                             
+                pop      %r12                             
+                pop      %r13                             
+                pop      %r14                             
+                pop      %r15                             
+              ← ret                               
+         1bc:   xor      %r15d,%r15d                                    
+                pxor     %xmm10,%xmm10                                      
+              ↑ jmp      18d                            

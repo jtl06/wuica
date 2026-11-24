@@ -1,0 +1,495 @@
+
+hot:     file format elf64-x86-64
+
+
+Disassembly of section .init:
+
+0000000000001000 <_init>:
+    1000:	f3 0f 1e fa          	endbr64
+    1004:	48 83 ec 08          	sub    $0x8,%rsp
+    1008:	48 8b 05 d9 2f 00 00 	mov    0x2fd9(%rip),%rax        # 3fe8 <__gmon_start__>
+    100f:	48 85 c0             	test   %rax,%rax
+    1012:	74 02                	je     1016 <_init+0x16>
+    1014:	ff d0                	call   *%rax
+    1016:	48 83 c4 08          	add    $0x8,%rsp
+    101a:	c3                   	ret
+
+Disassembly of section .plt:
+
+0000000000001020 <.plt>:
+    1020:	ff 35 8a 2f 00 00    	push   0x2f8a(%rip)        # 3fb0 <_GLOBAL_OFFSET_TABLE_+0x8>
+    1026:	ff 25 8c 2f 00 00    	jmp    *0x2f8c(%rip)        # 3fb8 <_GLOBAL_OFFSET_TABLE_+0x10>
+    102c:	0f 1f 40 00          	nopl   0x0(%rax)
+    1030:	f3 0f 1e fa          	endbr64
+    1034:	68 00 00 00 00       	push   $0x0
+    1039:	e9 e2 ff ff ff       	jmp    1020 <_init+0x20>
+    103e:	66 90                	xchg   %ax,%ax
+    1040:	f3 0f 1e fa          	endbr64
+    1044:	68 01 00 00 00       	push   $0x1
+    1049:	e9 d2 ff ff ff       	jmp    1020 <_init+0x20>
+    104e:	66 90                	xchg   %ax,%ax
+    1050:	f3 0f 1e fa          	endbr64
+    1054:	68 02 00 00 00       	push   $0x2
+    1059:	e9 c2 ff ff ff       	jmp    1020 <_init+0x20>
+    105e:	66 90                	xchg   %ax,%ax
+
+Disassembly of section .plt.got:
+
+0000000000001060 <__cxa_finalize@plt>:
+    1060:	f3 0f 1e fa          	endbr64
+    1064:	ff 25 8e 2f 00 00    	jmp    *0x2f8e(%rip)        # 3ff8 <__cxa_finalize@GLIBC_2.2.5>
+    106a:	66 0f 1f 44 00 00    	nopw   0x0(%rax,%rax,1)
+
+Disassembly of section .plt.sec:
+
+0000000000001070 <__isoc23_strtol@plt>:
+    1070:	f3 0f 1e fa          	endbr64
+    1074:	ff 25 46 2f 00 00    	jmp    *0x2f46(%rip)        # 3fc0 <__isoc23_strtol@GLIBC_2.38>
+    107a:	66 0f 1f 44 00 00    	nopw   0x0(%rax,%rax,1)
+
+0000000000001080 <malloc@plt>:
+    1080:	f3 0f 1e fa          	endbr64
+    1084:	ff 25 3e 2f 00 00    	jmp    *0x2f3e(%rip)        # 3fc8 <malloc@GLIBC_2.2.5>
+    108a:	66 0f 1f 44 00 00    	nopw   0x0(%rax,%rax,1)
+
+0000000000001090 <__printf_chk@plt>:
+    1090:	f3 0f 1e fa          	endbr64
+    1094:	ff 25 36 2f 00 00    	jmp    *0x2f36(%rip)        # 3fd0 <__printf_chk@GLIBC_2.3.4>
+    109a:	66 0f 1f 44 00 00    	nopw   0x0(%rax,%rax,1)
+
+Disassembly of section .text:
+
+00000000000010c0 <main>:
+  for (long i = 0; i < n; i++)
+    k += p[i] > 127;
+  return k;
+}
+
+int main(int argc, char **argv) {
+    10c0:	f3 0f 1e fa          	endbr64
+    10c4:	41 57                	push   %r15
+    10c6:	41 56                	push   %r14
+    10c8:	41 55                	push   %r13
+    10ca:	41 54                	push   %r12
+    10cc:	55                   	push   %rbp
+    10cd:	53                   	push   %rbx
+    10ce:	bb c8 00 00 00       	mov    $0xc8,%ebx
+    10d3:	48 83 ec 18          	sub    $0x18,%rsp
+  long rows = 256, cols = 4096, reps = argc > 1 ? atol(argv[1]) : 200;
+    10d7:	83 ff 01             	cmp    $0x1,%edi
+    10da:	7e 13                	jle    10ef <main+0x2f>
+  return (int) strtol (__nptr, (char **) NULL, 10);
+}
+__extern_inline long int
+__NTH (atol (const char *__nptr))
+{
+  return strtol (__nptr, (char **) NULL, 10);
+    10dc:	48 8b 7e 08          	mov    0x8(%rsi),%rdi
+    10e0:	ba 0a 00 00 00       	mov    $0xa,%edx
+    10e5:	31 f6                	xor    %esi,%esi
+    10e7:	e8 84 ff ff ff       	call   1070 <__isoc23_strtol@plt>
+    10ec:	48 89 c3             	mov    %rax,%rbx
+  float *m = malloc(sizeof(float) * rows * cols), *v = malloc(sizeof(float) * cols), *out = malloc(sizeof(float) * rows);
+    10ef:	bf 00 00 40 00       	mov    $0x400000,%edi
+    10f4:	e8 87 ff ff ff       	call   1080 <malloc@plt>
+    10f9:	bf 00 40 00 00       	mov    $0x4000,%edi
+    10fe:	49 89 c4             	mov    %rax,%r12
+    1101:	e8 7a ff ff ff       	call   1080 <malloc@plt>
+    1106:	bf 00 04 00 00       	mov    $0x400,%edi
+    110b:	49 89 c5             	mov    %rax,%r13
+    110e:	e8 6d ff ff ff       	call   1080 <malloc@plt>
+  unsigned char *p = malloc(rows * cols);
+    1113:	bf 00 00 10 00       	mov    $0x100000,%edi
+  float *m = malloc(sizeof(float) * rows * cols), *v = malloc(sizeof(float) * cols), *out = malloc(sizeof(float) * rows);
+    1118:	48 89 44 24 08       	mov    %rax,0x8(%rsp)
+  unsigned char *p = malloc(rows * cols);
+    111d:	e8 5e ff ff ff       	call   1080 <malloc@plt>
+    1122:	31 f6                	xor    %esi,%esi
+  for (long i = 0; i < rows * cols; i++) { m[i] = (float)(i % 7); p[i] = (unsigned char)(i * 37); }
+    1124:	31 c9                	xor    %ecx,%ecx
+    1126:	48 bf 25 49 92 24 49 	movabs $0x4924924924924925,%rdi
+    112d:	92 24 49 
+  unsigned char *p = malloc(rows * cols);
+    1130:	49 89 c6             	mov    %rax,%r14
+  for (long i = 0; i < rows * cols; i++) { m[i] = (float)(i % 7); p[i] = (unsigned char)(i * 37); }
+    1133:	66 90                	xchg   %ax,%ax
+    1135:	66 66 2e 0f 1f 84 00 	data16 cs nopw 0x0(%rax,%rax,1)
+    113c:	00 00 00 00 
+    1140:	48 89 c8             	mov    %rcx,%rax
+    1143:	66 0f ef c0          	pxor   %xmm0,%xmm0
+    1147:	41 88 34 0e          	mov    %sil,(%r14,%rcx,1)
+    114b:	83 c6 25             	add    $0x25,%esi
+    114e:	48 f7 ef             	imul   %rdi
+    1151:	48 89 c8             	mov    %rcx,%rax
+    1154:	48 c1 f8 3f          	sar    $0x3f,%rax
+    1158:	48 d1 fa             	sar    $1,%rdx
+    115b:	48 29 c2             	sub    %rax,%rdx
+    115e:	48 8d 04 d5 00 00 00 	lea    0x0(,%rdx,8),%rax
+    1165:	00 
+    1166:	48 29 d0             	sub    %rdx,%rax
+    1169:	48 89 ca             	mov    %rcx,%rdx
+    116c:	48 29 c2             	sub    %rax,%rdx
+    116f:	f3 48 0f 2a c2       	cvtsi2ss %rdx,%xmm0
+    1174:	f3 41 0f 11 04 8c    	movss  %xmm0,(%r12,%rcx,4)
+    117a:	48 83 c1 01          	add    $0x1,%rcx
+    117e:	48 81 f9 00 00 10 00 	cmp    $0x100000,%rcx
+    1185:	75 b9                	jne    1140 <main+0x80>
+  for (long i = 0; i < cols; i++) v[i] = (float)(i % 5);
+    1187:	48 be cd cc cc cc cc 	movabs $0xcccccccccccccccd,%rsi
+    118e:	cc cc cc 
+    1191:	31 c9                	xor    %ecx,%ecx
+    1193:	90                   	nop
+    1194:	66 66 2e 0f 1f 84 00 	data16 cs nopw 0x0(%rax,%rax,1)
+    119b:	00 00 00 00 
+    119f:	66 66 2e 0f 1f 84 00 	data16 cs nopw 0x0(%rax,%rax,1)
+    11a6:	00 00 00 00 
+    11aa:	66 66 2e 0f 1f 84 00 	data16 cs nopw 0x0(%rax,%rax,1)
+    11b1:	00 00 00 00 
+    11b5:	66 66 2e 0f 1f 84 00 	data16 cs nopw 0x0(%rax,%rax,1)
+    11bc:	00 00 00 00 
+    11c0:	48 89 c8             	mov    %rcx,%rax
+    11c3:	66 0f ef c0          	pxor   %xmm0,%xmm0
+    11c7:	48 f7 e6             	mul    %rsi
+    11ca:	48 89 d0             	mov    %rdx,%rax
+    11cd:	48 83 e2 fc          	and    $0xfffffffffffffffc,%rdx
+    11d1:	48 c1 e8 02          	shr    $0x2,%rax
+    11d5:	48 01 c2             	add    %rax,%rdx
+    11d8:	48 89 c8             	mov    %rcx,%rax
+    11db:	48 29 d0             	sub    %rdx,%rax
+    11de:	f3 48 0f 2a c0       	cvtsi2ss %rax,%xmm0
+    11e3:	f3 41 0f 11 44 8d 00 	movss  %xmm0,0x0(%r13,%rcx,4)
+    11ea:	48 83 c1 01          	add    $0x1,%rcx
+    11ee:	48 81 f9 00 10 00 00 	cmp    $0x1000,%rcx
+    11f5:	75 c9                	jne    11c0 <main+0x100>
+  double t = 0;
+  long k = 0;
+  for (long r = 0; r < reps; r++) { t += matvec(m, v, out, rows, cols); k += count(p, rows * cols / 4); }
+    11f7:	48 85 db             	test   %rbx,%rbx
+    11fa:	0f 8e 7c 00 00 00    	jle    127c <main+0x1bc>
+    1200:	31 ed                	xor    %ebp,%ebp
+  long k = 0;
+    1202:	45 31 ff             	xor    %r15d,%r15d
+  double t = 0;
+    1205:	66 45 0f ef d2       	pxor   %xmm10,%xmm10
+    120a:	66 0f 1f 44 00 00    	nopw   0x0(%rax,%rax,1)
+  for (long r = 0; r < reps; r++) { t += matvec(m, v, out, rows, cols); k += count(p, rows * cols / 4); }
+    1210:	48 8b 54 24 08       	mov    0x8(%rsp),%rdx
+    1215:	b9 00 01 00 00       	mov    $0x100,%ecx
+    121a:	4c 89 ee             	mov    %r13,%rsi
+    121d:	4c 89 e7             	mov    %r12,%rdi
+    1220:	41 b8 00 10 00 00    	mov    $0x1000,%r8d
+    1226:	48 83 c5 01          	add    $0x1,%rbp
+    122a:	e8 51 01 00 00       	call   1380 <matvec>
+    122f:	be 00 00 04 00       	mov    $0x40000,%esi
+    1234:	4c 89 f7             	mov    %r14,%rdi
+    1237:	f3 0f 5a c0          	cvtss2sd %xmm0,%xmm0
+    123b:	f2 44 0f 58 d0       	addsd  %xmm0,%xmm10
+    1240:	e8 6b 02 00 00       	call   14b0 <count>
+    1245:	49 01 c7             	add    %rax,%r15
+    1248:	48 39 eb             	cmp    %rbp,%rbx
+    124b:	75 c3                	jne    1210 <main+0x150>
+}
+
+__fortify_function int
+printf (const char *__restrict __fmt, ...)
+{
+  return __printf_chk (__USE_FORTIFY_LEVEL - 1, __fmt, __va_arg_pack ());
+    124d:	4c 89 fa             	mov    %r15,%rdx
+    1250:	66 41 0f 28 c2       	movapd %xmm10,%xmm0
+    1255:	bf 02 00 00 00       	mov    $0x2,%edi
+    125a:	b8 01 00 00 00       	mov    $0x1,%eax
+    125f:	48 8d 35 9e 0d 00 00 	lea    0xd9e(%rip),%rsi        # 2004 <_IO_stdin_used+0x4>
+    1266:	e8 25 fe ff ff       	call   1090 <__printf_chk@plt>
+  printf("%f %ld\n", t, k);
+  return 0;
+}
+    126b:	48 83 c4 18          	add    $0x18,%rsp
+    126f:	31 c0                	xor    %eax,%eax
+    1271:	5b                   	pop    %rbx
+    1272:	5d                   	pop    %rbp
+    1273:	41 5c                	pop    %r12
+    1275:	41 5d                	pop    %r13
+    1277:	41 5e                	pop    %r14
+    1279:	41 5f                	pop    %r15
+    127b:	c3                   	ret
+  long k = 0;
+    127c:	45 31 ff             	xor    %r15d,%r15d
+  double t = 0;
+    127f:	66 45 0f ef d2       	pxor   %xmm10,%xmm10
+    1284:	eb c7                	jmp    124d <main+0x18d>
+    1286:	66 2e 0f 1f 84 00 00 	cs nopw 0x0(%rax,%rax,1)
+    128d:	00 00 00 
+
+0000000000001290 <_start>:
+    1290:	f3 0f 1e fa          	endbr64
+    1294:	31 ed                	xor    %ebp,%ebp
+    1296:	49 89 d1             	mov    %rdx,%r9
+    1299:	5e                   	pop    %rsi
+    129a:	48 89 e2             	mov    %rsp,%rdx
+    129d:	48 83 e4 f0          	and    $0xfffffffffffffff0,%rsp
+    12a1:	50                   	push   %rax
+    12a2:	54                   	push   %rsp
+    12a3:	45 31 c0             	xor    %r8d,%r8d
+    12a6:	31 c9                	xor    %ecx,%ecx
+    12a8:	48 8d 3d 11 fe ff ff 	lea    -0x1ef(%rip),%rdi        # 10c0 <main>
+    12af:	ff 15 23 2d 00 00    	call   *0x2d23(%rip)        # 3fd8 <__libc_start_main@GLIBC_2.34>
+    12b5:	f4                   	hlt
+    12b6:	66 2e 0f 1f 84 00 00 	cs nopw 0x0(%rax,%rax,1)
+    12bd:	00 00 00 
+
+00000000000012c0 <deregister_tm_clones>:
+    12c0:	48 8d 3d 49 2d 00 00 	lea    0x2d49(%rip),%rdi        # 4010 <__TMC_END__>
+    12c7:	48 8d 05 42 2d 00 00 	lea    0x2d42(%rip),%rax        # 4010 <__TMC_END__>
+    12ce:	48 39 f8             	cmp    %rdi,%rax
+    12d1:	74 15                	je     12e8 <deregister_tm_clones+0x28>
+    12d3:	48 8b 05 06 2d 00 00 	mov    0x2d06(%rip),%rax        # 3fe0 <_ITM_deregisterTMCloneTable>
+    12da:	48 85 c0             	test   %rax,%rax
+    12dd:	74 09                	je     12e8 <deregister_tm_clones+0x28>
+    12df:	ff e0                	jmp    *%rax
+    12e1:	0f 1f 80 00 00 00 00 	nopl   0x0(%rax)
+    12e8:	c3                   	ret
+    12e9:	0f 1f 80 00 00 00 00 	nopl   0x0(%rax)
+
+00000000000012f0 <register_tm_clones>:
+    12f0:	48 8d 3d 19 2d 00 00 	lea    0x2d19(%rip),%rdi        # 4010 <__TMC_END__>
+    12f7:	48 8d 35 12 2d 00 00 	lea    0x2d12(%rip),%rsi        # 4010 <__TMC_END__>
+    12fe:	48 29 fe             	sub    %rdi,%rsi
+    1301:	48 89 f0             	mov    %rsi,%rax
+    1304:	48 c1 ee 3f          	shr    $0x3f,%rsi
+    1308:	48 c1 f8 03          	sar    $0x3,%rax
+    130c:	48 01 c6             	add    %rax,%rsi
+    130f:	48 d1 fe             	sar    $1,%rsi
+    1312:	74 14                	je     1328 <register_tm_clones+0x38>
+    1314:	48 8b 05 d5 2c 00 00 	mov    0x2cd5(%rip),%rax        # 3ff0 <_ITM_registerTMCloneTable>
+    131b:	48 85 c0             	test   %rax,%rax
+    131e:	74 08                	je     1328 <register_tm_clones+0x38>
+    1320:	ff e0                	jmp    *%rax
+    1322:	66 0f 1f 44 00 00    	nopw   0x0(%rax,%rax,1)
+    1328:	c3                   	ret
+    1329:	0f 1f 80 00 00 00 00 	nopl   0x0(%rax)
+
+0000000000001330 <__do_global_dtors_aux>:
+    1330:	f3 0f 1e fa          	endbr64
+    1334:	80 3d d5 2c 00 00 00 	cmpb   $0x0,0x2cd5(%rip)        # 4010 <__TMC_END__>
+    133b:	75 2b                	jne    1368 <__do_global_dtors_aux+0x38>
+    133d:	55                   	push   %rbp
+    133e:	48 83 3d b2 2c 00 00 	cmpq   $0x0,0x2cb2(%rip)        # 3ff8 <__cxa_finalize@GLIBC_2.2.5>
+    1345:	00 
+    1346:	48 89 e5             	mov    %rsp,%rbp
+    1349:	74 0c                	je     1357 <__do_global_dtors_aux+0x27>
+    134b:	48 8b 3d b6 2c 00 00 	mov    0x2cb6(%rip),%rdi        # 4008 <__dso_handle>
+    1352:	e8 09 fd ff ff       	call   1060 <__cxa_finalize@plt>
+    1357:	e8 64 ff ff ff       	call   12c0 <deregister_tm_clones>
+    135c:	c6 05 ad 2c 00 00 01 	movb   $0x1,0x2cad(%rip)        # 4010 <__TMC_END__>
+    1363:	5d                   	pop    %rbp
+    1364:	c3                   	ret
+    1365:	0f 1f 00             	nopl   (%rax)
+    1368:	c3                   	ret
+    1369:	0f 1f 80 00 00 00 00 	nopl   0x0(%rax)
+
+0000000000001370 <frame_dummy>:
+    1370:	f3 0f 1e fa          	endbr64
+    1374:	e9 77 ff ff ff       	jmp    12f0 <register_tm_clones>
+    1379:	0f 1f 80 00 00 00 00 	nopl   0x0(%rax)
+
+0000000000001380 <matvec>:
+__attribute__((noinline)) float matvec(const float *m, const float *v, float *out, long rows, long cols) {
+    1380:	f3 0f 1e fa          	endbr64
+  for (long r = 0; r < rows; r++) {
+    1384:	48 85 c9             	test   %rcx,%rcx
+    1387:	0f 8e 12 01 00 00    	jle    149f <matvec+0x11f>
+    138d:	4c 8d 0c 8a          	lea    (%rdx,%rcx,4),%r9
+    for (long c = 0; c < cols; c++)
+    1391:	4d 85 c0             	test   %r8,%r8
+    1394:	0f 8e e6 00 00 00    	jle    1480 <matvec+0x100>
+    139a:	4c 89 c1             	mov    %r8,%rcx
+    139d:	4e 8d 1c 85 00 00 00 	lea    0x0(,%r8,4),%r11
+    13a4:	00 
+    13a5:	66 0f ef db          	pxor   %xmm3,%xmm3
+    13a9:	48 c1 e9 02          	shr    $0x2,%rcx
+    13ad:	4d 8d 50 ff          	lea    -0x1(%r8),%r10
+    13b1:	48 c1 e1 04          	shl    $0x4,%rcx
+    13b5:	66 66 2e 0f 1f 84 00 	data16 cs nopw 0x0(%rax,%rax,1)
+    13bc:	00 00 00 00 
+    13c0:	31 c0                	xor    %eax,%eax
+    float s = 0;
+    13c2:	66 0f ef c9          	pxor   %xmm1,%xmm1
+    13c6:	49 83 fa 02          	cmp    $0x2,%r10
+    13ca:	76 76                	jbe    1442 <matvec+0xc2>
+    13cc:	0f 1f 84 00 00 00 00 	nopl   0x0(%rax,%rax,1)
+    13d3:	00 
+    13d4:	66 66 2e 0f 1f 84 00 	data16 cs nopw 0x0(%rax,%rax,1)
+    13db:	00 00 00 00 
+    13df:	66 66 2e 0f 1f 84 00 	data16 cs nopw 0x0(%rax,%rax,1)
+    13e6:	00 00 00 00 
+    13ea:	66 66 2e 0f 1f 84 00 	data16 cs nopw 0x0(%rax,%rax,1)
+    13f1:	00 00 00 00 
+    13f5:	66 66 2e 0f 1f 84 00 	data16 cs nopw 0x0(%rax,%rax,1)
+    13fc:	00 00 00 00 
+      s += m[r * cols + c] * v[c];
+    1400:	0f 10 04 07          	movups (%rdi,%rax,1),%xmm0
+    1404:	0f 10 24 06          	movups (%rsi,%rax,1),%xmm4
+    1408:	48 83 c0 10          	add    $0x10,%rax
+    140c:	0f 59 c4             	mulps  %xmm4,%xmm0
+    140f:	f3 0f 58 c8          	addss  %xmm0,%xmm1
+    1413:	0f 28 d0             	movaps %xmm0,%xmm2
+    1416:	0f c6 d0 55          	shufps $0x55,%xmm0,%xmm2
+    141a:	f3 0f 58 ca          	addss  %xmm2,%xmm1
+    141e:	0f 28 d0             	movaps %xmm0,%xmm2
+    1421:	0f 15 d0             	unpckhps %xmm0,%xmm2
+    1424:	0f c6 c0 ff          	shufps $0xff,%xmm0,%xmm0
+    1428:	f3 0f 58 ca          	addss  %xmm2,%xmm1
+    142c:	f3 0f 58 c8          	addss  %xmm0,%xmm1
+    for (long c = 0; c < cols; c++)
+    1430:	48 39 c8             	cmp    %rcx,%rax
+    1433:	75 cb                	jne    1400 <matvec+0x80>
+    1435:	41 f6 c0 03          	test   $0x3,%r8b
+    1439:	74 1e                	je     1459 <matvec+0xd9>
+    143b:	4c 89 c0             	mov    %r8,%rax
+    143e:	48 83 e0 fc          	and    $0xfffffffffffffffc,%rax
+      s += m[r * cols + c] * v[c];
+    1442:	f3 0f 10 04 86       	movss  (%rsi,%rax,4),%xmm0
+    1447:	f3 0f 59 04 87       	mulss  (%rdi,%rax,4),%xmm0
+    for (long c = 0; c < cols; c++)
+    144c:	48 83 c0 01          	add    $0x1,%rax
+      s += m[r * cols + c] * v[c];
+    1450:	f3 0f 58 c8          	addss  %xmm0,%xmm1
+    for (long c = 0; c < cols; c++)
+    1454:	4c 39 c0             	cmp    %r8,%rax
+    1457:	7c e9                	jl     1442 <matvec+0xc2>
+    out[r] = s;
+    1459:	f3 0f 11 0a          	movss  %xmm1,(%rdx)
+  for (long r = 0; r < rows; r++) {
+    145d:	48 83 c2 04          	add    $0x4,%rdx
+    total += s;
+    1461:	f3 0f 58 d9          	addss  %xmm1,%xmm3
+  for (long r = 0; r < rows; r++) {
+    1465:	4c 01 df             	add    %r11,%rdi
+    1468:	4c 39 ca             	cmp    %r9,%rdx
+    146b:	0f 85 4f ff ff ff    	jne    13c0 <matvec+0x40>
+}
+    1471:	0f 28 c3             	movaps %xmm3,%xmm0
+    1474:	c3                   	ret
+    1475:	66 66 2e 0f 1f 84 00 	data16 cs nopw 0x0(%rax,%rax,1)
+    147c:	00 00 00 00 
+  for (long r = 0; r < rows; r++) {
+    1480:	48 8d 42 04          	lea    0x4(%rdx),%rax
+    out[r] = s;
+    1484:	c7 02 00 00 00 00    	movl   $0x0,(%rdx)
+  for (long r = 0; r < rows; r++) {
+    148a:	4c 39 c8             	cmp    %r9,%rax
+    148d:	74 10                	je     149f <matvec+0x11f>
+    out[r] = s;
+    148f:	c7 42 04 00 00 00 00 	movl   $0x0,0x4(%rdx)
+  for (long r = 0; r < rows; r++) {
+    1496:	48 83 c2 08          	add    $0x8,%rdx
+    149a:	49 39 d1             	cmp    %rdx,%r9
+    149d:	75 e1                	jne    1480 <matvec+0x100>
+    total += s;
+    149f:	66 0f ef db          	pxor   %xmm3,%xmm3
+}
+    14a3:	0f 28 c3             	movaps %xmm3,%xmm0
+    14a6:	c3                   	ret
+    14a7:	66 0f 1f 84 00 00 00 	nopw   0x0(%rax,%rax,1)
+    14ae:	00 00 
+
+00000000000014b0 <count>:
+__attribute__((noinline)) long count(const unsigned char *p, long n) {
+    14b0:	f3 0f 1e fa          	endbr64
+  for (long i = 0; i < n; i++)
+    14b4:	48 85 f6             	test   %rsi,%rsi
+    14b7:	0f 8e 23 01 00 00    	jle    15e0 <count+0x130>
+    14bd:	48 8d 46 ff          	lea    -0x1(%rsi),%rax
+    14c1:	48 83 f8 0e          	cmp    $0xe,%rax
+    14c5:	0f 86 18 01 00 00    	jbe    15e3 <count+0x133>
+    14cb:	48 89 f2             	mov    %rsi,%rdx
+    14ce:	66 0f ef e4          	pxor   %xmm4,%xmm4
+    14d2:	66 0f 76 c0          	pcmpeqd %xmm0,%xmm0
+    14d6:	48 89 f8             	mov    %rdi,%rax
+    14d9:	66 0f 6f ec          	movdqa %xmm4,%xmm5
+    14dd:	66 0f ef db          	pxor   %xmm3,%xmm3
+    k += p[i] > 127;
+    14e1:	66 0f ef d2          	pxor   %xmm2,%xmm2
+    14e5:	48 83 e2 f0          	and    $0xfffffffffffffff0,%rdx
+    14e9:	48 8d 0c 17          	lea    (%rdi,%rdx,1),%rcx
+  for (long i = 0; i < n; i++)
+    14ed:	66 45 0f ef c9       	pxor   %xmm9,%xmm9
+    14f2:	66 0f f8 e8          	psubb  %xmm0,%xmm5
+    14f6:	66 2e 0f 1f 84 00 00 	cs nopw 0x0(%rax,%rax,1)
+    14fd:	00 00 00 
+    k += p[i] > 127;
+    1500:	f3 0f 6f 08          	movdqu (%rax),%xmm1
+    1504:	48 83 c0 10          	add    $0x10,%rax
+    1508:	66 0f 71 d1 07       	psrlw  $0x7,%xmm1
+    150d:	66 0f db cd          	pand   %xmm5,%xmm1
+    1511:	66 0f 6f f1          	movdqa %xmm1,%xmm6
+    1515:	66 0f 68 cc          	punpckhbw %xmm4,%xmm1
+    1519:	66 0f 60 f4          	punpcklbw %xmm4,%xmm6
+    151d:	66 0f 6f f9          	movdqa %xmm1,%xmm7
+    1521:	66 0f 69 cb          	punpckhwd %xmm3,%xmm1
+    1525:	66 44 0f 6f c6       	movdqa %xmm6,%xmm8
+    152a:	66 0f 69 f3          	punpckhwd %xmm3,%xmm6
+    152e:	66 0f 61 fb          	punpcklwd %xmm3,%xmm7
+    1532:	66 44 0f 61 c3       	punpcklwd %xmm3,%xmm8
+    1537:	66 41 0f 6f c0       	movdqa %xmm8,%xmm0
+    153c:	66 44 0f 6a c2       	punpckhdq %xmm2,%xmm8
+    1541:	66 0f 62 c2          	punpckldq %xmm2,%xmm0
+    1545:	66 41 0f d4 c1       	paddq  %xmm9,%xmm0
+    154a:	66 41 0f d4 c0       	paddq  %xmm8,%xmm0
+    154f:	66 44 0f 6f c6       	movdqa %xmm6,%xmm8
+    1554:	66 0f 6a f2          	punpckhdq %xmm2,%xmm6
+    1558:	66 44 0f 62 c2       	punpckldq %xmm2,%xmm8
+    155d:	66 41 0f d4 c0       	paddq  %xmm8,%xmm0
+    1562:	66 0f d4 c6          	paddq  %xmm6,%xmm0
+    1566:	66 0f 6f f7          	movdqa %xmm7,%xmm6
+    156a:	66 0f 6a fa          	punpckhdq %xmm2,%xmm7
+    156e:	66 0f 62 f2          	punpckldq %xmm2,%xmm6
+    1572:	66 0f d4 c6          	paddq  %xmm6,%xmm0
+    1576:	66 0f 6f f1          	movdqa %xmm1,%xmm6
+    157a:	66 0f 6a ca          	punpckhdq %xmm2,%xmm1
+    157e:	66 0f d4 c7          	paddq  %xmm7,%xmm0
+    1582:	66 0f 62 f2          	punpckldq %xmm2,%xmm6
+    1586:	66 0f d4 c6          	paddq  %xmm6,%xmm0
+    158a:	66 0f d4 c1          	paddq  %xmm1,%xmm0
+    158e:	66 44 0f 6f c8       	movdqa %xmm0,%xmm9
+  for (long i = 0; i < n; i++)
+    1593:	48 39 c8             	cmp    %rcx,%rax
+    1596:	0f 85 64 ff ff ff    	jne    1500 <count+0x50>
+    159c:	66 0f 73 d8 08       	psrldq $0x8,%xmm0
+    15a1:	66 44 0f d4 c8       	paddq  %xmm0,%xmm9
+    15a6:	66 4c 0f 7e c8       	movq   %xmm9,%rax
+    15ab:	48 39 f2             	cmp    %rsi,%rdx
+    15ae:	74 32                	je     15e2 <count+0x132>
+    15b0:	0f 1f 44 00 00       	nopl   0x0(%rax,%rax,1)
+    15b5:	66 66 2e 0f 1f 84 00 	data16 cs nopw 0x0(%rax,%rax,1)
+    15bc:	00 00 00 00 
+    k += p[i] > 127;
+    15c0:	48 0f be 0c 17       	movsbq (%rdi,%rdx,1),%rcx
+  for (long i = 0; i < n; i++)
+    15c5:	48 83 c2 01          	add    $0x1,%rdx
+    k += p[i] > 127;
+    15c9:	48 c1 e9 3f          	shr    $0x3f,%rcx
+    15cd:	48 01 c8             	add    %rcx,%rax
+  for (long i = 0; i < n; i++)
+    15d0:	48 39 d6             	cmp    %rdx,%rsi
+    15d3:	7f eb                	jg     15c0 <count+0x110>
+    15d5:	c3                   	ret
+    15d6:	66 2e 0f 1f 84 00 00 	cs nopw 0x0(%rax,%rax,1)
+    15dd:	00 00 00 
+  long k = 0;
+    15e0:	31 c0                	xor    %eax,%eax
+}
+    15e2:	c3                   	ret
+  for (long i = 0; i < n; i++)
+    15e3:	31 d2                	xor    %edx,%edx
+  long k = 0;
+    15e5:	31 c0                	xor    %eax,%eax
+    15e7:	eb d7                	jmp    15c0 <count+0x110>
+
+Disassembly of section .fini:
+
+00000000000015ec <_fini>:
+    15ec:	f3 0f 1e fa          	endbr64
+    15f0:	48 83 ec 08          	sub    $0x8,%rsp
+    15f4:	48 83 c4 08          	add    $0x8,%rsp
+    15f8:	c3                   	ret

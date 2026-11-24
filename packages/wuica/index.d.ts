@@ -29,7 +29,9 @@ export type Syntax = 'auto' | 'intel' | 'att';
 export type LoopChoice = 'auto' | 'whole' | number | string;
 /** The named loop choices ('auto', 'whole'); a number is a loop's index (0-based), any other string its label. */
 export declare const LOOP_CHOICES: readonly ['auto', 'whole'];
-/** A loop of assembly text (listLoops; the CLI's -loops). */
+/** A loop of the text that was not analyzed (analyze's `otherLoops`): listLoops' entry without `auto`. */
+export type OtherLoop = Omit<LoopListing, 'auto'>;
+/** A loop of assembly text (listLoops; the CLI's -loops; the MCP tool list_loops). */
 export interface LoopListing {
   /** Its index for `loop` (0-based): the deepest loops first, then in code order. */
   index: number;
@@ -105,7 +107,8 @@ export type CodeRequest =
 export type AnalyzeRequest = CodeRequest & { options?: AnalysisOptions };
 
 /** Body of POST /api/compare. */
-export type CompareRequest = CodeRequest & { archs?: string[]; options?: AnalysisOptions };
+/** `per`: elements per iteration (also cycles per element: `elementsPerIteration` and each row's `perElement`). */
+export type CompareRequest = CodeRequest & { archs?: string[]; options?: AnalysisOptions; per?: number };
 
 /** Result codes, like an exit status. */
 export declare const CODES: Readonly<{ OK: 0; REQUEST: 1; ASSEMBLER: 2; ANALYSIS: 3 }>;
@@ -141,6 +144,14 @@ export interface Row {
   notes: string;
   /** values[i] belongs to columns[i]; averages per iteration. */
   values: number[];
+  /** Assembly input: the instruction's 1-based line in the text, and its `.loc` source line ("file.c:12") when the text has .file/.loc directives. Absent for machine code. */
+  line?: number;
+  loc?: string;
+  /** objdump -S and perf annotate input: the interleaved source line in force ("s += a[i] * b[i];"). */
+  source?: string;
+  /** perf annotate input: the instruction's percent of all the samples of the output (each symbol's own percent weighted
+   * by its sample count). */
+  samples?: number;
 }
 
 /** A successful analysis: the response of docs/WASM-API.md plus code, hex and stderr. */
@@ -171,6 +182,8 @@ export interface AnalyzeResult {
   hex?: string;
   /** What of `source` was analyzed, when not the whole text as given (request.loop). */
   loop?: LoopInfo;
+  /** The loops of the text that were not analyzed, when it has more than one (listLoops without `auto`). */
+  otherLoops?: OtherLoop[];
   /** The syntax `source` was read in (detected unless the request said). */
   syntax?: 'intel' | 'att';
   /** Assembler warnings, notes (exits taken as not taken), and the decode warning. */
@@ -192,9 +205,15 @@ export interface AnalyzeSummary {
   decodeErrors: number;
   hex?: string;
   loop?: LoopInfo;
+  /** The loops of the text that were not analyzed, when it has more than one (listLoops without `auto`). */
+  otherLoops?: OtherLoop[];
   stderr: StderrLine[];
   instructions: Array<{
     instr: string;
+    line?: number;
+    loc?: string;
+    source?: string;
+    samples?: number;
     bytes?: string;
     kind?: 'regMerge' | 'stackSync';
     issued?: number;
@@ -228,9 +247,9 @@ export interface Insights {
   /** Cycles per iteration that no single limit explains. */
   unexplained?: number;
   /** The critical loop-carried dependency chain (index: into `instructions`). */
-  chain?: { index: number; instr: string; operand: string; latency: number; carried: boolean }[];
+  chain?: { index: number; instr: string; line?: number; loc?: string; operand: string; latency: number; carried: boolean }[];
   /** The instructions with the largest share of the binding resource, or of the largest limit (top 5). */
-  hot?: { resource: string; ports?: string[]; instructions: { index: number; instr: string; share: number }[] };
+  hot?: { resource: string; ports?: string[]; instructions: { index: number; instr: string; line?: number; loc?: string; share: number }[] };
   /** Known blind spots of the model the block meets (absent if none): rmw-index, paths, exit, split. */
   caveats?: Caveat[];
   /** With options.details: the ports behind the Ports limit (cycles = uops / ports) and the instructions that load them. */
@@ -264,7 +283,7 @@ export interface AssembleResult {
 }
 
 export type CompareRow =
-  | { arch: string; name: string; year: number | null; prototype: boolean; code: 0; tp: number; mode: 'loop' | 'unroll'; bottlenecks: string[]; limits: Limit[]; decodeErrors: number }
+  | { arch: string; name: string; year: number | null; prototype: boolean; code: 0; tp: number; mode: 'loop' | 'unroll'; bottlenecks: string[]; limits: Limit[]; decodeErrors: number; perElement?: number }
   | { arch: string; name: string; year: number | null; prototype: boolean; code: 1 | 2 | 3; error: string };
 
 export interface CompareResult {
@@ -272,9 +291,15 @@ export interface CompareResult {
   /** The assembled machine code, when `source` was given. */
   hex?: string;
   loop?: LoopInfo;
+  /** The loops of the text that were not analyzed, when it has more than one (listLoops without `auto`). */
+  otherLoops?: OtherLoop[];
+  /** With the request's `per`. */
+  elementsPerIteration?: number;
   stderr: StderrLine[];
   results: CompareRow[];
 }
+/** A compare() result with cycles per element (`per` elements per iteration); unchanged without `per`. */
+export function comparePerElement(result: CompareResult | Failure, per?: number): CompareResult | Failure;
 
 export interface Wuica {
   /** POST /api/analyze/<arch>. Failures resolve to a Failure (never throw for bad input). */
@@ -309,6 +334,12 @@ export interface Wuica {
   /** The derived diagnosis of a successful analyze() result with its microarchitecture's configuration (as in the REST
    * response and summarize()); null for a failure. */
   insights(result: AnalyzeResult | Failure): Insights | null;
+  /** The what-if experiments (the MCP tool what_if, POST /api/what-if/<arch>): analyze's request with `variants`
+   * (default all) and `per` (elements per iteration: also cycles per element). */
+  whatIf(arch: string, request: WhatIfRequest): Promise<WhatIfPerElement | Failure>;
+  /** Two blocks, A (before) and B (after), on one microarchitecture (wuica diff, the MCP tool diff_blocks,
+   * POST /api/diff/<arch>). A failure's error starts with "A: " or "B: ". */
+  diff(arch: string, request: DiffRequest): Promise<DiffResult | Failure>;
   /** The id for a user-supplied name (case-insensitive, "-" optional), DEFAULT_ARCH for empty input, or null. */
   resolveArch(arch?: string | null): string | null;
   /** How many times the analyzer was restarted after a trap. */
@@ -371,8 +402,11 @@ export interface Caveat {
   instructions: number[];
 }
 
-export type WhatIfVariant = 'unroll2' | 'unroll4' | 'unroll8' | 'acc2' | 'acc3' | 'acc4' | 'acc8' | 'simpleFrontEnd' | 'noMacroFusion' | 'noMicroFusion' | 'nochain';
+export type WhatIfVariant = 'unroll2' | 'unroll4' | 'unroll8' | 'acc2' | 'acc3' | 'acc4' | 'acc8' | 'simpleFrontEnd' | 'noMacroFusion' | 'noMicroFusion' | 'nochain' | 'align';
+/** The default variants (not align). */
 export const WHAT_IF_VARIANTS: readonly WhatIfVariant[];
+/** The variants that run only when asked for: align (64 analyses). */
+export const WHAT_IF_OPT_IN_VARIANTS: readonly WhatIfVariant[];
 export interface WhatIfResult {
   code: 0;
   arch: string;
@@ -381,16 +415,71 @@ export interface WhatIfResult {
   bottlenecks: string[];
   unit: 'cycles per original iteration';
   loop?: LoopInfo;
+  /** The base's decode errors and warnings (they hold for the variants too). */
+  decodeErrors?: number;
+  stderr?: StderrLine[];
   /** tp per original iteration, delta = tp − base tp, speedup = base tp / tp; estimate: no analysis (nochain);
    * renamed (accN): the chain's registers and the ones of the copies after the first. */
-  variants: { id: WhatIfVariant; label: string; tp?: number; delta?: number; speedup?: number | null; estimate?: boolean; bottlenecks?: string[]; renamed?: { from: string; to: string[] }[]; error?: string }[];
+  variants: { id: WhatIfVariant; label: string; tp?: number; delta?: number; speedup?: number | null; estimate?: boolean; bottlenecks?: string[]; renamed?: { from: string; to: string[] }[]; error?: string;
+    /** align: the 64 alignment offsets (tp: the median); best and worst: the first offset with the minimum, the maximum; offset: this block's. */
+    alignment?: { min: number; median: number; max: number; best: number; worst: number; spread: number; offset: number } }[];
   /** With accumulator variants: the best N (the smallest within 1% of the fastest; 1 = as it is) and its tp. */
   accumulators?: { best: number; tp: number };
+  /** From the API server: its time limit for the whole request ("deadline") ran out, or it was busy, after the base:
+   * the variants without a result have error "not run: <notRun>" (align: with how many offsets were analyzed). */
+  notRun?: string;
 }
 
 /** The CLI's `-json -whatif`: one WhatIfResult per CPU, keyed by its id, with one CPU as with several. With `-per N`,
  * each has elementsPerIteration (N) and perElement (tp / N), and each variant with a tp its perElement. */
-export type CliWhatIf = Record<string, (WhatIfResult & { elementsPerIteration?: number; perElement?: number; variants: (WhatIfResult['variants'][number] & { perElement?: number })[] }) | Failure>;
+export type CliWhatIf = Record<string, WhatIfPerElement | Failure>;
+/** A what-if result; with `per`, elementsPerIteration and perElement (tp / per), and each variant with a tp its perElement. */
+export type WhatIfPerElement = WhatIfResult & { elementsPerIteration?: number; perElement?: number; variants: (WhatIfResult['variants'][number] & { perElement?: number })[] };
+/** The request of Wuica.diff: two blocks (each as analyze's request), `options` for both (unless a block has its own),
+ * `per` elements per iteration (N for both, or [A, B]). */
+export interface DiffRequest { a: AnalyzeRequest; b: AnalyzeRequest; options?: AnalysisOptions; per?: number | [number, number] }
+/** One side of a DiffResult: as analyze gives it; perElement = tp / per (unrounded, as compare's and what-if's). */
+export interface DiffSide { tp: number; mode: 'loop' | 'unroll'; bottlenecks: string[]; decodeErrors: number; perElement?: number; loop?: LoopInfo; stderr?: StderrLine[] }
+/** The result of Wuica.diff. tp and limits as analyze gives them; delta (B − A, 0 when the same within 0.25 %) and
+ * speedup (A / B) rounded to two decimals; perElement's a, b and delta unrounded; uop changes rounded to two decimals.
+ * Both blocks must be analyzed the same way (both loops, or both unrolled): else a Failure "not comparable". */
+export interface DiffResult {
+  code: 0;
+  arch: string;
+  a: DiffSide;
+  b: DiffSide;
+  delta: number;
+  speedup: number | null;
+  verdict: 'better' | 'worse' | 'same';
+  perElement?: { a: number; b: number; delta: number; speedup: number | null; verdict: 'better' | 'worse' | 'same' };
+  /** The warnings of both sides (decode errors, assembler warnings), each starting with "A: " or "B: ". */
+  stderr?: StderrLine[];
+  bottlenecks: { a: string[]; b: string[]; gone: string[]; new: string[] };
+  limits: { name: string; a: number | null; b: number | null; delta: number | null }[];
+  /** uops per iteration of each execution port (both sides' ports; [] if they differ). */
+  ports: { port: string; a: number; b: number; delta: number }[];
+  /** The instructions aligned as a diff: changed (same instruction, other uops), modified (other operands), added (only
+   * in B), removed (only in A); `uops`: the change of the issued uops and of each port's, where not 0. */
+  instructions: { counts: Record<'same' | 'changed' | 'modified' | 'added' | 'removed', number>; changes: { status: 'changed' | 'modified' | 'added' | 'removed'; a: string | null; b: string | null; uops: Record<string, number> }[] };
+}
+/** Wuica.diff with any w that has analyze. */
+export function diffRequest(w: Pick<Wuica, 'analyze'>, arch: string, request: DiffRequest): Promise<DiffResult | Failure>;
+/** The two analyses and the result (for diffMarkdown), or the failure. */
+export function diffAnalyses(w: Pick<Wuica, 'analyze'>, arch: string, request: DiffRequest): Promise<{ result: DiffResult; a: AnalyzeResult; b: AnalyzeResult; per: [number, number] | null; sourceA: string | null; sourceB: string | null } | { failure: Failure }>;
+/** The result from two analyze() responses. */
+export function diffResult(a: AnalyzeResult, b: AnalyzeResult, options?: { per?: [number, number] | null; sourceA?: string | null; sourceB?: string | null }): DiffResult | Failure;
+/** Markdown of diffAnalyses' result (the page's A–B tables; markdown.compare), naming the microarchitecture (archTitle, else its id), with the warnings. */
+export function diffMarkdown(x: Awaited<ReturnType<typeof diffAnalyses>>, options?: { archTitle?: string }): string;
+/** The result as text (wuica diff; REST text/plain). */
+export function diffText(result: DiffResult | Failure): string;
+/** The request of Wuica.whatIf, the MCP tool what_if and POST /api/what-if/<arch>. */
+export type WhatIfRequest = AnalyzeRequest & { variants?: readonly WhatIfVariant[]; per?: number };
+/** whatIf with a request as the interfaces take it (`variants`, `per`), with w's analyze and assemble. */
+export function whatIfRequest(w: Pick<Wuica, 'analyze' | 'assemble'>, arch: string, request: WhatIfRequest): Promise<WhatIfPerElement | Failure>;
+/** A what-if result per element (`per` elements per iteration); unchanged without `per` or for a failure. */
+export function whatIfPerElement(result: WhatIfResult | Failure, per?: number): WhatIfPerElement | Failure;
+/** The what-if table as the CLI prints it (-whatif; REST text/plain). */
+export function whatIfText(result: WhatIfPerElement | Failure): string;
 /** The CLI's `-json` with one CPU: the analyze result with insights (caveats in insights.caveats), perElement (-per)
  * and whatIf (-whatif). */
 export type CliAnalyzeJson = AnalyzeResult & { insights?: Insights; perElement?: number; whatIf?: CliWhatIf };
@@ -430,6 +519,8 @@ export namespace markdown {
     options?: { per?: number }): string;
   /** The what-if table of one CPU (per element with elementsPerIteration). */
   function whatIf(result: (WhatIfResult & { elementsPerIteration?: number }) | (Failure & { arch?: string })): string;
+  /** whatIf's table, and the alignment line when the result has the variant align. */
+  function whatIfAlignment(result: (WhatIfResult & { elementsPerIteration?: number }) | (Failure & { arch?: string })): string;
   /** The loops of assembly text (listLoops). */
   function loops(list: LoopListing[]): string;
   /** A against B (as the page's A–B view): summary, bottlenecks, limits, the aligned instructions with B − A per column;

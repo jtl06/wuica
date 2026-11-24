@@ -15,6 +15,7 @@
 // workers this takes both: a request that comes in while a compare runs waits for one part (on aethia, for the SHA-256
 // showcase, up to ~90 ms). splitCompare: false (WUICA_SPLIT_COMPARE=0) turns it off.
 
+import { whatIfRequest, diffAnalyses } from 'wuica';
 import { BusyError, timeoutFailure } from './pool.js';
 
 export const STATUS = Symbol('httpStatus');
@@ -129,6 +130,15 @@ export class Facade {
     return failed ?? { ...out[0], results: out.flatMap((r) => r.results) };
   }
 
+  // The most jobs a compare of these microarchitectures (default all) can run at once: its lanes when it is split (with
+  // every worker idle), else 1. (The rate limit's cost of a compare: at least one token per lane.)
+  compareLanes(archs) {
+    const n = Array.isArray(archs) && archs.length ? archs.length : this.#local.archs().length;
+    const size = this.#pool.size;
+    if (!this.#cfg.splitCompare || n <= PART_ARCHS || size < 2) return 1;
+    return Math.min(Math.max(2, Math.ceil(size / 2)), size, Math.ceil(n / PART_ARCHS));
+  }
+
   // The parts of a compare and the number of lanes for them (see the top), or null for one job.
   #split(request) {
     if (request === null || typeof request !== 'object' || Array.isArray(request)) return null;
@@ -143,6 +153,88 @@ export class Facade {
     return { parts, lanes: Math.min(lanes, parts.length) };
   }
 
+  // A request that runs several analysis jobs (what-if, diff): the library's interface for them with one deadline for
+  // all (the budget of one job, as a compare's parts share it); nothing more is started once it has passed, a job
+  // refused (busy) or the client has gone (ctx.gone): every later job gets that failure (the deadline's with notRun
+  // "deadline": what-if marks the variants without a result with it). ctx gets the totals: queueMs,
+  // runMs, jobs, and the instructions and bytes of the first job. stopped(): that failure or null; done(): the jobs
+  // that finished.
+  #session(ctx, what) {
+    const deadline = performance.now() + this.#cfg.timeoutMs;
+    /** @type {any} */
+    let stop = null;
+    let done = 0;
+    const timeUp = () => {
+      ctx.timedOut = true;
+      return { ...timeoutFailure(this.#cfg.timeoutMs), error: `the ${what} took longer than ${this.#cfg.timeoutMs / 1000} s, the limit of this server for all its analyses`, notRun: 'deadline' };
+    };
+    ctx.queueMs = 0; ctx.runMs = 0; ctx.jobs = 0;
+    const job = async (check, op, args) => {
+      if (stop) return stop;
+      if (ctx.gone) return (stop = refuse(499, 'the client closed the connection'));
+      const bad = check();
+      if (bad) return bad;
+      const left = deadline - performance.now();
+      if (left <= 0) return (stop = timeUp());
+      /** @type {Record<string, any>} */
+      const c = {};
+      const r = await this.#run(op, args, c, { timeoutMs: left });
+      ctx.jobs++;
+      ctx.queueMs += c.queueMs ?? 0;
+      ctx.runMs += c.runMs ?? 0;
+      for (const k of ['instructions', 'bytes']) if (ctx[k] === undefined && c[k] !== undefined) ctx[k] = c[k];
+      if (c.timedOut) return (stop = timeUp());
+      if (c.busy) { ctx.busy = true; return (stop = r); }
+      done++;
+      return r;
+    };
+    const w = {
+      resolveArch: (a) => this.resolveArch(a),
+      analyze: (arch, req) => { ctx.arch ??= this.resolveArch(arch) ?? String(arch).slice(0, 40); return job(() => this.#check(req), 'analyze', { arch, req }); },
+      assemble: (source, syntax = 'intel') => job(() => this.#check({ source }), 'assemble', { source, syntax }),
+    };
+    return { w, stopped: () => stop, done: () => done };
+  }
+
+  // The what-if experiments (the package's whatIfRequest, as the MCP tool what_if): each variant one analysis job, all
+  // within one deadline (#session). The deadline after the base: what finished, the other variants "not run: deadline"
+  // (notRun on the result); before it: the failure. A busy server or a client that has gone: that failure.
+  async whatIf(arch, request, ctx = {}) {
+    const { w, stopped } = this.#session(ctx, 'what-if');
+    const r = /** @type {any} */ (await whatIfRequest(w, arch, request));
+    const stop = stopped();
+    if (stop && !stop.notRun) return stop;
+    if (r.code && r.notRun) delete r.notRun;
+    return r;
+  }
+
+  // Two blocks (the package's diffAnalyses, as the MCP tool diff_blocks): {result, a, b} or {failure}. The sizes and
+  // options of both blocks are checked before either is analyzed; both analyses within one deadline.
+  async diff(arch, request, ctx = {}) {
+    if (request !== null && typeof request === 'object') {
+      // the options both blocks share: the request's (no block named), then each block's size and own options
+      const shared = request.options !== null && typeof request.options === 'object' ? this.#check({ options: request.options }) : null;
+      if (shared) return { failure: shared };
+      for (const k of ['a', 'b']) {
+        const x = request[k];
+        if (x === null || typeof x !== 'object') continue;
+        const bad = this.#check(x);
+        if (bad) { bad.error = `${k.toUpperCase()}: ${bad.error}`; bad.stderr = [{ text: bad.error }]; return { failure: bad }; }
+      }
+    }
+    const { w, stopped, done } = this.#session(ctx, 'diff');
+    const x = await diffAnalyses(w, arch, request);
+    const stop = stopped();
+    if (!stop) return x;
+    // a diff needs both blocks: a deadline is a failure, which says how far it got
+    const { notRun, ...failure } = stop;
+    if (notRun === 'deadline') {
+      failure.error = `${stop.error}: ${done() ? 'A was analyzed, B was not' : 'neither block was analyzed'}`;
+      failure.stderr = [{ text: failure.error }];
+    }
+    return { failure };
+  }
+
   async assemble(source, syntax = 'intel', ctx = {}) {
     return this.#check({ source }) ?? this.#run('assemble', { source, syntax }, ctx);
   }
@@ -153,9 +245,11 @@ export class Facade {
       archs: (fields) => { ctx.tool ??= 'list_archs'; return this.archs(fields); },
       summarize: (r) => this.summarize(r),
       resolveArch: (a) => this.resolveArch(a),
-      analyze: (arch, request) => { ctx.tool = 'analyze'; return this.analyze(arch, request, ctx).then((r) => { ctx.code = r.code; return r; }); },
-      compare: (request) => { ctx.tool = 'compare_archs'; return this.compare(request, ctx).then((r) => { ctx.code = r.code; return r; }); },
-      assemble: (source, syntax) => { ctx.tool = 'assemble'; return this.assemble(source, syntax, ctx).then((r) => { ctx.code = r.code; return r; }); },
+      analyze: (arch, request) => { ctx.tool ??= 'analyze'; return this.analyze(arch, request, ctx).then((r) => { ctx.code = r.code; return r; }); },
+      compare: (request) => { ctx.tool ??= 'compare_archs'; return this.compare(request, ctx).then((r) => { ctx.code = r.code; return r; }); },
+      whatIf: (arch, request) => { ctx.tool ??= 'what_if'; return this.whatIf(arch, request, ctx).then((r) => { ctx.code = r.code; return r; }); },
+      diff: (arch, request) => { ctx.tool ??= 'diff_blocks'; return this.diff(arch, request, ctx).then((/** @type {any} */ x) => { const r = x.failure ?? x.result; ctx.code = r.code; return r; }); },
+      assemble: (source, syntax) => { ctx.tool ??= 'assemble'; return this.assemble(source, syntax, ctx).then((r) => { ctx.code = r.code; return r; }); },
     };
   }
 }

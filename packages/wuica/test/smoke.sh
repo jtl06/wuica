@@ -36,7 +36,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 const c = new Client({ name: 'smoke', version: '0' });
 await c.connect(new StdioClientTransport({ command: process.argv[2], args: [] }));
 const tools = (await c.listTools()).tools.map((t) => t.name).sort().join(',');
-if (tools !== 'analyze,assemble,compare_archs,list_archs,what_if') throw new Error(`tools: ${tools}`);
+if (tools !== 'analyze,assemble,compare_archs,diff_blocks,list_archs,list_loops,what_if') throw new Error(`tools: ${tools}`);
 const r = await c.callTool({ name: 'analyze', arguments: { source: 'add rax, rbx', arch: 'ICL', format: 'json' } });
 if (JSON.parse(r.content[0].text).tp !== 1) throw new Error(r.content[0].text);
 const w = await c.callTool({ name: 'what_if', arguments: { source: 'loop:\n vaddps ymm0, ymm0, ymm1\n dec rcx\n jnz loop\n', arch: 'SKL' } });
