@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createWuica, normalizeHex } from '../lib/index.js';
+import { tmpDir } from './tmpdir.mjs';
 
 const DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -523,7 +524,7 @@ test('summarize', async () => {
 });
 
 test('a dataDir with plain binary tables works; JSON tables are an error that says how to convert them', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-data-'));
+  const dir = tmpDir('wuica-data-');
   fs.mkdirSync(path.join(dir, 'arch'));
   fs.copyFileSync(path.join(ROOT, 'data/uarch.json'), path.join(dir, 'uarch.json'));
   fs.writeFileSync(path.join(dir, 'arch/SKL.bin'), zlib.brotliDecompressSync(fs.readFileSync(path.join(DIR, 'dist/data/arch/SKL.bin.br'))));

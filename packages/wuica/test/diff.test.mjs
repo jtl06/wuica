@@ -9,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createWuica, findExample, diffAnalyses, diffMarkdown, diffText } from '../lib/index.js';
 import { mcpTools, callTool } from '../lib/mcp.js';
+import { tmpDir } from './tmpdir.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.resolve(HERE, '../bin/wuica.js');
@@ -121,7 +122,7 @@ test('the MCP tool compare_archs with per', async () => {
 });
 
 test('wuica diff A B: text, -json, -md (golden), exit codes', () => {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'wuica-diff-'));
+  const dir = tmpDir('wuica-diff-');
   fs.writeFileSync(path.join(dir, 'dot1.s'), DOT1);
   fs.writeFileSync(path.join(dir, 'dot4.s'), DOT4);
   const run = (...args) => spawnSync(process.execPath, [BIN, 'diff', ...args], { cwd: dir, encoding: 'utf8' });

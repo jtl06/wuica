@@ -10,6 +10,7 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { createWuica } from '../lib/index.js';
 import { isBinaryTable } from '../lib/wasm.js';
+import { tmpDir } from './tmpdir.mjs';
 
 const DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT = path.resolve(DIR, '../..');
@@ -21,7 +22,7 @@ test('the shipped tables are binary', () => {
 });
 
 test('a binary table of another format version: a clear error', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-tables-'));
+  const dir = tmpDir('wuica-tables-');
   fs.mkdirSync(path.join(dir, 'arch'));
   fs.copyFileSync(path.join(ROOT, 'data/uarch.json'), path.join(dir, 'uarch.json'));
   const b = new Uint8Array(zlib.brotliDecompressSync(fs.readFileSync(path.join(DIR, 'dist/data/arch/SKL.bin.br'))));

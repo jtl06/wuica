@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createWuica } from '../lib/index.js';
 import { ThreadPool, threadLimit, threadOption, threadsForWork, workMs, WORK, maxMemoryBytes } from '../lib/threads.js';
+import { tmpDir } from './tmpdir.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const HEX = '4801d84801c349ffcf75f5';
@@ -44,7 +45,7 @@ test('threads: the same response as one after another', async () => {
 });
 
 test('threads: a table that cannot be loaded', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-threads-'));
+  const dir = tmpDir('wuica-threads-');
   fs.mkdirSync(path.join(dir, 'arch'));
   fs.copyFileSync(path.join(ROOT, 'data/uarch.json'), path.join(dir, 'uarch.json'));
   for (const t of ['SKL', 'ICL']) fs.copyFileSync(path.join(ROOT, 'packages/wuica/dist/data/arch', `${t}.bin.br`), path.join(dir, 'arch', `${t}.bin.br`));

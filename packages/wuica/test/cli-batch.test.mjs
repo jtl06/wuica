@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createWuica } from '../lib/index.js';
+import { tmpDir } from './tmpdir.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.resolve(HERE, '../bin/wuica.js');
@@ -73,7 +74,7 @@ test('several CPUs: a row per file and CPU; -TPonly: tab-separated lines; -repor
 });
 
 test('-files LIST and -files -: the names from a file or stdin, with the arguments', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-files-'));
+  const dir = tmpDir('wuica-files-');
   const list = path.join(dir, 'list.txt');
   fs.writeFileSync(list, `# kernels\n${path.join(FX, 'divmod.hsw.s')}\n\n${path.join(FX, 'hist.hsw.s')}\n`);
   assert.equal(run(['dot.hsw.s', '-files', list, '-TPonly']).out, `dot.hsw.s\t32.00\n${path.join(FX, 'divmod.hsw.s')}\t22.00\n${path.join(FX, 'hist.hsw.s')}\t11.95\n`);

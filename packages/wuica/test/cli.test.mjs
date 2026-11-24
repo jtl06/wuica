@@ -5,11 +5,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpDir } from './tmpdir.mjs';
 
 const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../bin/wuica.js');
 const HEX = '4801d84801c349ffcf75f5';
 const ASM = 'top:\n  add rax, rbx\n  add rbx, rax\n  dec r15\n  jnz top\n';
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-cli-'));
+const tmp = tmpDir('wuica-cli-');
 const asmFile = path.join(tmp, 'block.s');
 fs.writeFileSync(asmFile, ASM);
 const hexFile = path.join(tmp, 'block.hex');

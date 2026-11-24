@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, binaryFormat, inductionSteps } from '../lib/cli.js';
 import { detectSyntax } from '../lib/web/loop-find.js';
+import { tmpDir } from './tmpdir.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.resolve(HERE, '../bin/wuica.js');
@@ -125,7 +126,7 @@ test('7. flags: --version, --long spellings, =values, case-insensitive; -trace w
   assert.equal(run([fx('dot.hsw.s'), '-TPONLY', '--ARCH', 'skl']).out, '32.00\n');
   assert.deepEqual(parseArgs(['--json', '--loop=.LBB0_12', '-per=8']).loop, '.LBB0_12');
   assert.match(run([fx('dot.hsw.s'), '-trace', '-TPonly']).err, /-trace: shown only with -json/);
-  const typo = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-')), 'typo.s');
+  const typo = path.join(tmpDir('wuica-'), 'typo.s');
   fs.writeFileSync(typo, '.L1:\n  frob rax\n  jnz .L1\n');
   assert.match(run([typo]).err, new RegExp(`^${typo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:2:3: error: invalid instruction mnemonic 'frob'`, 'm'));
   assert.match(run(['--help'], '', MCP_BIN).out, /^Usage: wuica-mcp/);
