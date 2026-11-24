@@ -26,7 +26,8 @@ export function createInsight(env) {
   let results = new Map();      // unit -> summary, for job.key
   let doneKey = null, forcedKey = null, waitingKey = null, runs = 0;
   let table = null;             // the decorated table (its rows: table.vr)
-  let chainRows = null;         // row -> {text, title} of the chain's marks
+  let chainRows = null;         // row -> {text, title} of the chain's marks (the title made when the row is drawn)
+  let chainOf = null;           // the chain (chainInfo) of chainRows
   let costCol = null;           // the cost column: {cells: costCells(...) or null}
   let paintFrame = 0;
   let tools = null;             // the status/button element next to the toggle
@@ -54,14 +55,16 @@ export function createInsight(env) {
     if (info.steps.length > shown.length) parts.push(h('span', { class: 'hint', text: `… +${info.steps.length - shown.length} ` }));
     // (one line: its length is the Dependencies limit; the whole chain and its length are in the tooltip)
     const length = `${info.ratio.toFixed(2)} cycles/iteration${info.iterations > 1 ? ` (over ${info.iterations} iterations)` : ''}`;
-    return h('div', { class: 'row ins ins-chain-row', title: `${length}; → same iteration · ↻ next iteration\n\n${info.lines.join('\n')}` },
+    return h('div', { class: 'row ins ins-chain-row', title: `${length}; → same iteration · ↻ next iteration\n\n${info.text}` },
       h('div', { class: 'label', text: 'chain' }),
       h('div', { class: 'field' }, h('span', { class: 'ins-chain' }, parts)));
   }
 
   function markChain(t, r, info) {
     chainRows = new Map();
-    for (const [row, list] of info.onChain) chainRows.set(row, { text: `← ${[...new Set(list.map((m) => m.operand))].join(', ')}`, title: chainTitle(info, row) });
+    chainOf = info;
+    // (a title has every line of the chain: made for the rows drawn, not for each row of a chain of thousands)
+    for (const [row, list] of info.onChain) chainRows.set(row, { text: `← ${[...new Set(list.map((m) => m.operand))].join(', ')}`, title: null });
     if (t.vr) t.vr.data.chain = [...chainRows.keys()].sort((a, b) => a - b); // (keys.js: n and p)
   }
 
@@ -69,7 +72,13 @@ export function createInsight(env) {
   function paintRow(tr, k) {
     const ch = chainRows?.get(k), th = tr.cells[0];
     tr.classList.toggle('ins-on-chain', !!ch);
-    if (ch) { th.dataset.chain = ch.text; th.title = ch.title; } else if (th.dataset.chain !== undefined) { delete th.dataset.chain; th.removeAttribute('title'); }
+    if (ch) {
+      if (ch.title === null) {
+        ch.title = chainTitle(chainOf, k);
+        if (table?.vr) table.vr.data.chainTitles = (table.vr.data.chainTitles ?? 0) + 1; // (counted for tests-js/web_insight_browser.mjs)
+      }
+      th.dataset.chain = ch.text; th.title = ch.title;
+    } else if (th.dataset.chain !== undefined) { delete th.dataset.chain; th.removeAttribute('title'); }
     let td = tr.querySelector(':scope > td.ins-cost');
     if (!costCol) { td?.remove(); return; }
     if (!td) { td = h('td', { class: 'ins ins-cost' }); tr.insertBefore(td, tr.cells[2] ?? null); } // after the instruction and the notes

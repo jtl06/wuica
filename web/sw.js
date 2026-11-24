@@ -22,21 +22,25 @@ async function plain(res) {
 const relative = (url) => (url.origin === scope.origin && url.pathname.startsWith(scope.pathname) ? url.pathname.slice(scope.pathname.length) : null);
 
 self.addEventListener('install', (event) => {
-  event.waitUntil((async () => {
-    const cache = await caches.open(CACHE);
-    const res = await fetch('manifest.json', { cache: 'no-cache' });
-    if (!res.ok) throw new Error(`manifest.json: HTTP ${res.status}`);
-    const manifest = await res.clone().json();
-    if (manifest.version !== VERSION) throw new Error('manifest.json belongs to another build'); // mid-deploy: retry on the next visit
-    await cache.put('manifest.json', res);
-    await Promise.all(Object.keys(manifest.files).filter((p) => !LAZY.test(p)).map(async (path) => {
-      const r = await fetch(fetchPath(path), { cache: 'no-cache' });
-      if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
-      await cache.put(path, await plain(r));
-    }));
-    await self.skipWaiting();
-  })());
+  event.waitUntil(install().catch(async (e) => { await caches.delete(CACHE).catch(() => {}); throw e; })); // (a refused install leaves no cache)
 });
+async function install() {
+  const cache = await caches.open(CACHE);
+  const res = await fetch('manifest.json', { cache: 'no-cache' });
+  if (!res.ok) throw new Error(`manifest.json: HTTP ${res.status}`);
+  const manifest = await res.clone().json();
+  if (manifest.version !== VERSION) throw new Error('manifest.json belongs to another build'); // mid-deploy: retry on the next visit
+  await cache.put('manifest.json', res);
+  await Promise.all(Object.keys(manifest.files).filter((p) => !LAZY.test(p)).map(async (path) => {
+    const r = await fetch(fetchPath(path), { cache: 'no-cache' });
+    if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
+    // the page of this build (build.sh stamps it): a page of another one (a cache on the way still serving the last
+    // deploy's) would make every visit an old page with this build's files, its note never cleared by a reload
+    if (path === 'index.html' && !(await r.clone().text()).includes(`<meta name="wuica-build" content="${VERSION}">`)) throw new Error('index.html belongs to another build'); // retry on the next visit
+    await cache.put(path, await plain(r));
+  }));
+  await self.skipWaiting();
+}
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {

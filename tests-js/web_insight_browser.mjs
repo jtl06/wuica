@@ -17,7 +17,7 @@ import { findChrome } from './chrome.mjs';
 import { hostHandler } from './static-host.mjs';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES } from '../web/js/examples.js';
-import { stopChrome } from './cdp.mjs';
+import { stopChrome, testConditions } from './cdp.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.join(here, '..');
@@ -125,6 +125,7 @@ async function openPage({ width = 1280, height = 900, mobile = false } = {}) {
     fs.writeFileSync(path.join(shots, name), Buffer.from(data, 'base64'));
   };
   for (const d of ['Runtime', 'Log', 'Page']) await page.cmd(`${d}.enable`);
+  await testConditions((m, a) => page.cmd(m, a)); // (cdp.mjs: scratch runs under another font, real scroll bars, a slower CPU)
   await page.cmd('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile });
   return page;
 }
@@ -241,6 +242,23 @@ try {
     check(r.overflow <= 0 && r.top === 'rgb(152, 251, 152)' && r.bg === 'rgb(9, 10, 9)', 'phone, dark: no sideways scrolling; the largest saving in the heading colour', JSON.stringify(r));
     await page.shot('insight-phone-dark.png');
     check(page.problems.length === 0, 'no console errors (phone)', page.problems.join('\n'));
+    await page.cmd('Page.close');
+  }
+
+  // --- a chain of thousands of instructions: a title (with every line of the chain) is made only for the rows drawn ----------
+  // (each row's title of a long chain had all its lines: a paste of 8,000 lines took 2 s, of 20,000 minutes; a count, not a time)
+  {
+    const page = await openPage();
+    const N = 6000;
+    await page.goto(`${origin}/?nosw=1#v=1&c=${b64(Array.from({ length: N }, () => '48 83 c0 01').join('\n'))}`);
+    const r = await page.eval(`${HELPERS}
+      await until(() => document.querySelector('.tp .value') && document.querySelector('.ins-chain-row'), 120000); await wait(300);
+      const t = document.querySelector('table.uops'); const rows = instrRows();
+      const title = rows.find((tr) => tr.classList.contains('ins-on-chain'))?.cells[0].title ?? '';
+      return { made: t.vr.data.chainTitles ?? 0, drawn: rows.length, onChain: t.vr.data.chain?.length, lines: title.split('\\n').filter((l) => l.startsWith('rax ←')).length };`);
+    check(r.onChain === N && r.lines === N, 'a chain of 6,000 instructions: every row on it, a row\'s title with the whole chain', JSON.stringify(r));
+    check(r.made > 0 && r.made <= 200 && r.made <= r.drawn + 50, 'a chain of 6,000 instructions: titles made for the rows drawn only (at most 200), not for each row', JSON.stringify(r));
+    check(page.problems.length === 0, 'no console errors (a long chain)', page.problems.join('\n'));
     await page.cmd('Page.close');
   }
 

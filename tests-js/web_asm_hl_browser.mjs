@@ -35,7 +35,7 @@ const PRE = `${HELPERS}
     return { on: ta.parentElement.classList.contains('ed-on'), bad: bad.slice(0, 3), lines: V.length }; };`;
 
 const srv = await serve(copyDist());
-const { browser, close } = await launch(chrome);
+const { browser, close } = await launch(chrome, { scrollbars: true }); // (the BARS sheet's 15 px are real: probed below)
 const ONE = '#ffffff';
 const SHEETS = {
   box: `.ed > textarea { color: ${ONE} !important; caret-color: transparent !important; } .ed > .ed-hl { visibility: hidden !important; }`,
@@ -164,7 +164,8 @@ try {
   await p.eval(`${PRE} const ta = $('code'); ta.scrollTop = 300; ta.scrollLeft = 900; await frames(2); return 1;`);
   await aligned(p, 'long lines with tabs, scrolled sideways');
   await aligned(p, 'long lines, 15 px scroll bars', 'code', BARS);
-  r = await p.eval(`${PRE} sheet(${JSON.stringify(BARS)}); await frames(2); const ta = $('code'); ta.scrollTop = ta.scrollHeight; ta.scrollLeft = ta.scrollWidth; await frames(3); return { ...follows(ta), top: ta.scrollTop, left: ta.scrollLeft, hlTop: ta.parentElement.querySelector('.ed-hl').scrollTop, hlLeft: ta.parentElement.querySelector('.ed-hl').scrollLeft };`);
+  r = await p.eval(`${PRE} sheet(${JSON.stringify(BARS)}); await frames(2); const ta = $('code'); ta.scrollTop = ta.scrollHeight; ta.scrollLeft = ta.scrollWidth; await frames(3); return { ...follows(ta), top: ta.scrollTop, left: ta.scrollLeft, hlTop: ta.parentElement.querySelector('.ed-hl').scrollTop, hlLeft: ta.parentElement.querySelector('.ed-hl').scrollLeft, bar: [ta.offsetWidth - ta.clientWidth - 2, ta.offsetHeight - ta.clientHeight - 2] };`);
+  check(r.bar[0] === 15 && r.bar[1] === 15, 'the scroll bars take 15 px (the condition is real)', JSON.stringify(r.bar));
   check(r.bad.length === 0 && r.top === r.hlTop && r.left === r.hlLeft && r.left > 0, '15 px scroll bars, scrolled to the far corner: the layer scrolls as far as the box', JSON.stringify(r));
   await aligned(p, 'long lines, 15 px scroll bars, the far corner', 'code', BARS);
   await p.eval(`${PRE} sheet(''); return 1;`);

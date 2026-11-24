@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { findChrome } from './chrome.mjs';
 import { hostHandler } from './static-host.mjs';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
-import { FRAME_MS, stopChrome } from './cdp.mjs'; // (the bound of the "under a frame" check: looser on CI)
+import { FRAME_MS, stopChrome, testConditions } from './cdp.mjs'; // (the bound of the "under a frame" check: looser on CI)
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.join(here, '..');
@@ -117,6 +117,7 @@ async function openPage({ width = 1280, height = 900, mobile = false } = {}) {
     fs.writeFileSync(path.join(shots, name), Buffer.from(data, 'base64'));
   };
   for (const d of ['Runtime', 'Log', 'Page']) await page.cmd(`${d}.enable`);
+  await testConditions((m, a) => page.cmd(m, a)); // (cdp.mjs: scratch runs under another font, real scroll bars, a slower CPU)
   await page.cmd('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile });
   return page;
 }

@@ -31,7 +31,10 @@ export const LONG_TASK_MS = ON_CI ? 400 : 200;
 // Scratch runs of the browser suites under other conditions than this machine's (layout checks that depend on widths):
 //   WUICA_TEST_FONT=monospace     every text in that font instead of the page's own (as when it is not loaded; the checks
 //                                 of the font itself then accept it)
-//   WUICA_TEST_SCROLLBARS=1       scrollbars that take room, 15 px (Linux; macOS draws them over the page)
+//   WUICA_TEST_SCROLLBARS=1       scrollbars that take room, 15 px (Linux, Windows; macOS draws them over the page): Chrome
+//                                 then starts without --hide-scrollbars (scrollbarFlags), which would make them 0 px, and
+//                                 each page checks that a scroll bar takes 15 px (a console error if not: the condition
+//                                 cannot silently become no condition)
 //   WUICA_TEST_CPU_THROTTLE=N     the page's CPU N times slower (DevTools' throttling: a slow runner)
 // (a constructed style sheet: the page's CSP allows no inline style). cmd: the page's DevTools command function.
 export async function testConditions(cmd) {
@@ -41,8 +44,14 @@ export async function testConditions(cmd) {
   const rate = Number(process.env.WUICA_TEST_CPU_THROTTLE);
   if (rate > 1) await cmd('Emulation.setCPUThrottlingRate', { rate });
   if (!rules.length) return;
-  await cmd('Page.addScriptToEvaluateOnNewDocument', { source: `{ const s = new CSSStyleSheet(); s.replaceSync(${JSON.stringify(rules.join('\n'))}); document.adoptedStyleSheets = [...document.adoptedStyleSheets, s]; }` });
+  const probe = process.env.WUICA_TEST_SCROLLBARS ? `addEventListener('DOMContentLoaded', () => { if (location.protocol === 'about:') return;
+    const d = document.createElement('div'); d.style.cssText = 'position: absolute; top: 0; left: 0; width: 100px; height: 100px; overflow: scroll; visibility: hidden';
+    document.body.append(d); const w = d.offsetWidth - d.clientWidth; d.remove();
+    if (w !== 15) console.error('test conditions: a scroll bar takes ' + w + ' px, not 15 (WUICA_TEST_SCROLLBARS; Chrome with --hide-scrollbars?)'); });` : '';
+  await cmd('Page.addScriptToEvaluateOnNewDocument', { source: `{ const s = new CSSStyleSheet(); s.replaceSync(${JSON.stringify(rules.join('\n'))}); document.adoptedStyleSheets = [...document.adoptedStyleSheets, s]; ${probe} }` });
 }
+// Chrome's flag for scroll bars: --hide-scrollbars (0 px, the pages' look on macOS) unless WUICA_TEST_SCROLLBARS asks for real ones
+export const scrollbarFlags = () => (process.env.WUICA_TEST_SCROLLBARS ? [] : ['--hide-scrollbars']);
 
 export function findChrome(args = process.argv.slice(2)) {
   const i = args.indexOf('--chrome');
@@ -144,10 +153,11 @@ export async function stopChrome(proc, dirs = []) {
 }
 
 /** starts headless Chrome with a fresh profile: { browser, close() } */
-export async function launch(chrome, { extraArgs = [] } = {}) {
+// scrollbars: Chrome without --hide-scrollbars (which makes every scroll bar 0 px, a ::-webkit-scrollbar sheet too)
+export async function launch(chrome, { extraArgs = [], scrollbars = !!process.env.WUICA_TEST_SCROLLBARS } = {}) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-chrome-'));
   const proc = spawn(chrome, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run',
-    '--no-default-browser-check', '--disable-extensions', '--hide-scrollbars', ...extraArgs, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+    '--no-default-browser-check', '--disable-extensions', ...(scrollbars ? [] : ['--hide-scrollbars']), ...extraArgs, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
   const wsUrl = await new Promise((resolve, reject) => {
     let err = '';
     const t = setTimeout(() => reject(new Error('Chrome did not start: ' + err.slice(-500))), 30000);
