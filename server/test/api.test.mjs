@@ -157,6 +157,12 @@ test('POST /api/compare with per: cycles per element (one job or split into part
     assert.ok(r.json.results.every((x) => x.code !== 0 || x.perElement === x.tp / 4));
   }
   assert.equal((await post(s.base, '/api/compare', { hex: HEX, per: 0 })).status, 400);
+  // per in text and Markdown too
+  const body = { hex: HEX, archs: ['SKL'], per: 4 };
+  assert.match((await post(s.base, '/api/compare', body, { Accept: 'text/plain' })).text, /^SKL +Skylake +2015 +2\.00 +0\.50 +Dependencies$/m);
+  const md = await post(s.base, '/api/compare', body, { Accept: 'text/markdown' });
+  assert.equal(md.text, markdown.cpuTable(await w.compare(body), { per: 4 }));
+  assert.match(md.text, /\| per el \|/);
 });
 
 test('Accept: text/markdown: the package\'s Markdown for analyze and compare', async () => {

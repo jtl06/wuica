@@ -189,7 +189,7 @@ export function cpuTable(input, opts = {}) {
 // delta, speedup; the best number of accumulators.
 export function whatIf(x) {
   if (x?.code) return `**What if (${text(x.arch ?? '')}):** ${text(x.error)}\n`;
-  const per = x.elementsPerIteration > 1 ? x.elementsPerIteration : null;
+  const per = x.elementsPerIteration > 0 ? x.elementsPerIteration : null;
   const v = (n) => (per ? cycles(n / per) : f2(n));
   const rows = x.variants.map((y) => (y.error ? [text(y.label), '-', '', '', text(y.error)]
     : [text(y.label), `${y.estimate ? '>=' : ''}${v(y.tp)}`, `${y.delta > 0 ? '+' : ''}${v(y.delta)}`, `${f2(y.speedup ?? 0)}x`, y.estimate ? 'estimate' : '']));
@@ -283,7 +283,7 @@ export function whatIfAlignment(x) {
   const md = whatIf(x);
   const v = x?.variants?.find((y) => y.alignment);
   if (!v) return md;
-  const per = x.elementsPerIteration > 1 ? x.elementsPerIteration : null;
+  const per = x.elementsPerIteration > 0 ? x.elementsPerIteration : null;
   const c = (n) => (per ? cycles(n / per) : Number(n).toFixed(2));
   const a = v.alignment;
   return md + `\n**Alignment** over the 64 offsets${per ? ' (cycles per element)' : ''}: min ${c(a.min)} (offset ${a.best}), median ${c(a.median)}, max ${c(a.max)} (offset ${a.worst}), spread ${c(a.spread)}; this block at offset ${a.offset}\n`;

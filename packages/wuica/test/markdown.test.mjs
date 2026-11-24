@@ -118,6 +118,11 @@ test('loops: a text with two', () => {
   assert.equal(markdown.loops([]), 'no loops\n');
 });
 
+test('whatIf with per 1: per element (as the text form), not ignored', async () => {
+  const x = await whatIf(analyze, 'SKL', { source: ex('dot1') }, ['unroll2'], tools);
+  assert.match(markdown.whatIf({ ...x, elementsPerIteration: 1 }), /cycles per element \(1 per original iteration; base 16\.00\)/);
+});
+
 test('escaping: pipes and backticks in instruction text, cells padded by characters', () => {
   assert.equal(markdown.code('a|b'), '`a\\|b`');
   assert.equal(markdown.code('mov al, `'), '`` mov al, ` ``');

@@ -47,13 +47,16 @@ function compareText(c) {
   const fmt = (tp) => tp.toFixed(2);
   const kw = Math.max(4, ...c.results.map((r) => r.arch.length));
   const nw = Math.max(5, ...c.results.map((r) => r.name.length));
-  let out = `${'Arch'.padEnd(kw)}  ${'Model'.padEnd(nw)}  Year  ${'TP'.padStart(6)}  Bottlenecks\n`;
+  // with per (elementsPerIteration): cycles per element too, as the CLI prints it (three significant digits below 0.1)
+  const per = c.elementsPerIteration;
+  const fmtEl = (x) => (x !== 0 && Math.abs(x) < 0.1 ? Number(x).toPrecision(3) : fmt(x));
+  let out = `${'Arch'.padEnd(kw)}  ${'Model'.padEnd(nw)}  Year  ${'TP'.padStart(6)}${per ? `  ${'per el'.padStart(6)}` : ''}  Bottlenecks\n`;
   for (const r of c.results) {
     const year = String(r.year ?? '').padEnd(4);
     const rest = r.code ? `error: ${r.error.split('\n')[0]}` : `${r.bottlenecks.join(', ') || '-'}${r.prototype ? '  [prototype]' : ''}`;
-    out += `${r.arch.padEnd(kw)}  ${r.name.padEnd(nw)}  ${year}  ${(r.code ? '-' : fmt(r.tp)).padStart(6)}  ${rest}\n`;
+    out += `${r.arch.padEnd(kw)}  ${r.name.padEnd(nw)}  ${year}  ${(r.code ? '-' : fmt(r.tp)).padStart(6)}${per ? `  ${(r.code ? '-' : fmtEl(r.perElement)).padStart(6)}` : ''}  ${rest}\n`;
   }
-  return out + '\nTP: cycles per iteration. [prototype]: experimental model of the fork jtl06/uiCA.\n';
+  return out + `\nTP: cycles per iteration${per ? `; per el: cycles per element (${per} per iteration)` : ''}. [prototype]: experimental model of the fork jtl06/uiCA.\n`;
 }
 
 function flatText(obj, prefix = '') {
@@ -350,7 +353,7 @@ export async function createApp(options = {}) {
       rateLimit(req, ctx, cost(compareAnalyses(body?.archs)));
       const r = await facade.compare(body, ctx);
       ctx.code = r.code;
-      if (!wantText && wantsMarkdown(req)) return sendMarkdown(res, r, r.code ? markdown.report(r) : markdown.cpuTable(r));
+      if (!wantText && wantsMarkdown(req)) return sendMarkdown(res, r, r.code ? markdown.report(r) : markdown.cpuTable(r, { per: r.elementsPerIteration }));
       return sendResult(res, r, wantText, compareText);
     }
     if (p === '/api/assemble') {
