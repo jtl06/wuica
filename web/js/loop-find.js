@@ -237,6 +237,7 @@ export function fromPerfAnnotate(text) {
     return { perf: false, stdio2 };
   }
   const local = new Map(); // line -> [percent, the block's samples or null]
+  /** @type {number | null} */
   let blockSamples = null;
   const out = lines.map((l, k) => {
     const h = PERF_HEADER.exec(l);
