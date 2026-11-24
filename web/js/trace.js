@@ -652,7 +652,9 @@ export class Viewer {
     this.probe = el('span', { class: 'trace-probe', 'aria-hidden': 'true' });
     this.chart = el('div', { class: 'trace-chart' }, this.scroller, this.tip, this.probe);
     this.legend = this.controls?.pop ?? el('span', { hidden: true }); // (A–B: the panel's)
-    this.note = el('p', { class: 'trace-note hint' });
+    this.note = el('p', { class: 'trace-note hint' }); // one line: what is shown; the explanations in the legend's popover
+    this.about = el('p', { class: 'trace-about hint' });
+    this.controls?.pop.append(this.about);
     this.tableBox = el('div', { class: 'trace-tablebox', hidden: true });
     this.root = this.fixed
       ? el('div', { class: 'trace-viewer', 'data-tag': this.tag }, this.chart, this.tableBox, this.live) // A–B: the panel has the tools and the legend
@@ -740,7 +742,9 @@ export class Viewer {
     this.tip.hidden = true;
     const hiddenPorts = this.model.ports.length - this.ports.length;
     const { first, last, tp } = this.model.relevant;
-    this.note.textContent = `${this.rows.length} uops in cycles ${this.c0}–${this.c1}. Steady state (what the throughput is computed from): iterations ${first}–${last}`
+    const shownIts = [...new Set(Array.from(this.rows, (i) => this.model.uops[i].rnd))];
+    this.note.textContent = `${this.rows.length} uops · cycles ${this.c0}–${this.c1}` + (shownIts.length ? ` · iteration${shownIts.length === 1 ? '' : 's'} ${shownIts[0]}${shownIts.length > 1 ? `–${shownIts.at(-1)}` : ''}` : '');
+    this.about.textContent = `Steady state (what the throughput is computed from): iterations ${first}–${last}`
       + (tp !== null ? `, ${tp} cycles per iteration` : '') + '.' + (hiddenPorts ? ` ${hiddenPorts} port${hiddenPorts === 1 ? '' : 's'} without uops not shown.` : '');
     if (!keepScale) { this.state.scale = null; this.state.fit = true; this.state.scrollLeft = 0; this.state.scrollTop = 0; }
     this.setMode(this.state.mode === 'table' ? 'table' : 'chart'); // (re)renders the table or lays out the chart

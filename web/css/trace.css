@@ -27,6 +27,8 @@
 }
 .trace-legend-pop .trace-legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 0.2rem 2ch; }
 .trace-same { margin: 0; }
+.trace-legend-pop .trace-about { margin-top: 0.4rem; max-width: 34rem; }
+.trace-note { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .trace-chart { position: relative; min-width: 0; }
 .trace-scroll {

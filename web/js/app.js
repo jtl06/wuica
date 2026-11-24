@@ -24,6 +24,7 @@ import { createViews } from './views.js';         // the opt-in views below the 
 import { createABSlots } from './ab-slots.js';     // A–B: the issue slots of both sides
 import { createCmpSlots } from './cmp-slots.js';   // the issue slots per CPU in the CPU table (bound view open)
 import { withRegions } from './asm-regions.js';     // marked regions and .loc lines of pasted assembly
+import { createShipped } from './asm-shipped.js';    // the examples' machine code: their results before the assembler loads
 import { createRegionChip, createLoopChip } from './region-chip.js';
 import { replacesText, detectSyntax } from './loop-find.js';
 import { createKeys } from './keys.js';           // keyboard shortcuts, the ? overlay
@@ -80,6 +81,7 @@ let lastFragment = null;
 const tables = new Map(); // table name -> promise of "loaded into the engine"
 const tableData = new Map(); // table name -> promise of its bytes (the main engine and the pool's workers share them)
 let assemblerPromise = null;
+let assemblerLoaded = false; // the assembler is there (or known missing): no more answers from the examples' machine code
 let assemblerMissing = false; // true: this build has no assembler (final); a failed load of an existing one is not
 let assemblerError = '';
 let assembling = null;  // AbortController of the assembly of the current run: a newer run or an edit stops it
@@ -531,6 +533,13 @@ function setMode(mode, converted = null) { // converted: the code in the new for
 
 function ensureAssembler() {
   assemblerPromise ??= (async () => withRegions(await (async () => {
+    try { return await loadAssembler(); } finally { assemblerLoaded = !!assemblerPromise || assemblerMissing; }
+  })()))();
+  return assemblerPromise;
+}
+// (the module, or null; a failure to load an existing one is not final: assemblerPromise is cleared to try again)
+async function loadAssembler() {
+  return await (async () => {
     if (manifest.assembler !== false) { // false: build.sh found no module, so do not even ask for it
       try {
         const bytes = await download('assembler', PATHS.assembler);
@@ -554,9 +563,20 @@ function ensureAssembler() {
     }
     assemblerMissing = true;
     return null;
-  })()))();
-  return assemblerPromise;
+  })();
 }
+
+// The first visit does not wait for the assembler (wuica_asm.wasm, about 940 kB as served): a built-in example's text
+// is answered with its machine code (asm-shipped.js; the same result as assembling it), and the assembler is fetched
+// in the background once the first result is shown, or at once when the visit starts with other code in the link, or
+// when an editor is first focused, edited or pasted into. Code that is not an example waits for it (the status shows
+// its download).
+const shipped = createShipped([...EXAMPLES, ...CLASSIC_EXAMPLES, ...SHOWCASE_EXAMPLES]);
+async function shippedCode(text, syntax, loop) {
+  if (assemblerLoaded || MOCK) return null;
+  return shipped(text, syntax, loop);
+}
+function assemblerSoon() { if (!assemblerPromise && !assemblerLoaded && (state.mode === 'asm' || ab?.active())) ensureAssembler(); }
 
 // The assembler for side B of a run: its jobs stop with the run (as side A's in machineCode()).
 async function assemblerForRun() {
@@ -757,22 +777,27 @@ async function machineCode(id) {
     showMessages([{ line: null, column: null, severity: 'error', message: 'No code' }]);
     return null;
   }
-  const assembler = await ensureAssembler();
+  let r = await shippedCode(text, state.syntax, state.loop);
   if (id !== runSeq) return null;
-  if (!assembler) { showAssemblerMissing(); paintDerived(); return null; }
-  let r;
-  try {
-    r = await assembler.assemble(text, state.syntax, { signal: assembling?.signal, loop: state.loop });
-    // a loop picked for another text that has fewer loops: the first one again
-    if (!r.ok && state.loop !== 'auto' && id === runSeq && r.diagnostics.some((d) => /^loop: /.test(d.message))) {
-      state.loop = 'auto';
+  let mock = false;
+  if (!r) {
+    const assembler = await ensureAssembler();
+    if (id !== runSeq) return null;
+    if (!assembler) { showAssemblerMissing(); paintDerived(); return null; }
+    mock = !!assembler.mock;
+    try {
       r = await assembler.assemble(text, state.syntax, { signal: assembling?.signal, loop: state.loop });
+      // a loop picked for another text that has fewer loops: the first one again
+      if (!r.ok && state.loop !== 'auto' && id === runSeq && r.diagnostics.some((d) => /^loop: /.test(d.message))) {
+        state.loop = 'auto';
+        r = await assembler.assemble(text, state.syntax, { signal: assembling?.signal, loop: state.loop });
+      }
+    } catch (e) {
+      if (e?.name === 'CancelledError') return null; // replaced by a newer run, an edit, or Cancel
+      throw e;
     }
-  } catch (e) {
-    if (e?.name === 'CancelledError') return null; // replaced by a newer run, an edit, or Cancel
-    throw e;
+    if (id !== runSeq) return null;
   }
-  if (id !== runSeq) return null;
   // the alignment offset from the analyzed code's address (objdump), for each pick; none for a text without addresses
   // (not one left from the last text); an offset set by hand, in a link or by an import stays
   if (r.ok && alignBy !== 'manual') {
@@ -785,7 +810,7 @@ async function machineCode(id) {
   // what it assembled to is the result's objdump listing
   const items = [...r.diagnostics];
   if (r.ok && r.bytes.length === 0) items.push({ line: null, column: null, severity: 'error', message: 'No machine code' });
-  if (r.ok && r.bytes.length && assembler.mock) items.push({ line: null, column: null, severity: 'note', message: 'mock assembler' });
+  if (r.ok && r.bytes.length && mock) items.push({ line: null, column: null, severity: 'note', message: 'mock assembler' });
   if (items.length) showMessages(items); else clearMessages();
   if (r.ok && r.bytes.length) { regionChip.show(r.region ?? null, text); loopChip.show(r, text); pastedSource = r.source ? { ...r.source, hex: toHex(r.bytes) } : null; srcA = analyzedLines(text, r); }
   else if (r.choosable) loopChip.show(r, text); // the pick does not assemble: "whole" (or another loop) stays reachable
@@ -1395,8 +1420,12 @@ async function start() {
   manifest = await fetchManifest();
   el.buildId.textContent = manifest.version;
   registerServiceWorker();
-  // the assembler loads while the analyzer does: the first result in asm mode needs both
-  if (state.mode === 'asm') ensureAssembler();
+  // other code in the link: the assembler loads while the analyzer does (the first result needs both); a built-in
+  // example's needs only the analyzer, and the assembler follows it (assemblerSoon, below)
+  const own = state.mode === 'asm' && !(await shippedCode(el.code.value, state.syntax, state.loop));
+  if (state.mode === 'asm' && (own || ab?.active())) ensureAssembler();
+  for (const box of [el.code, $('code-b')].filter(Boolean)) for (const ev of ['focus', 'input', 'paste']) box.addEventListener(ev, assemblerSoon);
+  whenShown(assemblerSoon);
 
   try {
     const wasmBytes = MOCK ? null : download('analyzer', PATHS.wasm);
@@ -1434,7 +1463,7 @@ async function start() {
 
   ready = true;
   setIdle('ready');
-  if (state.mode === 'asm') {
+  if (state.mode === 'asm' && assemblerPromise) {
     const a = await ensureAssembler();
     if (!a) showAssemblerMissing();
   }
@@ -1445,6 +1474,13 @@ async function start() {
     renderEmpty(el.body);
     if (!hadState && !touched) autoFirst(); // a fresh visit: the default example
   }
+}
+
+// cb, once the first result is on the page (then the assembler loads without delaying it)
+function whenShown(cb) {
+  if (el.results.dataset.run) { cb(); return; }
+  const o = new MutationObserver(() => { if (el.results.dataset.run) { o.disconnect(); requestAnimationFrame(() => setTimeout(cb, 0)); } });
+  o.observe(el.results, { attributes: true, attributeFilter: ['data-run'] });
 }
 
 // A fresh visit (no state in the link, nothing typed): the default example is analyzed once, after the next frame

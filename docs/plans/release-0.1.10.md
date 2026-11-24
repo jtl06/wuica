@@ -16,6 +16,7 @@ claims a gain: keep it only if the number holds, and results stay bit-identical 
 | The README's stale wording about the package and its dependencies | 0.1.8 |
 | What the WebAssembly modules contain; serving the precompressed files; the name section; module preloading | Audit in progress (its own branch) |
 | The two ZEN3 errors, with the reviewers' dispatch and FP-steering hypotheses as things to measure | Model round 10 in progress |
+| The default first visit without the assembler (payload item 2 below) | After 0.1.9 (`web/js/asm-shipped.js`; 10 Mbit/s: 2,314 -> 1,531 ms to the first result, `docs/PORTING.md`) |
 
 ## Planned, in this order
 

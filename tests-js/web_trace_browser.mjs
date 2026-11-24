@@ -166,6 +166,8 @@ try {
       await wait(200);
       const v = viewer();
       out.note = document.querySelector('.trace-note').textContent;
+      out.noteLines = Math.round(document.querySelector('.trace-note').getBoundingClientRect().height / parseFloat(getComputedStyle(document.querySelector('.trace-note')).lineHeight));
+      out.about = document.querySelector('.trace-legend-pop .trace-about')?.textContent ?? '';
       out.range = document.querySelector('.trace-tools select').value;
       out.rows = v.rows.length; out.span = [v.c0, v.c1];
       out.rowRounds = [...new Set(Array.from(v.rows, (i) => v.model.uops[i].rnd))];
@@ -199,7 +201,8 @@ try {
       return out;`);
     check(r.tp === '32.00', 'the 50-instruction loop is analyzed', r.tp);
     check(r.closed && r.label === 'trace' && r.inResult && r.wide, 'the trace panel is in the result, closed, and nothing is loaded until it is opened; open, it is the pane\'s width', JSON.stringify([r.closed, r.label, r.inResult, r.wide]));
-    check(r.range === 'steady' && r.rowRounds.length === 3 && r.rowRounds[0] === r.relevant.first && /uops in cycles/.test(r.note), 'it opens on three steady-state iterations', JSON.stringify([r.range, r.rowRounds, r.relevant, r.note]));
+    check(r.range === 'steady' && r.rowRounds.length === 3 && r.rowRounds[0] === r.relevant.first && r.note === `${r.rows} uops · cycles ${r.span[0]}–${r.span[1]} · iterations ${r.rowRounds[0]}–${r.rowRounds.at(-1)}`, 'it opens on three steady-state iterations', JSON.stringify([r.range, r.rowRounds, r.relevant, r.note]));
+    check(r.noteLines === 1 && new RegExp(`^Steady state \\(what the throughput is computed from\\): iterations ${r.relevant.first}–${r.relevant.last}`).test(r.about), 'the caption is one line; what the steady state is, in the legend\'s popover', JSON.stringify([r.note, r.noteLines, r.about]));
     check(r.canvas[0] > 600 && r.canvas[1] > 200 && r.colours >= 5, 'the timeline is drawn', JSON.stringify([r.canvas, r.colours]));
     check(r.legend.length === 11 && r.legend.some((t) => /^7\s*iteration/.test(t)) && r.legend.some((t) => /shortened/.test(t)) && r.legend.some((t) => /ports busy/.test(t)), 'the legend: everything drawn (the iteration numbers, the shortened waits, the compact strip)', JSON.stringify(r.legend));
     check(r.pop.join() === 'true,false,true,false,true,true,true,true', 'the legend is a popover from "?" by the zoom; it opens and Escape closes it (the focus back on "?")', JSON.stringify(r.pop));

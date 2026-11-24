@@ -25,7 +25,7 @@ simulated as if unrolled; the ZEN3, ADL-P and ICX models are the fork's prototyp
 | Fixture cases identical to the reference | 17,081 simulation cases (+3,419 in an optional set), 12,046 instruction-builder cases, 3,948 decoder cases | Last local `scripts/check.sh full` logs (section 7.6) |
 | Time per analysis (WebAssembly, warm) | 0.52 ms (BHive block), 0.63 ms (random loop), 36 ms (2,949-instruction SHA-256 block) | Commit `623a117` message, measurement machine (Ryzen 7 7735U), Node 22; before model rounds 6–9 |
 | Analyzer module | 4.31 MB raw, 630 kB brotli q11 (package), 867 kB as the live site serves it | Section 7.1 |
-| First visit in assembly mode (analyzer, assembler, SKL table, page shell) | 2.19 MB as the live site serves it; the same files weigh 1.64 MB at brotli q11 (+34 % served) | Section 7.1 |
+| First visit in assembly mode (analyzer, assembler, SKL table, page shell) | 2.19 MB as the live site serves it; the same files weigh 1.64 MB at brotli q11 (+34 % served). After 0.1.9 the default first visit does not wait for the assembler: 1.14 MB before the first result (local host, brotli q2) | Section 7.1; `docs/PORTING.md`, "Size of the modules" |
 | Accuracy of the prototypes, held out, within 10 % | ZEN3 84.4 % / 87.7 %, ADL-P 90.9 % / 92.6 %, ICX 85.8 % / 89.7 % (random loops / BHive blocks) | `docs/ACCURACY.md`, "Round 9" |
 | Python reference, same work | 40–55 ms per analysis plus interpreter start | `README.md`, "Status" |
 
@@ -135,6 +135,11 @@ The reference commit whose model and data are shipped is recorded once, in `ci/d
   into `sw.js`. The service worker precaches everything except the tables, the assembler, llvm-mca and the showcase's
   assembly, serves cache-first, and fetches and caches lazy files on use; a new deploy is a new cache. After the first result
   the page prefetches all tables and the assembler when idle, unless Save-Data is set (`web/js/app.js`, `prefetchTables`).
+- A built-in example's assembly is answered from its machine code until the assembler has loaded (`web/js/asm-shipped.js`;
+  the same result as assembling it, `tests-js/web_asm_shipped.mjs`), so a fresh visit's first result needs only the
+  analyzer and one table. The assembler is fetched after that result, at once when a link holds other assembly, or on the
+  first focus, edit or paste of an editor; anything else that needs it (other code, A–B, what-if variants, a Compiler
+  Explorer import, converting other code between assembly and hex) waits for it, with its download in the status line.
   `tests-js/web_host_browser.mjs` checks this against a host emulation (`tests-js/static-host.mjs`) that redirects like the
   real host (Cloudflare static assets).
 - All page state (input text as base64url, mode, CPUs, options, open views, A–B side B) is in the URL fragment
@@ -337,7 +342,9 @@ Check this table before suggesting an optimization. "Identical results" means ru
 - Thread count chosen by the workload, and one compiled module shared across worker threads.
 - The shipped JSON tables replaced by a build-time binary form (JSON stays the export format).
 - Object files as CLI input.
-- A redesigned trace view and a layout without pane scrolling.
+- A redesigned trace view (a compact port strip, long waits for operands shortened to their length, A and B's differences
+  marked, the legend behind "?") and a fixed-frame layout: from 1200 × 700 the window does not scroll, only its sections
+  (editors, table rows, trace rows, a view's content).
 - A model round on the two known ZEN3 errors (section 10.1).
 - An audit of what the WebAssembly modules contain.
 
@@ -361,7 +368,7 @@ Check this table before suggesting an optimization. "Identical results" means ru
 ### 10.2 Payload and start-up
 
 - The page needs about 2.2 MB (served) before its first result in assembly mode, over 80 % of it the analyzer and the
-  assembler. The live host compresses on the fly at a lower ratio than the package's precompressed brotli q11: 867 kB vs
+  assembler (a fresh visit's built-in example no longer waits for the assembler: section 4.6). The live host compresses on the fly at a lower ratio than the package's precompressed brotli q11: 867 kB vs
   630 kB for the analyzer, 942 kB vs 688 kB for the assembler, 1.28 MB vs 0.68 MB for the tables (section 7.1).
 - XED's decoder accounts for 54 % of the analyzer's code bytes; the 1.13 MB data section is unattributed.
 - The JSON tables are parsed with `serde_json` on every load (2–15 ms each, 80 ms for all); the 0.1.9 binary form targets this.

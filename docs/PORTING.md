@@ -182,6 +182,13 @@ Measured on 0.1.8 (sizes in bytes; brotli with the command-line tool, window 24 
 - The default example without the assembler (a visit with the same example as machine code, the proxy for shipping the
   example's bytes): 1,171,367 instead of 2,153,091 bytes before the first result, 10 Mbit/s: 2,553 -> 1,728 ms, 4 Mbit/s:
   5,503 -> 3,685 ms.
+- Done after 0.1.9 (`web/js/asm-shipped.js`; `app.js` loads the assembler after the first result, at once for a link with
+  other code, or on the first focus, edit or paste of an editor). `tools/first-result.mjs` (the method above: brotli -q 2 for
+  everything, a new browser context per visit, median of 10), before -> after: unthrottled 121 -> 109 ms; 10 Mbit/s, 40 ms:
+  2,314 -> 1,531 ms; 4 Mbit/s, 80 ms: 5,320 -> 3,366 ms; on the wire before the first result 2,116,897 -> 1,136,985 bytes
+  (throttled runs; the assembler is not requested before it in any run). The built-in examples whose machine code is what
+  their text assembles to are answered this way (25 of 27 texts; `avx` has the corpus's encoding of `add r10, rcx`, not the
+  assembler's): `tests-js/web_asm_shipped.mjs` checks both ways, the same result and the same analysis.
 
 ## The reference
 
