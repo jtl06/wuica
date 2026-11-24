@@ -179,7 +179,7 @@ export function createWhatIf(env) {
       const o = outcome(base, x, results.get(x.id));
       const cells = !o ? [h('td', { class: 'wi-tp hint', text: '…' }), h('td'), h('td')]
         : o.error ? [h('td', { class: 'wi-tp hint', title: o.error, text: '—' }), h('td'), h('td')]
-          : [h('td', { class: 'wi-tp', text: `${o.estimate ? '≥' : ''}${f2(o.tp)}` }),
+          : [h('td', { class: 'wi-tp', title: o.approx ? `simulated ${f2(o.approx.simulated)}, under its ${o.approx.limit} limit (a short steady state): shown at the limit` : null, text: `${o.estimate ? '≥' : o.approx ? '≈' : ''}${f2(o.tp)}` }),
             h('td', { class: `wi-d ${o.delta < -0.005 ? 'neg' : o.delta > 0.005 ? 'pos' : ''}`, text: formatDelta(o.delta) }),
             h('td', { class: `wi-x ${o.speedup > 1.005 ? 'neg' : o.speedup < 0.995 ? 'pos' : ''}`, text: `${o.estimate ? '≤' : ''}${formatSpeedup(o.speedup)}` })];
       const isBest = done && best && best.n > 1 && x.id === `acc${best.n}`;
@@ -207,7 +207,7 @@ export function createWhatIf(env) {
       const o = outcome(base, x, results.get(x.id));
       if (!o) return { id: x.id, label: x.label, error: 'not computed yet' };
       if (o.error) return { id: x.id, label: x.label, error: o.error };
-      return { id: x.id, label: x.label, tp: o.tp, delta: o.delta, speedup: Number.isFinite(o.speedup) ? o.speedup : null, ...(o.estimate ? { estimate: true } : {}) };
+      return { id: x.id, label: x.label, tp: o.tp, delta: o.delta, speedup: Number.isFinite(o.speedup) ? o.speedup : null, ...(o.estimate ? { estimate: true } : {}), ...(o.approx ? { approx: o.approx } : {}) };
     });
     const done = exps.filter((x) => /^acc\d+$/.test(x.id) && !x.error).every((x) => results.has(x.id));
     const best = done && exps.some((x) => /^acc\d+$/.test(x.id)) ? bestOf(base.tp, exps, results) : null;

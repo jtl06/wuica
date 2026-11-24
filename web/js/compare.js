@@ -18,6 +18,8 @@ export function summarize(response) {
     tp,
     bottlenecks: Array.isArray(response.bottlenecks) ? response.bottlenecks.map(String) : [],
     mode: response.mode,
+    // (the limits, for what-if: a variant is not shown under its Ports or Issue limit, whatif-core.js hardLimit)
+    limits: Array.isArray(response.limits) ? response.limits.map((l) => ({ name: String(l.name), tp: Number(l.tp) })) : [],
     decodeErrors: Number(response.decodeErrors) || 0, // positions this CPU's decoder skipped (e.g. AVX2 on SNB)
     mock: !!response.mock,
   };

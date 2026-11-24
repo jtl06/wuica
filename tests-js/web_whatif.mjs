@@ -7,7 +7,8 @@ import { instrRanges, unrollHex, experiments, outcome, formatDelta, formatSpeedu
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES } from '../web/js/examples.js';
 import { encodeState, decodeState } from '../web/js/url-state.js';
-import { toolOutcome } from '../web/js/whatif-core.js';
+import { toolOutcome, bestOf, whatIfText } from '../web/js/whatif-core.js';
+import { whatIf as whatIfMarkdown } from '../web/js/markdown.js';
 import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
@@ -53,6 +54,24 @@ const OPTS = { alignmentOffset: 0, initPolicy: 'diff', simpleFrontEnd: false, no
   check(outcome(base, exps[1], undefined) === null && outcome(base, exps[1], { error: 'x' }).error === 'x', 'outcome: pending and error');
   check(/not comparable/.test(outcome(base, exps[3], { tp: 1, mode: 'unroll' }).error), 'outcome: another mode is not comparable');
   check(outcome(base, nc, undefined).tp === 1 && outcome(base, nc).estimate, 'outcome: the estimate needs no result');
+  // under the variant's own Ports or Issue limit (a short steady state: 8 accumulators of the SKL dot product, 63.75 cycles
+  // per 8 original iterations with Ports 64, 64.00 with minCycles 20000): at the limit, marked, the simulated number kept
+  {
+    const acc8 = { id: 'acc8', label: '8 accumulators', per: 8, hex: '90', options: OPTS };
+    const lim = (ports, deps = 4) => [{ name: 'Issue', tp: ports * 0.75 }, { name: 'Ports', tp: ports }, { name: 'Dependencies', tp: deps * 8 }];
+    const b = { tp: 32, mode: 'loop' };
+    const under = outcome(b, acc8, { tp: 63.75, mode: 'loop', limits: lim(64) });
+    check(under.tp === 8 && under.approx?.limit === 'Ports' && under.approx.simulated === 63.75 / 8 && under.delta === -24 && under.speedup === 4, 'outcome: under its own Ports limit: at the limit, approximate', JSON.stringify(under));
+    check(!outcome(b, acc8, { tp: 64, mode: 'loop', limits: lim(64) }).approx && outcome(b, acc8, { tp: 66, mode: 'loop', limits: lim(64) }).tp === 8.25, 'outcome: at or over the limit: as simulated');
+    check(outcome(b, acc8, { tp: 63.75, mode: 'loop', limits: lim(60, 9) }).tp === 63.75 / 8, 'outcome: the chain\'s limit is not a floor (a simulation can be under it)');
+    const t = toolOutcome({ ...b, code: 0 }, acc8, { code: 0, tp: 63.75, mode: 'loop', bottlenecks: ['Ports'], limits: lim(64) });
+    check(t.tp === 8 && t.delta === -24 && t.speedup === 4 && t.approx?.limit === 'Ports' && t.approx.simulated === 7.97, 'toolOutcome (the package): the same', JSON.stringify(t));
+    const best = bestOf(32, [{ id: 'acc4', per: 4 }, acc8], new Map([['acc4', { tp: 32, limits: lim(32) }], ['acc8', { tp: 63.75, limits: lim(64) }]]));
+    check(best?.n === 4, 'best number of accumulators: from the numbers shown (8 is not faster than 4)', JSON.stringify(best));
+    const x = { code: 0, arch: 'SKL', tp: 32, variants: [{ id: 'acc8', label: '8 accumulators', ...t }] };
+    check(/\| 8 accumulators \| +≈8\.00 \| +-24\.00 \| +4\.00x \| at its Ports limit \(simulated 7\.97\) \|/.test(whatIfMarkdown(x)), 'Markdown: ≈ and the simulated number', whatIfMarkdown(x));
+    check(/8 accumulators +~8\.00 +-24\.00 +4\.00x  at its Ports limit \(simulated 7\.97\)/.test(whatIfText(x)), 'text: ~ and the simulated number', whatIfText(x));
+  }
   check(formatDelta(-1) === '−1.00' && formatDelta(0.001) === '0.00' && formatDelta(0.5) === '+0.50' && formatSpeedup(2) === '×2.00', 'formatting');
   check(weight(exps[1], 13) === (u2.hex.length / 2 + 2 * 8) / 13 && weight(nc, 13) === 0, 'weight: relative size of the analysis');
   // the link of a variant: a hex fragment the page reads back

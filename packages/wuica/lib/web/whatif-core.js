@@ -90,8 +90,33 @@ export function experiments(response, hex, options) {
   return out;
 }
 
-// One result line of the page: {tp (per original iteration), delta, speedup, comparable} from a summary ({tp, mode} or
-// {error}).
+// The limits a simulation cannot beat in its steady state: port pressure and the issue width (uiCA's Ports and Issue
+// limits). A variant's analysis measures its steady state over the iterations the simulation runs (fewer for an unrolled
+// copy), and can come out a little under them: 8 accumulators on a dot product on SKL gave 63.75 cycles per 8 original
+// iterations under its Ports limit of 64 (64.00 with minCycles 20000). Such a variant is shown at the limit, marked as
+// approximate (≈), with the simulated number kept (simulated). Not the loop-carried chain's limit: a simulation can be
+// under it.
+const HARD_LIMITS = ['Ports', 'Issue'];
+/** @param {any} limits @returns {{name: string, tp: number} | null} the largest of them */
+export function hardLimit(limits) {
+  /** @type {{name: string, tp: number} | null} */
+  let best = null;
+  for (const l of Array.isArray(limits) ? limits : []) {
+    const tp = Number(l?.tp);
+    if (HARD_LIMITS.includes(l?.name) && Number.isFinite(tp) && (!best || tp > best.tp)) best = { name: l.name, tp };
+  }
+  return best;
+}
+// a variant's cycles per original iteration (r: its analysis, with limits): {tp, approx?: {limit, simulated}}
+function perOriginal(r, per) {
+  const tp = Number(r.tp) / per, hard = hardLimit(r.limits);
+  if (!hard || !(tp < hard.tp / per - 0.005)) return { tp };
+  return { tp: hard.tp / per, approx: { limit: hard.name, simulated: tp } };
+}
+
+// One result line of the page: {tp (per original iteration), delta, speedup, comparable, approx?} from a summary ({tp,
+// mode, limits} or {error}).
+/** @returns {any} */
 export function outcome(base, exp, r) {
   if (exp.error) return { error: exp.error };
   if (exp.estimate !== undefined) {
@@ -101,8 +126,8 @@ export function outcome(base, exp, r) {
   if (!r) return null;
   if (r.error) return { error: r.error };
   if (r.mode && base.mode && r.mode !== base.mode) return { error: `analyzed ${r.mode === 'loop' ? 'as a loop' : 'unrolled'}: not comparable` };
-  const tp = r.tp / exp.per;
-  return { tp, delta: tp - base.tp, speedup: tp > 0 ? base.tp / tp : Infinity };
+  const { tp, approx } = perOriginal(r, exp.per);
+  return { tp, delta: tp - base.tp, speedup: tp > 0 ? base.tp / tp : Infinity, ...(approx ? { approx } : {}) };
 }
 
 // The size of an experiment relative to the block (the time of its analysis grows about linearly).
@@ -115,7 +140,7 @@ export function bestOf(baseTp, exps, results) {
   for (const x of exps) {
     if (!/^acc\d+$/.test(x.id)) continue;
     const r = results.get(x.id);
-    if (r && !r.error && Number.isFinite(r.tp)) tps.set(x.per, r.tp / x.per);
+    if (r && !r.error && Number.isFinite(r.tp)) tps.set(x.per, perOriginal(r, x.per).tp);
   }
   return tps.size > 1 ? bestAccumulators(tps) : null;
 }
@@ -146,7 +171,11 @@ export function toolOutcome(base, exp, r) {
     return { ...row, error: exp.per > 1 && exp.hex ? `the block unrolled ×${exp.per} (${exp.hex.length} hex characters) could not be analyzed: ${error}` : error };
   }
   else if (r.mode !== base.mode) return { ...row, error: `analyzed ${r.mode === 'loop' ? 'as a loop' : 'unrolled'}: not comparable` };
-  else { tp = r.tp / exp.per; row.bottlenecks = r.bottlenecks; }
+  else {
+    const p = perOriginal(r, exp.per);
+    tp = p.tp; row.bottlenecks = r.bottlenecks;
+    if (p.approx) row.approx = { limit: p.approx.limit, simulated: round(p.approx.simulated) };
+  }
   return { ...row, tp: round(tp), delta: round(tp - base.tp), speedup: tp > 0 ? round(base.tp / tp) : null };
 }
 
@@ -262,7 +291,7 @@ export function whatIfText(x) {
   const per = x.elementsPerIteration;
   const f = per ? (v) => fmtEl(v / per) : fmt2;
   const rows = x.variants.map((v) => (v.error ? `  ${v.label.padEnd(VARIANT_W)} ${'-'.padStart(8)}  ${v.error}`
-    : `  ${v.label.padEnd(VARIANT_W)} ${`${v.estimate ? '>=' : ''}${f(v.tp)}`.padStart(8)} ${`${v.delta > 0 ? '+' : ''}${f(v.delta)}`.padStart(8)} ${`${fmt2(v.speedup ?? 0)}x`.padStart(7)}`));
+    : `  ${v.label.padEnd(VARIANT_W)} ${`${v.estimate ? '>=' : v.approx ? '~' : ''}${f(v.tp)}`.padStart(8)} ${`${v.delta > 0 ? '+' : ''}${f(v.delta)}`.padStart(8)} ${`${fmt2(v.speedup ?? 0)}x`.padStart(7)}${v.approx ? `  at its ${v.approx.limit} limit (simulated ${per ? Number(v.approx.simulated / per).toPrecision(3) : fmt2(v.approx.simulated)})` : ''}`));
   return [per ? `What if (${x.arch}), cycles per element (${per} per original iteration; base ${fmtEl(x.tp / per)}):` : `What if (${x.arch}), cycles per original iteration (base ${fmt2(x.tp)}):`,
     `  ${'variant'.padEnd(VARIANT_W)} ${'cycles'.padStart(8)} ${'delta'.padStart(8)} ${'speedup'.padStart(7)}`, ...rows,
     ...(x.accumulators ? [`  best number of accumulators: ${x.accumulators.best}${x.accumulators.best === 1 ? ' (as it is)' : ''}`] : []),

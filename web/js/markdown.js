@@ -192,7 +192,8 @@ export function whatIf(x) {
   const per = x.elementsPerIteration > 0 ? x.elementsPerIteration : null;
   const v = (n) => (per ? cycles(n / per) : f2(n));
   const rows = x.variants.map((y) => (y.error ? [text(y.label), '-', '', '', text(y.error)]
-    : [text(y.label), `${y.estimate ? '>=' : ''}${v(y.tp)}`, `${y.delta > 0 ? '+' : ''}${v(y.delta)}`, `${f2(y.speedup ?? 0)}x`, y.estimate ? 'estimate' : '']));
+    : [text(y.label), `${y.estimate ? '>=' : y.approx ? '≈' : ''}${v(y.tp)}`, `${y.delta > 0 ? '+' : ''}${v(y.delta)}`, `${f2(y.speedup ?? 0)}x`,
+      y.estimate ? 'estimate' : y.approx ? `at its ${text(y.approx.limit)} limit (simulated ${per ? Number(y.approx.simulated / per).toPrecision(3) : f2(y.approx.simulated)})` : '']));
   const head = `**What if (${text(x.arch)})**, ${per ? `cycles per element (${per} per original iteration; base ${cycles(x.tp / per)})` : `cycles per original iteration (base ${f2(x.tp)})`}`;
   const best = x.accumulators ? `best number of accumulators: ${x.accumulators.best}${x.accumulators.best === 1 ? ' (as it is)' : ''}` : null;
   return join([head, table(['Variant', 'Cycles', 'Δ', 'Speedup', 'Note'], rows, ['l', 'r', 'r', 'r', 'l']), best]);
