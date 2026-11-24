@@ -14,11 +14,10 @@
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use wuica::{Engine, Request};
 
-fn request(case: &Value) -> Result<Request, String> {
+fn request(case: &Value, trace: bool) -> Result<Request, String> {
     let o = &case["options"];
     let mut r = Request::new(case["arch"].as_str().ok_or("no arch")?);
     r.hex = case["hex"].as_str().ok_or("no hex")?.to_string();
@@ -29,7 +28,7 @@ fn request(case: &Value) -> Result<Request, String> {
     r.no_macro_fusion = o["noMacroFusion"].as_bool().unwrap_or(false);
     r.min_iterations = o["minIterations"].as_i64().unwrap_or(10);
     r.min_cycles = o["minCycles"].as_i64().unwrap_or(500);
-    r.include_trace = case.get("json").is_some();
+    r.include_trace = trace;
     Ok(r)
 }
 
@@ -48,18 +47,140 @@ fn first_text_difference(a: &str, b: &str) -> String {
 /// The verdict for one input line.
 pub fn verdict(engine: &Engine, line: &str) -> Value {
     let t0 = std::time::Instant::now();
-    let mut v = verdict_of(engine, line);
+    let mut v = verdict_of(engine, line, true);
     v["ms"] = json!((t0.elapsed().as_secs_f64() * 1e4).round() / 10.0);
     v
 }
 
-fn verdict_of(engine: &Engine, line: &str) -> Value {
-    let case: Value = match serde_json::from_str(line) {
-        Ok(v) => v,
-        Err(e) => return json!({"verdict": "bad-input", "detail": e.to_string()}),
+/// A value as Python's `json.dumps(value, sort_keys=True)` writes it (what the reference's `-json` output is), for comparing a
+/// trace with the reference's text before parsing it (a trace can have tens of MB).
+fn python_json(v: &Value, out: &mut String) {
+    use std::fmt::Write;
+    match v {
+        Value::Null => out.push_str("null"),
+        Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        Value::Number(n) if n.is_i64() || n.is_u64() => write!(out, "{n}").unwrap(),
+        Value::Number(n) => python_float(n.as_f64().unwrap(), out),
+        Value::String(s) => {
+            out.push('"');
+            for c in s.chars() {
+                match c {
+                    '"' => out.push_str("\\\""),
+                    '\\' => out.push_str("\\\\"),
+                    '\n' => out.push_str("\\n"),
+                    '\r' => out.push_str("\\r"),
+                    '\t' => out.push_str("\\t"),
+                    '\u{8}' => out.push_str("\\b"),
+                    '\u{c}' => out.push_str("\\f"),
+                    c if (c as u32) < 0x20 || (c as u32) > 0x7f => {
+                        let mut buf = [0u16; 2];
+                        for u in c.encode_utf16(&mut buf) {
+                            write!(out, "\\u{:04x}", u).unwrap();
+                        }
+                    }
+                    c => out.push(c),
+                }
+            }
+            out.push('"');
+        }
+        Value::Array(a) => {
+            out.push('[');
+            for (i, x) in a.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                python_json(x, out);
+            }
+            out.push(']');
+        }
+        Value::Object(o) => {
+            let mut keys: Vec<&String> = o.keys().collect();
+            keys.sort();
+            out.push('{');
+            for (i, k) in keys.into_iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                python_json(&Value::String(k.clone()), out);
+                out.push_str(": ");
+                python_json(&o[k], out);
+            }
+            out.push('}');
+        }
+    }
+}
+
+/// `repr(float)` of Python.
+fn python_float(f: f64, out: &mut String) {
+    if f.is_nan() {
+        return out.push_str("NaN");
+    }
+    if f.is_infinite() {
+        return out.push_str(if f > 0.0 { "Infinity" } else { "-Infinity" });
+    }
+    if f == 0.0 {
+        return out.push_str(if f.is_sign_negative() { "-0.0" } else { "0.0" });
+    }
+    let e = format!("{:e}", f.abs()); // shortest digits, e.g. 1.5e-7
+    let (mantissa, exp) = e.split_once('e').unwrap();
+    let exp: i32 = exp.parse().unwrap();
+    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    if f < 0.0 {
+        out.push('-');
+    }
+    if (-4..16).contains(&exp) {
+        if exp >= 0 {
+            let int_len = exp as usize + 1;
+            if digits.len() <= int_len {
+                out.push_str(&digits);
+                out.push_str(&"0".repeat(int_len - digits.len()));
+                out.push_str(".0");
+            } else {
+                out.push_str(&digits[..int_len]);
+                out.push('.');
+                out.push_str(&digits[int_len..]);
+            }
+        } else {
+            out.push_str("0.");
+            out.push_str(&"0".repeat((-exp - 1) as usize));
+            out.push_str(&digits);
+        }
+    } else {
+        out.push_str(&digits[..1]);
+        if digits.len() > 1 {
+            out.push('.');
+            out.push_str(&digits[1..]);
+        }
+        out.push_str(&format!("e{}{:02}", if exp < 0 { '-' } else { '+' }, exp.abs()));
+    }
+}
+
+fn verdict_of(engine: &Engine, line: &str, split: bool) -> Value {
+    // The reference's -json output is the last field of the fuzzer's lines (a string value cannot contain this sequence: its
+    // quotes would be escaped), and is kept as text; otherwise it is taken from the parsed line.
+    let line = line.trim_end();
+    let mut parsed_trace = None;
+    let (case, raw_trace): (Value, Option<&str>) = match line.find(", \"json\": ").filter(|_| split && line.ends_with('}')) {
+        Some(k) => match serde_json::from_str::<Value>(&format!("{}}}", &line[..k])) {
+            // a line with the -json output has a result
+            Ok(v) if v.get("TP").is_some() && v.get("error").is_none() => (v, Some(&line[k + 10..line.len() - 1])),
+            _ => return verdict_of(engine, line, false),
+        },
+        None => match serde_json::from_str::<Value>(line) {
+            Ok(mut v) => {
+                parsed_trace = v.as_object_mut().and_then(|o| o.remove("json")).map(|t| {
+                    let mut text = String::new();
+                    python_json(&t, &mut text);
+                    text
+                });
+                (v, None)
+            }
+            Err(e) => return json!({"verdict": "bad-input", "detail": e.to_string()}),
+        },
     };
+    let raw_trace = raw_trace.or(parsed_trace.as_deref());
     let file = case["file"].clone();
-    let req = match request(&case) {
+    let req = match request(&case, raw_trace.is_some()) {
         Ok(r) => r,
         Err(e) => return json!({"file": file, "verdict": "bad-input", "detail": e}),
     };
@@ -98,12 +219,23 @@ fn verdict_of(engine: &Engine, line: &str) -> Value {
     if r.text_with_hyperlinks != stdout {
         return differs("stdout", first_text_difference(stdout, &r.text_with_hyperlinks));
     }
-    if let Some(expected) = case.get("json") {
+    if let Some(raw) = raw_trace {
         match &r.trace {
             None => return differs("json", "wuica has no trace".to_string()),
             Some(trace) => {
-                if let Some(d) = wuica_core::jsoncmp::diff(expected, trace) {
-                    return differs("json", d);
+                let mut text = String::with_capacity(raw.len() + 16);
+                python_json(trace, &mut text);
+                if text != raw {
+                    // not the same text: compare the values (numbers by value, key order ignored)
+                    let expected: Value = match serde_json::from_str(raw) {
+                        Ok(v) => v,
+                        // the field was not the last one after all
+                        Err(_) if split => return verdict_of(engine, line, false),
+                        Err(e) => return json!({"file": file, "verdict": "bad-input", "detail": e.to_string()}),
+                    };
+                    if let Some(d) = wuica_core::jsoncmp::diff(&expected, trace) {
+                        return differs("json", d);
+                    }
                 }
             }
         }
@@ -126,24 +258,54 @@ pub fn run(engine: &Engine, path: &str) -> Result<(), String> {
         }
         return Ok(());
     }
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
-    let results: Vec<Mutex<Option<Value>>> = lines.iter().map(|_| Mutex::new(None)).collect();
-    let next = AtomicUsize::new(0);
+    // the lines are read as the threads need them: a file of cases with traces can have GBs
+    let file = std::fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
     let threads = std::env::var("WUICA_THREADS").ok().and_then(|s| s.parse().ok())
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |n| n.get()));
+    let (tx, rx) = std::sync::mpsc::sync_channel::<(usize, String)>(threads);
+    let rx = Mutex::new(rx);
+    let results: Mutex<Vec<(usize, Value)>> = Mutex::new(Vec::new());
+    let read_error: Mutex<Option<String>> = Mutex::new(None);
     std::thread::scope(|s| {
+        s.spawn(|| {
+            let mut reader = std::io::BufReader::new(file);
+            let mut i = 0;
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) if line.trim().is_empty() => continue,
+                    Ok(_) => {
+                        if tx.send((i, line)).is_err() {
+                            break;
+                        }
+                        i += 1;
+                    }
+                    Err(e) => {
+                        *read_error.lock().unwrap() = Some(e.to_string());
+                        break;
+                    }
+                }
+            }
+            drop(tx);
+        });
         for _ in 0..threads {
             s.spawn(|| loop {
-                let i = next.fetch_add(1, Ordering::Relaxed);
-                let Some(line) = lines.get(i) else { break };
-                *results[i].lock().unwrap() = Some(verdict(engine, line));
+                let next = rx.lock().unwrap().recv();
+                let Ok((i, line)) = next else { break };
+                let v = verdict(engine, &line);
+                results.lock().unwrap().push((i, v));
             });
         }
     });
+    if let Some(e) = read_error.into_inner().unwrap() {
+        return Err(format!("{path}: {e}"));
+    }
+    let mut results = results.into_inner().unwrap();
+    results.sort_by_key(|r| r.0);
     let mut out = std::io::BufWriter::new(std::io::stdout().lock());
-    for r in results {
-        writeln!(out, "{}", r.into_inner().unwrap().unwrap()).map_err(|e| e.to_string())?;
+    for (_, v) in results {
+        writeln!(out, "{v}").map_err(|e| e.to_string())?;
     }
     out.flush().map_err(|e| e.to_string())
 }
