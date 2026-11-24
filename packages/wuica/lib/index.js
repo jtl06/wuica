@@ -336,7 +336,7 @@ class Wuica {
     const r = await assembleMarked(assemble, text, { loop: loopChoice(loop), func });
     if (trap) return failure(CODES.ASSEMBLER, trap, undefined, { trapped: true });
     if (!r.ok) {
-      const bad = r.diagnostics.find((d) => /^(?:loop|func): /.test(d.message));
+      const bad = r.diagnostics.find((d) => /^(?:loop|func|input): /.test(d.message));
       if (bad) return failure(CODES.REQUEST, bad.message);
       if (looksAArch64(text)) return failure(CODES.ASSEMBLER, 'this looks like AArch64 assembly; wuica analyzes x86-64 (compile with --target=x86_64-linux-gnu)');
       const first = r.diagnostics.find((d) => d.severity === 'error');

@@ -59,7 +59,7 @@ export function planMarked(text, { pick = null, stubs = [] } = {}) {
   let pendingBegin = false;
   /** @type {{line: number, message: string} | null} */
   let error = null;
-  const locs = [], files = new Map(), views = new Set();
+  const locs = [], files = new Map();
   let inText = true, prev = false;
   const stack = [];
   /** @type {any} */
@@ -136,14 +136,7 @@ export function planMarked(text, { pick = null, stubs = [] } = {}) {
         if (name === 'loc') {
           const m = /^(\d+)\s+(\d+)/.exec(args);
           if (m && inText) locs.push({ label: label(i, col), file: Number(m[1]), line: Number(m[2]) });
-          // gcc's "view N" operand, which LLVM rejects ("unknown sub-directive"): blanked (the columns stay)
-          // (a symbol of it, which the debug sections can use, is defined as 0 in the trailer)
-          const v = /\bview\s+(\S+)/.exec(body);
-          if (v) {
-            const at = col + v.index;
-            lines[i] = lines[i].slice(0, at) + ' '.repeat(v[0].length) + lines[i].slice(at + v[0].length);
-            if (/^[A-Za-z_.$][\w.$]*$/.test(v[1])) views.add(v[1]);
-          }
+          // (the directive itself is not assembled: assembler.js withoutLineTable)
         } else if (name === 'file') {
           const m = /^(\d+)\s/.exec(args);
           const q = quoted(args);
@@ -193,9 +186,8 @@ export function planMarked(text, { pick = null, stubs = [] } = {}) {
   const lineCount = lines.length;
   const parts = [];
   for (let k = 0; k < labels.length; k += 32) parts.push(`.long ${labels.slice(k, k + 32).map((n) => `.Lwuica_z-${n}`).join(', ')}`);
-  const sets = [...views].map((n) => `.set ${n}, 0\n`).join('');
   const tail = stubsPlaced ? '' : `${stubs.map((n) => `${n}:`).join('\n')}\n`; // the exits at the end of the code
-  const out = `${lines.join('\n')}\n${sets}.text\n${tail}.Lwuica_z:\n.long ${MAGIC}\n${parts.join('\n')}\n`;
+  const out = `${lines.join('\n')}\n.text\n${tail}.Lwuica_z:\n.long ${MAGIC}\n${parts.join('\n')}\n`;
   if (region) delete region.closed;
   return { text: out, labels, regions, region, locs, files, shifts, lineCount, error };
 }
@@ -392,7 +384,7 @@ export async function assembleMarked(assemble, text, opts = {}) {
     line: prep.pick.begin, endLine: prep.pick.end, lines: prep.pick.lines, address: prep.address, alignment: prep.alignment,
   };
   // the source line of each analyzed instruction: of the pick, or of the whole text (not with a marked region)
-  const lines = prep.pick ? prep.pick.lines : r.region ? null : prep.lines ?? null;
+  const lines = prep.exactLines === false ? null : prep.pick ? prep.pick.lines : r.region ? null : prep.lines ?? null;
   const out = { ...r, loop, loops: prep.loops, body: prep.body, choosable: prep.choosable, alignment: prep.alignment, lines, lineInfo: prep.lineInfo ?? null, profile: prep.profile ?? null };
   if (r.ok && prep.notes.length) out.diagnostics = [...r.diagnostics, ...prep.notes];
   return out;

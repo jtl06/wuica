@@ -37,7 +37,9 @@ const RET = /^ret[lqw]?$/i;
 const SYMBOL = /^[A-Za-z_.$@][\w.$@]*$/;
 const GPR = /^(?:[re]?(?:ax|bx|cx|dx|si|di|sp|bp|ip)|[abcd][lh]|(?:si|di|sp|bp)l|r(?:[89]|1[0-5])[dwb]?)$/i;
 
-export const OUTSIDE_PREFIX = '.Lwuica_x'; // an objdump branch to an address that is not in the text
+export const OUTSIDE_PREFIX = '.Lwuica_x';
+// directives after which the lines of a text are not its instructions one to one
+const STRUCTURAL = /^[ \t]*(?:[\w.$@]+:[ \t]*)*(\.(?:rept|irpc?|macro|if\w*))\b/im; // an objdump branch to an address that is not in the text
 const ADDR_LABEL = (a) => `.Lwuica_a${a.toString(16)}`;
 
 // Splits a line (block comments already removed) into its statements outside comments: [{at, text}] (at: the column
@@ -127,8 +129,9 @@ export function fromObjdump(text) {
   const lines = normalizeText(text).split('\n');
   let header = false, symbolic = false, column = false, increasing = true, other = 0, plausible = true;
   const rows = [];
+  let last = -1; // (addresses increase within a function; perf annotate prints its functions in any order)
   for (const l of lines) {
-    if (OD_HEADER.test(l)) { header = true; continue; }
+    if (OD_HEADER.test(l)) { header = true; last = -1; continue; }
     if (OD_NOISE.test(l) || /^\s*(?:$|#|\/\/|;)/.test(l)) continue;
     const m = OD_ADDR.exec(l);
     if (!m) { other++; continue; }
@@ -136,7 +139,8 @@ export function fromObjdump(text) {
     if (/<[^>]*>/.test(m[4])) symbolic = true;
     const bc = byteColumn(m[4]);
     if (bc.bytes && /\t|  /.test(m[4])) column = true;
-    if (rows.length && a <= rows.at(-1).a) increasing = false;
+    if (a <= last) increasing = false;
+    last = a;
     rows.push({ a, rest: bc.rest });
   }
   if (rows.length < 2 || !increasing) return { objdump: false };
@@ -215,27 +219,41 @@ export function fromObjdump(text) {
 
 // ---- perf annotate --------------------------------------------------------------------------------------------------
 
-// `perf annotate --stdio` output ("   12.34 :   401130:   movss (%rdi,%rax,4),%xmm1", source and header lines after an
-// empty percent column " :"): the same lines as objdump text (an instruction as "  401130:\tmovss ...", a source line as
-// "; text", the function header as is), and the percent of samples of each instruction line. {text, perf: true,
-// samples: Map line -> percent} or {perf: false}. Lines stay where they are (diagnostics keep their lines).
+// `perf annotate --stdio` output: one block per symbol, each with its header ("Percent | Source code & Disassembly of hot
+// for cycles:u (1069 samples, percent: local period)") and its lines: an instruction "   22.59 :   1413:   movaps ...",
+// anything else after an empty percent column " :" (perf 7 numbers those lines: " : 39   s += m[...]"). Read as the same
+// lines of objdump text (an instruction as "  1413:\tmovaps ...", a source line as "; text", the function header as is),
+// line for line. samples: Map line -> the instruction's percent of all the samples of the output (a block's percentages
+// are of its own symbol's samples: weighted by the sample count of its header; without one, as given). {text, perf: true,
+// samples} or {perf: false} (stdio2: true for `perf annotate --stdio2` output, which has no addresses).
 const PERF_INSN = /^\s*(\d+(?:\.\d+)?)\s*:\s+([0-9a-fA-F]+):\s+(\S.*)$/;
 const PERF_OTHER = /^\s*:\s?(.*)$/;
+const PERF_HEADER = /^\s*Percent\s*\|.*?\((\d+) samples\b/;
 /** @returns {any} */
 export function fromPerfAnnotate(text) {
   const lines = normalizeText(text).split('\n');
-  if (lines.filter((l) => PERF_INSN.test(l)).length < 2 || !lines.some((l) => /^\s*Percent\s*\|/.test(l) || PERF_OTHER.test(l))) return { perf: false };
-  const samples = new Map();
+  if (lines.filter((l) => PERF_INSN.test(l)).length < 2 || !lines.some((l) => /^\s*Percent\s*\|/.test(l) || PERF_OTHER.test(l))) {
+    const stdio2 = /^Samples: .*\[percent: /m.test(lines.slice(0, 5).join('\n')) && lines.some((l) => /^Percent\s{2,}\S/.test(l));
+    return { perf: false, stdio2 };
+  }
+  const local = new Map(); // line -> [percent, the block's samples or null]
+  let blockSamples = null;
   const out = lines.map((l, k) => {
+    const h = PERF_HEADER.exec(l);
+    if (h) { blockSamples = Number(h[1]); return ''; }
     const m = PERF_INSN.exec(l);
-    if (m) { samples.set(k + 1, Number(m[1])); return `  ${m[2]}:\t${m[3].trim()}`; }
+    if (m) { local.set(k + 1, [Number(m[1]), blockSamples]); return `  ${m[2]}:\t${m[3].trim()}`; }
     const o = PERF_OTHER.exec(l);
-    if (!o) return ''; // the header ("Percent | Source code & Disassembly of ..."), the rule, a summary
-    const t = o[1].trim();
+    if (!o) return ''; // the header's rule, a summary
+    const t = o[1].trim().replace(/^\d+\s+/, ''); // (perf 7: the listing's line number first)
     if (!t || /^Disassembly of section\b/.test(t)) return '';
     if (/^[0-9a-fA-F]+\s+<[^>]*>:$/.test(t)) return t;
     return `; ${t}`;
   });
+  // the percent of all samples: each block's percentages weighted by its samples
+  const total = [...new Set([...local.values()].map(([, n]) => n))].reduce((a, n) => a + (n ?? 0), 0);
+  const samples = new Map();
+  for (const [line, [p, n]] of local) samples.set(line, total > 0 && n ? Math.round(p * n / total * 100) / 100 : p);
   return { perf: true, text: out.join('\n'), samples };
 }
 
@@ -429,6 +447,7 @@ export function functionBody(s) {
  */
 export function preparePaste(text, { loop = 'auto', func = null } = {}) {
   const pf = fromPerfAnnotate(normalizeText(text).replace(/^﻿/, ''));
+  if (pf.stdio2) return { error: 'input: this is perf annotate --stdio2 output, which has no addresses: use perf annotate --stdio', loops: [] };
   let t = leadingSemicolons(pf.perf ? pf.text : normalizeText(text).replace(/^﻿/, ''));
   const od = fromObjdump(t);
   if (od.objdump) t = od.text;
@@ -471,6 +490,15 @@ export function preparePaste(text, { loop = 'auto', func = null } = {}) {
     return out;
   }
   const code = s.instrs;
+  // .rept, .irp, .irpc, .macro and .if* make a line something else than one instruction (repeated, left out, a macro's
+  // call): no source lines then, and no loop picked (it could not be isolated): the whole text, said in a note
+  const structural = STRUCTURAL.exec(t);
+  out.exactLines = !structural;
+  if (structural && loop !== 'whole' && loops.length) {
+    const at = t.slice(0, structural.index).split('\n').length;
+    out.notes.push({ line: at, column: null, severity: 'note', message: `${structural[1]}: the text repeats or leaves out lines, so a loop cannot be isolated: the whole text is analyzed` });
+    loop = 'whole';
+  }
   out.lines = code.map((x) => x.line);
   // per instruction line: the interleaved source line (objdump -S, perf annotate) and the percent of samples (perf)
   out.lineInfo = new Map();
@@ -479,11 +507,14 @@ export function preparePaste(text, { loop = 'auto', func = null } = {}) {
     if (source !== undefined || samples !== undefined) out.lineInfo.set(x.line, { ...(source !== undefined ? { source } : {}), ...(samples !== undefined ? { samples } : {}) });
   }
   out.profile = pf.perf ? 'perf' : null;
-  // perf annotate with several loops: "auto" picks the one with the most samples (the first of equals)
+  // perf annotate with several loops: "auto" picks the one whose own instructions (not those of a loop nested in it)
+  // have the most samples, the first of equals
   if (pf.perf && loop === 'auto' && loops.length > 1) {
-    const heat = loops.map((l) => code.filter((x) => x.line >= l.begin && x.line <= l.end).reduce((n, x) => n + (pf.samples.get(x.line) ?? 0), 0));
+    const inside = (a, b) => a !== b && a.begin >= b.begin && a.end <= b.end;
+    const heat = loops.map((l) => code.filter((x) => x.line >= l.begin && x.line <= l.end && !loops.some((n) => inside(n, l) && x.line >= n.begin && x.line <= n.end))
+      .reduce((n, x) => n + (pf.samples.get(x.line) ?? 0), 0));
     loop = heat.indexOf(Math.max(...heat));
-  } // the source line of each instruction of the text (pick.lines: of the pick)
+  }
   if (Number.isInteger(loop) && Number(loop) >= loops.length) {
     out.error = `loop: ${loop} is not the index of a loop (0-based; the text has ${loops.length === 0 ? 'none' : `${loops.length}: 0 to ${loops.length - 1}`})`;
     return out;

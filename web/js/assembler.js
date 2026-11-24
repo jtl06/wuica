@@ -41,9 +41,25 @@ export function parseDiagnostics(text) {
 // The text as the module gets it, the one preparation for the page and the npm package (lib/wasm.js): no byte order
 // mark at the start (not code: LLVM would reject it), a NUL character as a space (the module reads a C string, which
 // ends at the first NUL: clang -g -S writes NULs into the comments of its .debug_str bytes, and the text after one,
-// with the labels it defines, would be lost), and stripHints. Lines and columns stay where they are.
+// with the labels it defines, would be lost), stripHints, and no line table (withoutLineTable). Lines and columns stay
+// where they are.
 export function prepareSource(text) {
-  return stripHints(String(text).replace(/^\uFEFF/, '').replace(/\0/g, ' '));
+  return withoutLineTable(stripHints(String(text).replace(/^\uFEFF/, '').replace(/\0/g, ' ')));
+}
+
+// The line table's directives, a `.loc` and a numbered `.file` on a line of their own (after labels), blanked (the columns stay): the
+// bytes of the code do not depend on them (asm-regions.js reads the lines from them before), while LLVM 22 rejects some
+// of gcc's: DWARF 5 (gcc 11 and later -g) with ".file 0" gives "unassigned file number in '.loc'", a "view N" operand
+// "unknown sub-directive". A view's symbol (.LVU3), which the debug sections can use, is defined as 0 after the text.
+const LINE_TABLE = /^([ \t]*(?:[\w.$@]+:[ \t]*)*)(\.loc[ \t][^\n;#]*|\.file[ \t]+\d+[ \t](?:"(?:[^"\\\n]|\\.)*"|[^\n;#"])*)/gm;
+export function withoutLineTable(text) {
+  const views = new Set();
+  const out = text.replace(LINE_TABLE, (_, lead, d) => {
+    const v = /\bview[ \t]+([A-Za-z_.$][\w.$]*)/.exec(d);
+    if (d.startsWith('.loc') && v) views.add(v[1]);
+    return lead + ' '.repeat(d.length);
+  });
+  return views.size ? `${out}\n${[...views].map((n) => `.set ${n}, 0`).join('\n')}\n` : out;
 }
 
 // Removes GNU as's {load} / {store} pseudo-prefixes at the start of a line (LLVM 22 says "unknown prefix"), and reads

@@ -162,7 +162,7 @@ test('the what-if variant align: the 64 alignment offsets, only when asked for',
   assert.equal((await w.whatIf('SKL', { source: src, variants: ['align'], options: { alignmentOffset: 8 } })).variants[0].alignment.offset, 8);
 });
 
-test('profiles: objdump -dS keeps the source lines, perf annotate --stdio the samples and picks the hottest loop', async () => {
+test('profiles: objdump -dS keeps the source lines', async () => {
   const { listLoops } = await import('../lib/index.js');
   // real llvm-objdump -dS output (tests-js/fixtures/profiles/sum.c, clang -O1 -g)
   const od = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/profiles/objdump-dS.txt'), 'utf8');
@@ -170,17 +170,95 @@ test('profiles: objdump -dS keeps the source lines, perf annotate --stdio the sa
   assert.equal(r.loop.function, 'dot');
   assert.deepEqual(r.rows.map((x) => x.source), [...Array(3).fill('s += a[i] * b[i];'), ...Array(3).fill('for (long i = 0; i < n; i++)')]);
   assert.deepEqual(w.summarize(r).instructions.map((x) => x.source), r.rows.map((x) => x.source));
-  // perf annotate --stdio: a sample written by hand from the documented format (perf is not on the development Mac)
-  const pf = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/profiles/perf-annotate.txt'), 'utf8');
+});
+
+test('profiles, real output (tests-js/fixtures/profiles/make-fixtures.sh): perf annotate --stdio of two hot functions and a nested loop', async () => {
+  const { listLoops } = await import('../lib/index.js');
+  const pf = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/profiles/perf-annotate-hot.txt'), 'utf8');
   const p = await w.analyze('SKL', { source: pf });
-  assert.equal(p.code, 0);
-  assert.equal(p.loop.function, 'count', 'the loop with the most samples (dot comes first in the text)');
-  assert.deepEqual(p.rows.map((x) => x.samples), [21.48, 18.77, 20.15, 10.26, 5.31, 5.24]);
-  assert.equal(p.rows[0].source, 'c += p[i] > 127;');
-  assert.deepEqual(listLoops(pf).map((l) => [l.function, l.auto]), [['dot', false], ['count', true]]);
-  assert.equal((await w.analyze('SKL', { source: pf, loop: 0 })).loop.function, 'dot', 'an explicit loop wins');
-  assert.equal((await w.analyze('SKL', { source: pf, loop: 0 })).rows[2].samples, 9.86);
-  assert.equal(p.tp, (await w.analyze('SKL', { hex: '0fb6140fc1ea074801d048ffc14839ce75ee', options: { alignmentOffset: 32 } })).tp);
+  assert.equal(p.code, 0, p.error);
+  // the hottest loop by its own samples: the inner loop of matvec (0x1400), not the outer loop around it (0x13c0),
+  // whose samples with those of the inner loop would be the most
+  assert.equal(p.loop.function, 'matvec');
+  assert.equal(p.loop.name, 'loop 0x1400');
+  assert.equal(p.loop.depth, 2);
+  assert.deepEqual(listLoops(pf).filter((l) => l.auto).map((l) => l.label), ['0x1400']);
+  // each block's percentages weighted by its header's samples (matvec 1069, count 58, main 20 of 1147), worked out by
+  // hand: 1430 at 26.33 % of matvec's 26.33 * 1069 / 1147 = 24.54; 1576 at 18.77 % of count's 18.77 * 58 / 1147 = 0.95
+  const cmp = p.rows.find((x) => x.kind === 'instr' && x.samples === 24.54);
+  assert.ok(cmp, JSON.stringify(p.rows.map((x) => x.samples)));
+  assert.equal(cmp.source, 'for (long c = 0; c < cols; c++)');
+  const c = await w.analyze('SKL', { source: pf, loop: listLoops(pf).findIndex((l) => l.label === '0x1500') });
+  assert.equal(c.loop.function, 'count');
+  assert.ok(c.rows.some((x) => x.samples === 0.95), JSON.stringify(c.rows.map((x) => x.samples)));
+  assert.ok(c.rows.some((x) => x.samples === 0.44), '1519 at 8.68 % of count: 0.44');
+  assert.ok(!c.rows.some((x) => x.samples > 1), 'no instruction of count has more than 1 % of all the samples');
+  // --stdio2 has no addresses: said, not analyzed as something else
+  const s2 = await w.analyze('SKL', { source: fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/profiles/perf-annotate-hot-stdio2.txt'), 'utf8') });
+  assert.equal(s2.code, 1);
+  assert.match(s2.error, /perf annotate --stdio2 output.*use perf annotate --stdio$/);
+});
+
+test('profiles, real output: GNU objdump -dS and -dSl, gcc 15 -O2 -g -S (DWARF 5, .file 0, .loc view) in AT&T and Intel syntax', async () => {
+  const F = (f) => fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/profiles', f), 'utf8');
+  for (const f of ['objdump-dS-hot.txt', 'objdump-dSl-hot.txt']) {
+    const r = await w.analyze('SKL', { source: F(f) });
+    assert.equal(r.code, 0, `${f}: ${r.error}`);
+    assert.equal(r.loop.function, 'matvec', f);
+    assert.equal(r.loop.name, 'loop 0x1400', f);
+    const instr = r.rows.filter((x) => x.kind === 'instr');
+    assert.deepEqual([...new Set(instr.map((x) => x.source))], ['s += m[r * cols + c] * v[c];', 'for (long c = 0; c < cols; c++)'], f);
+  }
+  const hex = (await w.analyze('SKL', { source: F('objdump-dS-hot.txt') })).hex;
+  for (const f of ['gcc-hot-att.s', 'gcc-hot-intel.s']) {
+    const text = F(f);
+    assert.match(text, /^\t\.file 0 "\." "hot\.c"$/m, `${f}: DWARF 5`);
+    assert.equal((await w.assemble(text)).code, 0, f);
+    const r = await w.analyze('SKL', { source: text });
+    assert.equal(r.code, 0, `${f}: ${r.error}`);
+    assert.equal(r.loop.function, 'matvec', f);
+    const instr = r.rows.filter((x) => x.kind === 'instr');
+    assert.deepEqual([...new Set(instr.map((x) => x.loc))], ['hot.c:11', 'hot.c:10'], `${f}: the loop body, then the loop control`);
+    assert.ok(instr.every((x) => Number.isInteger(x.line)), f);
+    assert.equal(r.hex, hex, `${f}: the bytes of the binary's loop`);
+  }
+  // the line directives are not assembled: clang's text, the same bytes without them (gcc's: those of the binary, above)
+  for (const f of ['profiles/clang23-sum-g.s', 'asm/dot-clang-O2-g.s']) {
+    const text = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures', f), 'utf8');
+    const bare = text.replace(/^\t\.(?:loc|file\t?\s*\d+)\b.*$/gm, '');
+    const [a, b] = [await w.analyze('SKL', { source: text }), await w.analyze('SKL', { source: bare })];
+    assert.equal(a.code, 0, f);
+    assert.equal(a.hex, b.hex, f);
+  }
+});
+
+test('source lines only when the lines are the instructions: .rept, .irp, .if, .macro; .byte; a NUL in a comment', async () => {
+  const lines = async (source, o = {}) => (await w.analyze('SKL', { source, ...o })).rows.filter((x) => x.kind === 'instr').map((x) => x.line);
+  // an instruction written as bytes: two instructions, one instruction line: no lines (not the jnz's line for the dec)
+  assert.deepEqual(await lines('loop:\n .byte 0x48, 0xff, 0xc9\n jnz loop\n'), [undefined, undefined]);
+  for (const src of ['loop:\n .rept 2\n add rax, 1\n .endr\n dec rcx\n jnz loop\n', 'loop:\n .irp r, rax, rbx\n add \\r, 1\n .endr\n dec rcx\n jnz loop\n',
+    '.if 0\n add rax, 1\n.endif\nloop:\n imul rbx, rbx\n dec rcx\n jnz loop\n', 'x: .rept 2\n nop\n .endr\nloop:\n add rax, 1\n dec rcx\n jnz loop\n']) {
+    const r = await w.analyze('SKL', { source: src });
+    assert.equal(r.code, 0, `${src}: ${r.error}`);
+    assert.ok(r.rows.every((x) => x.line === undefined), src);
+    assert.equal(r.loop, undefined, `${src}: the whole text`);
+    assert.match(r.stderr.map((l) => l.text).join('\n'), /note: \.(?:rept|irp|if): the text repeats or leaves out lines, so a loop cannot be isolated: the whole text is analyzed/, src);
+  }
+  // a loop before which a .rept repeats code: the whole text (said), never a wrong loop
+  const before = '.rept 2\n nop\n.endr\nf:\n mov eax, 1\nloop:\n add rax, 1\n dec rcx\n jnz loop\n ret\n';
+  const r = await w.analyze('SKL', { source: before });
+  assert.equal(r.loop, undefined);
+  assert.equal(r.rows.filter((x) => x.kind === 'instr').length, 7, 'two nops, mov, the loop, ret');
+  // a macro holding a .rept, called in two loops: assembled once each (no "symbol '.Lwuica_0' is already defined")
+  const macro = '.macro body\n .rept 2\n add rax, 1\n .endr\n.endm\nf:\nloop:\n body\n dec rcx\n jnz loop\n ret\nloop2:\n body\n dec rdx\n jnz loop2\n';
+  const m = await w.analyze('SKL', { source: macro });
+  assert.equal(m.code, 0, m.error);
+  assert.ok(m.rows.every((x) => x.line === undefined));
+  // a NUL in a comment: the comment ends at the line's end, the instructions stay (6.00: the imul chain, three lines on)
+  const nul = await w.analyze('SKL', { source: 'loop:\n add rax, 1 # a\x00b\n imul rbx, rbx\n imul rbx, rbx\n dec rcx\n jnz loop\n' });
+  assert.equal(nul.code, 0, nul.error);
+  assert.equal(nul.tp, 6);
+  assert.deepEqual(nul.rows.filter((x) => x.kind === 'instr').map((x) => x.line), [2, 3, 4, 5, 6]);
 });
 
 test('clang 23 -S output as is: .prefalign is read as the .p2align clang 22 wrote', async () => {
