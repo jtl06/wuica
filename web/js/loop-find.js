@@ -29,6 +29,8 @@ const MARKER = /^\s*(?:#|\/\/|;)\s*(?:LLVM-MCA-BEGIN|wuica-begin)(?![\w-])/im;
 const IACA = /^\s*mov[l]?\s+(?:ebx\s*,\s*111|\$111\s*,\s*%ebx)\s*$/im;
 const LABELS = /^(?:\s*(?:[\w.$@]+|"[^"]*")\s*:)*\s*/;
 const LABEL_ONE = /\s*([\w.$@]+|"[^"]*")\s*:/y;
+// data directives: bytes in the code that are not an instruction's line
+const DATA = /^(?:byte|short|word|hword|long|int|quad|octa|zero|fill|space|skip|ascii|asciz|string(?:8|16|32|64)?|[248]byte|value|single|float|double|[su]leb128|incbin|dc(?:b|\.\w)?|ds(?:\.\w)?)$/;
 const PREFIX = /^(?:lock|rep|repe|repz|repne|repnz|bnd|notrack|data16|data32|addr32|cs|ds|es|ss|fs|gs|rex(?:\.\w+)?|\{[\w ]+\})$/i;
 export const JCC = /^(?:j(?:a|ae|b|be|c|e|g|ge|l|le|na|nae|nb|nbe|nc|ne|ng|nge|nl|nle|no|np|ns|nz|o|p|pe|po|s|z|rcxz|ecxz)|loop(?:e|ne|z|nz)?|xbegin)$/i;
 export const JMP = /^jmp[lqw]?$/i;
@@ -229,7 +231,9 @@ export function fromObjdump(text) {
 // perf: true, samples} or {perf: false} (stdio2: true for `perf annotate --stdio2` output, which has no addresses).
 const PERF_INSN = /^\s*(\d+(?:\.\d+)?)\s*:\s+([0-9a-fA-F]+):\s+(\S.*)$/;
 const PERF_OTHER = /^\s*:\s?(.*)$/;
-const PERF_HEADER = /^\s*Percent\s*\|.*?\((\d+) samples(?:, percent: ([^)]*))?/;
+const PERF_HEADER = /^\s*Percent\s*\|/;
+const PERF_COUNT = /\((\d[\d,.'\u00a0\u202f]*) samples\b/; // (with a locale's thousands separators: "5,000")
+const PERF_TYPE = /percent: ([^),]*)/;
 /** @returns {any} */
 export function fromPerfAnnotate(text) {
   const lines = normalizeText(text).split('\n');
@@ -237,16 +241,22 @@ export function fromPerfAnnotate(text) {
     const stdio2 = /^Samples: .*\[percent: /m.test(lines.slice(0, 5).join('\n')) && lines.some((l) => /^Percent\s{2,}\S/.test(l));
     return { perf: false, stdio2 };
   }
-  const local = new Map(); // line -> [percent, the block's samples or null]
-  /** @type {number | null} */
-  let blockSamples = null;
-  let total = 0; // the samples of the blocks with local percentages
+  const local = new Map(); // line -> [percent, its block]
+  /** @type {{samples: number | null, global: boolean}[]} */
+  const blocks = [];
+  /** @type {{samples: number | null, global: boolean} | null} */
+  let block = null;
   const out = lines.map((l, k) => {
-    const h = PERF_HEADER.exec(l);
-    // (--percent-type global-*: already of all the samples, as given)
-    if (h) { blockSamples = /global/.test(h[2] ?? '') ? null : Number(h[1]); total += blockSamples ?? 0; return ''; }
+    if (PERF_HEADER.test(l)) {
+      // each header its own count (none: unknown, not the previous header's); --percent-type global-*: already of all
+      // the samples
+      const n = PERF_COUNT.exec(l);
+      block = { samples: n ? Number(n[1].replace(/\D/g, '')) : null, global: /global/.test(PERF_TYPE.exec(l)?.[1] ?? '') };
+      blocks.push(block);
+      return '';
+    }
     const m = PERF_INSN.exec(l);
-    if (m) { local.set(k + 1, [Number(m[1]), blockSamples]); return `  ${m[2]}:\t${m[3].trim()}`; }
+    if (m) { local.set(k + 1, [Number(m[1]), block]); return `  ${m[2]}:\t${m[3].trim()}`; }
     const o = PERF_OTHER.exec(l);
     if (!o) return ''; // the header's rule, a summary
     const t = o[1].trim().replace(/^\d+\s+/, ''); // (perf 7: the listing's line number first)
@@ -254,10 +264,14 @@ export function fromPerfAnnotate(text) {
     if (/^[0-9a-fA-F]+\s+<[^>]*>:$/.test(t)) return t;
     return `; ${t}`;
   });
-  // the percent of all samples: each block's percentages weighted by its samples
+  // the percent of all samples: each block's local percentages weighted by its samples, if every such block has its
+  // count (one block: as given); else each symbol's own percentages, as given (unweighted: true)
+  const locals = blocks.filter((b) => !b.global);
+  const unweighted = locals.length > 1 && locals.some((b) => b.samples === null);
+  const total = unweighted ? 0 : locals.reduce((a, b) => a + (b.samples ?? 0), 0);
   const samples = new Map();
-  for (const [line, [p, n]] of local) samples.set(line, total > 0 && n ? Math.round(p * n / total * 100) / 100 : p);
-  return { perf: true, text: out.join('\n'), samples };
+  for (const [line, [p, b]] of local) samples.set(line, total > 0 && b && !b.global && b.samples !== null ? Math.round(p * b.samples / total * 100) / 100 : p);
+  return { perf: true, text: out.join('\n'), samples, unweighted };
 }
 
 // ---- the statements of a text ----------------------------------------------------------------------------------------
@@ -274,14 +288,16 @@ const sectionName = (args) => (/^\s*("?)([^",\s]+)\1/.exec(args)?.[2] ?? '');
 export const isText = (args) => { const n = sectionName(args); return n === '.text' || n.startsWith('.text.'); };
 
 // {labels: Map name -> line, symbols: Set (assigned with = / .set / .equ), instrs: [{line, col, mnemonic, operands,
-// kind: 'jcc' | 'jmp' | 'call' | 'ret' | 'other', target}], numeric: [{name, line}]}. Lines 1-based; only .text code.
+// kind: 'jcc' | 'jmp' | 'call' | 'ret' | 'other', target}], numeric: [{name, line}], data: [line]}. Lines 1-based; only
+// .text code. A prefix alone on its line ("lock", then "add [rdi], eax") is part of the next instruction, not one of its
+// own; data: the lines of data directives in code (.byte, .fill, ...: bytes the instructions cannot be told from).
 export function scan(text) {
   const raw = String(text).split('\n');
   const lines = blankBlockComments(String(text)).split('\n');
   // clang's loop notes on a label's line or the comment line after it ("# =>This Inner Loop Header: Depth=2",
   // "#   in Loop: Header=BB0_4 Depth=1"): label -> text
   const notes = new Map();
-  const labels = new Map(), symbols = new Set(), instrs = [], numeric = [], functions = new Set();
+  const labels = new Map(), symbols = new Set(), instrs = [], numeric = [], functions = new Set(), data = [];
   let inText = true, prev = true, directives = 0;
   const stack = [];
   for (let i = 0; i < lines.length; i++) {
@@ -306,6 +322,7 @@ export function scan(text) {
         const name = d?.[1].toLowerCase() ?? '';
         const args = d?.[2] ?? '';
         directives++;
+        if (inText && DATA.test(name)) data.push(i + 1);
         if (name === 'set' || name === 'equ' || name === 'equiv') { const s = /^([\w.$@]+)/.exec(args); if (s) symbols.add(s[1]); }
         else if (name === 'globl' || name === 'global') { const s = /^([\w.$@]+)/.exec(args); if (s) functions.add(s[1]); }
         else if (name === 'type') { const s = /^([\w.$@]+)\s*,\s*[@%]function/.exec(args); if (s) functions.add(s[1]); }
@@ -320,6 +337,7 @@ export function scan(text) {
       const assign = /^([\w.$@]+)\s*=/.exec(body);
       if (assign) { symbols.add(assign[1]); continue; }
       if (!inText) continue;
+      if (body.split(/\s+/).every((w) => PREFIX.test(w))) continue; // a prefix alone: the next instruction's
       const { mnemonic, operands } = splitInstr(body);
       let kind = 'other', target = null;
       if (JCC.test(mnemonic)) kind = 'jcc';
@@ -333,7 +351,7 @@ export function scan(text) {
       instrs.push({ line: i + 1, col: st.at + lead, end: st.at + st.text.length, mnemonic, operands, kind, target, body });
     }
   }
-  return { labels, symbols, instrs, numeric, functions, directives, notes };
+  return { labels, symbols, instrs, numeric, functions, directives, notes, data };
 }
 
 // The line a branch target refers to (a label, or a numeric label "1b" / "1f" seen from `line`), or null.
@@ -510,6 +528,7 @@ export function preparePaste(text, { loop = 'auto', func = null } = {}) {
     if (source !== undefined || samples !== undefined) out.lineInfo.set(x.line, { ...(source !== undefined ? { source } : {}), ...(samples !== undefined ? { samples } : {}) });
   }
   out.profile = pf.perf ? 'perf' : null;
+  if (pf.unweighted) out.notes.push({ line: null, column: null, severity: 'note', message: 'perf annotate: a symbol\'s header has no sample count, so the samples are each symbol\'s own percentages (not of all the samples)' });
   // perf annotate with several loops: "auto" picks the one whose own instructions (not those of a loop nested in it)
   // have the most samples, the first of equals
   if (pf.perf && loop === 'auto' && loops.length > 1) {
@@ -546,6 +565,9 @@ export function preparePaste(text, { loop = 'auto', func = null } = {}) {
       out.pick = { ...out.pick, lines: code.filter((x) => x.line >= out.pick.begin && x.line <= out.pick.end).map((x) => x.line) };
     }
   }
+  // data directives among the analyzed instructions (the pick's, or the whole text's): their bytes are instructions of
+  // their own or parts of one, so the lines are not the instructions one to one: none
+  if (s.data.some((l) => !out.pick || (l >= out.pick.begin && l <= out.pick.end))) out.exactLines = false;
   // the exits: conditional branches (and jumps to .L labels) whose target the text does not define
   const defined = (name) => s.labels.has(name) || s.symbols.has(name);
   const seen = new Set();
