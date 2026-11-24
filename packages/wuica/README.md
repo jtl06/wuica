@@ -33,6 +33,7 @@ wuica dot.s -per 8                             # the loop does 8 elements per it
 wuica dot.s -loops                             # the loops in the file; -loop N or -loop .LBB0_12 picks one
 wuica dot.s -whatif                            # unrolled, N accumulators, front end and fusion variants
 wuica dot.s -arch SKL,ZEN3 -md                 # Markdown to paste in an issue or a chat (any mode)
+wuica diff dot.s dot4.s -per 8,32              # before and after: speed-up, bottlenecks, ports, instructions changed
 clang -O3 -c dot.c && wuica dot.o -func dot    # an object file (ELF or Mach-O, x86-64): no objdump needed
 wuica *.s -arch SKL,ZEN3                       # several files in one run: one table (-files LIST for long lists)
 objdump -d dot.o | wuica                       # objdump output: the loop's real alignment from its address
@@ -180,6 +181,7 @@ wuica *.s -json                      # {code, files: [{file, ...}]}, each entry 
 wuica -examples                      # the built-in examples (the web page's set)
 wuica -example dot1 -whatif          # one of them, as if it were the input file (every option applies)
 wuica -example dot1 -show > dot.s    # its assembly, to save and edit
+wuica diff a.s b.s -per 8 [-md|-json]  # two blocks (files, - or hex): before and after
 wuica --version
 ```
 
@@ -200,12 +202,13 @@ newline-delimited JSON-RPC 2.0 with the `initialize` handshake of the protocol r
 (`isError`) that says what is wrong, an unknown tool a JSON-RPC error. The server ends with its stdin, and writes only
 protocol messages to stdout. `wuica mcp --help` prints the usage. The tool table itself (names, descriptions, JSON
 Schemas, handlers) is exported as `mcpTools(w)` from `wuica-cli/mcp`, with `callTool` and `validate`; the remote server
-(`server/`) serves the same table over HTTP. It has five tools:
+(`server/`) serves the same table over HTTP. Its tools:
 
 | Tool | What it does |
 |---|---|
 | `analyze` | one block on one microarchitecture: `tp`, bottlenecks, limits, a compact per-instruction table (ports, uop sources, fusion notes) and uiCA's text report (`format`: `json`, `text`, `both`) |
 | `what_if` | one block re-analyzed with one change each (the web page's "try" row): `unroll2`/`unroll4`/`unroll8` (per original iteration), `acc2`/`acc3`/`acc4`/`acc8` (N accumulators: unrolled ×N with the loop-carried register renamed in each copy; `renamed` lists the registers, `accumulators.best` is the best N, 1 = as it is), `simpleFrontEnd`, `noMacroFusion`, `noMicroFusion`, and `nochain` (an estimate without the loop-carried chain); per variant `tp`, `delta`, `speedup` |
+| `diff_blocks` | two blocks, A (before) and B (after), on one microarchitecture: `tp` of each, `delta`, `speedup`, per element with `per`, bottlenecks and limits before and after, each port's uops, the instructions changed, added or removed |
 | `compare_archs` | one block on several or all microarchitectures: `tp` and bottlenecks per microarchitecture |
 | `list_archs` | ids, names, years, prototype flags |
 | `assemble` | assembly → hex bytes, or diagnostics with line/column |
@@ -326,6 +329,7 @@ text, and errors with structured stderr.
 | `POST /api/analyze/<arch>` | `w.analyze(arch, request)` | `analyze {arch, ...request, format?}` |
 | `POST /api/compare` | `w.compare(request)` | `compare_archs {...request}` |
 | `POST /api/what-if/<arch>` | `w.whatIf(arch, {...request, variants?, per?})` | `what_if {arch, ...request, variants?, per?}` |
+| `POST /api/diff/<arch>` | `w.diff(arch, {a, b, options?, per?})` | `diff_blocks {arch, a, b, options?, per?}` |
 | `POST /api/assemble` | `w.assemble(source, syntax)` | `assemble {source, syntax?}` |
 
 ### Microarchitectures: `GET /api/archs`
@@ -523,6 +527,15 @@ The request is analyze's plus `variants` (ids, default all: `unroll2`, `unroll4`
 per element). The response is the MCP tool's and `wuica -whatif -json`'s (`WhatIfResult`): the base `tp` and per variant
 `tp` per original iteration, `delta`, `speedup`, or `error`; `accumulators.best`. `text/plain` gives the CLI's table,
 `text/markdown` the Markdown one. Each variant is one analysis (rate-limited like compare).
+
+### Diff: `POST /api/diff/<arch>`
+
+`{a: block, b: block, options?, per?}`: each block as analyze's request; `options` for both; `per` elements per iteration
+(N for both, or [A, B]). The response (`DiffResult` in index.d.ts; `wuica diff -json`): `a` and `b` (`tp`,
+`bottlenecks`, `perElement`), `delta`, `speedup`, `verdict`, `perElement`, `bottlenecks` (`gone`, `new`), `limits`,
+`ports` (uops per iteration before and after) and `instructions` (`counts`; `changes`: `changed`, `modified`, `added`,
+`removed`, with the change of their uops). A failure's `error` starts with `A: ` or `B: `. `text/plain` gives the
+CLI's text, `text/markdown` the page's A–B tables.
 
 ### Assemble: `POST /api/assemble`
 

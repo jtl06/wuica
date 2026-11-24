@@ -6,10 +6,12 @@ import path from 'node:path';
 import { createWuica, normalizeHex, listLoops, whatIf, WHAT_IF_VARIANTS, CODES, examples, findExample, objectKind, markdown } from './index.js';
 import { analyzedLines } from './web/branch-label.js';
 import { whatIfPerElement, whatIfText } from './web/whatif-core.js';
+import { diffAnalyses, diffMarkdown, diffText } from './web/block-diff.js';
 
 export const VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 export const USAGE = `Usage: wuica [options] [FILE | - | HEX]
+       wuica diff [options] A B     two blocks (files, - or hex): throughput, bottlenecks, ports, instructions changed
        wuica [options] FILE FILE...   several inputs in one run: one table (-files LIST reads the names from a file)
        wuica mcp                start the MCP server (stdio)
 
@@ -387,6 +389,7 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
     else err.write(`${msg}\n`);
     return code;
   };
+  if (argv[0] === 'diff') return diffMain(argv.slice(1), io);
   try {
     o = parseArgs(argv);
     if (o.help) { out.write(USAGE + '\n'); return 0; }
@@ -547,6 +550,66 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
       return o?.json ? fail(1, `wuica: ${e.message}`) : (err.write(`wuica: ${e.message}\nRun "wuica -h" for the options.\n`), 1);
     }
     return fail(1, `wuica: ${e?.message ?? e}`);
+  }
+}
+
+// ---- wuica diff A B ---------------------------------------------------------------------------------------------------
+// Two blocks (each a file, - for stdin, or hex; object files as for one input) on one microarchitecture (-arch, default
+// SKL): web/js/block-diff.js. -per N (both) or -per A,B: also per element. -md: the Markdown of the page's A–B view;
+// -json: the result object. The other options as for one input (applied to both). Exit status: 0, or the failing side's.
+async function diffMain(argv, io) {
+  const { stdout: out, stderr: err } = io;
+  /** @type {CliOptions} */
+  let o = /** @type {any} */ (null);
+  try {
+    // -per N or -per A,B (parseArgs takes one number)
+    /** @type {number[] | null} */
+    let per = null;
+    const rest = [];
+    for (let i = 0; i < argv.length; i++) {
+      const m = /^--?per(?:=(.*))?$/i.exec(argv[i]);
+      if (!m) { rest.push(argv[i]); continue; }
+      const v = m[1] ?? argv[++i];
+      if (v === undefined) throw new UsageError('-per needs a value');
+      per = String(v).split(',').map(Number);
+      if (per.length === 1) per = [per[0], per[0]];
+      if (per.length !== 2 || !per.every((n) => n > 0)) throw new UsageError(`-per: elements per iteration, N or A,B: ${v}`);
+    }
+    o = parseArgs(rest);
+    if (o.help) { out.write(USAGE + '\n'); return 0; }
+    if (o.md && (o.json || o.tpOnly)) throw new UsageError(`-md: Markdown instead of the text report; not with ${o.json ? '-json (JSON is its own format)' : '-TPonly (one number per line)'}`);
+    if (o.inputs.length !== 2) throw new UsageError(`diff: two inputs, A and B (got ${o.inputs.length})`);
+    if (o.archs) throw new UsageError('diff: one microarchitecture (-arch NAME)');
+    for (const f of ['whatif', 'loops', 'funcs', 'example', 'files', 'raw', 'tpOnly']) if (o[f] !== undefined && o[f] !== false) throw new UsageError(`diff: -${f} is not available here`);
+    if (o.inputs.filter((n) => n === '-').length > 1) throw new UsageError('stdin (-) can be read only once');
+    const w = await createWuica({ ...(o.data ? { dataDir: o.data } : {}) });
+    if (!w.resolveArch(o.arch)) return failWith(CODES.REQUEST, `unknown microarchitecture: ${o.arch} (known: ${w.archs('id').map((a) => a.id).join(', ')})`);
+    const sides = [];
+    for (const name of o.inputs) {
+      const input = await readInput({ ...o, input: name }, io, w);
+      for (const n of input.notes) err.write(`${name}: ${n}\n`);
+      sides.push(input);
+    }
+    const x = await diffAnalyses(w, o.arch, { a: sides[0].request, b: sides[1].request, options: o.options, ...(per ? { per } : {}) });
+    if (x.failure) {
+      const k = /^B: /.test(x.failure.error) ? 1 : 0;
+      if (o.json) { out.write(JSON.stringify(x.failure) + '\n'); return x.failure.code; }
+      printStderr({ stderr: (x.failure.stderr ?? []).length ? x.failure.stderr : [{ text: x.failure.error }] }, err, o.inputs[k]);
+      if ((x.failure.stderr ?? []).length) err.write(`${o.inputs[k]}: ${x.failure.error.replace(/^[AB]: /, '')}\n`);
+      return x.failure.code;
+    }
+    for (const [k, r] of [x.a, x.b].entries()) printStderr(prefixed(r, o.inputs[k]), err, o.inputs[k]);
+    if (o.json) { out.write(JSON.stringify(x.result) + '\n'); return 0; }
+    out.write(o.md ? diffMarkdown(x) : `A: ${o.inputs[0]}\nB: ${o.inputs[1]}\n${diffText(x.result)}`);
+    return 0;
+  } catch (e) {
+    if (e instanceof UsageError) return failWith(1, `wuica diff: ${e.message}`);
+    return failWith(1, `wuica diff: ${e?.message ?? e}`);
+  }
+  function failWith(code, msg) {
+    if (o?.json) out.write(JSON.stringify({ code, error: msg, stderr: [{ text: msg }] }) + '\n');
+    else err.write(`${msg}\n`);
+    return code;
   }
 }
 

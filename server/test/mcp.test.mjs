@@ -31,7 +31,7 @@ test('initialize: server info and instructions', () => {
 
 test('tools/list: the five tools of the stdio server, same schemas', async () => {
   const r = await remote.listTools();
-  assert.deepEqual(r.tools.map((t) => t.name).sort(), ['analyze', 'assemble', 'compare_archs', 'list_archs', 'what_if']);
+  assert.deepEqual(r.tools.map((t) => t.name).sort(), ['analyze', 'assemble', 'compare_archs', 'diff_blocks', 'list_archs', 'what_if']);
   assert.deepEqual(r, JSON.parse(JSON.stringify(await local.listTools()))); // the in-memory transport keeps `_meta: undefined`
 });
 
@@ -100,7 +100,7 @@ test('stateless transport: GET and DELETE are 405; no session id; CORS', async (
   assert.equal(r.status, 200);
   assert.equal(r.headers.get('mcp-session-id'), null);
   assert.equal(r.headers.get('access-control-allow-origin'), '*');
-  assert.equal(r.json.result.tools.length, 5);
+  assert.equal(r.json.result.tools.length, 6);
   const pre = await fetch(s.base + '/mcp', { method: 'OPTIONS', headers: { Origin: 'https://example.org', 'Access-Control-Request-Method': 'POST' } });
   assert.equal(pre.status, 204);
   assert.match(pre.headers.get('access-control-allow-headers'), /Mcp-Protocol-Version/);

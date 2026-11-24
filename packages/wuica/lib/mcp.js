@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import readline from 'node:readline';
 import { createWuica } from './index.js';
 import { whatIfRequest, VARIANTS } from './web/whatif-core.js';
+import { diffRequest } from './web/block-diff.js';
 
 const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
@@ -90,7 +91,8 @@ export const INSTRUCTIONS =
         'wuica predicts the throughput of x86-64 basic blocks (loop bodies) with uiCA\'s cycle-level pipeline model, ' +
         'locally. Use `analyze` for one block on one microarchitecture (bottlenecks, per-port usage, full report), ' +
         '`what_if` for the effect of unrolling, an ideal front end, fusion, or removing the dependency chain, ' +
-        '`compare_archs` to see a block on several microarchitectures, `list_archs` for the ids, `assemble` to check ' +
+        '`compare_archs` to see a block on several microarchitectures, `diff_blocks` for the effect of a code change ' +
+        '(before and after), `list_archs` for the ids, `assemble` to check ' +
         'that assembly text is accepted and see its encoding. ' + ASSUMPTIONS;
 
 const readOnly = { readOnlyHint: true, idempotentHint: true, openWorldHint: false };
@@ -187,6 +189,31 @@ export function mcpTools(w) {
       }),
       annotations: readOnly, execution,
       handler: async ({ arch, ...request }) => result(await whatIfRequest(w, arch ?? 'SKL', request)),
+    },
+    {
+      name: 'diff_blocks',
+      title: 'Compare two versions of a block',
+      description:
+        'Analyzes two x86-64 blocks, A (before) and B (after), on one microarchitecture and returns in one result: `a` and ' +
+        '`b` (tp in cycles per iteration, bottlenecks), `delta` (B - A; negative = faster), `speedup` (A / B), `verdict` ' +
+        '(better, worse, same), `perElement` (with `per`: cycles per element of each and their change, for loops that do a ' +
+        'different amount of work per iteration, e.g. after unrolling), `bottlenecks` (a, b, gone, new), `limits` (each ' +
+        'component\'s limit before and after), `ports` (uops per iteration of each execution port before and after) and ' +
+        '`instructions` (counts, and the instructions changed, added or removed, aligned as a diff, with the change of their ' +
+        'uops per port). Each block is given as for analyze; `options` apply to both. ' + INPUT_NOTE + ' ' + ERRORS_NOTE +
+        ' A failure says which side (A: or B:).',
+      inputSchema: obj({
+        arch: str('microarchitecture id (default "SKL"); see list_archs'),
+        a: { description: 'block A (before)', type: 'object', properties: codeShape, additionalProperties: false },
+        b: { description: 'block B (after)', type: 'object', properties: codeShape, additionalProperties: false },
+        options: optionsShape,
+        per: {
+          description: 'elements per iteration: a number for both, or [A, B] (e.g. [8, 32] after unrolling ×4): also cycles per element',
+          anyOf: [{ type: 'number', exclusiveMinimum: 0 }, { type: 'array', items: { type: 'number', exclusiveMinimum: 0 } }],
+        },
+      }, ['a', 'b']),
+      annotations: readOnly, execution,
+      handler: async ({ arch, ...request }) => result(await diffRequest(w, arch ?? 'SKL', request)),
     },
     {
       name: 'compare_archs',

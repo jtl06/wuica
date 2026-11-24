@@ -13,7 +13,7 @@
 //     visit and of all the tables (the idle prefetch) are within tests-js/budgets.mjs (+10%): the check whose absence let uncompressed tables ship in 0.1.9.
 //     Also: the analyzer, the assembler and the tables come compressed (content-encoding, or the precompressed .gz).
 // API (default https://api.wuica.jacen.li): /healthz, /api/version (wuica and server are VERSION), one analyze, one
-// compare, MCP tools/list (the five tools) and one what_if.
+// compare, MCP tools/list (at least the five tools of 0.1.9) and one what_if.
 // Exit status 1 if a check fails.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -61,7 +61,8 @@ async function api() {
     };
     const t = await rpc(1, 'tools/list');
     const names = (t.body?.result?.tools ?? []).map((x) => x.name).sort().join(',');
-    check(t.status === 200 && names === 'analyze,assemble,compare_archs,list_archs,what_if', 'MCP tools/list', names || JSON.stringify(t.body));
+    const want = ['analyze', 'assemble', 'compare_archs', 'list_archs', 'what_if']; // (and the newer ones: diff_blocks, list_loops)
+    check(t.status === 200 && want.every((n) => names.split(',').includes(n)), 'MCP tools/list', names || JSON.stringify(t.body));
     const w = await rpc(2, 'tools/call', { name: 'what_if', arguments: { source: 'loop:\n vaddps ymm0, ymm0, ymm1\n dec rcx\n jnz loop\n', arch: 'SKL' } });
     const text = w.body?.result?.content?.[0]?.text ?? '';
     check(w.status === 200 && !w.body?.result?.isError && /accumulators/.test(text), 'MCP tools/call what_if', text.slice(0, 80).replace(/\s+/g, ' ') || JSON.stringify(w.body));

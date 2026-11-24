@@ -36,6 +36,8 @@ export function listLoops(source, { func = null } = {}) {
 
 export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, CODES, WARM_HEX, parseDiagnostics, insights };
 export { whatIf, VARIANTS as WHAT_IF_VARIANTS, whatIfPerElement, whatIfText, whatIfRequest } from './web/whatif-core.js';
+export { diffResult, diffAnalyses, diffRequest, diffMarkdown, diffText } from './web/block-diff.js';
+import { diffRequest } from './web/block-diff.js';
 import { whatIfRequest } from './web/whatif-core.js';
 export { examples, findExample } from './examples.js';
 export * as markdown from './web/markdown.js';
@@ -505,6 +507,13 @@ class Wuica {
   /** @param {string} arch @param {any} [request] @returns {Promise<any>} */
   async whatIf(arch, request = {}) {
     return whatIfRequest(this, arch, request);
+  }
+
+  // Two blocks on one microarchitecture (web/js/block-diff.js): {a: block, b: block, options?, per?} -> the change of
+  // throughput, bottlenecks, limits, ports and instructions. wuica diff, the MCP tool diff_blocks and POST /api/diff/<arch>.
+  /** @param {string} arch @param {any} request @returns {Promise<any>} */
+  async diff(arch, request) {
+    return diffRequest(this, arch, request);
   }
 
   insights(r) {

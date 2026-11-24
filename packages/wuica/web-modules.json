@@ -1,4 +1,4 @@
 {
   "comment": "The page's modules the package uses, copied from web/js to lib/web by copy-web.mjs (build.sh runs it); tests-js/web_pkg_copies.mjs checks the copies. A module listed here imports only modules listed here.",
-  "modules": ["ab-diff.js", "accum.js", "asm-regions.js", "asm-tokens.js", "assembler.js", "branch-label.js", "bound-core.js", "caveats.js", "details.js", "examples.js", "loop-find.js", "markdown.js", "showcase.js", "whatif-core.js"]
+  "modules": ["ab-diff.js", "accum.js", "asm-regions.js", "asm-tokens.js", "assembler.js", "block-diff.js", "branch-label.js", "bound-core.js", "caveats.js", "details.js", "examples.js", "loop-find.js", "markdown.js", "showcase.js", "whatif-core.js"]
 }

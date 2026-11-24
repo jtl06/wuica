@@ -1,7 +1,7 @@
 // Every REST endpoint, as JSON and as text, against the library's own results.
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { createWuica, markdown, whatIfText } from 'wuica';
+import { createWuica, markdown, whatIfText, diffAnalyses, diffMarkdown, diffText } from 'wuica';
 import fs from 'node:fs';
 import path from 'node:path';
 import { start, post, get, HEX, ASM, ROOT, plain, rest } from './helpers.mjs';
@@ -113,6 +113,27 @@ test('POST /api/what-if/<arch>: the library\'s whatIf (the MCP tool what_if), pe
   const asm = await post(s.base, '/api/what-if/SKL', { source: 'frob rax' });
   assert.equal(asm.status, 200);
   assert.equal(asm.json.code, 2);
+});
+
+test('POST /api/diff/<arch>: the library\'s diff (the MCP tool diff_blocks), text, Markdown, errors', async () => {
+  const body = { a: { hex: HEX }, b: { source: ASM }, per: [1, 2] };
+  const r = await post(s.base, '/api/diff/SKL', body);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json, await w.diff('SKL', body));
+  assert.equal(r.json.perElement.b, r.json.b.tp / 2);
+  const x = await diffAnalyses(w, 'SKL', body);
+  assert.equal((await post(s.base, '/api/diff/SKL', body, { Accept: 'text/plain' })).text, diffText(x.result));
+  const m = await post(s.base, '/api/diff/SKL', body, { Accept: 'text/markdown' });
+  assert.match(m.headers.get('content-type'), /^text\/markdown/);
+  assert.equal(m.text, diffMarkdown(x));
+  assert.equal((await post(s.base, '/api/diff/NOPE', body)).status, 404);
+  assert.equal((await post(s.base, '/api/diff', body)).status, 404);
+  const bad = await post(s.base, '/api/diff/SKL', { a: { hex: HEX } });
+  assert.equal(bad.status, 400);
+  const asm = await post(s.base, '/api/diff/SKL', { a: { hex: HEX }, b: { source: 'frob rax' } });
+  assert.equal(asm.status, 200);
+  assert.equal(asm.json.code, 2);
+  assert.match(asm.json.error, /^B: /);
 });
 
 test('Accept: text/markdown: the package\'s Markdown for analyze and compare', async () => {

@@ -15,7 +15,7 @@
 // workers this takes both: a request that comes in while a compare runs waits for one part (on aethia, for the SHA-256
 // showcase, up to ~90 ms). splitCompare: false (WUICA_SPLIT_COMPARE=0) turns it off.
 
-import { whatIfRequest } from 'wuica';
+import { whatIfRequest, diffAnalyses } from 'wuica';
 import { BusyError, timeoutFailure } from './pool.js';
 
 export const STATUS = Symbol('httpStatus');
@@ -148,6 +148,12 @@ export class Facade {
   async whatIf(arch, request, ctx = {}) {
     const w = /** @type {any} */ ({ analyze: (a, r) => this.analyze(a, r, ctx), assemble: (t, s) => this.assemble(t, s, ctx) });
     return whatIfRequest(w, arch, request);
+  }
+
+  // Two blocks (the package's diffAnalyses, as the MCP tool diff_blocks): {result, a, b} or {failure}.
+  async diff(arch, request, ctx = {}) {
+    const w = /** @type {any} */ ({ analyze: (a, r) => this.analyze(a, r, ctx) });
+    return diffAnalyses(w, arch, request);
   }
 
   async assemble(source, syntax = 'intel', ctx = {}) {

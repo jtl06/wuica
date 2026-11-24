@@ -312,6 +312,9 @@ export interface Wuica {
   /** The what-if experiments (the MCP tool what_if, POST /api/what-if/<arch>): analyze's request with `variants`
    * (default all) and `per` (elements per iteration: also cycles per element). */
   whatIf(arch: string, request: WhatIfRequest): Promise<WhatIfPerElement | Failure>;
+  /** Two blocks, A (before) and B (after), on one microarchitecture (wuica diff, the MCP tool diff_blocks,
+   * POST /api/diff/<arch>). A failure's error starts with "A: " or "B: ". */
+  diff(arch: string, request: DiffRequest): Promise<DiffResult | Failure>;
   /** The id for a user-supplied name (case-insensitive, "-" optional), DEFAULT_ARCH for empty input, or null. */
   resolveArch(arch?: string | null): string | null;
   /** How many times the analyzer was restarted after a trap. */
@@ -396,6 +399,38 @@ export interface WhatIfResult {
 export type CliWhatIf = Record<string, WhatIfPerElement | Failure>;
 /** A what-if result; with `per`, elementsPerIteration and perElement (tp / per), and each variant with a tp its perElement. */
 export type WhatIfPerElement = WhatIfResult & { elementsPerIteration?: number; perElement?: number; variants: (WhatIfResult['variants'][number] & { perElement?: number })[] };
+/** The request of Wuica.diff: two blocks (each as analyze's request), `options` for both (unless a block has its own),
+ * `per` elements per iteration (N for both, or [A, B]). */
+export interface DiffRequest { a: AnalyzeRequest; b: AnalyzeRequest; options?: AnalysisOptions; per?: number | [number, number] }
+/** The result of Wuica.diff. Numbers are cycles per iteration (perElement: per element) rounded to two decimals. */
+export interface DiffResult {
+  code: 0;
+  arch: string;
+  a: { tp: number; mode: 'loop' | 'unroll'; bottlenecks: string[]; perElement?: number; loop?: LoopInfo };
+  b: { tp: number; mode: 'loop' | 'unroll'; bottlenecks: string[]; perElement?: number; loop?: LoopInfo };
+  /** B − A (0 when the same within 0.25 %); speedup A / B. */
+  delta: number;
+  speedup: number | null;
+  verdict: 'better' | 'worse' | 'same';
+  perElement?: { a: number; b: number; delta: number; speedup: number | null; verdict: 'better' | 'worse' | 'same' };
+  bottlenecks: { a: string[]; b: string[]; gone: string[]; new: string[] };
+  limits: { name: string; a: number | null; b: number | null; delta: number | null }[];
+  /** uops per iteration of each execution port (both sides' ports; [] if they differ). */
+  ports: { port: string; a: number; b: number; delta: number }[];
+  /** The instructions aligned as a diff: changed (same instruction, other uops), modified (other operands), added (only
+   * in B), removed (only in A); `uops`: the change of the issued uops and of each port's, where not 0. */
+  instructions: { counts: Record<'same' | 'changed' | 'modified' | 'added' | 'removed', number>; changes: { status: 'changed' | 'modified' | 'added' | 'removed'; a: string | null; b: string | null; uops: Record<string, number> }[] };
+}
+/** Wuica.diff with any w that has analyze. */
+export function diffRequest(w: Pick<Wuica, 'analyze'>, arch: string, request: DiffRequest): Promise<DiffResult | Failure>;
+/** The two analyses and the result (for diffMarkdown), or the failure. */
+export function diffAnalyses(w: Pick<Wuica, 'analyze'>, arch: string, request: DiffRequest): Promise<{ result: DiffResult; a: AnalyzeResult; b: AnalyzeResult; per: [number, number] | null; sourceA: string | null; sourceB: string | null } | { failure: Failure }>;
+/** The result from two analyze() responses. */
+export function diffResult(a: AnalyzeResult, b: AnalyzeResult, options?: { per?: [number, number] | null; sourceA?: string | null; sourceB?: string | null }): DiffResult;
+/** Markdown of diffAnalyses' result (the page's A–B tables; markdown.compare). */
+export function diffMarkdown(x: Awaited<ReturnType<typeof diffAnalyses>>): string;
+/** The result as text (wuica diff; REST text/plain). */
+export function diffText(result: DiffResult | Failure): string;
 /** The request of Wuica.whatIf, the MCP tool what_if and POST /api/what-if/<arch>. */
 export type WhatIfRequest = AnalyzeRequest & { variants?: readonly WhatIfVariant[]; per?: number };
 /** whatIf with a request as the interfaces take it (`variants`, `per`), with w's analyze and assemble. */
