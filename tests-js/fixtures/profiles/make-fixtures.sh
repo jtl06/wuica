@@ -1,7 +1,8 @@
 #!/bin/sh
 # The real profile fixtures of hot.c, as made on Linux x86-64 (gcc 15.2, GNU objdump 2.46, perf 7.0) in a directory
 # holding hot.c: relative paths only (-fdebug-prefix-map), so no local path lands in a fixture. perf needs a CPU with
-# the cycles event (user space only: cycles:u).
+# the cycles event (user space only: cycles:u). The fixtures were made with these commands one by one; a new profile has
+# other percentages: packages/wuica/test/library.test.mjs spells out some of them (24.54, 0.95, 0.44), to be redone.
 set -e
 gcc -O2 -g -fdebug-prefix-map="$PWD"=. -o hot hot.c
 gcc -O2 -g -fdebug-prefix-map="$PWD"=. -S hot.c -o gcc-hot-att.s

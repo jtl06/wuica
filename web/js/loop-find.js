@@ -223,12 +223,13 @@ export function fromObjdump(text) {
 // for cycles:u (1069 samples, percent: local period)") and its lines: an instruction "   22.59 :   1413:   movaps ...",
 // anything else after an empty percent column " :" (perf 7 numbers those lines: " : 39   s += m[...]"). Read as the same
 // lines of objdump text (an instruction as "  1413:\tmovaps ...", a source line as "; text", the function header as is),
-// line for line. samples: Map line -> the instruction's percent of all the samples of the output (a block's percentages
-// are of its own symbol's samples: weighted by the sample count of its header; without one, as given). {text, perf: true,
-// samples} or {perf: false} (stdio2: true for `perf annotate --stdio2` output, which has no addresses).
+// line for line. samples: Map line -> the instruction's percent of all the samples of the output: a block's local
+// percentages (perf's default) are of its own symbol's samples, weighted by the sample count of its header (an
+// approximation of perf's global-period, which weighs by period); global ones, or without a header, as given. {text,
+// perf: true, samples} or {perf: false} (stdio2: true for `perf annotate --stdio2` output, which has no addresses).
 const PERF_INSN = /^\s*(\d+(?:\.\d+)?)\s*:\s+([0-9a-fA-F]+):\s+(\S.*)$/;
 const PERF_OTHER = /^\s*:\s?(.*)$/;
-const PERF_HEADER = /^\s*Percent\s*\|.*?\((\d+) samples\b/;
+const PERF_HEADER = /^\s*Percent\s*\|.*?\((\d+) samples(?:, percent: ([^)]*))?/;
 /** @returns {any} */
 export function fromPerfAnnotate(text) {
   const lines = normalizeText(text).split('\n');
@@ -239,9 +240,11 @@ export function fromPerfAnnotate(text) {
   const local = new Map(); // line -> [percent, the block's samples or null]
   /** @type {number | null} */
   let blockSamples = null;
+  let total = 0; // the samples of the blocks with local percentages
   const out = lines.map((l, k) => {
     const h = PERF_HEADER.exec(l);
-    if (h) { blockSamples = Number(h[1]); return ''; }
+    // (--percent-type global-*: already of all the samples, as given)
+    if (h) { blockSamples = /global/.test(h[2] ?? '') ? null : Number(h[1]); total += blockSamples ?? 0; return ''; }
     const m = PERF_INSN.exec(l);
     if (m) { local.set(k + 1, [Number(m[1]), blockSamples]); return `  ${m[2]}:\t${m[3].trim()}`; }
     const o = PERF_OTHER.exec(l);
@@ -252,7 +255,6 @@ export function fromPerfAnnotate(text) {
     return `; ${t}`;
   });
   // the percent of all samples: each block's percentages weighted by its samples
-  const total = [...new Set([...local.values()].map(([, n]) => n))].reduce((a, n) => a + (n ?? 0), 0);
   const samples = new Map();
   for (const [line, [p, n]] of local) samples.set(line, total > 0 && n ? Math.round(p * n / total * 100) / 100 : p);
   return { perf: true, text: out.join('\n'), samples };

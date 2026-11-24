@@ -212,6 +212,14 @@ test('profiles, real output (tests-js/fixtures/profiles/make-fixtures.sh): perf 
   assert.ok(c.rows.some((x) => x.samples === 0.95), JSON.stringify(c.rows.map((x) => x.samples)));
   assert.ok(c.rows.some((x) => x.samples === 0.44), '1519 at 8.68 % of count: 0.44');
   assert.ok(!c.rows.some((x) => x.samples > 1), 'no instruction of count has more than 1 % of all the samples');
+  // hand-edited from the real output: two blocks with the same count (count's header says 1069 too) both count:
+  // 26.33 * 1069 / (1069 + 1069 + 20) = 13.04
+  const same = pf.replace('(58 samples,', '(1069 samples,');
+  const sm = await w.analyze('SKL', { source: same, loop: '0x1400' });
+  assert.ok(sm.rows.some((x) => x.samples === 13.04), JSON.stringify(sm.rows.map((x) => x.samples)));
+  // hand-edited: --percent-type global-period (its header says global): the percentages as given
+  const global = pf.replace(/percent: local period/g, 'percent: global period');
+  assert.ok((await w.analyze('SKL', { source: global, loop: '0x1400' })).rows.some((x) => x.samples === 26.33));
   // --stdio2 has no addresses: said, not analyzed as something else
   const s2 = await w.analyze('SKL', { source: fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/profiles/perf-annotate-hot-stdio2.txt'), 'utf8') });
   assert.equal(s2.code, 1);
@@ -241,14 +249,14 @@ test('profiles, real output: GNU objdump -dS and -dSl, gcc 15 -O2 -g -S (DWARF 5
     assert.ok(instr.every((x) => Number.isInteger(x.line)), f);
     assert.equal(r.hex, hex, `${f}: the bytes of the binary's loop`);
   }
-  // the line directives are not assembled: clang's text, the same bytes without them (gcc's: those of the binary, above)
-  for (const f of ['profiles/clang23-sum-g.s', 'asm/dot-clang-O2-g.s']) {
-    const text = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures', f), 'utf8');
-    const bare = text.replace(/^\t\.(?:loc|file\t?\s*\d+)\b.*$/gm, '');
-    const [a, b] = [await w.analyze('SKL', { source: text }), await w.analyze('SKL', { source: bare })];
-    assert.equal(a.code, 0, f);
-    assert.equal(a.hex, b.hex, f);
-  }
+  // the line directives are not assembled, and the bytes stay: clang23-sum-g.s as clang23-sum.s (the same clang, without
+  // -g: no line table); dot-clang-O2-g.s's loop as clang 23 assembles it (clang --target=x86_64-linux-gnu -c, the .text bytes)
+  const F2 = (f) => fs.readFileSync(path.join(ROOT, 'tests-js/fixtures', f), 'utf8');
+  const [g, n] = [F2('profiles/clang23-sum-g.s'), F2('profiles/clang23-sum.s')];
+  assert.equal((await w.analyze('SKL', { source: g })).hex, (await w.analyze('SKL', { source: n })).hex);
+  assert.equal((await w.assemble(g)).hex, (await w.assemble(n)).hex);
+  assert.equal((await w.analyze('SKL', { source: F2('asm/dot-clang-O2-g.s') })).hex,
+    'f20f100ccff20f1054cf08f20f590ccef20f5954ce08f20f58c8f20f105ccf10f20f595cce10f20f58d1f20f1044cf18f20f5944ce18f20f58daf20f58c34883c1044839ca75b9');
 });
 
 test('source lines only when the lines are the instructions: .rept, .irp, .if, .macro; .byte; a NUL in a comment', async () => {
