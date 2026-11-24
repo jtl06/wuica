@@ -200,7 +200,7 @@ try {
       for (const id of ['loadstore', 'avx', 'stack', 'synthetic']) { await example(id); out[id] = [tp(), focused(), document.querySelector('.mock-tag').textContent.slice(0, 44), document.querySelectorAll('table.uops tr.extra').length, overflow()]; }
       out.reportStaysOpen = document.querySelector('details.report-wrap').open;
       out.synthetic2 = { notes: [...document.querySelectorAll('table.uops td.note')].map((td) => td.textContent).join(''), nolink: !document.querySelector('table.uops tr.unsupported a'), caveat: caveats(), mode: mode() === 'unrolled',
-        listing: listing().trimEnd().split('\\n'), instrs: document.querySelectorAll('table.uops tbody tr:not(.extra)').length, legend: [...new Set([...document.querySelectorAll('table.uops td.note[title]')].map((td) => `${td.textContent} ${td.title}`))].join('\\n'), noLegend: !document.querySelector('#result-body .legend') };
+        listing: listing().trimEnd().split('\\n'), instrs: document.querySelectorAll('table.uops tbody tr:not(.extra)').length, legend: [...new Set([...document.querySelectorAll('table.uops td.note[title]')].map((td) => td.textContent + ' ' + td.title))].join('\\n'), noLegend: !document.querySelector('#result-body .legend') };
       out.columns = [document.querySelectorAll('table.uops thead th').length, !!$('hide-empty')];
       await example('error'); out.error = document.querySelector('.error-box')?.textContent;
       return out;`);
