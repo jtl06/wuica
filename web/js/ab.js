@@ -14,7 +14,7 @@
 // carries both sides. The page (app.js) runs the analyses: inputs() gets the machine code of both sides,
 // analyze() runs them, draw() shows the result. All text goes in through textContent.
 
-import { h, uopTable, NOTES, watchFit, nearestLimit, columnGroup, copyAllButton, messageList, invalidText } from './render.js';
+import { h, uopTable, NOTES, watchFit, nearestLimit, columnGroup, copyAllButton, messageList, invalidText, alignButton } from './render.js';
 import { attachHighlight, colorInstr } from './asm-hl.js'; // B's code box in colour; the instructions of the Δ table
 import { caveats, cannotRun } from './caveats.js';
 import { GROUP_LABEL } from './archs.js';
@@ -505,6 +505,8 @@ export function createAB(api) {
     // said, as that is rarely what is meant (A → B of a file, then B's loop picked by default)
     const odd = mismatch(view);
     if (odd) line.insertBefore(h('span', { class: 'ab-odd caveat', title: odd.title, text: odd.text }), line.querySelector('.ab-delta'));
+    const at = alignButton(api.alignTag?.() ?? null); // (the offset, when not the default: both sides run at it)
+    if (at) line.insertBefore(at, line.querySelector('.ab-delta'));
     line.append(copyAllButton());
     const meta = h('div', { class: 'meta ab-meta' }, sideMeta('A', a), sep(), sideMeta('B', b), cmp.okA && cmp.okB ? [sep(), bottlenecks(view), notModelled(view)] : null);
     meta.title = meta.textContent; // (one line on wider screens, cut with …: the whole of it here)

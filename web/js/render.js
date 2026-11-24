@@ -296,6 +296,7 @@ export function renderResult(root, view) {
           h('span', { class: `value${bad ? ' invalid' : ''}`, title: bad ? `not a result: ${bad.title} (${Number(r.tp).toFixed(2)} cycles/iteration as computed)` : w > 1 ? `${Number(r.tp).toFixed(2)} cycles/iteration ÷ ${w}` : null, text: w > 1 ? cyc(Number(r.tp) / w) : Number(r.tp).toFixed(2) }), ' ',
           h('span', { class: `unit${view.workFlag ? ' caveat' : ''}`, title: view.workFlag ? 'the code changed since its elements per iteration were set' : null, text: `${w > 1 ? 'cycles/element' : 'cycles/iteration'}${view.workFlag ? '?' : ''}` })),
         h('span', { class: 'meta', title: details }, mode, sep(), h('span', { class: view.experimental ? 'caveat' : null, text: view.archTitle })),
+        alignButton(view.alignTag),
         copyAllButton(),
         h('span', { class: 'bn-line' }, h('span', { class: 'k', text: bnKey }), ' ',
           r.bottlenecks.length ? h('span', { class: 'bn', text: r.bottlenecks.join(', ') })
@@ -324,6 +325,16 @@ export function renderResult(root, view) {
   }
 
   root.replaceChildren(...out);
+}
+
+// The alignment offset when it is not the default (app.js alignTag: {offset, reset}): a small tag next to the headline
+// that sets it back; null for none
+export function alignButton(tag) {
+  if (!tag) return null;
+  const b = h('button', { type: 'button', class: 'plain align-tag', title: `the code at alignment offset ${tag.offset} (not 0): click to set it back`, 'aria-label': `alignment offset ${tag.offset}: set back to 0` },
+    `offset ${tag.offset} `, h('span', { 'aria-hidden': 'true', text: '×' }));
+  b.addEventListener('click', () => tag.reset());
+  return b;
 }
 
 // Why a CPU cannot run the code (caveats.js cannotRun): "needs AVX-512 · 12 undecodable positions skipped"

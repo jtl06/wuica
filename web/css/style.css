@@ -480,6 +480,14 @@ table.cmp-cpus { width: 100%; }
 .cmp-cpus tr.pending td.cmp-tp { color: var(--subtle); }
 .cmp-cpus tr.error td.cmp-tp { color: var(--caveat); }
 /* a CPU that cannot run the code: its number is not a result (the reason in the last column, the number in the tooltip) */
+/* the alignment offset when it is not the default (render.js alignButton): a tag that sets it back */
+.align-tag { border: 1px solid var(--caveat); color: var(--caveat); padding: 0 0.4ch; line-height: 1.3; font-size: 0.9em; white-space: nowrap; }
+.align-tag:hover { color: var(--text); }
+/* the options' summary when some are changed: "options" in the caveat colour, underlined; its text ("· 2 changed") for
+   screen readers and the tooltip only, so that the toolbar keeps its width and does not wrap (the headline's tag says
+   which: the offset) */
+#advanced-summary { font-size: 0; }
+#advanced > summary:has(#advanced-summary:not(:empty)) { color: var(--caveat); text-decoration: underline dotted; text-underline-offset: 0.2em; }
 .cmp-cpus tr.invalid td.cmp-tp, .tp .value.invalid, .ab-tp .value.invalid, .ab-cpus td.invalid { color: var(--subtle); text-decoration: line-through; }
 .cmp-cpus tbody tr { cursor: pointer; }
 .cmp-cpus tbody tr.current > * { background-color: var(--accent-dim); }

@@ -132,7 +132,7 @@ const panels = createComparePanels({
   tableLoaded: (key) => !!engine?.hasArch(archItems.get(key)?.table),
   ensureTable: (key) => ensureTable(key),
   onArch: (key) => focusArch(key),
-  onAlign: (offset) => setAlign(offset),
+  onAlign: (offset) => { alignBy = 'manual'; setAlign(offset); }, // (a click of the sweep: the user's offset)
   work: () => (state.ab ? 1 : state.aWork),
   onToggle: () => {
     const o = panels.open();
@@ -185,7 +185,7 @@ let textA = '', textB = '';
 let syntaxChosen = false; // the user picked the syntax (not the page from a pasted text)
 function newTextA() { state.loop = 'auto'; if (alignBy === 'manual') alignBy = null; textA = el.code.value; }
 function newTextB() { state.bLoop = 'auto'; textB = /** @type {HTMLTextAreaElement | null} */ (document.getElementById('code-b'))?.value ?? ''; }
-const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o),
+const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => { alignBy = 'manual'; setAlign(o); },
   work: (v) => (v?.side === 'b' ? state.bWork : state.aWork), // elements per iteration of the shown result (its side in A–B)
   assemble: async (text) => { const a = await ensureAssembler(); return a ? a.assemble(text, 'intel') : null; }, cpus: () => checked, onToggle: (open) => { Object.assign(state, open); syncUrl(true); if ('bound' in open) cmpSlots.decorate(); }, getSel: () => state.sel, getSource: () => (ceSource && (!pastedSource || ceSource.hex === lastView?.hex) ? ceSource : pastedSource),
   // llvm-mca (mca.js): its module only if the build has it, downloaded on first use; the bytes as Intel assembly
@@ -319,6 +319,7 @@ function paintDerived() {
   const changed = ['alignmentOffset', 'initPolicy', 'simpleFrontEnd', 'noMicroFusion', 'noMacroFusion', 'minIterations', 'minCycles']
     .filter((k) => state[k] !== DEFAULT_STATE[k]).length;
   el.advancedSummary.textContent = changed ? ` · ${changed} changed` : '';
+  el.advancedSummary.parentElement.title = changed ? `analysis options: ${changed} changed` : 'analysis options';
   paintCpus();
   el.run.disabled = !ready || (state.mode === 'asm' && assemblerMissing);
   paintStale();
@@ -483,6 +484,12 @@ function cpusChanged(e) {
     paintDerived();
     syncUrl(true);
   }
+}
+// The alignment offset next to the headline while it is not the default one (a sweep's click, the field, a link), with
+// a click that sets it back (to the offset of the code's addresses, if it has them); none for that offset itself
+function alignTag() {
+  if (state.alignmentOffset === DEFAULT_STATE.alignmentOffset || alignBy === 'auto') return null;
+  return { offset: state.alignmentOffset, reset: () => { alignBy = null; setAlign(DEFAULT_STATE.alignmentOffset); } };
 }
 function setAlign(offset) {
   const v = clampInt(offset, LIMITS.alignmentOffset, DEFAULT_STATE.alignmentOffset);
@@ -779,7 +786,7 @@ function draw() {
   tracePanel.setOpen(state.trace); // (opened or closed in A–B mode meanwhile)
   const trace = lastView.response && !lastView.response.error && Array.isArray(lastView.response.rows) ? tracePanel.update(lastView) : null;
   const onUi = (k, v) => { ui[k] = v; if (k === 'hideEmpty') draw(); };
-  renderResult(el.body, { ...lastView, config: uarch?.configs?.[lastView.archKey], ui, onUi, work: state.aWork, workFlag: !!ab?.flagged?.('a') && state.aWork !== 1 });
+  renderResult(el.body, { ...lastView, config: uarch?.configs?.[lastView.archKey], ui, onUi, work: state.aWork, workFlag: !!ab?.flagged?.('a') && state.aWork !== 1, alignTag: alignTag() });
   showTrace(trace);
   copySingle(lastView);
   insight.decorate(el.body, lastView);
@@ -1260,7 +1267,7 @@ function setupFeatures() {
     redraw: () => { if (lastView?.ab) { draw(); updateABCpus(lastView.ab, { auto: true }); } else if (lastView && !state.ab) { draw(); panels.redrawCpus(); } },
     srcA: () => srcA,
     state, el: { code: el.code, body: el.body, toolbar: el.toolbar }, archItems: () => archItems, archTitle, ensureAssembler: assemblerForRun, ensureTable,
-    machineCodeA: machineCode, changed, writeControls,
+    machineCodeA: machineCode, changed, writeControls, alignTag,
     picks: () => picks,
     // A → B: B analyzes what A does (its loop too); swap: the picks change sides. B's text is B's own now (an edit is
     // an edit, not a new text that starts with its first loop)

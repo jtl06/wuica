@@ -294,6 +294,33 @@ try {
     await page.close();
   }
 
+  // ---- a sweep click: the offset next to the headline (a tag that sets it back); the toolbar does not move --------------
+  {
+    const page = await fresh();
+    const r = await page.eval(`${W}
+      const top = () => Math.round($('code').getBoundingClientRect().top), tbh = () => Math.round(document.querySelector('#input .toolbar').getBoundingClientRect().height);
+      const tag = () => document.querySelector('#result-body .row.lead .align-tag');
+      pasteInto($('code'), ${js(fx('scan_v2.s'))}); await settle();
+      const before = { top: top(), tb: tbh(), tag: !!tag(), tp: tp() };
+      document.querySelector('.view-tab[data-tab="sweep"]').click();
+      await until(() => document.querySelectorAll('#cmp-sweep rect.hit').length === 64 && $('cmp-sweep').dataset.state === 'done', 90000);
+      document.querySelector('#cmp-sweep rect.hit[data-offset="30"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await settle();
+      const after = { top: top(), tb: tbh(), tag: tag()?.textContent ?? null, tp: tp(), align: $('opt-align').value, summary: $('advanced-summary').textContent };
+      $('cmp-ab').click(); await settle();
+      const ab = document.querySelector('#result-body .ab-tp .align-tag')?.textContent ?? null;
+      $('cmp-single').click(); await settle();
+      tag().click(); await settle();
+      const reset = { tag: !!tag(), align: $('opt-align').value, tp: tp(), summary: $('advanced-summary').textContent };
+      return { before, after, ab, reset };`, { timeout: 200000 });
+    check(!r.before.tag && r.after.tag === 'offset 30 ×' && r.after.align === '30' && r.after.tp !== r.before.tp, 'sweep click: the headline says "offset 30" (its number changed)', js(r));
+    check(r.after.top === r.before.top && r.after.tb === r.before.tb && r.after.summary === ' · 1 changed', 'sweep click: the toolbar keeps its height, the editor does not move (the options\' count for screen readers)', js([r.before, r.after]));
+    check(r.ab === 'offset 30 ×', 'sweep click: A–B shows the offset too', String(r.ab));
+    check(!r.reset.tag && r.reset.align === '0' && r.reset.tp === r.before.tp && r.reset.summary === '', 'the tag sets the offset back to 0', js(r.reset));
+    check(page.take().length === 0, 'sweep: no errors', '');
+    await page.close();
+  }
+
   // ---- B6: an assembler error of the old code goes when a Compiler Explorer link replaces it (A, and B) ----------------
   {
     const page = await fresh();
