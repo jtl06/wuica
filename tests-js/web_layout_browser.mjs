@@ -349,30 +349,32 @@ try {
       $('examples').value = 'sha256'; $('examples').dispatchEvent(new Event('change', { bubbles: true })); await until(() => document.querySelector('#result-body .tp .value')?.textContent === '744.25' && !$('results').hasAttribute('aria-busy') && !$('result-body').classList.contains('stale'), 120000);
       const ms = performance.now() - t0;
       await wait(300);
-      const out = { opts, ms, long: [...long], tp: tp(), asm: $('mode-asm').checked && $('code').value.startsWith('loop:') && $('code').value.includes('mov qword ptr [rsp+0x98], r8'), rows: document.querySelectorAll('table.uops tbody tr').length,
-        more: document.querySelector('.more-rows')?.innerText, status: $('status').textContent, cost: $('result-body').dataset.cost,
+      const out = { opts, ms, long: [...long], tp: tp(), asm: $('mode-asm').checked && $('code').value.startsWith('loop:') && $('code').value.includes('mov qword ptr [rsp+0x98], r8'), rows: document.querySelectorAll('table.uops tbody tr[data-row]').length,
+        count: document.querySelector('table.uops').vr?.count, more: document.querySelector('.more-rows')?.innerText ?? null, status: $('status').textContent, cost: $('result-body').dataset.cost,
         closed: [...document.querySelectorAll('details.text-block, details.trace-panel')].every((d) => !d.open), meta: document.querySelector('#result-body .meta').title };
       // the cost column waits for a click (2,949 analyses)
       document.querySelector('.ins-cost-box').click(); await until(() => $('result-body').dataset.cost === 'waiting', 10000);
       out.costWait = [$('result-body').dataset.cost, document.querySelector('.ins-cost-status button')?.textContent];
       document.querySelector('.ins-cost-box').click(); await wait(100);
-      // all rows on request
+      // every row a scroll away (vrows.js): the last one drawn at the end of the scroll range
       const t1 = performance.now();
-      document.querySelector('.more-rows button').click(); await wait(50);
-      out.all = [document.querySelectorAll('table.uops tbody tr').length, Math.round(performance.now() - t1), !document.querySelector('.more-rows')];
+      const w = document.querySelector('#result-body .table-wrap'); w.scrollTop = w.scrollHeight; await wait(100);
+      const drawn = [...document.querySelectorAll('table.uops tbody tr[data-row]')];
+      out.all = [Number(drawn.at(-1)?.dataset.row), Math.round(performance.now() - t1), drawn.length];
+      w.scrollTop = 0;
       // three CPUs (the pool): the table of their throughputs
       cpus('SKL', 'ZEN3', 'ADL-P'); await until(tableDone, 60000);
       out.cpus = rows(); out.cpusInfo = $('cmp-cpus-info').textContent;
       return out;`);
     check(r.opts.at(-1) === 'showcase:sha256', 'showcase: its own group at the end of the examples', JSON.stringify(r.opts));
     check(r.tp === '744.25' && r.asm && /^2949 instructions · 11602 bytes/.test(r.meta), 'showcase: SHA-256 (2,949 instructions) gives 744.25 on SKL; the input switches to Intel assembly', JSON.stringify([r.tp, r.asm, r.meta]));
-    check(r.rows === 200 && /^2,749 more rows · show all 2,949 rows$/.test(r.more) && r.closed && r.cost === 'off', 'showcase: the first 200 rows are drawn, the rest on request; objdump, report and trace stay closed; no cost column', JSON.stringify([r.rows, r.more, r.closed, r.cost]));
+    check(r.count >= 2949 && r.rows < 200 && r.more === null && r.closed && r.cost === 'off', 'showcase: the rows near the view are drawn, every row a scroll away (no "show all"); objdump, report and trace stay closed; no cost column', JSON.stringify([r.count, r.rows, r.more, r.closed, r.cost]));
     check(/^744\.25 cycles\/iteration · SKL · \d+(\.\d)? ms$/.test(r.status), 'showcase: the status line shows the analysis time', r.status);
     check(r.costWait[0] === 'waiting' && /compute \(\d{4} analyses\)/.test(r.costWait[1] ?? ''), 'showcase: the cost column waits for a click', JSON.stringify(r.costWait));
-    check(r.all[0] === 2949 && r.all[2], 'showcase: "show all" draws every row', JSON.stringify(r.all));
+    check(r.all[0] === r.count - 1 && r.all[2] < 200, 'showcase: at the end of the scroll range, the last row is drawn (and few others)', JSON.stringify([r.all, r.count]));
     check(r.cpus.map((x) => x.join(':')).join() === 'SKL:744.25,ZEN3:620.75,ADL-P:587.00', 'showcase: the table of three CPUs (as uiCA: 744.25, 620.75, 587)', JSON.stringify([r.cpus, r.cpusInfo]));
     check(r.long.every((ms) => ms < LONG_TASK_MS), `showcase: no long task of ${LONG_TASK_MS} ms or more while it loads`, JSON.stringify(r.long));
-    console.log(`showcase: example to result ${r.ms.toFixed(0)} ms (${r.status}); long tasks meanwhile ${JSON.stringify(r.long)} ms; all rows drawn in ${r.all[1]} ms; three CPUs: ${r.cpusInfo}`);
+    console.log(`showcase: example to result ${r.ms.toFixed(0)} ms (${r.status}); long tasks meanwhile ${JSON.stringify(r.long)} ms; scrolled to the last row in ${r.all[1]} ms; three CPUs: ${r.cpusInfo}`);
   }
 
   const problems = page.take();

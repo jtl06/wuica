@@ -140,6 +140,11 @@ The reference commit whose model and data are shipped is recorded once, in `ci/d
   analyzer and one table. The assembler is fetched after that result, at once when a link holds other assembly, or on the
   first focus, edit or paste of an editor; anything else that needs it (other code, A–B, what-if variants, a Compiler
   Explorer import, converting other code between assembly and hex) waits for it, with its download in the status line.
+- A long block stays responsive (`tests-js/web_lag_browser.mjs`, the SHA-256 showcase: no main-thread task over 50 ms
+  measured here for any interaction): the uop tables, A–B's Δ table and the dependency graph draw only the rows near the
+  view (`web/js/vrows.js`; a browser's find-in-page sees only those rows), the trace's model and the dependency graph are
+  made in the analyzer's worker, a large answer of the worker comes in parts, a tab shown again is not built again, and
+  the long texts (objdump, uiCA report) go into the page when opened.
   `tests-js/web_host_browser.mjs` checks this against a host emulation (`tests-js/static-host.mjs`) that redirects like the
   real host (Cloudflare static assets).
 - All page state (input text as base64url, mode, CPUs, options, open views, A–B side B) is in the URL fragment

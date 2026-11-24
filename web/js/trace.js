@@ -1507,10 +1507,21 @@ export function traceGuard(side) {
 
 // The model of a run's trace (side: {response, request, archKey}; the response has the trace if it was made with it,
 // otherwise the run is analyzed again with includeTrace). Resolves to {model, buildMs}; throws on failure.
-export async function loadTrace(side, { analyze, config = () => null }) {
+// traceModel(request, opts): the model made by the analyzer's worker (engine-rpc.js), or null where there is no worker.
+export async function loadTrace(side, { analyze, config = () => null, traceModel = null }) {
   const r = side.response;
   let trace = r?.trace;
   let details = r?.details ?? null;
+  const cfg0 = config(side);
+  const opts = { portNames: cfg0?.portNames ?? null, retireWidth: cfg0?.retireWidth ?? null, issueDispatchDelay: cfg0?.issueDispatchDelay ?? null };
+  const made = !trace && traceModel ? await traceModel({ ...side.request, includeTrace: true, details: true }, opts) : null;
+  if (made) {
+    const res = made.response;
+    if (!res || res.error) throw new Error(`The trace could not be made: ${res?.error ?? 'no response'}`);
+    if (!made.model) throw new Error('The analyzer returned no trace.');
+    made.model.issue = issueLog(res.details ?? null);
+    return { model: made.model, buildMs: made.model.buildMs ?? 0 };
+  }
   if (!trace) {
     const res = await analyze({ ...side.request, includeTrace: true, details: true }); // details: the issue strip
     if (!res || res.error) throw new Error(`The trace could not be made: ${res?.error ?? 'no response'}`);
@@ -1537,7 +1548,7 @@ const gate = (b) => { b.dataset.gate = ''; return b; };
 //   trace under the pointer / clicked, as its instruction (rowGroups); onTrace(): the state of the trace changed
 // update(view) is called on every redraw of the result with the shown view ({response, request, archKey, ...});
 // it returns the element to put into the result (always the same element).
-export function createTracePanel({ analyze, config = () => null, onToggle = null, onHoverGroup = null, onPickGroup = null, onTrace = null }) {
+export function createTracePanel({ analyze, config = () => null, traceModel = null, onToggle = null, onHoverGroup = null, onPickGroup = null, onTrace = null }) {
   const body = el('div', { class: 'trace-body' });
   const summary = el('summary', { title: 'every uop of a few iterations, by cycle' }, 'cycle by cycle');
   const details = el('details', { class: 'trace-panel' }, summary, body);
@@ -1561,7 +1572,7 @@ export function createTracePanel({ analyze, config = () => null, onToggle = null
     const t = tr;
     t.state = 'loading';
     changed();
-    loadTrace(v, { analyze, config }).then(({ model, buildMs }) => {
+    loadTrace(v, { analyze, config, traceModel }).then(({ model, buildMs }) => {
       if (tr !== t) return;
       t.state = 'ready'; t.model = model; t.buildMs = buildMs;
       changed();
@@ -1656,7 +1667,7 @@ export function createTracePanel({ analyze, config = () => null, onToggle = null
 // A–B: the traces of both blocks stacked, on one time axis (same scale, cycle 0 = where the same iteration starts on
 // each side; abWindow), scrolled and zoomed together. A <details> like the single panel; both traces are loaded when it
 // is opened. view: the A–B view of ab.js ({a, b, scale}; each side {response, request, archKey}).
-export function createABTracePanel({ analyze, config = () => null, onToggle = null }) {
+export function createABTracePanel({ analyze, config = () => null, traceModel = null, onToggle = null }) {
   const body = el('div', { class: 'trace-body' });
   const summary = el('summary', { title: 'A and B on one time axis' }, 'cycle by cycle');
   const details = el('details', { class: 'trace-panel trace-ab' }, summary, body);
@@ -1682,9 +1693,9 @@ export function createABTracePanel({ analyze, config = () => null, onToggle = nu
     render();
     (async () => {
       try {
-        const a = await loadTrace(v.a, { analyze, config });
+        const a = await loadTrace(v.a, { analyze, config, traceModel });
         if (job !== j) return;
-        const b = await loadTrace(v.b, { analyze, config });
+        const b = await loadTrace(v.b, { analyze, config, traceModel });
         if (job !== j) return;
         j.state = 'ready'; j.models = { a: a.model, b: b.model };
       } catch (e) {

@@ -138,7 +138,7 @@ const HELPERS = `
   const runAnyway = () => { for (const b of document.querySelectorAll('.ins-cost-status button')) b.click(); };
   const done = async (start) => { const n = $('results').dataset.run; start(); await until(() => $('results').dataset.run !== n); };
   const costDone = async (start) => { await start(); await until(() => (runAnyway(), body().dataset.cost === 'done')); }; // the state changes at once on a change
-  const instrRows = () => [...document.querySelectorAll('table.uops tbody tr:not(.extra)')];
+  const instrRows = () => [...document.querySelectorAll('table.uops tbody tr[data-row]:not(.extra)')];
   const cost = () => instrRows().map((tr) => tr.querySelector('td.ins-cost')?.textContent ?? null);
   const top = () => instrRows().map((tr, i) => tr.querySelector('td.ins-cost.top') ? i : -1).filter((i) => i >= 0);
   const head = () => [...document.querySelectorAll('table.uops thead th')].map((th) => th.textContent);

@@ -159,7 +159,8 @@ export function createBound(env = {}) {
   let selected = null; // the resource the user picked (kept while the response has it)
   let row = null, details = null, body = null, hint = null;
   let root = null, view = null;
-  let shaded = [];     // the cells that carry a shade
+  let shade_ = null;   // the shade of the table's rows: {b, name} (a decorator of its rows, vrows.js) or null
+  let shadedTable = null;
   let detailsTimer = 0;
   onRange(() => { if (open) paint(); });
 
@@ -184,29 +185,34 @@ export function createBound(env = {}) {
     return row;
   }
 
-  function clean() {
-    for (const th of shaded) {
+  // a row of the table, shaded by its share (or not)
+  function shadeRow(tr, k) {
+    const th = tr.cells[0], x = shade_?.b.weights[k];
+    if (x > 0) {
+      th.style.setProperty('--bd', (x / shade_.b.max).toFixed(3));
+      th.setAttribute('aria-description', `${pct(x / shade_.b.total)} of ${shade_.name}`);
+      tr.classList.add('bd-hot');
+    } else if (tr.classList.contains('bd-hot')) {
       th.style.removeProperty('--bd');
       th.removeAttribute('aria-description');
-      th.parentElement?.classList.remove('bd-hot');
+      tr.classList.remove('bd-hot');
     }
-    shaded = [];
+  }
+  function clean() {
+    shade_ = null;
+    if (shadedTable?.vr) { shadedTable.vr.data.hot = []; shadedTable.vr.repaint('bd'); }
     markPorts(root, null);
   }
 
   function shade(b, name) {
     clean();
-    const trs = root?.querySelector('table.uops')?.tBodies[0]?.rows;
-    if (!b || !trs) return;
-    for (let k = 0; k < trs.length && k < b.weights.length; k++) {
-      const x = b.weights[k];
-      if (!(x > 0)) continue;
-      const th = trs[k].cells[0];
-      th.style.setProperty('--bd', (x / b.max).toFixed(3));
-      th.setAttribute('aria-description', `${pct(x / b.total)} of ${name}`);
-      trs[k].classList.add('bd-hot');
-      shaded.push(th);
-    }
+    const t = root?.querySelector('table.uops');
+    if (!b || !t?.vr) return;
+    shade_ = { b, name };
+    shadedTable = t;
+    // (keys.js: n and p go through these, hottest first)
+    t.vr.data.hot = b.weights.map((x, row) => ({ row, weight: x / b.max })).filter((x) => x.weight > 0);
+    if (!t.vr.decorators.has('bd')) t.vr.decorate('bd', shadeRow); else t.vr.repaint('bd');
   }
 
   function bar(it, sel) {
@@ -272,7 +278,7 @@ export function createBound(env = {}) {
       root = target;
       view = v;
       ensureRow();
-      shaded = []; // the table was drawn anew
+      shade_ = null; shadedTable = null; // the table was drawn anew
       paint();
       finishJump(root);
     },

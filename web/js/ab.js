@@ -14,7 +14,7 @@
 // carries both sides. The page (app.js) runs the analyses: inputs() gets the machine code of both sides,
 // analyze() runs them, draw() shows the result. All text goes in through textContent.
 
-import { h, uopTable, NOTES, LEGEND, rowLimit, moreRows, watchFit, nearestLimit, columnGroup } from './render.js';
+import { h, uopTable, NOTES, LEGEND, watchFit, nearestLimit, columnGroup } from './render.js';
 import { caveats } from './caveats.js';
 import { GROUP_LABEL } from './archs.js';
 import { compareResponses, signed, cycles, signedCycles } from './ab-diff.js';
@@ -22,6 +22,7 @@ import { parseHexInput, toHex } from './hex-input.js';
 import { MAX_CODE_BYTES, tooMuchCode } from './assembler.js';
 import { LIMITS } from './url-state.js';
 import { branchLabels, analyzedLines } from './branch-label.js';
+import { VRows, ALL_UP_TO } from './vrows.js';
 
 const PLACEHOLDERS = {
   hex: '48 83 c0 02 49 ff cf 75 f7',
@@ -539,19 +540,25 @@ export function createAB(api) {
         const first = k === 0 || columnGroup(d.columns[k - 1].name)?.group !== g.group;
         return h('th', { scope: 'col', class: [cls, 'pg'].filter(Boolean).join(' '), 'data-col': c.name, title: c.name }, first ? h('span', { class: 'cg', text: g.group }) : null, g.n);
       }));
+    // (a long block: drawn in a window of rows, vrows.js; the sizing row holds each column's widest text)
+    const rows = ui.onlyChanges ? d.rows.filter((r) => r.status !== 'same') : d.rows;
+    const hidden = d.rows.length - rows.length;
+    const grp = (td, k) => { if (k === 0 || (k === 1 && d.columns[0].name === 'Issued')) td.classList.add('grp'); return td; };
     const body = h('tbody');
-    let hidden = 0;
-    for (const r of d.rows) {
-      if (ui.onlyChanges && r.status === 'same') { hidden++; continue; }
-      body.append(h('tr', { class: `ab-${r.status}`, title: STATUS_TEXT[r.status] },
+    if (rows.length > ALL_UP_TO) {
+      const widest = (texts) => texts.reduce((a, t) => (t.length > a.length ? t : a), '');
+      const lab = (u) => (u ? `${labels.get(u.row) ?? u.label}${u.notes ? ` ${u.notes}` : ''}${u.extras.length ? ` +${u.extras.length}` : ''}` : '');
+      body.append(h('tr', { class: 'vr-size', 'aria-hidden': 'true' }, h('td', { class: 'ab-m first', text: '±' }),
+        h('td', { class: 'ab-i' }, h('span', { text: widest(rows.map((r) => lab(r.a))) })), h('td', { class: 'ab-i' }, h('span', { text: widest(rows.map((r) => lab(r.b))) })),
+        d.columns.map((c, k) => grp(h('td', { class: 'ab-d', text: widest(rows.map((r) => signed(r.deltas[k]))) }), k))));
+    }
+    body.vr = new VRows(body, rows.length, (i) => {
+      const r = rows[i];
+      return h('tr', { class: `ab-${r.status}`, title: STATUS_TEXT[r.status] },
         h('td', { class: 'ab-m first', text: STATUS_MARK[r.status] }),
         instrCell(r.a, labels), instrCell(r.b, labels),
-        r.deltas.map((v, k) => {
-          const td = deltaCell(v);
-          if (k === 0 || (k === 1 && d.columns[0].name === 'Issued')) td.classList.add('grp');
-          return td;
-        })));
-    }
+        r.deltas.map((v, k) => grp(deltaCell(v), k)));
+    });
     const foot = h('tr', null, h('td', { class: 'ab-m first' }), h('th', { scope: 'row', class: 'ab-i', text: 'Total' }), h('td', { class: 'ab-i' }),
       d.totals.map((v, k) => {
         const td = deltaCell(v);
@@ -571,11 +578,10 @@ export function createAB(api) {
     const side = (t, s) => {
       const col = h('div', { class: 'ab-col', 'data-side': t.toLowerCase() });
       if (!s || !ok(s.response)) { col.append(h('div', { class: 'ab-cap' }, tag(t), ' no result')); return col; }
-      const r = uopTable(s.response, true, rowLimit(s.response.rows.length, ui.allRows), { shown: s.shown });
+      const r = uopTable(s.response, true, Infinity, { shown: s.shown });
       markChanges(r.table, s, t === 'A' ? 'a' : 'b', view);
       col.append(...[h('div', { class: 'ab-cap' }, tag(t), ` ${s.archKey} · ${two(Number(s.response.tp))} cycles/iteration`),
         watchFit(h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': `Uops per instruction of ${t}, average per iteration` }, r.table)),
-        r.more ? moreRows(r.more, s.response.rows.length, () => { ui.allRows = true; draw(shown); }) : null,
         r.notes.size ? h('p', { class: 'legend' }, [...r.notes].map((k) => h('span', { title: NOTES[k] }, h('b', { text: k }), ` ${LEGEND[k]}`))) : null].filter(Boolean));
       return col;
     };
@@ -590,25 +596,26 @@ export function createAB(api) {
     const wraps = [...stack.querySelectorAll(':scope > .ab-col > .table-wrap')];
     if (wraps.length !== 2) return;
     const rowsOf = (s) => s?.response?.rows ?? [];
-    const map = [new Map(), new Map()]; // tr index of A -> of B, and back
+    const map = [new Map(), new Map()]; // row of A -> of B, and back
     const d = view.cmp?.diff;
-    if (d) for (const x of d.rows) {
-      if (!x.a || !x.b) continue;
-      const ia = rowsOf(view.a).indexOf(x.a.row), ib = rowsOf(view.b).indexOf(x.b.row);
-      if (ia >= 0 && ib >= 0) { map[0].set(ia, ib); map[1].set(ib, ia); }
+    if (d) {
+      const at = [indexOfRows(view.a), indexOfRows(view.b)];
+      for (const x of d.rows) {
+        if (!x.a || !x.b) continue;
+        const ia = at[0].get(x.a.row) ?? -1, ib = at[1].get(x.b.row) ?? -1;
+        if (ia >= 0 && ib >= 0) { map[0].set(ia, ib); map[1].set(ib, ia); }
+      }
     } else for (let k = 0; k < Math.min(rowsOf(view.a).length, rowsOf(view.b).length); k++) { map[0].set(k, k); map[1].set(k, k); }
     let following = false;
+    // (the rows are of one height, vrows.js: the row at a scroll position is a division)
+    const rowH = (w) => w.querySelector('table')?.vr?.rowH || 19;
     wraps.forEach((w, k) => w.addEventListener('scroll', () => {
       if (following) return;
       const other = wraps[1 - k];
-      const trs = w.querySelector('table')?.tBodies[0]?.rows, theirs = other.querySelector('table')?.tBodies[0]?.rows;
-      if (!trs?.length || !theirs?.length) return;
-      const head = w.querySelector('thead')?.offsetHeight ?? 0, y = w.scrollTop + head;
-      let lo = 0, hi = trs.length - 1; // the first row whose bottom is below the header
-      while (lo < hi) { const mid = (lo + hi) >> 1; if (trs[mid].offsetTop + trs[mid].offsetHeight > y) hi = mid; else lo = mid + 1; }
+      const lo = Math.floor(w.scrollTop / rowH(w));
       const j = map[k].get(lo);
-      if (j === undefined || !theirs[j]) return;
-      const t = theirs[j].offsetTop - (other.querySelector('thead')?.offsetHeight ?? 0) + (y - trs[lo].offsetTop);
+      if (j === undefined) return;
+      const t = j * rowH(other) + (w.scrollTop - lo * rowH(w));
       if (Math.abs(other.scrollTop - t) < 1) return;
       following = true;
       other.scrollTop = t;
@@ -618,32 +625,55 @@ export function createAB(api) {
 
   // What differs, in the tables themselves (the alignment of the Δ fold, ab-diff.js): a row of a changed instruction
   // gets a bar in its side's colour and its differing cells a frame; a row only this side has is tinted.
+  // (as a decorator of the table's rows, vrows.js: registered first, so the cell positions are the table's own)
   function markChanges(table, s, side, view) {
     const d = view.cmp?.diff;
     const other = side === 'a' ? view.b : view.a;
-    if (!d || !ok(other?.response)) return;
-    const trs = table.tBodies[0]?.rows ?? [];
+    if (!d || !ok(other?.response) || !table.vr) return;
     const names = [...table.tHead.rows[0].cells].slice(2).map((th) => th.dataset.col); // (after the instruction and the notes)
     const otherCols = other.response.columns;
+    const at = indexOfRows(s);
+    const marks = new Map(); // row -> {only: title} | {cells: [cell index]}
     for (const x of d.rows) {
       const mine = side === 'a' ? x.a : x.b, theirs = side === 'a' ? x.b : x.a;
       if (!mine || x.status === 'same') continue;
-      const tr = trs[s.response.rows.indexOf(mine.row)];
-      if (!tr) continue;
-      if (!theirs) { tr.classList.add('abd-only'); tr.title = side === 'a' ? 'only in A' : 'only in B'; continue; }
-      tr.classList.add('abd-chg');
+      const row = at.get(mine.row);
+      if (row === undefined) continue;
+      if (!theirs) { marks.set(row, { only: side === 'a' ? 'only in A' : 'only in B' }); continue; }
+      const cells = [];
       names.forEach((name, k) => {
         const ia = s.response.columns.indexOf(name), ib = otherCols.indexOf(name);
         if (ia < 0 || ib < 0) return;
-        if (Math.abs((mine.values[ia] ?? 0) - (theirs.values[ib] ?? 0)) >= 0.005) tr.cells[k + 2]?.classList.add('abd-cell');
+        if (Math.abs((mine.values[ia] ?? 0) - (theirs.values[ib] ?? 0)) >= 0.005) cells.push(k + 2);
       });
+      marks.set(row, { cells });
     }
+    table.vr.decorate('ab', (tr, k) => {
+      const m = marks.get(k);
+      if (!m) return;
+      if (m.only) { tr.classList.add('abd-only'); tr.title = m.only; return; }
+      tr.classList.add('abd-chg');
+      for (const c of m.cells) tr.cells[c]?.classList.add('abd-cell');
+    });
   }
+  // a side's rows by object: row -> index
+  function indexOfRows(s) { const m = new Map(); (s?.response?.rows ?? []).forEach((r, k) => m.set(r, k)); return m; }
 
   function reports(view) {
-    const pre = (t, s) => h('div', { class: 'ab-col' }, h('div', { class: 'ab-cap' }, tag(t)),
-      h('pre', { class: 'report', tabindex: '0', 'aria-label': `uiCA report of ${t}`, text: typeof s?.response?.text === 'string' ? s.response.text : '' }));
-    return fold('report', 'text', 'uiCA reports', h('div', { class: 'ab-pair' }, pre('A', view.a), pre('B', view.b)));
+    // (the texts go into the page when the fold is opened: a long block's reports are hundreds of kB to lay out)
+    const pres = [];
+    const pre = (t, s) => {
+      const p = h('pre', { class: 'report', tabindex: '0', 'aria-label': `uiCA report of ${t}` });
+      pres.push([p, typeof s?.response?.text === 'string' ? s.response.text : '']);
+      return h('div', { class: 'ab-col' }, h('div', { class: 'ab-cap' }, tag(t)), p);
+    };
+    const row = fold('report', 'text', 'uiCA reports', h('div', { class: 'ab-pair' }, pre('A', view.a), pre('B', view.b)));
+    const d = row.querySelector('details');
+    const small = pres.every(([, text]) => text.length < 50000); // (a short block's reports: in the page at once, as before)
+    const fill = () => { if (d.open || small) for (const [p, text] of pres) if (!p.firstChild && text) p.textContent = text; };
+    d.addEventListener('toggle', fill);
+    fill();
+    return row;
   }
 
   function draw(view) {

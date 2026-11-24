@@ -3,6 +3,7 @@
 import { caveats } from './caveats.js';
 import { formatListing } from './listing.js';
 import { accuracyNote } from './archs.js';
+import { VRows, ALL_UP_TO } from './vrows.js';
 
 const FRONT_END = ['MITE', 'MS', 'DSB', 'LSD'];
 const COUNTS = ['Issued', 'Exec.'];
@@ -84,13 +85,20 @@ function copyButton(getText, what) {
 }
 
 // A collapsible block of plain text with a copy button; `open` is kept by the caller across redraws.
+// text: the text, or a function that makes it. The text goes into the page when the block is opened: a long block's
+// listing and report are hundreds of kB, which the page would lay out on every result even while they are closed.
 function textBlock(cls, summary, text, open, onToggle) {
+  let made = null;
+  const get = () => (made ??= typeof text === 'function' ? text() : text);
+  const pre = h('pre', { class: cls, tabindex: '0', 'aria-label': summary });
   const d = h('details', { class: `${cls}-wrap text-block`, open },
     h('summary', { text: summary }),
-    copyButton(() => text, summary),
-    h('pre', { class: cls, tabindex: '0', 'aria-label': summary, text }));
+    copyButton(get, summary),
+    pre);
+  const fill = () => { if (!pre.firstChild && (d.open || typeof text !== 'function')) pre.textContent = get(); };
+  fill();
   let last = !!open; // the toggle event also fires for the initial state: report changes only
-  d.addEventListener('toggle', () => { if (d.open !== last) { last = d.open; onToggle(d.open); } });
+  d.addEventListener('toggle', () => { fill(); if (d.open !== last) { last = d.open; onToggle(d.open); } });
   return d;
 }
 
@@ -174,8 +182,9 @@ export function uopTable(r, hideEmpty, limit = Infinity, { shown = null } = {}) 
       return h('th', { scope: 'col', class: cls(i, 'pg'), 'data-col': name, title: name }, first ? h('span', { class: 'cg', text: g.group }) : null, g.n);
     }));
 
-  const body = h('tbody');
-  (r.rows.length > limit ? r.rows.slice(0, limit) : r.rows).forEach((x, k) => {
+  // a row of the model (vrows.js draws the rows near the view of a long table)
+  const make = (k) => {
+    const x = r.rows[k];
     const extra = x.kind !== 'instr';
     const text = shown?.[k] ?? x.label;
     let label = text;
@@ -191,8 +200,21 @@ export function uopTable(r, hideEmpty, limit = Infinity, { shown = null } = {}) 
       if (kinds[i] === 'port' && v !== 0) td.style.setProperty('--h', Math.min(1, Math.max(0.12, v)).toFixed(2));
       tr.append(td);
     }
-    body.append(tr);
-  });
+    return tr;
+  };
+  // a long table (drawn in a window): the widest text of each column, in a row that takes no height (visibility:
+  // collapse), so the columns keep their width whichever rows are drawn (the port fit, fitInstr, measures its
+  // instruction too); a short one draws all its rows anyway
+  const body = h('tbody');
+  if (r.rows.length > ALL_UP_TO) {
+    const widest = (texts) => texts.reduce((a, t) => (t.length > a.length ? t : a), '');
+    const label = widest(r.rows.map((x, k) => String(shown?.[k] ?? x.label ?? '')));
+    body.append(h('tr', { class: 'vr-size', 'aria-hidden': 'true' },
+      h('th', { class: 'first' }, h('span', { text: label })),
+      h('td', { class: 'note', text: widest(r.rows.map((x) => String(x.notes ?? ''))) }),
+      cols.map((i) => h('td', { class: cls(i), text: widest(r.rows.map((x) => fmt(Number(x.values?.[i]) || 0))) }))));
+  }
+  const vr = new VRows(body, r.rows.length, make);
 
   const foot = h('tr', null,
     h('th', { scope: 'row', class: 'first', text: 'Total' }),
@@ -200,13 +222,14 @@ export function uopTable(r, hideEmpty, limit = Infinity, { shown = null } = {}) 
     cols.map((i) => h('td', { class: cls(i), text: fmt(totals[i]) })));
 
   const table = h('table', { class: 'grid uops' }, h('thead', null, head), body, h('tfoot', null, foot));
-  return { table, hidden: n - cols.length, notes: new Set(r.rows.map((x) => x.notes).filter((k) => NOTES[k])), more: Math.max(0, r.rows.length - limit) };
+  table.vr = vr;
+  return { table, hidden: n - cols.length, notes: new Set(r.rows.map((x) => x.notes).filter((k) => NOTES[k])), more: 0 };
 }
 
-// A long block (thousands of rows) draws its first rows at once; the rest on request (one long layout otherwise).
-export const ROWS_AT_ONCE = 400;
-export const ROWS_FIRST = 200;
-export const rowLimit = (n, all) => (all || n <= ROWS_AT_ONCE ? Infinity : ROWS_FIRST);
+// (A long block is drawn in a window of rows, vrows.js: every row is a scroll away; nothing waits for "show all".)
+export const ROWS_AT_ONCE = Infinity;
+export const ROWS_FIRST = Infinity;
+export const rowLimit = () => Infinity;
 export function moreRows(more, total, onAll) {
   const b = h('button', { type: 'button', class: 'plain', text: `show all ${total.toLocaleString('en-US')} rows` });
   b.addEventListener('click', onAll);
@@ -306,8 +329,8 @@ export function renderResult(root, view) {
 
     const listingOpen = view.ui.listingOpen?.[view.inputMode] ?? false; // collapsed until opened
     out.push(h('div', { class: 'row text-row' }, h('div', { class: 'label', text: 'text' }), h('div', { class: 'field' },
-      textBlock('listing', 'objdump', formatListing(r.rows).text, listingOpen, (open) => view.onUi('listingOpen', { ...view.ui.listingOpen, [view.inputMode]: open })),
-      textBlock('report', 'uiCA report', typeof r.text === 'string' ? r.text : '', view.ui.reportOpen, (open) => view.onUi('reportOpen', open)))));
+      textBlock('listing', 'objdump', r.rows.length > ALL_UP_TO ? () => formatListing(r.rows).text : formatListing(r.rows).text, listingOpen, (open) => view.onUi('listingOpen', { ...view.ui.listingOpen, [view.inputMode]: open })),
+      textBlock('report', 'uiCA report', typeof r.text !== 'string' ? '' : r.rows.length > ALL_UP_TO ? () => r.text : r.text, view.ui.reportOpen, (open) => view.onUi('reportOpen', open)))));
   }
 
   root.replaceChildren(...out);

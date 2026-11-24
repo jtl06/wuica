@@ -111,19 +111,23 @@
     var pane = document.getElementById('results');
     if (!pane || !wide || !wide.matches) { fitted.forEach(function (e) { e.style.removeProperty('max-height'); }); fitted = []; return; }
     sideBySide();
-    var list = scrollers(shownParts());
+    if (boxed) { boxed.style.removeProperty('max-height'); boxed.style.removeProperty('overflow-y'); boxed = null; }
+    var parts = shownParts();
+    var list = scrollers(parts);
     fitted.forEach(function (e) { if (list.indexOf(e) < 0) e.style.removeProperty('max-height'); });
     fitted = list;
-    if (!list.length) return;
     var padB = parseFloat(getComputedStyle(pane).paddingBottom) || 0;
-    for (var pass = 0; pass < 3; pass++) {
-      // what the pane's content needs now, and what it has
+    // what the pane's content needs now against what it has (negative: too much)
+    var room = function () {
       var pr = pane.getBoundingClientRect(), bottom = pr.top;
       for (var c = pane.firstElementChild; c; c = c.nextElementSibling) {
         if (!c.getClientRects().length || getComputedStyle(c).position === 'absolute' || getComputedStyle(c).position === 'fixed') continue;
         bottom = Math.max(bottom, c.getBoundingClientRect().bottom + (parseFloat(getComputedStyle(c).marginBottom) || 0));
       }
-      var delta = pane.clientHeight - (bottom - pr.top + pane.scrollTop + padB) - 1;
+      return pane.clientHeight - (bottom - pr.top + pane.scrollTop + padB) - 1;
+    };
+    for (var pass = 0; list.length && pass < 3; pass++) {
+      var delta = room();
       // the scrollers in rows (side by side: one row), each row as tall as its tallest
       var rows = [];
       list.forEach(function (e) {
@@ -155,7 +159,17 @@
       });
       if (!changed) break;
     }
+    // still too much where the page does not scroll (the scrollers at their floor): the tab's largest part scrolls, not
+    // the pane, so the headline and the tabs stay
+    var over = room();
+    if (over < -1 && still && still.matches && parts.length) {
+      var big = parts.reduce(function (a, p) { return p.getBoundingClientRect().height > a.getBoundingClientRect().height ? p : a; });
+      big.style.maxHeight = Math.max(MIN_STILL, Math.floor(big.getBoundingClientRect().height + over)) + 'px';
+      big.style.overflowY = 'auto';
+      boxed = big;
+    }
   }
+  var boxed = null; // the part of the shown tab that scrolls as a whole (see the end of fit)
   window.addEventListener('resize', fitSoon);
   function choose(name) {
     var list = views();
@@ -169,8 +183,9 @@
   // the table tab picked: the selected row in view (picked in the trace while the table was hidden), once it is fitted
   function revealSel() {
     requestAnimationFrame(function () {
-      var tr = document.querySelector('#result-body table.uops tbody tr.tl-sel');
-      if (tr && tr.getClientRects().length) tr.scrollIntoView({ block: 'nearest' });
+      var t = document.querySelector('#result-body table.uops');
+      var sel = t && t.vr ? t.vr.data.sel : -1; // (vrows.js: drawn on the way)
+      if (sel >= 0 && t.getClientRects().length) t.vr.reveal(sel);
     });
   }
   function side() { return document.body.dataset.abSide === 'b' ? 'b' : 'a'; }

@@ -122,35 +122,39 @@ export function createICard(env) {
   env.details?.onLoad?.((v) => { if (v === view && root && ok() && table()) badges(); });
 
   const table = () => root?.querySelector('table.uops');
-  const trs = () => table()?.tBodies[0]?.rows ?? [];
+  const count = () => table()?.vr?.count ?? 0;
   // a row of the decorated table: single mode's (linked to the trace: trace-link.js), or in A–B mode the table of the
   // side the views show (views.js is decorated with that side)
   const abOn = () => document.body.classList.contains('ab-on');
   const rowOf = (tr) => {
     const t = tr?.parentElement?.parentElement;
-    return tr && t === table() && (abOn() || t.classList.contains('tl-linkable')) && tr.parentElement.tagName === 'TBODY' ? tr.sectionRowIndex : -1;
+    return tr && t === table() && (abOn() || t.classList.contains('tl-linkable')) && tr.parentElement.tagName === 'TBODY' ? (t.vr?.index(tr) ?? -1) : -1;
   };
   const align = () => Number(view?.request?.alignmentOffset) || 0;
   const ok = () => !!view?.response && !view.response.error && Array.isArray(view.response.rows);
 
+  // the hazard badges of the notes column: a decorator of the table's rows (vrows.js)
+  let marks = new Map(); // row -> {hz, title}
   function badges() {
-    const rows = trs();
     const d = env.details?.peek(view) ?? null;
-    for (const { row, hz, title } of hazards(view.response, align(), d)) {
-      const td = rows[row]?.querySelector('td.note');
-      if (!td) continue;
-      if (td.dataset.hz === hz) continue;
-      td.dataset.hz = hz;
+    marks = new Map(hazards(view.response, align(), d).map(({ row, hz, title }) => [row, { hz, title }]));
+    const vr = table()?.vr;
+    if (!vr) return;
+    if (!vr.decorators.has('hz')) vr.decorate('hz', (tr, k) => {
+      const m = marks.get(k), td = tr.querySelector('td.note');
+      if (!m || !td || td.dataset.hz === m.hz) return;
+      td.dataset.hz = m.hz;
       td.dataset.hzTitle ??= td.title;
-      td.title = [td.dataset.hzTitle, title].filter(Boolean).join('\n');
-    }
+      td.title = [td.dataset.hzTitle, m.title].filter(Boolean).join('\n');
+    });
+    else vr.repaint('hz');
   }
 
   function ensureCard() {
     if (card?.isConnected) return card;
     const wrap = table()?.closest('.table-wrap');
     if (!wrap) return null;
-    card = h('div', { class: trs().length > STICK_ROWS ? 'ic stick' : 'ic', id: 'icard', role: 'region', 'aria-label': 'instruction', hidden: true });
+    card = h('div', { class: count() > STICK_ROWS ? 'ic stick' : 'ic', id: 'icard', role: 'region', 'aria-label': 'instruction', hidden: true });
     wrap.after(card);
     return card;
   }

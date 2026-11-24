@@ -180,8 +180,10 @@ let mcaModule = null;
 // The trace (trace.js), below both panes; linked to the uop table (trace-link.js). Its open state and the selected row
 // are in the URL.
 const traceOpened = (open) => { if (state.trace === open) return; state.trace = open; syncUrl(true); };
+// the trace's model made in the analyzer's worker (engine-rpc.js), or null on the page's own thread (trace.js does it)
+const traceModel = (request, opts) => (engine?.traceModel ? engine.traceModel(request, opts) : Promise.resolve(null));
 const tracePanel = createTracePanel({
-  analyze: (request) => engine.analyze(request), config: (v) => uarch?.configs?.[v.archKey],
+  analyze: (request) => engine.analyze(request), config: (v) => uarch?.configs?.[v.archKey], traceModel,
   onToggle: traceOpened,
   onHoverGroup: (g) => traceLink.fromTraceHover(g),
   onPickGroup: (g) => traceLink.fromTracePick(g),
@@ -194,7 +196,7 @@ const traceLink = createTraceLink({
   onWaits: (on) => { state.waits = on; syncUrl(true); },
 });
 // A–B: the traces of both sides on one time axis
-const abTracePanel = createABTracePanel({ analyze: (request) => engine.analyze(request), config: (side) => uarch?.configs?.[side.archKey], onToggle: traceOpened });
+const abTracePanel = createABTracePanel({ analyze: (request) => engine.analyze(request), config: (side) => uarch?.configs?.[side.archKey], traceModel, onToggle: traceOpened });
 let ab = null; // the A–B comparison (ab.js); in A–B mode lastView is {ab: view} (the A–B traces, no compare panels)
 let ce = null; // the Compiler Explorer import (godbolt-ui.js)
 

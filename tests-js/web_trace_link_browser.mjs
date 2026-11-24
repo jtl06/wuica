@@ -348,7 +348,7 @@ try {
   check(page.problems.length === 0, 'no console errors (desktop)', page.problems.join('\n'));
   await page.cmd('Page.close');
 
-  // --- a long block: a uop of the trace whose row is not drawn yet (the table draws its first 200 rows) -------------------------
+  // --- a long block: a uop of the trace whose row is not drawn (the table draws the rows near its view: vrows.js) ----------------
   {
     const p = await openPage();
     let long = '';
@@ -356,14 +356,15 @@ try {
     await p.goto(`${origin}/?nosw=1#v=1&a=${ARCH}&trace=1&c=${b64(long)}`);
     const lr = await p.eval(`${HELPERS}
       await until(() => viewer()); await wait(150);
-      const out = { drawn: trs().length };
+      const drawnRows = () => [...document.querySelectorAll('table.uops tbody tr[data-row]')];
+      const out = { drawn: drawnRows().length, has300: drawnRows().some((t) => t.dataset.row === '300') };
       const v = viewer(); const r = Array.from(v.rows).findIndex((i) => v.model.uops[i].instrID === 300);
       v.pick(r); await wait(200);
       await tab('table'); await wait(100);
       const t = document.querySelector('tr.tl-sel');
-      out.after = [trs().length, t?.sectionRowIndex ?? -1, t?.querySelector('th')?.textContent, hash().includes('sel=300'), inView(t)];
+      out.after = [drawnRows().length, Number(t?.dataset.row ?? -1), t?.querySelector('th')?.textContent, hash().includes('sel=300'), inView(t)];
       return out;`);
-    check(lr.drawn === 200 && lr.after[0] === 450 && lr.after[1] === 300 && lr.after[2] === 'add rax, rbx' && lr.after[3] && lr.after[4], 'a click on a uop whose row is not drawn: all rows are drawn and the row is selected; the table tab shows it', JSON.stringify(lr));
+    check(lr.drawn < 200 && !lr.has300 && lr.after[0] < 200 && lr.after[1] === 300 && lr.after[2] === 'add rax, rbx' && lr.after[3] && lr.after[4], 'a click on a uop whose row is not drawn: its row is drawn and selected (still only the rows near the view); the table tab shows it', JSON.stringify(lr));
     check(p.problems.length === 0, 'no console errors (long block)', p.problems.join('\n'));
     await p.cmd('Page.close');
   }

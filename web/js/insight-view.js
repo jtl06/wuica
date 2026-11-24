@@ -1,13 +1,14 @@
 // The insight views on the result: the critical dependency chain (a line under the limits, a marker on its rows) and
 // the cost column (the cycles/iteration each instruction adds: with it minus without it). They decorate the result after render.js has drawn
-// it (app.js calls decorate() after renderResult): the rows of `table.uops tbody` are the response's rows, in order.
+// it (app.js calls decorate() after renderResult): the table's rows are the response's rows, by index (vrows.js: a long
+// table draws the rows near the view); the chain's marks and the cost column are a decorator of its rows.
 // The cost analyses run after the main result, on the worker pool (pool.js) if the page has one, otherwise in the
 // analyzer's worker, one at a time; they stop as soon as their input is out of date and are cached (insight.js has the
 // data side).
 
 import { h } from './render.js';
 import { makeRequest } from './engine.js';
-import { summarize, resultKey, ResultCache, latestWins } from './compare.js';
+import { summarize, ResultCache, latestWins } from './compare.js';
 import { chainInfo, chainTitle, costUnits, costJobs, costCells, costKey, VARIANTS } from './insight.js';
 
 const DELAY = 100;        // ms after a result before the cost column starts
@@ -24,10 +25,21 @@ export function createInsight(env) {
   let job = null;               // {key, hex, arch, options, cu, jobs, count, response, variant, estimate}; jobs: null until needed
   let results = new Map();      // unit -> summary, for job.key
   let doneKey = null, forcedKey = null, waitingKey = null, runs = 0;
-  let cellsOf = null;           // row -> td of the cost column in the decorated table
+  let table = null;             // the decorated table (its rows: table.vr)
+  let chainRows = null;         // row -> {text, title} of the chain's marks
+  let costCol = null;           // the cost column: {cells: costCells(...) or null}
+  let paintFrame = 0;
   let tools = null;             // the status/button element next to the toggle
 
   const variant = () => (open.nop ? 'nop' : 'remove');
+  // the cache key of a job: its block is the job's block (costKey: code, cpu, options, variant) without one unit. Not
+  // the block's own text: a key of thousands of hex digits per job made a large block's setup take a second (hashing)
+  const ids = new Map(); // costKey -> a short id
+  let idSeq = 0;
+  const jobKey = (j, x) => {
+    if (!ids.has(j.key)) { if (ids.size > 64) ids.delete(ids.keys().next().value); ids.set(j.key, ++idSeq); }
+    return `${ids.get(j.key)}|${x.unit}`;
+  };
   const setState = (s) => { if (root) root.dataset.cost = s; };
 
   // ---- chain ----------------------------------------------------------------------------------------------------------
@@ -49,15 +61,24 @@ export function createInsight(env) {
           bottleneck ? null : h('span', { class: 'aside', text: ' · not the bottleneck' }))));
   }
 
-  function markChain(table, r, info) {
-    const trs = table.tBodies[0]?.rows ?? [];
-    for (const [row, list] of info.onChain) {
-      const th = trs[row]?.cells[0];
-      if (!th) continue;
-      trs[row].classList.add('ins-on-chain');
-      th.dataset.chain = `← ${[...new Set(list.map((m) => m.operand))].join(', ')}`;
-      th.title = chainTitle(info, row);
-    }
+  function markChain(t, r, info) {
+    chainRows = new Map();
+    for (const [row, list] of info.onChain) chainRows.set(row, { text: `← ${[...new Set(list.map((m) => m.operand))].join(', ')}`, title: chainTitle(info, row) });
+    if (t.vr) t.vr.data.chain = [...chainRows.keys()].sort((a, b) => a - b); // (keys.js: n and p)
+  }
+
+  // the decorator of the table's rows: the chain's marks and the cost column's cell
+  function paintRow(tr, k) {
+    const ch = chainRows?.get(k), th = tr.cells[0];
+    tr.classList.toggle('ins-on-chain', !!ch);
+    if (ch) { th.dataset.chain = ch.text; th.title = ch.title; } else if (th.dataset.chain !== undefined) { delete th.dataset.chain; th.removeAttribute('title'); }
+    let td = tr.querySelector(':scope > td.ins-cost');
+    if (!costCol) { td?.remove(); return; }
+    if (!td) { td = h('td', { class: 'ins ins-cost' }); tr.insertBefore(td, tr.cells[2] ?? null); } // after the instruction and the notes
+    const c = costCol.cells?.[k];
+    td.textContent = c?.text ?? '';
+    td.className = c ? ['ins', 'ins-cost', `ins-${c.kind}`, c.kind === 'value' ? (c.delta > 0 ? 'adds' : c.delta < 0 ? 'helps' : 'zero') : '', c.top ? 'top' : ''].filter(Boolean).join(' ') : 'ins ins-cost';
+    if (c?.title) td.title = c.title; else td.removeAttribute('title');
   }
 
   // ---- cost -----------------------------------------------------------------------------------------------------------
@@ -77,32 +98,32 @@ export function createInsight(env) {
       ' ', sel, ' ', tools);
   }
 
-  function addColumn(table, r) {
+  function addColumn(t) {
     const at = (tr) => tr.cells[2] ?? null; // after the instruction and the notes
-    const head = table.tHead?.rows[0];
+    const head = t.tHead?.rows[0];
     if (head) head.insertBefore(h('th', { scope: 'col', class: 'ins ins-cost', title: `cycles/iteration the instruction adds: with it minus with it ${VARIANTS[variant()]} (+: it costs that much; −: the block is slower without it); macro-fused pairs together; the loop's branch is kept`, text: 'cost' }), at(head));
-    cellsOf = new Map();
-    const trs = table.tBodies[0]?.rows ?? [];
-    r.rows.forEach((_, row) => {
-      const tr = trs[row];
-      if (!tr) return;
-      const td = h('td', { class: 'ins ins-cost' });
-      tr.insertBefore(td, at(tr));
-      cellsOf.set(row, td);
-    });
-    const foot = table.tFoot?.rows[0];
+    const size = t.tBodies[0]?.querySelector(':scope > tr.vr-size');
+    if (size) size.insertBefore(h('td', { class: 'ins ins-cost', text: '+00.00' }), at(size));
+    const foot = t.tFoot?.rows[0];
     if (foot) foot.insertBefore(h('td', { class: 'ins ins-cost' }), at(foot));
+    costCol = { cells: null };
   }
 
+  // the column's cells from the results so far: at most once a frame (the results come in by the hundred), and only the
+  // drawn rows are touched
+  function paintNow() {
+    if (paintFrame) { cancelAnimationFrame(paintFrame); paintFrame = 0; }
+    if (!job || !costCol) return;
+    costCol.cells = costCells(job.response, job.cu, results, job.variant);
+    table?.vr?.repaint('ins');
+  }
   function paint() {
-    if (!job || !cellsOf) return;
-    const cells = costCells(job.response, job.cu, results, job.variant);
-    cells.forEach((c, row) => {
-      const td = cellsOf.get(row);
-      if (!td) return;
-      td.textContent = c.text;
-      td.className = ['ins', 'ins-cost', `ins-${c.kind}`, c.kind === 'value' ? (c.delta > 0 ? 'adds' : c.delta < 0 ? 'helps' : 'zero') : '', c.top ? 'top' : ''].filter(Boolean).join(' ');
-      if (c.title) td.title = c.title; else td.removeAttribute('title');
+    if (paintFrame || !job || !costCol) return;
+    paintFrame = requestAnimationFrame(() => {
+      paintFrame = 0;
+      if (!job || !costCol) return;
+      costCol.cells = costCells(job.response, job.cu, results, job.variant);
+      table?.vr?.repaint('ins');
     });
   }
 
@@ -133,6 +154,7 @@ export function createInsight(env) {
   const parallel = (n) => Math.max(1, Math.min(n, env.pool?.()?.size ?? 1)); // analyses that run at once
 
   function finished(j, t0) {
+    paintNow();
     doneKey = j.key;
     runs++;
     if (root) { root.dataset.costRuns = String(runs); root.dataset.costMs = (performance.now() - t0).toFixed(1); }
@@ -146,9 +168,9 @@ export function createInsight(env) {
     const t0 = performance.now();
     const pool = env.pool?.();
     if (pool) {
-      const same = new Map(); // resultKey -> the units whose blocks are the same (e.g. without one of two equal instructions)
+      const same = new Map(); // jobKey -> the job's units
       for (const x of todo) {
-        const rk = resultKey(x.hex, j.arch, j.options);
+        const rk = jobKey(j, x);
         const c = cache.get(rk);
         if (c) results.set(x.unit, c); else if (same.has(rk)) same.get(rk).units.push(x.unit); else same.set(rk, { rk, units: [x.unit], request: makeRequest(x.hex, j.arch, j.options) });
       }
@@ -170,7 +192,7 @@ export function createInsight(env) {
     const engine = env.engine();
     for (const x of todo) {
       if (stale()) return;
-      const rk = resultKey(x.hex, j.arch, j.options);
+      const rk = jobKey(j, x);
       let r = cache.get(rk);
       if (!r) {
         try {
@@ -194,13 +216,10 @@ export function createInsight(env) {
   // ---- decorate -------------------------------------------------------------------------------------------------------
 
   function clean() {
-    for (const e of root.querySelectorAll('.ins')) e.remove();
-    for (const tr of root.querySelectorAll('tr.ins-on-chain')) {
-      tr.classList.remove('ins-on-chain');
-      delete tr.cells[0].dataset.chain;
-      tr.cells[0].removeAttribute('title');
-    }
-    cellsOf = null;
+    for (const e of root.querySelectorAll('.ins')) e.remove(); // (the chain line, the header's and footer's cells, the tools)
+    chainRows = null;
+    costCol = null;
+    if (table?.vr) { table.vr.data.chain = []; table.vr.repaint('ins'); }
     tools = null;
   }
 
@@ -208,23 +227,26 @@ export function createInsight(env) {
     root = target;
     view = v;
     const r = v?.response;
-    const table = root.querySelector('table.uops');
+    const t = root.querySelector('table.uops');
+    if (t !== table) { chainRows = null; costCol = null; }
+    table = t;
     if (!r || r.error || !Array.isArray(r.rows) || !table) { job = null; setState('off'); return; }
     clean();
+    table.vr?.decorate('ins', paintRow);
 
     const info = chainInfo(r);
     if (info) {
       const after = root.querySelector('.limits')?.closest('.row');
       const row = chainRow(r, info);
       if (after) after.after(row); else table.closest('.row')?.before(row);
-      if (r.bottlenecks.includes('Dependencies')) markChain(table, r, info);
+      if (r.bottlenecks.includes('Dependencies')) { markChain(table, r, info); table.vr?.repaint('ins'); }
     }
 
     const cu = r.mock ? { ok: false, reason: 'not with mock data' } : costUnits(r, v.hex);
     root.querySelector('.table-tools')?.append(toggle(cu.ok, cu.reason));
     if (!cu.ok || !open.cost) { job = null; runner.cancel(); setState(cu.ok ? 'off' : 'unavailable'); return; }
 
-    addColumn(table, r);
+    addColumn(table);
     const opts = { ...v.request };
     delete opts.hex; delete opts.arch; delete opts.includeTrace;
     const key = costKey(v.hex, v.archKey, opts, variant());
@@ -242,7 +264,7 @@ export function createInsight(env) {
     } else {
       job.response = r; job.cu = cu;
     }
-    paint();
+    paintNow();
     if (doneKey === key) { setState('done'); paintTools('done'); return; }
     if (waitingKey === key && forcedKey !== key) { setState('waiting'); paintTools('waiting'); return; }
     setState('queued');
@@ -255,7 +277,7 @@ export function createInsight(env) {
     if (j.jobs) return;
     j.jobs = costJobs(j.cu.units, j.hex, j.variant);
     j.count = j.jobs.length;
-    for (const x of j.jobs) { const c = cache.get(resultKey(x.hex, j.arch, j.options)); if (c) results.set(x.unit, c); }
+    for (const x of j.jobs) { const c = cache.get(jobKey(j, x)); if (c) results.set(x.unit, c); }
   }
 
   return {

@@ -217,19 +217,20 @@ try {
       const long = []; new PerformanceObserver((l) => { for (const e of l.getEntries()) long.push(Math.round(e.duration)); }).observe({ type: 'longtask' });
       document.querySelector('#bound summary').click();
       await until(() => document.querySelector('.bd-item'));
-      out.items = items().length; out.hot = hot().length; out.rows = trs().length;
+      const drawn = () => [...document.querySelectorAll('table.uops tbody tr[data-row]')];
+      out.items = items().length; out.hot = hot().length; out.rows = drawn().length;
       const t1 = performance.now();
       document.querySelector('.bd-item[data-id="Ports"]').click();
       out.switchMs = performance.now() - t1;
       await wait(100);
       out.long = [...long];
-      // the chain: its largest share is beyond the first 200 rows: the jump draws them all first
+      // the chain: its largest share is beyond the rows drawn (vrows.js): the jump draws it
       document.querySelector('.bd-item[data-id="Dependencies"]')?.click();
       const btns = [...document.querySelectorAll('.bd-row')];
       out.top = btns.length;
       btns[0]?.click();
       await until(() => trs().some((tr) => tr.classList.contains('rj-flash')), 5000).catch(() => {});
-      out.afterJump = [trs().length, trs().findIndex((tr) => tr.classList.contains('rj-flash'))];
+      out.afterJump = [drawn().length, Number(drawn().find((tr) => tr.classList.contains('rj-flash'))?.dataset.row ?? -1)];
       return out;`);
     const sha = await analyze((await import('../web/js/examples.js')).SHOWCASE_EXAMPLES[0].hex);
     const edges = sha.criticalPath?.edges ?? [];
@@ -237,8 +238,8 @@ try {
     for (const e of edges) lat.set(e.from, (lat.get(e.from) ?? 0) + e.latency);
     const order = [...lat].sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, 5).map((x) => x[0]);
     check(r.tp === '744.25' && r.closed[0] === false && r.closed[1] === 0 && r.closed[2] === 'closed' && r.closed[3] === 0, 'bound: SHA-256: closed, nothing computed or shaded', JSON.stringify(r.closed));
-    check(r.long.every((ms) => ms < LONG_TASK_MS) && r.switchMs < LONG_TASK_MS && r.items > 5 && r.hot > 0 && r.rows === 200, `bound: SHA-256: opening and switching: no task of ${LONG_TASK_MS} ms or more`, JSON.stringify(r));
-    check(r.top === Math.min(5, order.length) && order[0] >= 200 && r.afterJump[0] === 2949 && r.afterJump[1] === order[0], 'bound: SHA-256: a jump to a chain row beyond the drawn ones draws all rows and flashes it', JSON.stringify([r.top, r.afterJump, order]));
+    check(r.long.every((ms) => ms < LONG_TASK_MS) && r.switchMs < LONG_TASK_MS && r.items > 5 && r.hot > 0 && r.rows < 200, `bound: SHA-256: opening and switching: no task of ${LONG_TASK_MS} ms or more`, JSON.stringify(r));
+    check(r.top === Math.min(5, order.length) && order[0] >= 200 && r.afterJump[0] < 200 && r.afterJump[1] === order[0], 'bound: SHA-256: a jump to a chain row beyond the drawn ones draws it (and only the rows near it) and flashes it', JSON.stringify([r.top, r.afterJump, order]));
     console.log(`bound: SHA-256: long tasks while opening ${JSON.stringify(r.long)} ms, switch ${r.switchMs.toFixed(1)} ms; chain top rows ${order.join(',')}`);
   }
 
@@ -474,10 +475,12 @@ try {
       await until(() => document.querySelector('#deps .dp-body')?.dataset.state === 'done', 60000);
       obs.disconnect();
       const drawn = Math.round(performance.now() - t0);
-      await until(() => document.querySelector('.dp-sl.zero'), 10000); // the slack column: a task of its own
-      return [...out, drawn, long, document.querySelectorAll('.dp-node').length, document.querySelectorAll('.dp-sl.zero').length, document.querySelector('.dp-k.sl')?.title ?? ''];`);
-    check(s[0] === 'trace 2,949 instructions' && s[1] === 0 && s[4] === 2949, 'deps: SHA-256: past its size limit (the button), picking the tab loads it; every instruction is drawn', JSON.stringify(s));
-    check(s[5] > 100 && s[6] && !/too large/.test(s[6]), 'deps: SHA-256: the slack is computed (the chain has slack 0)', JSON.stringify(s.slice(5)));
+      await until(() => document.querySelector('.dp-sl'), 10000); // the slack column: a task of its own
+      // (a graph this large draws the instructions near the view, deps.js: the map is as tall as all of them)
+      const rows = Math.round((Number(document.querySelector('.dp-map').getAttribute('height')) - 4) / 18);
+      return [...out, drawn, long, document.querySelectorAll('.dp-node').length, document.querySelectorAll('.dp-sl').length, document.querySelector('.dp-k.sl')?.title ?? '', rows];`);
+    check(s[0] === 'trace 2,949 instructions' && s[1] === 0 && s[7] === 2949 && s[4] > 0 && s[4] < 400, 'deps: SHA-256: past its size limit (the button), picking the tab loads it; the map has every instruction, those near the view drawn', JSON.stringify(s));
+    check(s[5] > 0 && s[6] && !/too large/.test(s[6]), 'deps: SHA-256: the slack is computed', JSON.stringify(s.slice(5)));
     console.log(`deps: SHA-256: traced and drawn in ${s[2]} ms after the tab; long tasks ${JSON.stringify(s[3])}`);
   }
 

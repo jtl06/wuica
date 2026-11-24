@@ -123,7 +123,7 @@ try {
       $('examples').value = 'sha256'; $('examples').dispatchEvent(new Event('change', { bubbles: true }));
       await until(() => $('code').value.includes('rsp+0x98') && /744\\.25/.test(document.querySelector('.ab-tp')?.textContent ?? ''), 120000); await settle();
       if ($('code-b').value !== $('code').value) { $('ab-copy').click(); await until(() => $('code-b').value === $('code').value); } await settle();
-      await until(() => document.querySelectorAll('#ab-main .ab-stack table.uops tbody tr').length >= 400, 120000); await settle();
+      await until(() => (document.querySelector('#ab-main .ab-stack table.uops')?.vr?.count ?? 0) >= 2949, 120000); await settle();
       out.long = { side: document.querySelector('#ab-main .ab-stack').classList.contains('ab-side'), m: measure() };
       const [a, b] = wraps(); a.scrollTop = 600; await wait(200);
       out.long.sync = [a.scrollTop, b.scrollTop];

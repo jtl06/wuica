@@ -5,7 +5,7 @@
 //  2. the real module, if it has been built: decoding, and analysis if the module has it.
 import fs from 'node:fs';
 import { WasmEngine, EngineError, makeRequest, REQUEST_DEFAULTS } from '../web/js/engine.js';
-import { WorkerEngine, CancelledError, createHandler } from '../web/js/engine-rpc.js';
+import { WorkerEngine, CancelledError, createHandler, inParts } from '../web/js/engine-rpc.js';
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -156,8 +156,27 @@ class FakeWorker {
   #handle = createHandler(); #dead = false;
   posted = [];
   constructor() { FakeWorker.made.push(this); }
-  postMessage(msg) { this.posted.push(msg.op); setTimeout(async () => { if (this.#dead) return; const a = await this.#handle(msg); setTimeout(() => { if (!this.#dead) this.onmessage?.({ data: a }); }, 0); }, 0); }
+  postMessage(msg) { this.posted.push(msg.op); setTimeout(async () => { if (this.#dead) return; const a = await this.#handle(msg); for (const m of inParts(a)) setTimeout(() => { if (!this.#dead) this.onmessage?.({ data: m }); }, 0); }, 0); }
   terminate() { this.#dead = true; }
+}
+// a large answer in parts (engine-worker.js, inParts): the details' rows and a trace model's uops come in slices and are
+// joined again, in order; a small answer is one message
+{
+  const rows = Array.from({ length: 1003 }, (_, i) => ({ i })), uops = Array.from({ length: 9001 }, (_, i) => ({ i }));
+  const msgs = inParts({ id: 7, ok: true, value: { tp: 1, details: { rows: rows.slice() }, model: { uops: uops.slice(), nCycles: 3 } } });
+  check(msgs.length === 3 + 3 + 1 && msgs.slice(0, -1).every((m) => m.id === 7 && m.part) && msgs.at(-1).value.details.rows.length === 0 && msgs.at(-1).value.model.uops.length === 0,
+    'parts: a large answer in slices, the answer last with them left empty', JSON.stringify(msgs.map((m) => m.part ?? 'answer')));
+  check(inParts({ id: 1, ok: true, value: { details: { rows: [1, 2] } } }).length === 1 && inParts({ id: 2, ok: false, error: 'x' }).length === 1, 'parts: a small answer or an error: one message');
+  class PartsWorker {
+    postMessage(msg) {
+      const value = msg.op === 'init' ? { analyze: true, decode: true, cancel: true } : { tp: 1, details: { rows: rows.slice() }, model: { uops: uops.slice() } };
+      for (const m of inParts({ id: msg.id, ok: true, value })) setTimeout(() => this.onmessage?.({ data: m }), 0);
+    }
+    terminate() {}
+  }
+  const e = await WorkerEngine.create(() => ({}), () => new PartsWorker());
+  const r = await e.analyze(makeRequest('90', 'SKL'));
+  check(r.details.rows.length === 1003 && r.details.rows.every((x, i) => x.i === i) && r.model.uops.length === 9001 && r.model.uops.every((x, i) => x.i === i), 'parts: joined again in order');
 }
 {
   const fakes = [];
