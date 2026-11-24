@@ -97,6 +97,29 @@ added to the list in `ci/make-data-asset.sh`.
   15: 73 ms). So `-arch all` on the showcase takes 0.60 s with 4 or 8 threads, 0.67 s with 12 and 0.71 s with 15 (1.04 s
   without), and on a small block 8 threads are as fast as none and 15 are 12% slower; the default is one thread per two
   microarchitectures. `-arch all` minus `-arch SKL` is the cost of the other 14: 0.73 s before, 0.30 s on threads.
+- Threads by work (round 0.1.9; the measurement machine, node 22, 5 runs, medians; the Mac in parentheses). The default
+  is no longer one thread per two CPUs but comes from the work of a call (threads.js, `WORK`): each table loaded once
+  (8 ms), each analysis 1.2 ms plus 0.009 ms per instruction (SKL: saxpy 1.1 ms, the SHA-256 block 26 ms, Mac). Below
+  300 ms of estimated work no threads; above, one per 150 ms, from 2 to 8, at most the cores but one. A thread costs
+  about 50-60 MB (its isolate, its tables, its memory) and saves nothing on short work. `-arch all` on saxpy: 0.37 s
+  with no thread, 0.38-0.42 s with 2-8 (197 MB against 240-347 MB): none. The SHA-256 block on all 15 CPUs: 1.01 s with
+  none, 0.75 / 0.60 / 0.62 s with 2 / 4 / 8 (236 / 296 / 405 / 597 MB): the default picks 4 (0.61 s, 400 MB). 20
+  SHA-256 blocks on SKL: 1.18 / 0.94 / 0.79 / 0.78 s with 1 / 2 / 4 / 8: 4 (0.79 s). 50 small blocks on 3 CPUs:
+  0.44 s with none, 0.48-0.55 s with threads: none. The SHA-256 block on 3 CPUs (105 ms of estimated work): none, 0.42 s
+  against 0.39-0.42 s with threads, at 195 instead of 277-311 MB.
+- Batches (wuica a.s b.s ...): 50 small files in one process instead of 50: 0.39 s instead of 14.4 s on SKL, 0.43 s
+  instead of 18.2 s on 3 CPUs; 20 SHA-256 blocks: 0.79 s instead of 6.5 s (Mac: 0.21 / 0.24 / 0.41 s instead of 7.6 /
+  7.9 / 3.5 s).
+- Memory (0.1.8 -> 0.1.9, peak RSS, the measurement machine; Mac in parentheses): saxpy on 3 CPUs 233 -> 159 MB (186 ->
+  124), `-arch all` 396 -> 193 MB (347 -> 157), the SHA-256 block on all CPUs 676 -> 445 MB (673 -> 470), `-whatif` on 3
+  CPUs 252 -> 183 MB (214 -> 155): fewer threads, binary tables (SKL: 4 instead of 6 MB of WebAssembly memory), no copy
+  of decompressed bytes, table bytes not kept (read again after a trap). A small run on one CPU is 133-139 MB (100-111
+  on the Mac) against node's 56 (46): no single cause. On the Mac: the analyzer's module decompressed and compiled
+  +24 MB, the code V8 compiles for loading a table +8 MB and for the first analysis +15 MB, the assembler (assembly
+  input only) +17 MB with its decompression. Freeing the assembler before the analysis lowers the peak by 5 MB only
+  with a forced garbage collection: not done.
+- Binary tables: 14.6 MB of JSON -> 6.4 MB (brotli 681 -> 614 kB for the 15); loading a table (decompress and load,
+  warm) SKL 2.2 -> 1.4 ms, ADL-P 6.1 -> 3.7 ms, all 15 55 -> 33 ms (Mac); the analyzer module grows by 21 kB.
 
 ## The reference
 
