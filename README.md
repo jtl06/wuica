@@ -60,5 +60,6 @@ The reference commit is recorded in `docs/DESIGN.md`.
   Jan Reineke. It is not part of this repository: the tables are generated locally from a uiCA installation with
   `tools/export_data.py`.
 
-If you use uiCA's models in research, cite the uiCA paper: Andreas Abel and Jan Reineke, *uiCA: Accurate Throughput Prediction of
-Basic Blocks on Recent Intel Microarchitectures*, ICS 2022.
+uiCA is described in: Andreas Abel and Jan Reineke, *uiCA: Accurate Throughput Prediction of Basic Blocks on Recent Intel
+Microarchitectures*, ICS 2022. The Intel models are uiCA's; the ZEN3, ADL-P and ICX models are prototypes of the fork
+[jtl06/uiCA](https://github.com/jtl06/uiCA) and are not part of that work.

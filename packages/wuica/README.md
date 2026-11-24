@@ -25,6 +25,7 @@ with `npx wuica-cli ...`. The examples below write `wuica`.
 ## The CLI in five minutes
 
 ```
+wuica -example saxpy -arch SKL,ZEN3,ADL-P      # a built-in loop, no file needed (-examples lists them)
 clang -O3 -march=haswell -S dot.c -o dot.s     # AT&T, as clang and gcc write it: detected, no flag needed
 wuica dot.s                                    # uiCA's report for SKL, of the loop wuica picked
 wuica dot.s -arch SKL,ZEN3,ADL-P               # one table for several CPUs ("all": every one)
@@ -144,6 +145,9 @@ wuica loop.s -json                   # the JSON result (the contract's analyze r
 wuica psum.s -loop whole             # the whole text, not the loop found in it (-loop auto, the default, or -loop N)
 wuica psum.s -loops                  # list the loops; -loop .LBB0_12 or -func psum to choose
 wuica psum.s -whatif -per 8          # what-if variants; cycles per element (8 elements per iteration)
+wuica -examples                      # the built-in examples (the web page's set)
+wuica -example dot1 -whatif          # one of them, as if it were the input file (every option applies)
+wuica -example dot1 -show > dot.s    # its assembly, to save and edit
 wuica --version
 ```
 
@@ -162,7 +166,7 @@ newline-delimited JSON-RPC 2.0 with the `initialize` handshake of the protocol r
 `ping`, `tools/list` and `tools/call`. Arguments are checked against the tools' JSON Schemas; a mismatch is a tool error
 (`isError`) that says what is wrong, an unknown tool a JSON-RPC error. The server ends with its stdin, and writes only
 protocol messages to stdout. `wuica mcp --help` prints the usage. The tool table itself (names, descriptions, JSON
-Schemas, handlers) is exported as `mcpTools(w)` from `wuica/mcp`, with `callTool` and `validate`; the remote server
+Schemas, handlers) is exported as `mcpTools(w)` from `wuica-cli/mcp`, with `callTool` and `validate`; the remote server
 (`server/`) serves the same table over HTTP. It has five tools:
 
 | Tool | What it does |
@@ -173,29 +177,107 @@ Schemas, handlers) is exported as `mcpTools(w)` from `wuica/mcp`, with `callTool
 | `list_archs` | ids, names, years, prototype flags |
 | `assemble` | assembly → hex bytes, or diagnostics with line/column |
 
-Add it to **Claude Code** from a local checkout (after `build.sh` and `npm install`) or an installed tarball:
+### Set it up in your agent
 
-```
-claude mcp add wuica -- node /absolute/path/to/packages/wuica/bin/wuica.js mcp
-```
+The command is `npx -y wuica-cli mcp` (stdio) in every client. **Claude Code**, **OpenAI Codex CLI**, **opencode**
+and **Amp** add it with one command:
 
-Once the package is published on npm:
-
-```
+```sh
 claude mcp add wuica -- npx -y wuica-cli mcp
+codex mcp add wuica -- npx -y wuica-cli mcp
+opencode mcp add wuica -- npx -y wuica-cli mcp
+amp mcp add wuica -- npx -y wuica-cli mcp
 ```
 
-Other MCP clients (Claude Desktop, Cursor, VS Code, ...) use the same command in their JSON configuration:
+Most other clients read a JSON file with an `mcpServers` object: **Claude Desktop** (Settings → Developer → Edit Config:
+`claude_desktop_config.json`), **Cursor** (`~/.cursor/mcp.json`, or `.cursor/mcp.json` in a project), **Gemini CLI**
+(`~/.gemini/settings.json`, or `.gemini/settings.json` in a project), **Cline** (MCP Servers → Configure → Configure MCP
+Servers: `cline_mcp_settings.json`) and **Continue** (a file in `.continue/mcpServers/`):
 
 ```json
 {
   "mcpServers": {
-    "wuica": { "command": "npx", "args": ["-y", "wuica", "mcp"] }
+    "wuica": { "command": "npx", "args": ["-y", "wuica-cli", "mcp"] }
   }
 }
 ```
 
+Where the format differs:
+
+- **Codex** (`~/.codex/config.toml`, or `.codex/config.toml` in a trusted project; what `codex mcp add` writes):
+
+  ```toml
+  [mcp_servers.wuica]
+  command = "npx"
+  args = ["-y", "wuica-cli", "mcp"]
+  ```
+
+- **opencode** 2.x (`opencode.jsonc` in the project, or the global configuration):
+
+  ```json
+  {
+    "$schema": "https://opencode.ai/config.json",
+    "mcp": { "servers": { "wuica": { "type": "local", "command": ["npx", "-y", "wuica-cli", "mcp"] } } }
+  }
+  ```
+
+- **VS Code** with GitHub Copilot (`~/.copilot/mcp-config.json`, or `.mcp.json` at the workspace root):
+
+  ```json
+  {
+    "mcpServers": {
+      "wuica": { "type": "stdio", "command": "npx", "args": ["-y", "wuica-cli", "mcp"], "tools": ["*"] }
+    }
+  }
+  ```
+
+- **Zed** (`settings.json`):
+
+  ```json
+  {
+    "context_servers": {
+      "wuica": { "command": "npx", "args": ["-y", "wuica-cli", "mcp"], "env": {} }
+    }
+  }
+  ```
+
+- **Amp** (`~/.config/amp/settings.json`, or `.amp/settings.json` in a project):
+
+  ```json
+  {
+    "amp.mcpServers": {
+      "wuica": { "command": "npx", "args": ["-y", "wuica-cli", "mcp"] }
+    }
+  }
+  ```
+
+- **goose** (`~/.config/goose/config.yaml`):
+
+  ```yaml
+  extensions:
+    wuica:
+      type: stdio
+      name: wuica
+      enabled: true
+      cmd: npx
+      args: ["-y", "wuica-cli", "mcp"]
+      timeout: 300
+  ```
+
+The hosted server (`server/`, the REST API's host) speaks MCP over Streamable HTTP at
+`https://api.wuica.jacen.li/mcp`, with nothing to install: `claude mcp add --transport http wuica
+https://api.wuica.jacen.li/mcp`. Clients with a JSON or TOML file give the URL instead of the command: `"url"` in
+Cursor and Zed, `"type": "http", "url"` in VS Code, `"httpUrl"` in Gemini CLI, `"type": "remote", "url"` in opencode,
+`url = "…"` in Codex.
+
+To develop wuica, point a client at a checkout instead (after `packages/wuica/build.sh` and `npm install`):
+`claude mcp add wuica -- node /absolute/path/to/packages/wuica/bin/wuica.js mcp`.
+
 Example prompt: *"Use wuica to compare this loop on Skylake, Ice Lake and Zen 3 and explain the bottleneck."*
+
+**Without MCP.** An agent that can run shell commands can use the CLI directly: `npx -y wuica-cli FILE -arch SKL,ZEN3
+-json` (one JSON object; the shapes are under "JSON" in [The CLI in five minutes](#the-cli-in-five-minutes)), `-whatif`
+for the variants, `-loops` and `-loop N` to choose the loop, and `-example saxpy` to try it without a file.
 
 ## API contract
 
@@ -412,7 +494,7 @@ LLVM 22.1.2's (the same bytes as `llvm-mc`). Only `.text` is returned. `.include
 ```
 packages/wuica/build.sh          # copies and compresses the wasm modules and tables into dist/, copies the licenses
 cd packages/wuica && npm install && npm test
-npm pack                         # wuica-<version>.tgz
+npm pack                         # wuica-cli-<version>.tgz
 ```
 
 `build.sh` uses `target/wasm32-unknown-unknown/release/wuica_wasm.wasm` (it runs `./build-wasm.sh` if the file is
@@ -430,8 +512,9 @@ uncompressed file.
   repository. It also contains wasi-libc and libc++ from wasi-sdk (Apache-2.0 WITH LLVM-exception, MIT and other
   permissive licenses).
 - The instruction data comes from [uops.info](https://www.uops.info) by Andreas Abel and Jan Reineke.
-- The MCP server uses the [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) (MIT) and
-  [zod](https://zod.dev) (MIT), installed as npm dependencies.
+- The package has no dependencies. Its tests use the [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
+  (MIT) and [zod](https://zod.dev) (MIT) as development dependencies; the remote server (`server/`) uses them at run time.
 
-If you use uiCA's models in research, cite the uiCA paper: Andreas Abel and Jan Reineke, *uiCA: Accurate Throughput
-Prediction of Basic Blocks on Recent Intel Microarchitectures*, ICS 2022.
+uiCA is described in: Andreas Abel and Jan Reineke, *uiCA: Accurate Throughput Prediction of Basic Blocks on Recent
+Intel Microarchitectures*, ICS 2022. The Intel models are uiCA's; the ZEN3, ADL-P and ICX models are prototypes of the
+fork [jtl06/uiCA](https://github.com/jtl06/uiCA) and are not part of that work.
