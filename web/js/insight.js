@@ -24,10 +24,11 @@ export function operandName(op) {
 
 const cycles = (n) => `${n} cycle${n === 1 ? '' : 's'}`;
 
-// null, or {ratio, edges, steps, onChain: Map row -> [{operand, latency, carried, fromLabel}], lines}
+// null, or {ratio, edges, steps, onChain: Map row -> [{operand, latency, carried, fromLabel}], lines, text}
 //   steps: the instructions in the order of the chain, each with the arrow that leaves it ('→' same iteration,
 //          '↻' into the next one); the last arrow leads back to the first instruction
-//   lines: the edges as text, for a tooltip
+//   lines: the edges as text, for a tooltip; text: them joined (once: a row's tooltip has them all, and a chain of
+//   thousands of rows made a title each, with every line, quadratic: chainTitle)
 export function chainInfo(response) {
   const cp = response?.criticalPath;
   const rows = response?.rows;
@@ -49,14 +50,14 @@ export function chainInfo(response) {
   const steps = cp.edges.map((e) => ({ row: e.from, label: label(e.from), arrow: e.carried ? '↻' : '→', operand: operandName(e.operand), latency: e.latency }));
   const iterations = cp.edges.filter((e) => e.carried).length;
   const ratio = Number(cp.ratio);
-  return { ratio, iterations, edges: cp.edges, steps, onChain, lines };
+  return { ratio, iterations, edges: cp.edges, steps, onChain, lines, text: lines.join('\n') };
 }
 
 // The tooltip of a row on the chain.
 export function chainTitle(info, row) {
   const mine = info.onChain.get(row) ?? [];
   const head = mine.map((m) => `reads ${m.operand} from ${m.fromLabel} (${cycles(m.latency)}${m.carried ? ', previous iteration' : ''})`);
-  return [`critical dependency chain: ${round2(info.ratio).toFixed(2)} cycles/iteration`, ...head, '', 'chain:', ...info.lines].join('\n');
+  return [`critical dependency chain: ${round2(info.ratio).toFixed(2)} cycles/iteration`, ...head, '', 'chain:', info.text ?? info.lines.join('\n')].join('\n');
 }
 
 // ---- the cost of each instruction ------------------------------------------------------------------------------------
