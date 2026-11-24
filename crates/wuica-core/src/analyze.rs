@@ -331,6 +331,9 @@ pub fn strip_hyperlinks(s: &str) -> String {
 
 /// Runs an analysis of decoded instructions. `decode_errors` is passed through to the response. `data` must be the instruction
 /// table of the configuration (`uarch.configs[request.arch].name`).
+/// The largest alignment offset (in magnitude) [`analyze`] accepts: 2^62 (docs/DEVIATIONS.md).
+pub const MAX_ALIGNMENT_OFFSET: u64 = 1 << 62;
+
 pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, uarch: &UArch, data: &ArchData) -> Result<Response, String> {
     let config = uarch.configs.get(&request.arch).ok_or_else(|| format!("unknown microarchitecture: {}", request.arch))?;
     let init_policy = match request.init_policy.as_str() {
@@ -339,6 +342,11 @@ pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, 
         "stack" => InitPolicy::Stack,
         other => return Err(format!("unknown initPolicy: {other}")),
     };
+    // Addresses are the alignment offset plus code offsets (i64; Python's ints are unbounded): an offset of more than 2^62
+    // in magnitude could wrap them (a block of 1 MiB run for 10^8 cycles stays below 2^35 bytes from it).
+    if request.alignment_offset.unsigned_abs() > MAX_ALIGNMENT_OFFSET {
+        return Err(format!("alignmentOffset {} is out of range (at most 2^62 in magnitude)", request.alignment_offset));
+    }
     if decoded.is_empty() {
         return Err("no instructions found".to_string());
     }

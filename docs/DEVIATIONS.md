@@ -34,6 +34,11 @@ loads on IVB), makes the reference run for hours; wuica rejects a uop with more 
 operands"), stops after 10^8 cycles ("invalid input: the simulation does not terminate"), and otherwise needs minutes or runs out
 of memory on such blocks (see `docs/WASM-API.md`, "Failures and traps").
 
+An `alignmentOffset` beyond ±2^62 is refused ("alignmentOffset ... is out of range (at most 2^62 in magnitude)"; a request
+error): addresses are 64-bit integers in wuica and unbounded in Python, and such an offset could make them wrap (before, an
+offset of 2^63 - 1 wrapped silently). The offsets anyone uses are 0 to 63; the result depends on the offset only through
+addresses modulo 64.
+
 ## Results that differ from upstream
 
 | Change | Upstream | Fork and wuica | Commit |

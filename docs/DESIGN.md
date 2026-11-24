@@ -98,7 +98,10 @@ Both sides always get the same raw bytes (the hex string in the fixture).
 These are the places where a straightforward translation gives different results:
 
 1. **Iteration order.** Python dicts iterate in insertion order, and the code relies on it (`portData`, `regOperands`, `rw`,
-   `latencies`, the rename dictionaries). Use `Vec` of pairs or `IndexMap`; never iterate over a `HashMap`/`HashSet`.
+   `latencies`, the rename dictionaries). Use `Vec` of pairs or `IndexMap`; never iterate over a `HashMap`/`HashSet`. The
+   hash maps of the core are `fasthash::LookupMap`/`LookupSet` (the simulator's `FxHashMap`/`FxHashSet`, `FastMap`, the binary
+   tables' string index, the loaded tables of `crates/wuica`): newtypes without `iter`, `keys`, `values`, `into_iter`, `drain`
+   or `retain`, so the compiler checks this rule. (When they were introduced, no code iterated one.)
    Python *sets* that are iterated must be given a defined order that matches the reference (after `9b69d9d`, the only such
    place, `pendingUops`, is sorted by uop index).
 2. **Integer division and modulo.** `//` and `%` round toward negative infinity (`disp // 64` with a negative displacement);
@@ -107,13 +110,28 @@ These are the places where a straightforward translation gives different results
    tuples orders by `idx`. Rust's `Iterator::max_by_key` returns the *last* maximum: write these out explicitly.
 4. **Numbers.** Latencies and throughput limits can be fractions (`TP`, `blockedResources`): Python mixes `int` and `float`
    freely. Keep the order of floating-point operations, and use `f64` where the Python value can be a float. The final
-   throughput is `round(x, 2)`: Python rounds half to even on the exact binary value; check against the fixtures.
+   throughput is `round(x, 2)`: Python rounds half to even on the exact binary value; check against the fixtures. The
+   one helper, `facile::py_round2`, is checked against CPython for every `k / n`, `n <= 1000`, `k <= 3n`
+   (`crates/wuica-core/tests/round2.rs`, `fixtures/round2.bin.gz`, `tools/export_round2_fixture.py`). Integers: Python's are
+   unbounded; the table below lists where a fixed width meets a user-controlled size.
 5. **Strings as data.** Much logic tests substrings of names (`'MM' in reg`, `'MOV' in instrStr`, `'I64' in instrStr`).
    Port these tests literally first; replace them with enums only where the fixture tests cover the difference.
 6. **Identity vs. equality.** Operands (`RegOperand('RAX')`) are compared and used as dict keys by *identity* in Python: two
    operands for the same register are different keys. Give operands ids; do not key by register name where Python keys by object.
 7. **Known quirks are part of the reference.** For example, `getRegSize` (fixed in `a100889`) and the `% 16`/`% 32` block
    splitting. If something looks like a bug, port it as it is, and report it; fixes go into the Python reference first.
+
+### Integer widths against Python's `int`
+
+| Place | Type | What bounds it |
+|---|---|---|
+| `minIterations`, `minCycles` (`SimOptions`) | `i64` | compared with `rnd` and `clock` only; the capacity estimate clamps them to 2^30 before multiplying (`minCycles × issueWidth`), then to 2^20 rounds |
+| `clock`, `rnd`, cycle stamps (`issued`, `executed`, `retired`) | `i64` | the simulation stops after 10^8 cycles ("the simulation does not terminate"); a huge `minIterations` hits that limit |
+| entity ids (uops, fused and laminated uops, instruction instances, renamer values and lists, store-buffer entries, dependency nodes) | `u32` | created per cycle at a bounded rate (issue width, operands per uop), so at most a few 10^9 in 10^8 cycles; `sim::idx` panics past 2^32 (an error natively, a trap in WebAssembly) instead of wrapping. Unreachable in WebAssembly (4 GiB of memory) and below the work budget |
+| operands per uop (`n_in`, `n_out`) | `u16` | a uop with more than 65,535 operands is rejected ("too many operands") |
+| ports (`actual_port`, port lists) | `u8` | the configurations (`uarch.json`): far fewer than 255 ports |
+| `alignmentOffset`, instruction addresses | `i64` | addresses are the offset plus code offsets (below 2^35 for 1 MiB of code over 10^8 cycles); offsets beyond ±2^62 are refused (`analyze::MAX_ALIGNMENT_OFFSET`; docs/DEVIATIONS.md). Before, i64::MAX wrapped silently |
+| `decodeErrors`, instruction counts, table indices | `u32`/`usize` | the input (at most 1 MiB of machine code in the hosts) and the tables |
 
 ## Work packages
 
