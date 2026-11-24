@@ -537,8 +537,6 @@ def minimize(case, target, check, budget=400):
          if n >= len(body):
             break
          n = min(len(body), 2 * n)
-   if len(cur['body']) == 1 and cur['end']['kind'] != 'none':
-      pass
    for key in sorted(cur['options']):
       if key == 'minCycles':
          continue
@@ -549,8 +547,9 @@ def minimize(case, target, check, budget=400):
       c = dict(cur, options=o)
       if test(c):
          cur = c
-   for end in [{'kind': 'none'}, dict(cur['end'], pre=''), dict(cur['end'], long=False)]:
-      if end != cur['end']:
+   for simpler in [lambda e: {'kind': 'none'}, lambda e: dict(e, pre=''), lambda e: dict(e, long=False)]:
+      end = simpler(cur['end'])
+      if cur['end']['kind'] != 'none' and end != cur['end']:
          c = dict(cur, end=end)
          c['hex'] = block_hex(c['body'], end)
          if test(c):
@@ -774,6 +773,9 @@ def main():
    ap.add_argument('--jobs', type=int, default=max(1, (os.cpu_count() or 2) - 2)); ap.add_argument('--chunk', type=int, default=1000)
    ap.add_argument('--timeout', type=int, default=DEFAULT_TIMEOUT); ap.add_argument('--minimize-per-group', type=int, default=2)
    a = ap.parse_args()
+   for k in ['uica', 'wuica', 'data', 'pool', 'out']:  # the reference's runner changes the working directory
+      if getattr(a, k):
+         setattr(a, k, os.path.abspath(getattr(a, k)))
    if a.arch and a.arch not in CPUS:
       raise SystemExit('unknown --arch %s (one of %s)' % (a.arch, ' '.join(CPUS)))
    if a.cmd == 'gen':
