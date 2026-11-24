@@ -91,6 +91,23 @@ test('whatIf(arch, request): the what-if experiments with variants and per (the 
   assert.equal((await w.whatIf('SKL', { source: DOT, variants: ['acc9'] })).code, 1);
 });
 
+test('otherLoops: the loops not analyzed when the text has more than one (listLoops\' entries), in analyze, summarize, compare', async () => {
+  const { listLoops } = await import('../lib/index.js');
+  const src = 'f:\n.L1:\n add rax, 1\n dec rcx\n jnz .L1\n.L2:\n add rbx, 1\n dec rdx\n jnz .L2\n ret\n';
+  const r = await w.analyze('SKL', { source: src });
+  const all = listLoops(src);
+  assert.equal(r.loop.index, 0);
+  assert.deepEqual(r.otherLoops, all.filter((l) => l.index !== 0).map(({ auto, ...l }) => l));
+  assert.deepEqual(r.otherLoops, [{ index: 1, label: '.L2', function: 'f', line: 6, endLine: 9, instructions: 3, depth: 1 }]);
+  assert.deepEqual((await w.analyze('SKL', { source: src, loop: 1 })).otherLoops.map((l) => l.label), ['.L1']);
+  assert.deepEqual(w.summarize(r).otherLoops, r.otherLoops);
+  assert.deepEqual((await w.compare({ source: src, archs: ['SKL'] })).otherLoops, r.otherLoops);
+  // one loop, or machine code: none
+  assert.equal((await w.analyze('SKL', { source: 'l:\n dec rcx\n jnz l\n' })).otherLoops, undefined);
+  assert.equal((await w.analyze('SKL', { hex: HEX })).otherLoops, undefined);
+  assert.equal(listLoops(42).error, '`source` must be assembly text');
+});
+
 test('SKL result in detail', async () => {
   const r = await w.analyze('SKL', { hex: HEX });
   assert.equal(r.tp, 2);

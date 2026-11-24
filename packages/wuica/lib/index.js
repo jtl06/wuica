@@ -29,9 +29,16 @@ export { detectSyntax };
 // instructions, depth, auto}] (auto: the one "auto" analyzes) or {error}. No assembling.
 /** @param {string} source @param {{func?: string | null}} [opts] @returns {any} (index.d.ts: LoopListing[] | {error}) */
 export function listLoops(source, { func = null } = {}) {
+  if (typeof source !== 'string') return { error: '`source` must be assembly text' };
   const p = preparePaste(normalizeText(source), { loop: 'auto', func });
   if (p.error) return { error: p.error };
-  return p.loops.map((l, index) => ({ index, label: l.label, function: l.function, line: l.begin, endLine: l.end, instructions: l.instructions, depth: l.depth, auto: p.choice === index }));
+  return loopListing(p.loops, p.choice);
+}
+
+// The loops of a text (loop-find.js preparePaste's, or what an assembly of it found) as listLoops gives them; the one
+// implementation behind -loops, the MCP tool list_loops and the analyze response's otherLoops.
+function loopListing(loops, choice) {
+  return loops.map((l, index) => ({ index, label: l.label, function: l.function, line: l.begin, endLine: l.end, instructions: l.instructions, depth: l.depth, auto: choice === index }));
 }
 
 export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, CODES, WARM_HEX, parseDiagnostics, insights };
@@ -318,7 +325,9 @@ class Wuica {
     const loopInfo = picked && { index: picked.index, count: picked.count, name: picked.name, line: picked.line, endLine: picked.endLine, ...(picked.lines ? { lines: picked.lines } : {}),
       ...(info ? { function: info.function, depth: info.depth, instructions: info.instructions } : {}),
       ...(picked.address !== null && picked.address !== undefined ? { address: picked.address } : {}), ...(r.alignment !== null ? { alignmentOffset: r.alignment } : {}) };
-    return { code: CODES.OK, hex: Buffer.from(r.bytes).toString('hex'), bytes: r.bytes, stderr: diagnosticLines(r.diagnostics), loop: loopInfo, syntax: { name: syn.name, detected: syn.detected } };
+    // the other loops of the text, when it has more than one (what -loop N or LABEL can pick instead)
+    const otherLoops = r.loops.length > 1 ? loopListing(r.loops, null).filter((l) => l.index !== picked?.index).map(({ auto, ...l }) => l) : null;
+    return { code: CODES.OK, hex: Buffer.from(r.bytes).toString('hex'), bytes: r.bytes, stderr: diagnosticLines(r.diagnostics), loop: loopInfo, syntax: { name: syn.name, detected: syn.detected }, ...(otherLoops ? { otherLoops } : {}) };
   }
 
   // {source | asm | hex, syntax, loop} -> {hex, assembled, stderr, loop} or a failure.
@@ -341,7 +350,7 @@ class Wuica {
     const a = await this.machineCode(source, req.syntax ?? 'auto', loopChoice(req.loop), req.func ?? null);
     if (a.code !== CODES.OK) return a;
     if (a.bytes.length === 0) return failure(CODES.REQUEST, 'the source contains no instructions');
-    return { hex: a.hex, assembled: true, stderr: a.stderr, loop: a.loop, syntax: a.syntax.name };
+    return { hex: a.hex, assembled: true, stderr: a.stderr, loop: a.loop, syntax: a.syntax.name, ...(a.otherLoops ? { otherLoops: a.otherLoops } : {}) };
   }
 
   // The options of a request with the alignment offset of the code's addresses (objdump input), unless it was given.
@@ -379,7 +388,7 @@ class Wuica {
     if (r.code !== undefined) return r;
     const stderr = [...code.stderr];
     if (r.decodeErrors > 0) stderr.push({ text: `Warning: ${r.decodeErrors} position(s) could not be decoded` });
-    return { code: CODES.OK, ...r, ...(code.assembled ? { hex: code.hex, syntax: code.syntax } : {}), ...(code.loop ? { loop: code.loop } : {}), stderr };
+    return { code: CODES.OK, ...r, ...(code.assembled ? { hex: code.hex, syntax: code.syntax } : {}), ...(code.loop ? { loop: code.loop } : {}), ...(code.otherLoops ? { otherLoops: code.otherLoops } : {}), stderr };
   }
 
   // Several blocks on one microarchitecture: [request] -> [analyze() result] in the same order (each exactly what
@@ -473,7 +482,7 @@ class Wuica {
     // a CPU that could not decode some instructions (FMA on SNB): its throughput leaves them out
     const decode = results.filter((r) => r.code === CODES.OK && r.decodeErrors > 0)
       .map((r) => ({ text: `Warning: ${r.arch}: ${r.decodeErrors} position(s) could not be decoded (instructions it does not have): its throughput leaves them out` }));
-    return { code: CODES.OK, ...(code.assembled ? { hex: code.hex, syntax: code.syntax } : {}), ...(code.loop ? { loop: code.loop } : {}), stderr: [...code.stderr, ...decode], results };
+    return { code: CODES.OK, ...(code.assembled ? { hex: code.hex, syntax: code.syntax } : {}), ...(code.loop ? { loop: code.loop } : {}), ...(code.otherLoops ? { otherLoops: code.otherLoops } : {}), stderr: [...code.stderr, ...decode], results };
   }
 
   // POST /api/compare {source | hex, syntax, archs?, options}: one block on several microarchitectures (default: all).
@@ -552,7 +561,7 @@ class Wuica {
     const ins = base ? { ...base, ...detailInsights(r) } : null;
     return {
       code: r.code, arch: r.arch, name, year, prototype, tp: r.tp, unit: 'cycles per iteration', mode: r.mode,
-      bottlenecks: r.bottlenecks, limits: r.limits, decodeErrors: r.decodeErrors, ...(r.hex ? { hex: r.hex } : {}), ...(r.loop ? { loop: r.loop } : {}),
+      bottlenecks: r.bottlenecks, limits: r.limits, decodeErrors: r.decodeErrors, ...(r.hex ? { hex: r.hex } : {}), ...(r.loop ? { loop: r.loop } : {}), ...(r.otherLoops ? { otherLoops: r.otherLoops } : {}),
       stderr: r.stderr, instructions, ...(ins ? { insights: ins } : {}),
     };
   }

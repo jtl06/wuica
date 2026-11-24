@@ -24,7 +24,7 @@ test('the SDK client: initialize, ping, tools/list, every tool, errors', async (
   assert.deepEqual(client.getServerCapabilities(), { tools: { listChanged: true } });
   assert.deepEqual(await client.ping(), {});
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((t) => t.name), ['list_archs', 'analyze', 'what_if', 'diff_blocks', 'compare_archs', 'assemble']);
+  assert.deepEqual(tools.map((t) => t.name), ['list_archs', 'analyze', 'what_if', 'diff_blocks', 'compare_archs', 'list_loops', 'assemble']);
   for (const [name, args] of [['list_archs', {}], ['analyze', { hex: '4801d84801c349ffcf75f5', format: 'json' }], ['what_if', { hex: '4801d84801c349ffcf75f5', variants: ['unroll2'] }],
     ['compare_archs', { hex: '4801d84801c349ffcf75f5', archs: ['SKL'] }], ['assemble', { source: 'add rax, rbx' }]]) {
     const r = await client.callTool({ name, arguments: args });
@@ -88,7 +88,7 @@ test('raw lines: version negotiation, parse errors, notifications, batches, EOF'
   // 2025-03-26: the client's version back, and batches
   const b = await rawSession([init('2025-03-26'), '[{"jsonrpc":"2.0","id":2,"method":"ping"},{"jsonrpc":"2.0","method":"notifications/initialized"},{"jsonrpc":"2.0","id":3,"method":"tools/list"}]']);
   assert.equal(b.replies[0].result.protocolVersion, '2025-03-26');
-  assert.ok(Array.isArray(b.replies[1]) && b.replies[1].length === 2 && b.replies[1][1].result.tools.length === 6);
+  assert.ok(Array.isArray(b.replies[1]) && b.replies[1].length === 2 && b.replies[1][1].result.tools.length === 7);
   for (const v of ['2024-11-05', '2025-06-18', '2025-11-25']) assert.equal((await rawSession([init(v)])).replies[0].result.protocolVersion, v);
 });
 

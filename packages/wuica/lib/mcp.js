@@ -9,7 +9,7 @@
 
 import fs from 'node:fs';
 import readline from 'node:readline';
-import { createWuica } from './index.js';
+import { createWuica, listLoops } from './index.js';
 import { whatIfRequest, VARIANTS } from './web/whatif-core.js';
 import { diffRequest } from './web/block-diff.js';
 
@@ -92,7 +92,7 @@ export const INSTRUCTIONS =
         'locally. Use `analyze` for one block on one microarchitecture (bottlenecks, per-port usage, full report), ' +
         '`what_if` for the effect of unrolling, an ideal front end, fusion, or removing the dependency chain, ' +
         '`compare_archs` to see a block on several microarchitectures, `diff_blocks` for the effect of a code change ' +
-        '(before and after), `list_archs` for the ids, `assemble` to check ' +
+        '(before and after), `list_loops` for the loops of a text, `list_archs` for the ids, `assemble` to check ' +
         'that assembly text is accepted and see its encoding. ' + ASSUMPTIONS;
 
 const readOnly = { readOnlyHint: true, idempotentHint: true, openWorldHint: false };
@@ -230,6 +230,24 @@ export function mcpTools(w) {
       }),
       annotations: readOnly, execution,
       handler: async (request) => result(await w.compare(request)),
+    },
+    {
+      name: 'list_loops',
+      title: 'List the loops of assembly text',
+      description:
+        'Lists the loops of x86-64 assembly text (a whole function or file: gcc -S, clang -S, objdump -d lines) without ' +
+        'analyzing it: per loop `index` (what `loop: N` picks), `label` (what `loop: "LABEL"` picks), `function`, `line` ' +
+        'and `endLine`, `instructions`, `depth` (1 = innermost), `auto` (the one analyze picks by default). `func` keeps ' +
+        'one function\'s loops. The analyze result also lists the loops it did not pick as `otherLoops`. ' + ERRORS_NOTE,
+      inputSchema: obj({
+        source: str('the assembly text'),
+        func: codeShape.func,
+      }, ['source']),
+      annotations: readOnly, execution,
+      handler: async ({ source, func }) => {
+        const ls = listLoops(source, { func: func ?? null });
+        return result(Array.isArray(ls) ? { code: 0, loops: ls } : { code: 1, error: ls.error, stderr: [{ text: ls.error }] });
+      },
     },
     {
       name: 'assemble',

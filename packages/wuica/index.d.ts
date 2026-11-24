@@ -29,7 +29,9 @@ export type Syntax = 'auto' | 'intel' | 'att';
 export type LoopChoice = 'auto' | 'whole' | number | string;
 /** The named loop choices ('auto', 'whole'); a number is a loop's index (0-based), any other string its label. */
 export declare const LOOP_CHOICES: readonly ['auto', 'whole'];
-/** A loop of assembly text (listLoops; the CLI's -loops). */
+/** A loop of the text that was not analyzed (analyze's `otherLoops`): listLoops' entry without `auto`. */
+export type OtherLoop = Omit<LoopListing, 'auto'>;
+/** A loop of assembly text (listLoops; the CLI's -loops; the MCP tool list_loops). */
 export interface LoopListing {
   /** Its index for `loop` (0-based): the deepest loops first, then in code order. */
   index: number;
@@ -171,6 +173,8 @@ export interface AnalyzeResult {
   hex?: string;
   /** What of `source` was analyzed, when not the whole text as given (request.loop). */
   loop?: LoopInfo;
+  /** The loops of the text that were not analyzed, when it has more than one (listLoops without `auto`). */
+  otherLoops?: OtherLoop[];
   /** The syntax `source` was read in (detected unless the request said). */
   syntax?: 'intel' | 'att';
   /** Assembler warnings, notes (exits taken as not taken), and the decode warning. */
@@ -192,6 +196,8 @@ export interface AnalyzeSummary {
   decodeErrors: number;
   hex?: string;
   loop?: LoopInfo;
+  /** The loops of the text that were not analyzed, when it has more than one (listLoops without `auto`). */
+  otherLoops?: OtherLoop[];
   stderr: StderrLine[];
   instructions: Array<{
     instr: string;
@@ -272,6 +278,8 @@ export interface CompareResult {
   /** The assembled machine code, when `source` was given. */
   hex?: string;
   loop?: LoopInfo;
+  /** The loops of the text that were not analyzed, when it has more than one (listLoops without `auto`). */
+  otherLoops?: OtherLoop[];
   stderr: StderrLine[];
   results: CompareRow[];
 }

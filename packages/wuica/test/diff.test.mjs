@@ -56,6 +56,17 @@ test('the MCP tool diff_blocks gives the library\'s result', async () => {
   assert.match(bad.content[0].text, /^Invalid arguments for tool diff_blocks: b: required/);
 });
 
+test('the MCP tool list_loops: listLoops\' entries, func, errors', async () => {
+  const { listLoops } = await import('../lib/index.js');
+  const tools = mcpTools(w);
+  const src = 'f:\n.L1:\n add rax, 1\n dec rcx\n jnz .L1\n.L2:\n add rbx, 1\n dec rdx\n jnz .L2\n ret\n';
+  const r = await callTool(tools, 'list_loops', { source: src });
+  assert.deepEqual(JSON.parse(r.content[0].text), { code: 0, loops: listLoops(src) });
+  const e = await callTool(tools, 'list_loops', { source: src, func: 'nope' });
+  assert.equal(e.isError, true);
+  assert.match(JSON.parse(e.content[0].text).error, /^func: "nope" is not a label/);
+});
+
 test('wuica diff A B: text, -json, -md (golden), exit codes', () => {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'wuica-diff-'));
   fs.writeFileSync(path.join(dir, 'dot1.s'), DOT1);

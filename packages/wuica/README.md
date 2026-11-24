@@ -210,6 +210,7 @@ Schemas, handlers) is exported as `mcpTools(w)` from `wuica-cli/mcp`, with `call
 | `what_if` | one block re-analyzed with one change each (the web page's "try" row): `unroll2`/`unroll4`/`unroll8` (per original iteration), `acc2`/`acc3`/`acc4`/`acc8` (N accumulators: unrolled ×N with the loop-carried register renamed in each copy; `renamed` lists the registers, `accumulators.best` is the best N, 1 = as it is), `simpleFrontEnd`, `noMacroFusion`, `noMicroFusion`, and `nochain` (an estimate without the loop-carried chain); per variant `tp`, `delta`, `speedup` |
 | `diff_blocks` | two blocks, A (before) and B (after), on one microarchitecture: `tp` of each, `delta`, `speedup`, per element with `per`, bottlenecks and limits before and after, each port's uops, the instructions changed, added or removed |
 | `compare_archs` | one block on several or all microarchitectures: `tp` and bottlenecks per microarchitecture |
+| `list_loops` | the loops of assembly text (what `loop` can pick): index, label, function, lines, instructions, depth, the one picked by default |
 | `list_archs` | ids, names, years, prototype flags |
 | `assemble` | assembly → hex bytes, or diagnostics with line/column |
 
@@ -326,6 +327,7 @@ text, and errors with structured stderr.
 | REST | Library | MCP tool |
 |---|---|---|
 | `GET /api/archs[?fields=id,name]` | `w.archs(fields?)` | `list_archs {fields?}` |
+| — | `listLoops(source, {func?})` | `list_loops {source, func?}` |
 | `POST /api/analyze/<arch>` | `w.analyze(arch, request)` | `analyze {arch, ...request, format?}` |
 | `POST /api/compare` | `w.compare(request)` | `compare_archs {...request}` |
 | `POST /api/what-if/<arch>` | `w.whatIf(arch, {...request, variants?, per?})` | `what_if {arch, ...request, variants?, per?}` |
@@ -405,7 +407,8 @@ Request:
   only models 64-bit mode. `assemble` alone accepts them.
 - `loop` exists in the library, REST (`/api/analyze`, `/api/compare`), the MCP tools `analyze`, `what_if` and
   `compare_archs`, and the package's CLI (`wuica -loop auto|whole|N`). The reference/test binary (`crates/wuica-cli`) reads
-  machine code only (hex or `-raw`), so it has no `-loop`.
+  machine code only (hex or `-raw`), so it has no `-loop`. When the text has more than one loop, `otherLoops` lists the others (as `listLoops` and `-loops` give them, without
+`auto`), in the analyze, summary and compare results.
 
 ### Option ranges per interface
 

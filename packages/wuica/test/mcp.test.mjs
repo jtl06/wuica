@@ -30,7 +30,7 @@ test('initialize: server info and instructions', () => {
 
 test('tools/list', async () => {
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((t) => t.name).sort(), ['analyze', 'assemble', 'compare_archs', 'diff_blocks', 'list_archs', 'what_if']);
+  assert.deepEqual(tools.map((t) => t.name).sort(), ['analyze', 'assemble', 'compare_archs', 'diff_blocks', 'list_archs', 'list_loops', 'what_if']);
   const analyze = tools.find((t) => t.name === 'analyze');
   assert.match(analyze.description, /cycles per iteration/);
   assert.match(analyze.description, /L1/);
