@@ -370,6 +370,7 @@ const whatIfTable = whatIfText;
 // -TPonly -whatif: one "variant cycles [per element]" line per variant (prefix: the CPU, with several)
 function whatIfTerse(x, prefix = '') {
   if (x.code) return `${prefix}what-if error: ${x.error}\n`;
+  if (x.unsupported) return `${prefix}what-if: not a result: ${x.unsupported}\n`; // (no variants)
   return x.variants.map((v) => `${prefix}${v.id} ${v.error ? 'error' : `${fmt(v.tp)}${v.perElement !== undefined ? ` ${fmtEl(v.perElement)}` : ''}`}\n`).join('');
 }
 

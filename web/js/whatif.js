@@ -230,6 +230,15 @@ export function createWhatIf(env) {
     row.hidden = !ok;
     if (!ok) { job = null; runner.cancel(); setCopy('try', null); return; }
     if (!open) { body.replaceChildren(); body.dataset.state = 'closed'; runner.cancel(); setCopy('try', null); return; }
+    // a result its CPU cannot run (caveats.js cannotRun): no variants (none would compare with it): said once
+    if (view.invalid) {
+      job = null; runner.cancel();
+      const line = `not a result for ${view.archKey}: ${view.invalid.reason}: no variants`;
+      body.dataset.state = 'done';
+      body.replaceChildren(h('p', { class: 'caveat wi-invalid', title: view.invalid.title }, ...[sideTag(view), view.side ? ' ' : null, line].filter(Boolean)));
+      setCopy('try', { what: 'the what-if variants', md: () => `**What if (${view.archKey}):** ${line}\n` });
+      return;
+    }
     const options = { ...view.request };
     delete options.hex; delete options.arch; delete options.includeTrace;
     // the other checked CPUs (only with the worker pool: their analyses run there)

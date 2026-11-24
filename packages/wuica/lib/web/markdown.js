@@ -214,6 +214,7 @@ export function cpuTable(input, opts = {}) {
 // delta, speedup; the best number of accumulators.
 export function whatIf(x) {
   if (x?.code) return `**What if (${text(x.arch ?? '')}):** ${text(x.error)}\n`;
+  if (x?.unsupported) return `**What if (${text(x.arch)}):** not a result: ${text(x.unsupported)} (the base ~~${f2(x.tp)}~~ leaves out what the CPU cannot run): no variants\n`;
   const per = x.elementsPerIteration > 0 ? x.elementsPerIteration : null;
   const v = (n) => (per ? cycles(n / per) : f2(n));
   // (a variant within sampling of its Ports or Issue limit at the limit, ≈: whatif-core.js shownOutcome)

@@ -92,6 +92,13 @@ test('3b. code a CPU cannot run (AVX-512 on SKL, ZEN3): not a result in text, Ma
   const lj = JSON.parse(run([ld, '-arch', 'SKL,ZEN3', '-json']).out);
   assert.deepEqual(lj.results.map((r) => [r.arch, r.unsupported ?? null, r.noData ?? null, 'xOps' in r]), [['SKL', null, 2, false], ['ZEN3', null, 2, false]]);
   assert.match(run([ld, '-arch', 'SKL']).out, /^2 instructions without data \(not in the instruction tables\): the throughput leaves their cost out$/m);
+  // what-if of a base SKL cannot run: once, no variants (text, -TPonly, JSON)
+  const wt = run([avx, '-arch', 'SKL', '-whatif']).out;
+  assert.match(wt, /^What if \(SKL\): not a result: needs AVX-512 .*: no variants$/m);
+  assert.doesNotMatch(wt, /accumulators|unroll ×/);
+  assert.match(run([avx, '-arch', 'SKL', '-whatif', '-TPonly']).out, /^what-if: not a result: needs AVX-512$/m);
+  const wj = JSON.parse(run([avx, '-arch', 'SKL', '-whatif', '-json']).out).whatIf.SKL;
+  assert.deepEqual([wj.unsupported, wj.variants.length, wj.tp], ['needs AVX-512', 0, 38]);
   const dj = JSON.parse(run(['diff', avx, avx, '-arch', 'SKL', '-json']).out);
   assert.deepEqual([dj.verdict, 'speedup' in dj, 'delta' in dj], ['not comparable', false, false]);
   const d = run(['diff', avx, avx, '-arch', 'SKL']);

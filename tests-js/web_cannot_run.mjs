@@ -11,7 +11,8 @@ import fs from 'node:fs';
 import { cannotRun, noData, extensionOf, LACKS } from '../web/js/caveats.js';
 import { summarize, compareRows } from '../web/js/compare.js';
 import { abCpuRows } from '../web/js/ab-cpus.js';
-import { cpuTable, report, compare } from '../web/js/markdown.js';
+import { cpuTable, report, compare, whatIf as whatIfMd } from '../web/js/markdown.js';
+import { whatIf, whatIfText } from '../web/js/whatif-core.js';
 import { diffResult, diffText } from '../web/js/block-diff.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { WasmAssembler } from '../web/js/assembler.js';
@@ -127,6 +128,10 @@ if (!fs.existsSync(asmPath) || !fs.existsSync(wasmPath)) {
   // the diff's data says the same: no verdict of better/worse/same, no delta, no speedup (per element too)
   const dj = diffResult({ ...out.ZEN3, unsupported: zen.reason }, out.ZEN3, { per: [4, 4] });
   check(dj.verdict === 'not comparable' && !('delta' in dj) && !('speedup' in dj) && dj.perElement.verdict === 'not comparable' && !('speedup' in dj.perElement) && !('delta' in dj.perElement), 'diff data: verdict "not comparable", no delta or speedup', j({ verdict: dj.verdict, delta: dj.delta, speedup: dj.speedup, pe: dj.perElement }));
+  // what-if of a base its CPU cannot run: said once, no variants (text, Markdown)
+  const wi = await whatIf(async (arch, req) => (req.hex === hex ? { code: 0, ...out.SKL, unsupported: skl.reason } : { code: 0, ...out.ICL }), 'SKL', { hex });
+  check(wi.unsupported === 'needs AVX-512' && wi.variants.length === 0 && wi.tp === 38, 'what-if: unsupported, no variants, the base number as it is', j({ u: wi.unsupported, n: wi.variants.length, tp: wi.tp }));
+  check(/^What if \(SKL\): not a result: needs AVX-512 .*no variants\n$/.test(whatIfText(wi)) && /^\*\*What if \(SKL\):\*\* not a result: needs AVX-512 \(the base ~~38\.00~~/.test(whatIfMd(wi)), 'what-if text and Markdown: once, no variants', whatIfText(wi) + whatIfMd(wi));
   const ok2 = diffResult(out.ICL, out.ICL);
   check(ok2.verdict === 'same' && ok2.speedup === 1 && ok2.delta === 0, 'diff data of two results: as before');
   // FMA on SNB (the classic GEMM and saxpy): named

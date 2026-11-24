@@ -208,6 +208,13 @@ export async function whatIf(analyze, arch, request, variants = VARIANTS, { asse
   if (unknown.length) return { code: 1, error: `unknown variant(s): ${unknown.join(', ')} (known: ${ALL_VARIANTS.join(', ')})`, stderr: [] };
   const base = await analyze(arch, request);
   if (base.code !== 0) return base;
+  // a base its CPU cannot run (unsupported: caveats.js cannotRun, the library's analyze): its number is no result, so no
+  // variant compares with it: said once, no variants
+  if (base.unsupported) {
+    return { code: 0, arch: base.arch, tp: base.tp, mode: base.mode, bottlenecks: base.bottlenecks, ...(base.loop ? { loop: base.loop } : {}),
+      ...(base.decodeErrors ? { decodeErrors: base.decodeErrors } : {}), ...(base.stderr?.length ? { stderr: base.stderr } : {}),
+      unit: 'cycles per original iteration', unsupported: base.unsupported, variants: [] };
+  }
   // the code as the rows have it (the analyzed bytes, if every byte was decoded), for the unrolled copies; the other
   // variants analyze the caller's code as given (hex in any form the library accepts, or the assembled bytes)
   const rowsHex = base.decodeErrors ? '' : base.rows.filter((x) => x.kind === 'instr').map((x) => String(x.opcode ?? '').toLowerCase()).join('');
@@ -300,6 +307,7 @@ const VARIANT_W = 18;
 // The what-if table as text (per element with elementsPerIteration); a failure as one line.
 export function whatIfText(x) {
   if (x.code) return `What if (${x.arch ?? ''}): ${x.error}\n`;
+  if (x.unsupported) return `What if (${x.arch}): not a result: ${x.unsupported} (the base ${fmt2(x.tp)} leaves out what ${x.arch} cannot run): no variants\n`;
   const per = x.elementsPerIteration;
   const f = per ? (v) => fmtEl(v / per) : fmt2;
   const rows = x.variants.map((v) => { if (v.error) return `  ${v.label.padEnd(VARIANT_W)} ${'-'.padStart(8)}  ${v.error}`;

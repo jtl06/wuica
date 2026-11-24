@@ -429,6 +429,9 @@ export interface WhatIfResult {
   /** The base's decode errors and warnings (they hold for the variants too). */
   decodeErrors?: number;
   stderr?: StderrLine[];
+  /** Only when the CPU cannot run the base (as AnalyzeResult's): why. `variants` is then empty: no variant compares with
+   * a number that is not a result. */
+  unsupported?: string;
   /** tp per original iteration, delta = tp − base tp, speedup = base tp / tp; estimate: no analysis (nochain);
    * renamed (accN): the chain's registers and the ones of the copies after the first; approx: the simulation (tp) came
    * out under the variant's own Ports or Issue limit by at most 1% (a short steady state): the text and the Markdown
