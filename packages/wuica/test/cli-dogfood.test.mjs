@@ -57,11 +57,33 @@ test('2. a closed pipe: no stack trace, the exit status is the result\'s code', 
 
 test('3. a table marks a CPU that could not decode some instructions, in text and JSON', () => {
   const r = run([fx('dot.hsw.s'), '-arch', 'SNB,SKL']);
-  assert.match(r.out, /^SNB\s+Sandy Bridge\s+2011\s+5\.00\*\s+LSD\s+8 undecodable \(left out\)$/m);
+  // (not a result for SNB: the reason first, web/caveats.js cannotRun, from the analyzed text: FMA)
+  assert.match(r.out, /^SNB\s+Sandy Bridge\s+2011\s+5\.00\*\s+LSD\s+not a result: needs FMA; 8 undecodable \(left out\)$/m);
   assert.match(r.err, /Warning: SNB: 8 position\(s\) could not be decoded/);
   const j = JSON.parse(run([fx('dot.hsw.s'), '-arch', 'SNB,SKL', '-json']).out);
   assert.equal(j.results[0].decodeErrors, 8);
+  assert.equal(j.results[0].unsupported, 'needs FMA');
+  assert.equal(j.results[1].unsupported, undefined);
   assert.ok(j.stderr.some((l) => /SNB: 8 position/.test(l.text)));
+});
+
+test('3b. code a CPU cannot run (AVX-512 on SKL, ZEN3): not a result in text, Markdown, JSON (a flag), diff; the numbers as they are', () => {
+  const avx = path.resolve(FX, '../dogfood/avx512.s');
+  const t = run([avx, '-arch', 'SKL,ZEN3,ICL']);
+  assert.match(t.out, /^SKL\s+Skylake\s+2015\s+38\.00\*\s.*not a result: needs AVX-512; 12 undecodable \(left out\)/m);
+  // ZEN3 decodes the zmm instructions but has no data for them: marked as SKL is
+  assert.match(t.out, /^ZEN3\s+AMD Zen 3\s+2020\s+3\.00\*\s.*not a result: needs AVX-512;/m);
+  assert.match(t.out, /^ICL\s+Ice Lake client\s+2019\s+4\.00\s/m);
+  const j = JSON.parse(run([avx, '-arch', 'SKL,ZEN3,ICL', '-json']).out);
+  assert.deepEqual(j.results.map((r) => [r.arch, r.tp, r.unsupported ?? null]), [['SKL', 38, 'needs AVX-512'], ['ZEN3', 3, 'needs AVX-512'], ['ICL', 4, null]]);
+  assert.ok(j.results.every((r) => !('xLabels' in r)));
+  const one = JSON.parse(run([avx, '-arch', 'ZEN3', '-json']).out);
+  assert.equal(one.tp, 3);
+  assert.equal(one.unsupported, 'needs AVX-512');
+  assert.match(run([avx, '-arch', 'ZEN3']).out, /^Not a result for ZEN3: needs AVX-512/m);
+  assert.match(run([avx, '-arch', 'ZEN3', '-md']).out, /^\*\*~~3\.00~~ cycles\/iteration\*\* \(not a result: needs AVX-512\)/m);
+  const d = run(['diff', avx, avx, '-arch', 'SKL']);
+  assert.match(d.out, /^SKL: A 38\.00 {2}B 38\.00 cycles per iteration {2}\(not comparable: A needs AVX-512, B needs AVX-512\)$/m);
 });
 
 test('4. -loops, -loop LABEL, -func; the deepest loop first (clang notes); 0-based indices', () => {

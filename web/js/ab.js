@@ -14,15 +14,15 @@
 // carries both sides. The page (app.js) runs the analyses: inputs() gets the machine code of both sides,
 // analyze() runs them, draw() shows the result. All text goes in through textContent.
 
-import { h, uopTable, NOTES, watchFit, nearestLimit, columnGroup, copyAllButton, messageList } from './render.js';
+import { h, uopTable, NOTES, watchFit, nearestLimit, columnGroup, copyAllButton, messageList, invalidText } from './render.js';
 import { attachHighlight, colorInstr } from './asm-hl.js'; // B's code box in colour; the instructions of the Δ table
-import { caveats } from './caveats.js';
+import { caveats, cannotRun } from './caveats.js';
 import { GROUP_LABEL } from './archs.js';
 import { compareResponses, signed, cycles, signedCycles } from './ab-diff.js';
 import { parseHexInput, toHex } from './hex-input.js';
 import { MAX_CODE_BYTES, tooMuchCode } from './assembler.js';
 import { LIMITS } from './url-state.js';
-import { branchLabels, analyzedLines } from './branch-label.js';
+import { branchLabels, analyzedLines, analyzedText } from './branch-label.js';
 import { VRows, ALL_UP_TO } from './vrows.js';
 
 const PLACEHOLDERS = {
@@ -352,7 +352,10 @@ export function createAB(api) {
       }
       const item = api.archItems().get(x.arch);
       const src = s === 'b' ? srcB : api.srcA?.() ?? null;
-      return { side: s, response, shown: ok(response) ? branchLabels(response.rows, src) : null, elapsedMs: performance.now() - t0, hex, byteCount: x.bytes.length, archKey: x.arch,
+      const code = analyzedText(src);
+      // invalid: code this CPU cannot run (caveats.js): its number is no result, and A–B no comparison
+      return { side: s, response, shown: ok(response) ? branchLabels(response.rows, src) : null, code, invalid: ok(response) ? cannotRun(response, { arch: x.arch, code }) : null,
+        elapsedMs: performance.now() - t0, hex, byteCount: x.bytes.length, archKey: x.arch,
         archTitle: api.archTitle(x.arch, !!item?.experimental), experimental: !!item?.experimental,
         inputMode: s === 'a' ? state.mode : state.bMode };
     };
@@ -411,7 +414,7 @@ export function createAB(api) {
     const title = [s.archTitle, plural(instrs, 'instruction'), plural(s.byteCount, 'byte'), r.mock ? 'mock data' : ms(s)].join(' · ');
     return h('span', { class: 'ab-side', title }, tag(t), ` ${s.archKey} `, h('span', { class: 'tag', text: r.mode === 'loop' ? 'loop' : 'unrolled' }),
       r.mock ? h('span', { class: 'mock-tag', text: ' mock' }) : null,
-      r.decodeErrors > 0 ? h('span', { class: 'caveat', text: ` ${r.decodeErrors} undecodable skipped` }) : null);
+      s.invalid ? h('span', { class: 'caveat', title: s.invalid.title, text: ` not a result: ${invalidText(s.invalid)}` }) : null);
   }
 
   function bottlenecks(view) {
@@ -456,8 +459,10 @@ export function createAB(api) {
     const t = cmp.tp;
     const per = cmp.perElement;
     const val = (s, v, raw, work) => (ok(s?.response)
-      ? h('span', { class: 'value', title: per ? `${two(raw)} cycles/iteration ÷ ${work}` : null, text: two(v) })
+      ? h('span', { class: `value${s.invalid ? ' invalid' : ''}`, title: s.invalid ? `not a result: ${s.invalid.title} (${two(raw)} cycles/iteration as computed)` : per ? `${two(raw)} cycles/iteration ÷ ${work}` : null, text: two(v) })
       : h('span', { class: 'value ab-none', text: '–' }));
+    // a side whose code its CPU cannot run: no verdict, but why
+    const bad = [['A', a], ['B', b]].filter(([, s]) => ok(s?.response) && s.invalid);
     const okA = ok(a?.response), okB = ok(b?.response);
     const rawA = okA ? Number(a.response.tp) : null, rawB = okB ? Number(b.response.tp) : null;
     const flag = flagged('a') || flagged('b');
@@ -466,7 +471,10 @@ export function createAB(api) {
       h('span', { class: 'ab-arrow', 'aria-hidden': 'true', text: '→' }),
       tag('B'), val(b, okB ? rawB / cmp.workB : null, rawB, cmp.workB),
       h('span', { class: `unit${flag ? ' caveat' : ''}`, title: flag ? 'a side\'s code changed since its elements per iteration were set' : (per ? `A: ${cmp.workA}, B: ${cmp.workB} elements per iteration` : null), text: `${unitOf(view)}${flag ? '?' : ''}` }));
-    if (t) {
+    if (t && bad.length) {
+      line.append(h('span', { class: 'ab-delta ab-invalid caveat', 'data-verdict': 'invalid', title: bad.map(([k, s]) => `${k}: ${s.invalid.title}`).join('\n') },
+        `not comparable: ${bad.map(([k, s]) => `${k} ${s.invalid.reason} on ${s.archKey}`).join(', ')}`));
+    } else if (t) {
       const speed = t.speedup >= 1 ? `${t.speedup.toFixed(2)}× faster` : `${(1 / t.speedup).toFixed(2)}× slower`;
       line.append(h('span', { class: `ab-delta ab-${t.verdict}`, 'data-verdict': t.verdict },
         h('span', { class: 'ab-verdict', text: t.verdict === 'better' ? 'B better' : t.verdict === 'worse' ? 'B worse' : 'no change' }),
@@ -476,7 +484,7 @@ export function createAB(api) {
     const meta = h('div', { class: 'meta ab-meta' }, sideMeta('A', a), sep(), sideMeta('B', b), cmp.okA && cmp.okB ? [sep(), bottlenecks(view), notModelled(view)] : null);
     meta.title = meta.textContent; // (one line on wider screens, cut with …: the whole of it here)
     // the same in one line, for screen readers and for copying
-    const sr = t ? h('p', { class: 'ab-sr', text: `A: ${two(t.a)} cycles, B: ${two(t.b)} cycles${per ? ' per element' : ''}, Δ = ${t.verdict === 'same' ? '0' : `${sign2(t.delta)} (${percent(t.pct)})`}` }) : null;
+    const sr = t ? h('p', { class: 'ab-sr', text: `A: ${two(t.a)} cycles, B: ${two(t.b)} cycles${per ? ' per element' : ''}, ${bad.length ? 'not comparable' : `Δ = ${t.verdict === 'same' ? '0' : `${sign2(t.delta)} (${percent(t.pct)})`}`}` }) : null;
     return lead('throughput', line, meta, sr);
   }
 

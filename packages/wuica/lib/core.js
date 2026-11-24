@@ -26,9 +26,12 @@ export function analysisResult(r) {
 }
 
 // The fields of a compare() row taken from an analysis result (after arch, name, year, prototype).
+// xLabels: the instructions the CPU's model has no data for (notes X), for compare()'s `unsupported` (web/caveats.js
+// cannotRun, index.js); it removes them.
 export function compareFields(r) {
   if (r.code !== undefined) return { code: r.code, error: r.error };
-  return { code: CODES.OK, tp: r.tp, mode: r.mode, bottlenecks: r.bottlenecks, limits: r.limits, decodeErrors: r.decodeErrors };
+  const x = Array.isArray(r.rows) ? r.rows.filter((row) => row?.kind === 'instr' && row.notes === 'X').map((row) => String(row.label)) : [];
+  return { code: CODES.OK, tp: r.tp, mode: r.mode, bottlenecks: r.bottlenecks, limits: r.limits, decodeErrors: r.decodeErrors, ...(x.length ? { xLabels: x } : {}) };
 }
 
 // A block for warming up the analyzer: ~500 instructions of several kinds in a loop (a 24-instruction mix, 20 times;

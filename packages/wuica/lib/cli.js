@@ -512,12 +512,12 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
           return;
         }
         const year = String(r.year ?? '').padEnd(4);
-        const tp = (r.code ? '-' : `${fmt(r.tp)}${r.decodeErrors ? '*' : ''}`).padStart(6);
-        const notes = [r.decodeErrors ? `${r.decodeErrors} undecodable (left out)` : null, ...(ins?.caveats ?? []).map((x) => x.text), r.prototype ? '[prototype]' : null].filter(Boolean).join('; ');
+        const tp = (r.code ? '-' : `${fmt(r.tp)}${r.decodeErrors || r.unsupported ? '*' : ''}`).padStart(6);
+        const notes = [r.unsupported ? `not a result: ${r.unsupported}` : null, r.decodeErrors ? `${r.decodeErrors} undecodable (left out)` : null, ...(ins?.caveats ?? []).map((x) => x.text), r.prototype ? '[prototype]' : null].filter(Boolean).join('; ');
         out.write(`${r.arch.padEnd(kw)}  ${r.name.padEnd(nw)}  ${year}  ${tp}${o.per ? `  ${(pe !== undefined ? fmtEl(pe) : '-').padStart(6)}` : ''}  ${bns[k].padEnd(bw)}${notes ? `  ${notes}` : ''}`.trimEnd() + '\n');
       });
       if (!o.tpOnly) {
-        out.write(`\nTP: cycles per iteration${o.per ? `; per el: per element (${o.per} per iteration)` : ''}. "-": unknown. *: some instructions could not be decoded for that CPU and are left out.\n`);
+        out.write(`\nTP: cycles per iteration${o.per ? `; per el: per element (${o.per} per iteration)` : ''}. "-": unknown. *: not a result: that CPU cannot run some of the code, which its number leaves out.\n`);
         if (c.results.some((r) => r.prototype)) out.write('[prototype]: experimental model of the fork jtl06/uiCA.\n');
         if (base?.code === 0 && !o.per) { const s = inductionSteps(base); if (s.length) err.write(stepLine(s)); }
         for (const x of Object.values(wi ?? {})) out.write('\n' + (x.code ? `What if (${x.arch}): ${x.error}\n` : whatIfTable(x)));
@@ -552,6 +552,7 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
     let text = r.text;
     if (ins?.largest && /^Bottleneck: unknown$/m.test(text)) text = text.replace(/^Bottleneck: unknown$/m, d.shift());
     out.write(text);
+    if (r.unsupported) d.unshift(`Not a result for ${r.arch}: ${r.unsupported} (the throughput leaves out what it cannot run)`);
     if (o.per) d.push(`Per element: ${fmtEl(per(r.tp))} cycles (${fmt(r.tp)} cycles/iteration, ${o.per} elements per iteration)`);
     if (d.length) out.write(`\n${d.join('\n')}\n`);
     const steps = !o.per ? inductionSteps(r) : [];
@@ -769,13 +770,13 @@ async function batch(w, o, io) {
   out.write(`${'File'.padEnd(fw)}  ${'Loop'.padEnd(lw)}  ${o.archs ? `${'CPU'.padEnd(cw)}  ` : ''}${'TP'.padStart(6)}${o.per ? `  ${'per el'.padStart(6)}` : ''}  ${'Bottlenecks'.padEnd(bw)}  Notes`.trimEnd() + '\n');
   for (const it of items) {
     docs.get(it).rows.forEach((row, j) => {
-      const tp = (row.code ? '-' : `${fmt(row.tp)}${row.decodeErrors ? '*' : ''}`).padStart(6);
+      const tp = (row.code ? '-' : `${fmt(row.tp)}${row.decodeErrors || row.unsupported ? '*' : ''}`).padStart(6);
       const notes = [...row.notes, row.prototype ? '[prototype]' : null].filter(Boolean).join('; ');
       out.write(`${(j ? '' : it.name).padEnd(fw)}  ${(j ? '' : loopOf(it)).padEnd(lw)}  ${o.archs ? `${String(row.cpu ?? '-').padEnd(cw)}  ` : ''}${tp}${o.per ? `  ${(row.pe !== undefined ? fmtEl(row.pe) : '-').padStart(6)}` : ''}  ${row.bn.padEnd(bw)}${notes ? `  ${notes}` : ''}`.trimEnd() + '\n');
     });
   }
   out.write(`\nTP: cycles per iteration${o.archs ? '' : ` on ${w.resolveArch(o.arch)}`}${o.per ? `; per el: per element (${o.per} per iteration)` : ''}. "-": unknown or failed.\n`
-    + 'Loop: what was analyzed ("as is": all of it). *: undecodable code left out.\n');
+    + 'Loop: what was analyzed ("as is": all of it). *: not a result (code left out).\n');
   if (all.some((r) => r.prototype)) out.write('[prototype]: experimental model of the fork jtl06/uiCA.\n');
   if (o.report) {
     for (const it of items) {
@@ -831,9 +832,9 @@ async function batchMarkdown(w, o, out, items, docs, worst) {
 function rowOf(r, ins, per) {
   if (r.code) return { code: r.code, bn: `error: ${String(r.error).split('\n')[0]}`, notes: [] };
   return {
-    code: 0, tp: r.tp, pe: per(r.tp), decodeErrors: r.decodeErrors,
+    code: 0, tp: r.tp, pe: per(r.tp), decodeErrors: r.decodeErrors, unsupported: r.unsupported ?? null,
     bn: r.bottlenecks.join(', ') || (ins?.largest ? `- (nearest ${ins.largest.join(', ')})` : '-'),
-    notes: [r.decodeErrors ? `${r.decodeErrors} undecodable (left out)` : null, ...(ins?.caveats ?? []).map((x) => x.text)].filter(Boolean),
+    notes: [r.unsupported ? `not a result: ${r.unsupported}` : null, r.decodeErrors ? `${r.decodeErrors} undecodable (left out)` : null, ...(ins?.caveats ?? []).map((x) => x.text)].filter(Boolean),
   };
 }
 

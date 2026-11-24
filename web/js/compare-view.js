@@ -10,6 +10,7 @@ import { makeRequest } from './engine.js';
 import { setCopy } from './copy-view.js';
 import { sweep as sweepText, cpuTable, offsetRanges } from './markdown.js';
 import { ARCH_INFO, PROTOTYPE } from './archs.js';
+import { cannotRun } from './caveats.js';
 import {
   summarize, compareRows, sweepData, sweepLayout, compareKey, sweepKey, resultKey, ResultCache, latestWins, SWEEP_OFFSETS,
 } from './compare.js';
@@ -236,13 +237,14 @@ export function createComparePanels(env) {
       const info = ARCH_INFO[it.key];
       const row = { arch: it.key, name: info?.name ?? '', year: info?.year ?? '' };
       if (!r || r.error) return { ...row, code: 1, error: r?.error ?? 'not analyzed yet' };
-      return { ...row, tp: r.tp, bottlenecks: r.bottlenecks, decodeErrors: r.decodeErrors, ...(it.experimental ? { prototype: true } : {}) };
+      const bad = cannotRun(r, { arch: it.key, code: input.code ?? null });
+      return { ...row, tp: r.tp, bottlenecks: r.bottlenecks, decodeErrors: r.decodeErrors, ...(bad ? { unsupported: bad.reason } : {}), ...(it.experimental ? { prototype: true } : {}) };
     });
   }
 
   function drawCpus(p) {
     const work = env.work?.() ?? 1; // elements per iteration: per element
-    const rows = compareRows(env.checked(), p.results, { sort, current: input?.arch ?? null });
+    const rows = compareRows(env.checked(), p.results, { sort, current: input?.arch ?? null, code: input?.code ?? null });
     const ariaSort = (col) => (col === 'menu' ? (sort === 'menu' ? 'ascending' : null) : sort === 'tp' ? 'ascending' : sort === 'tp-desc' ? 'descending' : null);
     const head = h('tr', null,
       h('th', { scope: 'col', class: 'first', 'aria-sort': ariaSort('menu') }, sortButton('menu', 'cpu', 'sort by release date')),
@@ -257,18 +259,17 @@ export function createComparePanels(env) {
       const name = info ? `${info.name}${info.year ? ` (${info.year})` : ''}` : '';
       const gauge = h('span', { class: 'gauge' }, h('span'));
       gauge.firstChild.style.width = `${(100 * r.bar).toFixed(1)}%`;
-      const tr = h('tr', { class: [r.current ? 'current' : '', r.fastest ? 'fastest' : '', r.state !== 'ok' ? r.state : ''].filter(Boolean).join(' ') || null,
+      const tr = h('tr', { class: [r.current ? 'current' : '', r.fastest ? 'fastest' : '', r.state !== 'ok' ? r.state : '', r.invalid ? 'invalid' : ''].filter(Boolean).join(' ') || null,
         'aria-current': r.current ? 'true' : null, 'data-arch': r.key },
         h('th', { scope: 'row', class: 'first' },
           h('button', { type: 'button', class: 'plain pick', 'data-focus': `cpu-${r.key}`, title: `details for ${r.title}`, 'aria-pressed': r.current ? 'true' : 'false', text: r.key })),
         h('td', { class: 'cmp-name' }, name, r.experimental ? h('span', { class: 'caveat', text: ` · ${PROTOTYPE}` }) : null),
-        h('td', { class: 'cmp-tp', title: r.state === 'error' ? r.error : r.state === 'ok' && work > 1 ? `${fmtTp(r.tp)} cycles/iteration ÷ ${work}` : null,
+        h('td', { class: 'cmp-tp', title: r.state === 'error' ? r.error : r.invalid ? `not a result: ${r.invalid.title} (${fmtTp(r.tp)} cycles/iteration as computed)` : r.state === 'ok' && work > 1 ? `${fmtTp(r.tp)} cycles/iteration ÷ ${work}` : null,
           text: r.state === 'ok' ? (work > 1 ? cyc(r.tp / work) : fmtTp(r.tp)) : r.state === 'error' ? 'failed' : '…' }),
         h('td', { class: 'cmp-bar', 'aria-hidden': 'true' }, gauge),
-        h('td', { class: 'cmp-bn' }, r.state !== 'ok' ? '' : r.bottlenecks.length ? r.bottlenecks.join(', ')
-          : h('span', { class: 'hint', title: 'no single limit explains the throughput', text: 'unknown' }),
-        r.decodeErrors ? h('span', { class: 'caveat', title: `this CPU's decoder skipped ${r.decodeErrors} position${r.decodeErrors === 1 ? '' : 's'} (instructions it does not support): the throughput leaves them out`,
-          text: ` · ${r.decodeErrors} undecodable skipped` }) : null));
+        // a CPU that cannot run the code (caveats.js cannotRun): why, instead of a bottleneck
+        h('td', { class: 'cmp-bn' }, r.state !== 'ok' ? '' : r.invalid ? invalidNote(r) : r.bottlenecks.length ? r.bottlenecks.join(', ')
+          : h('span', { class: 'hint', title: 'no single limit explains the throughput', text: 'unknown' })));
       tr.addEventListener('click', () => env.onArch(r.key));
       body.append(tr);
     }
@@ -277,6 +278,14 @@ export function createComparePanels(env) {
     if (p.waitingForClick) parts.unshift(runButton(p));
     p.body.replaceChildren(...parts);
     if (input) env.decorateCpus?.(p.body.querySelector('table'), { hex: input.hex, options: input.options }); // cmp-slots.js
+  }
+
+  // "needs AVX-512 · 12 undecodable skipped", "3 instructions not supported"
+  function invalidNote(r) {
+    const x = r.invalid;
+    const parts = [x.needs.length ? `needs ${x.needs.join(', ')}` : '', x.decodeErrors ? `${x.decodeErrors} undecodable skipped` : '',
+      x.unsupported ? `${x.unsupported} not supported` : ''].filter(Boolean);
+    return h('span', { class: 'caveat', title: x.title, text: parts.join(' · ') });
   }
 
   // the table's copy control (copy-view.js; the same look as the tab row's)

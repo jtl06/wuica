@@ -17,6 +17,7 @@ import { insights, boundModel, blame, topRows } from './bound-core.js';
 import { compareResponses, cycles, signed, signedCycles, MINOR } from './ab-diff.js';
 import { branchLabels, analyzedLines } from './branch-label.js';
 import { shownOutcome } from './whatif-core.js';
+import { cannotRun } from './caveats.js';
 
 export { cycles, signedCycles };
 
@@ -88,12 +89,25 @@ function nearest(r, per = 1) {
   return `${lims.filter((l) => l.tp >= max - 0.005).map((l) => l.name).join(', ')} ${per > 1 ? cycles(max / per) : f2(max)}`;
 }
 
-// The headline: cycles per iteration (or per element), the CPU, loop or unrolled, the bottleneck.
-//   meta: {arch, archTitle (the CPU's title: "SKL · Skylake (2015)"), per (elements per iteration)}
+// Code the CPU cannot run (caveats.js cannotRun): the page's own (meta.invalid), the library's `unsupported` (its
+// reason), or from the response; null if it can.
+//   meta: {invalid, arch, analyzed (the analyzed assembly text: names the extension)}
+export function cannotRunOf(r, meta = {}) {
+  if (meta.invalid !== undefined) return meta.invalid;
+  if (typeof r?.unsupported === 'string') return { reason: r.unsupported };
+  return cannotRun(r, { arch: meta.arch ?? r?.arch ?? null, code: meta.analyzed ?? null });
+}
+
+// The headline: cycles per iteration (or per element), the CPU, loop or unrolled, the bottleneck. A CPU that cannot run
+// the code: its number struck through (not a result), and why.
+//   meta: {arch, archTitle (the CPU's title: "SKL · Skylake (2015)"), per (elements per iteration), invalid}
 export function headline(r, meta = {}) {
   const per = meta.per > 1 ? meta.per : 1;
   const tp = Number(r.tp);
-  const head = per > 1 ? `**${cycles(tp / per)} cycles/element** (${f2(tp)} cycles/iteration, ${per} elements per iteration)` : `**${f2(tp)} cycles/iteration**`;
+  const bad = cannotRunOf(r, meta);
+  const strike = (t) => (bad ? `~~${t}~~` : t);
+  const head = (per > 1 ? `**${strike(cycles(tp / per))} cycles/element** (${f2(tp)} cycles/iteration, ${per} elements per iteration)` : `**${strike(f2(tp))} cycles/iteration**`)
+    + (bad ? ` (not a result: ${text(bad.reason)})` : '');
   const bn = r.bottlenecks?.length ? r.bottlenecks.join(', ') : `unknown${nearest(r, per) ? ` · nearest ${nearest(r, per)}` : ''}`;
   return `${head} · ${text(meta.archTitle ?? meta.arch ?? r.arch)} · ${r.mode === 'loop' ? 'loop' : 'unrolled'} · bottleneck: ${bn}`;
 }
@@ -164,7 +178,7 @@ export function cpuTable(input, opts = {}) {
   const items = batch ? input : [{ result: Array.isArray(input) ? { results: input } : input }];
   const loopOf = (r) => (r?.loop ? `${r.loop.name.replace(/^loop /, '')}${r.loop.function ? ` (${r.loop.function})` : ''}` : r && !r.code ? 'as is' : '-');
   const rows = [];
-  let prototype = false;
+  let prototype = false, invalid = false;
   for (const it of items) {
     cpuRows(it.result).forEach((r, k) => {
       const lead = batch ? [k ? '' : text(it.file), k ? '' : text(loopOf(it.result))] : [];
@@ -172,14 +186,19 @@ export function cpuTable(input, opts = {}) {
       const bn = r.bottlenecks?.length ? r.bottlenecks.join(', ') : nearest(r) ? `- (nearest ${nearest(r).replace(/ [\d.]+$/, '')})` : '-';
       const cav = (r.caveats ?? r.insights?.caveats ?? []).map((c) => (typeof c === 'string' ? c : c.text));
       prototype ||= !!r.prototype;
-      const notes = [r.decodeErrors ? `${r.decodeErrors} undecodable (left out)` : null, ...cav, r.prototype ? '[prototype]' : null].filter(Boolean).map(text).join('; ');
-      rows.push([...lead, text(r.arch), text(r.name ?? ''), String(r.year ?? ''), `${f2(r.tp)}${r.decodeErrors ? '*' : ''}`, ...(per ? [cycles(Number(r.tp) / per)] : []), text(bn), notes]);
+      // a CPU that cannot run the code (caveats.js cannotRun): its number struck through, and why
+      const bad = cannotRunOf(r, {});
+      invalid ||= !!bad;
+      const notes = [bad ? `not a result: ${bad.reason}` : null, r.decodeErrors ? `${r.decodeErrors} undecodable (left out)` : null, ...cav, r.prototype ? '[prototype]' : null].filter(Boolean).map(text).join('; ');
+      const strike = (t) => (bad ? `~~${t}~~` : t);
+      rows.push([...lead, text(r.arch), text(r.name ?? ''), String(r.year ?? ''), `${strike(f2(r.tp))}${r.decodeErrors ? '*' : ''}`, ...(per ? [strike(cycles(Number(r.tp) / per))] : []), text(bn), notes]);
     });
   }
   const head = [...(batch ? ['File', 'Loop'] : []), 'CPU', 'Model', 'Year', 'TP', ...(per ? ['per el'] : []), 'Bottlenecks', 'Notes'];
   const align = [...(batch ? ['l', 'l'] : []), 'l', 'l', 'l', 'r', ...(per ? ['r'] : []), 'l', 'l'];
   const notes = [`TP: cycles per iteration${per ? `; per el: cycles per element (${per} per iteration)` : ''}. "-": unknown or failed.`];
   if (rows.some((r) => /\*$/.test(r[batch ? 5 : 3]))) notes.push('*: some instructions could not be decoded for that CPU and are left out.');
+  if (invalid) notes.push('~~TP~~: not a result: the CPU cannot run some of the code (its number leaves it out).');
   if (prototype) notes.push('[prototype]: experimental model of the fork jtl06/uiCA.');
   return join([table(head, rows, align), notes.join(BR)]);
 }
@@ -232,7 +251,11 @@ export function compare(a, b, meta = {}) {
   }
   const t = cmp.tp;
   const sides = meta.archA || meta.archB ? ` (A: ${text(meta.archA ?? a.arch)}, B: ${text(meta.archB ?? b.arch)})` : '';
-  const lines = [`**A ${cycles(t.a)} · B ${cycles(t.b)} ${unit}**${t.verdict === 'same' ? ' (the same)' : ` (Δ ${t.delta === 0 ? '0' : signedCycles(t.delta)}, ${percent(t.pct)})`}${sides}`];
+  // a side whose CPU cannot run its code (caveats.js cannotRun): its number struck through, no Δ (not comparable)
+  const badA = cannotRunOf(a, { invalid: meta.invalidA, arch: meta.archA ?? a.arch }), badB = cannotRunOf(b, { invalid: meta.invalidB, arch: meta.archB ?? b.arch });
+  const bad = [['A', badA, meta.archA ?? a.arch], ['B', badB, meta.archB ?? b.arch]].filter(([, x]) => x);
+  const strike = (x, v) => (x ? `~~${cycles(v)}~~` : cycles(v));
+  const lines = [`**A ${strike(badA, t.a)} · B ${strike(badB, t.b)} ${unit}**${bad.length ? ` (not comparable: ${bad.map(([k, x, arch]) => `${k} ${text(x.reason)}${arch ? ` on ${text(arch)}` : ''}`).join(', ')})` : t.verdict === 'same' ? ' (the same)' : ` (Δ ${t.delta === 0 ? '0' : signedCycles(t.delta)}, ${percent(t.pct)})`}${sides}`];
   const bn = cmp.bottlenecks;
   const names = (xs) => (xs.length ? xs.join(', ') : 'unknown');
   lines.push(bn.same && bn.a.length ? `bottleneck: ${bn.a.join(', ')} (both)` : `bottleneck: A ${names(bn.a)} → B ${names(bn.b)}`);
@@ -257,10 +280,13 @@ export function compare(a, b, meta = {}) {
     blocks.push(legend.join('; '));
   }
   if (meta.cpus?.length) {
+    // (a side its CPU cannot run, unsupportedA/B: struck through, no Δ)
     blocks.push(table(['CPU', 'A', 'B', 'Δ', '%'], meta.cpus.map((c) => {
       const okA = Number.isFinite(c.a), okB = Number.isFinite(c.b);
-      const dd = okA && okB ? c.b - c.a : null;
-      return [text(c.arch), okA ? cycles(c.a) : '-', okB ? cycles(c.b) : '-', dd === null ? '' : Math.abs(dd) < 0.005 ? '0' : signedCycles(dd), dd === null || !(c.a > 0) ? '' : percent((100 * dd) / c.a)];
+      const no = c.unsupportedA || c.unsupportedB;
+      const dd = okA && okB && !no ? c.b - c.a : null;
+      const v = (x, why) => (Number.isFinite(x) ? (why ? `~~${cycles(x)}~~` : cycles(x)) : '-');
+      return [text(c.arch), v(c.a, c.unsupportedA), v(c.b, c.unsupportedB), no ? text([c.unsupportedA ? `A ${c.unsupportedA}` : '', c.unsupportedB ? `B ${c.unsupportedB}` : ''].filter(Boolean).join(', ')) : dd === null ? '' : Math.abs(dd) < 0.005 ? '0' : signedCycles(dd), dd === null || !(c.a > 0) ? '' : percent((100 * dd) / c.a)];
     }), ['l', 'r', 'r', 'r', 'r']));
   }
   return join(blocks);

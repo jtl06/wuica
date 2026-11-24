@@ -11,7 +11,7 @@ import { fetchBytes, fetchManifest, PATHS, formatSize, whenIdle, gunzip } from '
 import { WasmAssembler, isWasm, MAX_CODE_BYTES, tooMuchCode } from './assembler.js';
 import { WorkerAssembler, PageAssembler } from './assembler-rpc.js'; // large sources in a worker of its own
 import { renderResult, renderEmpty, renderFailure, copyText, h, row, messageList } from './render.js';
-import { latestWins } from './compare.js';
+import { latestWins, summarize } from './compare.js';
 import { createComparePanels } from './compare-view.js';
 import { createTracePanel, createABTracePanel } from './trace.js';
 import { createTraceLink } from './trace-link.js'; // the uop table <-> the trace; the wait column
@@ -29,9 +29,10 @@ import { createCopy, setCopy } from './copy-view.js';
 import { report, cpuTable, compare } from './markdown.js';          // copying a view, or the whole result, as text
 import { createRegionChip, createLoopChip } from './region-chip.js';
 import { replacesText, detectSyntax } from './loop-find.js';
+import { cannotRun } from './caveats.js';     // code a CPU cannot run
 import { createKeys } from './keys.js';           // keyboard shortcuts, the ? overlay
 import { createABCpus } from './ab-cpus.js';       // A–B on every checked CPU
-import { branchLabels, analyzedLines } from './branch-label.js'; // branch targets as labels in the uop table
+import { branchLabels, analyzedLines, analyzedText } from './branch-label.js'; // branch targets as labels in the uop table
 import { attachHighlight } from './asm-hl.js';     // the code box in colour
 
 const $ = (id) => document.getElementById(id);
@@ -950,6 +951,8 @@ async function run({ auto = false } = {}) {
       response: response && !response.error && srcA?.lines && !response.loop ? { ...response, loop: { lines: srcA.lines } } : response, request, elapsedMs, hex, byteCount: bytes.length, inputMode: state.mode,
       archKey, archTitle: archTitle(archKey, item.experimental), experimental: item.experimental,
       shown: response && !response.error && Array.isArray(response.rows) ? branchLabels(response.rows, srcA) : null,
+      // code this CPU cannot run (caveats.js): its number is not a result
+      invalid: cannotRun(response, { arch: archKey, code: analyzedText(srcA) }),
     };
     lastView.snap = snapshotOf(input, null);
     lastRunKey = key;
@@ -958,8 +961,8 @@ async function run({ auto = false } = {}) {
       // the time is shown here (not in the result): how fast the analyzer is
       // with several CPUs checked, their number: the table has the others (the time is this CPU's)
       const n = checked.length > 1 && !state.ab ? ` · ${checked.length} CPUs` : '';
-      if (tell) flash(`${Number(response.tp).toFixed(2)} cycles/iteration · ${archKey}${n}${response.mock ? ' (mock data)' : ` · ${elapsedMs < 10 ? elapsedMs.toFixed(1) : Math.round(elapsedMs)} ms`}`, { ms: 6000, key });
-      panels.update({ hex, arch: archKey, options: opts, elapsedMs, response }, { auto });
+      if (tell) flash(`${Number(response.tp).toFixed(2)} cycles/iteration · ${archKey}${lastView.invalid ? ` (not a result: ${lastView.invalid.reason})` : ''}${n}${response.mock ? ' (mock data)' : ` · ${elapsedMs < 10 ? elapsedMs.toFixed(1) : Math.round(elapsedMs)} ms`}`, { ms: 6000, key });
+      panels.update({ hex, arch: archKey, options: opts, elapsedMs, response, code: analyzedText(srcA) }, { auto });
       if (!warmedUp && engine.warmUp) { warmedUp = true; setTimeout(() => engine.warmUp(archKey), 0); }
     } else if (tell) {
       flash('analysis failed', { error: true });
@@ -1065,7 +1068,7 @@ function paintSideEmpty(empty) {
 // B has a cpu of its own: the headline compares two CPUs, so no row of the table per CPU is its (none is marked)
 const bOwnCpu = () => !!state.bArch && state.bArch !== state.arch && archItems.has(state.bArch);
 // the table of A and B per checked CPU (ab-cpus.js); the results of the comparison itself are reused
-const summaryOf = (r) => ({ tp: Number(r.tp), bottlenecks: r.bottlenecks ?? [], mode: r.mode, decodeErrors: Number(r.decodeErrors) || 0, mock: !!r.mock });
+const summaryOf = (r) => ({ ...summarize(r), bottlenecks: r.bottlenecks ?? [] }); // (compare.js: with the unsupported rows, for cannotRun)
 // Copying the whole result as text (copy-view.js; the text: markdown.js): single, the result (report) with the table of
 // the checked CPUs; A–B, the comparison (compare, with A and B per checked CPU), then each side's result. "diff": the
 // comparison of A–B's first tab.
@@ -1080,7 +1083,7 @@ function snapshotOf(input, inputB) {
 }
 // the link of the result shown, with the elements per iteration it shows
 const linkNow = (snap) => linkOf(snap ? { ...snap.state, aWork: state.aWork, bWork: state.bWork } : collectState());
-const sideMeta = (s, work) => ({ arch: s.archKey, archTitle: s.archTitle, per: work, config: uarch?.configs?.[s.archKey] ?? null, shown: s.shown ?? null });
+const sideMeta = (s, work) => ({ arch: s.archKey, archTitle: s.archTitle, per: work, config: uarch?.configs?.[s.archKey] ?? null, shown: s.shown ?? null, invalid: s.invalid ?? null });
 const codeOf = (c) => (c ? { code: String(c.text ?? '').replace(/\s+$/, ''), lang: c.mode === 'hex' ? '' : 'asm' } : {});
 function copySingle(v) {
   setCopy('diff', null);
@@ -1097,7 +1100,8 @@ function copySingle(v) {
   } });
 }
 function copyAB(view, snap = null) {
-  const meta = { workA: view.workA, workB: view.workB, archA: view.a?.archKey, archB: view.b?.archKey, shownA: view.a?.shown ?? null, shownB: view.b?.shown ?? null };
+  const meta = { workA: view.workA, workB: view.workB, archA: view.a?.archKey, archB: view.b?.archKey, shownA: view.a?.shown ?? null, shownB: view.b?.shown ?? null,
+    invalidA: view.a?.invalid ?? null, invalidB: view.b?.invalid ?? null };
   setCopy('diff', view.cmp?.okA && view.cmp?.okB ? { what: 'the A–B comparison', md: () => compare(view.a.response, view.b.response, { ...meta, cpus: abCpus.rows() }) } : null);
   setCopy('cpus', null); // (A–B: the table of A and B per CPU is copied with the diff)
   setCopy('all', { what: 'the whole A–B result', md: () => [
@@ -1111,15 +1115,17 @@ function copyAB(view, snap = null) {
 function updateABCpus(view, { auto = false } = {}) {
   const seed = new Map();
   for (const s of [view.a, view.b]) if (okSide(s)) seed.set(`${s.side}:${s.archKey}`, summaryOf(s.response));
-  abCpus.update({ a: view.a?.hex ?? null, b: view.b?.hex ?? null, options: options(), workA: view.workA, workB: view.workB, focus: bOwnCpu() ? null : state.arch, seed }, { auto });
+  abCpus.update({ a: view.a?.hex ?? null, b: view.b?.hex ?? null, options: options(), workA: view.workA, workB: view.workB, focus: bOwnCpu() ? null : state.arch, seed,
+    codeA: view.a?.code ?? null, codeB: view.b?.code ?? null }, { auto });
 }
 // the sweep (compare-view.js) of the side the views show
 function sweepSide({ auto = true } = {}) {
   const sv = abView();
-  if (sv) panels.update({ hex: sv.hex, arch: sv.archKey, options: options(), elapsedMs: sv.elapsedMs, response: sv.response }, { auto });
+  if (sv) panels.update({ hex: sv.hex, arch: sv.archKey, options: options(), elapsedMs: sv.elapsedMs, response: sv.response, code: sv.code ?? null }, { auto });
 }
 // the lines of side A's analyzed assembly (branch-label.js: its labels for the branch targets), or null (machine code)
 let srcA = null;
+
 document.addEventListener('wuica:ab-side', (e) => {
   const s = /** @type {CustomEvent} */ (e).detail === 'b' ? 'b' : 'a';
   if (s === abSide) return;

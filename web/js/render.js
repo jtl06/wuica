@@ -278,6 +278,8 @@ export function renderResult(root, view) {
   } else {
     const mock = r.mock ? { ...r.mock, sameCode: r.mock.hex === view.hex } : null;
     const w = view.work > 1 ? view.work : 1; // elements per iteration (url-state.js aWork): then per element
+    // code this CPU cannot run (caveats.js cannotRun, app.js): the number struck, why under it
+    const bad = view.invalid ?? null;
     const mode = r.mode === 'loop' ? h('span', { class: 'tag', title: 'ends in a branch: analyzed as a loop', text: 'loop' })
       : r.mode === 'unroll' ? h('span', { class: 'tag', title: 'no branch at the end: analyzed as if repeated back to back', text: 'unrolled' })
         : h('span', { class: 'tag', text: String(r.mode) });
@@ -291,7 +293,7 @@ export function renderResult(root, view) {
     out.push(leadRow('throughput',
       h('div', { class: 'tp' },
         h('span', { class: 'tp-main' },
-          h('span', { class: 'value', title: w > 1 ? `${Number(r.tp).toFixed(2)} cycles/iteration ÷ ${w}` : null, text: w > 1 ? cyc(Number(r.tp) / w) : Number(r.tp).toFixed(2) }), ' ',
+          h('span', { class: `value${bad ? ' invalid' : ''}`, title: bad ? `not a result: ${bad.title} (${Number(r.tp).toFixed(2)} cycles/iteration as computed)` : w > 1 ? `${Number(r.tp).toFixed(2)} cycles/iteration ÷ ${w}` : null, text: w > 1 ? cyc(Number(r.tp) / w) : Number(r.tp).toFixed(2) }), ' ',
           h('span', { class: `unit${view.workFlag ? ' caveat' : ''}`, title: view.workFlag ? 'the code changed since its elements per iteration were set' : null, text: `${w > 1 ? 'cycles/element' : 'cycles/iteration'}${view.workFlag ? '?' : ''}` })),
         h('span', { class: 'meta', title: details }, mode, sep(), h('span', { class: view.experimental ? 'caveat' : null, text: view.archTitle })),
         copyAllButton(),
@@ -301,8 +303,7 @@ export function renderResult(root, view) {
               text: nearestLimit(r, w) ? `unknown · nearest ${nearestLimit(r, w)}` : 'unknown' }))),
       mock ? h('div', { class: 'mock-tag', text: mockLine(mock, view.archKey) }) : null,
       caveatLine(r, view.config),
-      r.decodeErrors > 0 ? h('div', { class: 'caveat', role: 'alert',
-        text: `${r.decodeErrors} undecodable position${r.decodeErrors === 1 ? '' : 's'} skipped` }) : null));
+      bad ? h('div', { class: 'caveat cannot-run', role: 'alert', title: bad.title, text: `not a result for ${view.archKey}: ${invalidText(bad)}` }) : null));
 
     if (r.limits.length) {
       out.push(h('div', { class: 'row', title: 'cycles/iteration if each were the only bottleneck' },
@@ -323,6 +324,13 @@ export function renderResult(root, view) {
   }
 
   root.replaceChildren(...out);
+}
+
+// Why a CPU cannot run the code (caveats.js cannotRun): "needs AVX-512 · 12 undecodable positions skipped"
+export function invalidText(bad) {
+  const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+  return [bad.needs.length ? `needs ${bad.needs.join(', ')}` : '', bad.decodeErrors ? `${n(bad.decodeErrors, 'undecodable position', 'undecodable positions')} skipped` : '',
+    bad.unsupported ? `${n(bad.unsupported, 'instruction', 'instructions')} not supported` : ''].filter(Boolean).join(' · ');
 }
 
 // The control that copies the whole result (copy-view.js, the provider 'all')

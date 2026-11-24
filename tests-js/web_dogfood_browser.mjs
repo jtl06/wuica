@@ -73,6 +73,41 @@ try {
     await page.close();
   }
 
+  // ---- B1: code a CPU cannot run is not shown as a result (the headline, the table of CPUs, A–B) ----------------------
+  {
+    const page = await fresh();
+    const r = await page.eval(`${W}
+      const row = (k) => document.querySelector('table.cmp-cpus tr[data-arch="' + k + '"]');
+      const cell = (k, c) => row(k)?.querySelector(c)?.textContent ?? '';
+      const lead = () => document.querySelector('#result-body > .row.lead');
+      const out = {};
+      pasteInto($('code'), ${js(fx('avx512.s'))}); await settle();
+      out.skl = { head: headline(), struck: lead().querySelector('.tp .value').classList.contains('invalid'), title: lead().querySelector('.tp .value').title };
+      $('cpu-all').click(); await until(() => $('cmp-cpus').dataset.state === 'done', 90000); await wait(300);
+      out.table = Object.fromEntries(['SKL', 'ZEN3', 'ICL', 'ADL-P'].map((k) => [k, { tp: cell(k, '.cmp-tp'), bn: cell(k, '.cmp-bn'), invalid: row(k).classList.contains('invalid'),
+        fastest: row(k).classList.contains('fastest'), bar: row(k).querySelector('.gauge > span').style.width }]));
+      out.fastest = [...document.querySelectorAll('table.cmp-cpus tr.fastest')].map((t) => t.dataset.arch).join();
+      row('ZEN3').click(); await settle();
+      out.zen3 = { head: headline(), struck: lead().querySelector('.tp .value').classList.contains('invalid'), status: $('status').textContent };
+      // A–B: A on ZEN3, B the same code on ICL
+      $('cpu-clear').click(); await wait(200);
+      $('cmp-ab').click(); await settle(); $('ab-copy').click(); await settle(); pick('b-arch', 'ICL'); await settle();
+      out.ab = { head: headline(), struckA: !!lead().querySelector('.ab-tp .value.invalid'), verdict: lead().querySelector('.ab-delta')?.dataset.verdict };
+      return out;`, { timeout: 200000 });
+    check(r.skl.struck && /not a result for SKL: needs AVX-512 · 12 undecodable positions skipped/.test(r.skl.head) && /38\.00 cycles\/iteration as computed/.test(r.skl.title),
+      'B1: SKL headline: the number struck (in the tooltip), "needs AVX-512"', js(r.skl));
+    check(/3\.00 cycles\/iteration · ZEN3 \(not a result: needs AVX-512\)/.test(r.zen3.status), 'B1: the status line says so too', r.zen3.status);
+    const t = r.table;
+    check(t.SKL.tp === '38.00' && t.SKL.invalid && /needs AVX-512 · 12 undecodable skipped/.test(t.SKL.bn), 'B1: table: SKL marked, its number kept', js(t.SKL));
+    check(t.ZEN3.tp === '3.00' && t.ZEN3.invalid && !t.ZEN3.fastest && /needs AVX-512 · 12 not supported/.test(t.ZEN3.bn), 'B1: table: ZEN3 marked as the Intel rows, not the fastest', js(t.ZEN3));
+    check(t['ADL-P'].invalid && t['ADL-P'].bar === '0%' && t.ICL.bar === '66.7%' && !t.ICL.invalid, 'B1: table: no bar for ADL-P\'s 11725, which does not set the scale', js([t['ADL-P'], t.ICL]));
+    check(r.fastest === 'ICL,TGL,RKL,ICX', 'B1: table: the fastest are CPUs that run the code', r.fastest);
+    check(r.zen3.struck && /not a result for ZEN3: needs AVX-512 · 12 instructions not supported/.test(r.zen3.head), 'B1: ZEN3 headline: struck, why', js(r.zen3));
+    check(r.ab.struckA && r.ab.verdict === 'invalid' && /not comparable: A needs AVX-512 on ZEN3/.test(r.ab.head) && !/faster|better/.test(r.ab.head), 'B1: A–B: no verdict, "not comparable"', js(r.ab));
+    check(page.take().length === 0, 'B1: no errors', '');
+    await page.close();
+  }
+
   // ---- B2: the status line (aria-live) never keeps the result of code that is no longer there ---------------------------
   {
     const page = await fresh();

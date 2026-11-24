@@ -14,6 +14,7 @@ import { compare as compareMarkdown, shownLabels, text as mdText } from './markd
 const r2 = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 const side = (r, per) => ({
   tp: r.tp, mode: r.mode, bottlenecks: r.bottlenecks, decodeErrors: r.decodeErrors ?? 0,
+  ...(r.unsupported ? { unsupported: r.unsupported } : {}), // (the CPU cannot run this side's code: caveats.js cannotRun)
   ...(per ? { perElement: r.tp / per } : {}), ...(r.loop ? { loop: r.loop } : {}),
   ...(r.stderr?.length ? { stderr: r.stderr } : {}),
 });
@@ -132,8 +133,11 @@ const sg = (v, f = f2) => (v === null || v === undefined ? '' : `${v > 0 ? '+' :
 export function diffText(r) {
   if (r.code) return `diff failed: ${r.error}\n`;
   const pct = r.a.tp > 0 ? ` ${sg((100 * (r.b.tp - r.a.tp)) / r.a.tp, (v) => Number(v).toFixed(1))}%` : '';
-  const lines = [`${r.arch}: A ${f2(r.a.tp)}  B ${f2(r.b.tp)} cycles per iteration  (${r.verdict === 'same' ? 'the same' : `${sg(r.delta)},${pct}; speedup ${f2(r.speedup)}x`})`];
-  if (r.perElement) lines.push(`per element: A ${fe(r.perElement.a)}  B ${fe(r.perElement.b)}  (${r.perElement.verdict === 'same' ? 'the same' : `${sg(r.perElement.delta, fe)}; speedup ${f2(r.perElement.speedup)}x`})`);
+  // a side whose code the CPU cannot run (unsupported): its number is no result, so no verdict
+  const bad = [['A', r.a.unsupported], ['B', r.b.unsupported]].filter(([, x]) => x).map(([k, x]) => `${k} ${x}`);
+  const verdict = (v, same) => (bad.length ? `not comparable: ${bad.join(', ')}` : same ? 'the same' : v);
+  const lines = [`${r.arch}: A ${f2(r.a.tp)}  B ${f2(r.b.tp)} cycles per iteration  (${verdict(`${sg(r.delta)},${pct}; speedup ${f2(r.speedup)}x`, r.verdict === 'same')})`];
+  if (r.perElement) lines.push(`per element: A ${fe(r.perElement.a)}  B ${fe(r.perElement.b)}  (${verdict(`${sg(r.perElement.delta, fe)}; speedup ${f2(r.perElement.speedup)}x`, r.perElement.verdict === 'same')})`);
   const names = (xs) => (xs.length ? xs.join(', ') : 'unknown');
   lines.push(`bottleneck: A ${names(r.bottlenecks.a)} -> B ${names(r.bottlenecks.b)}`);
   for (const l of r.stderr ?? []) lines.push(`warning: ${l.text.replace(/^([AB]: )Warning: /, '$1')}`);

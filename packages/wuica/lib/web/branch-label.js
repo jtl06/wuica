@@ -146,3 +146,10 @@ export function analyzedLines(text, r) {
   }
   return { text: t, from: 1, to: Infinity };
 }
+// The text of those lines (the analyzed assembly), or null for none: caveats.js cannotRun names the extension a CPU lacks
+// from it
+export function analyzedText(src) {
+  if (!src) return null;
+  const lines = String(src.text).split('\n');
+  return lines.slice(Math.max(0, src.from - 1), Number.isFinite(src.to) ? src.to : lines.length).join('\n');
+}

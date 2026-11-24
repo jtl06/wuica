@@ -479,6 +479,8 @@ table.cmp-cpus { width: 100%; }
 .cmp-cpus tr.fastest td.cmp-tp { color: var(--heading); }
 .cmp-cpus tr.pending td.cmp-tp { color: var(--subtle); }
 .cmp-cpus tr.error td.cmp-tp { color: var(--caveat); }
+/* a CPU that cannot run the code: its number is not a result (the reason in the last column, the number in the tooltip) */
+.cmp-cpus tr.invalid td.cmp-tp, .tp .value.invalid, .ab-tp .value.invalid, .ab-cpus td.invalid { color: var(--subtle); text-decoration: line-through; }
 .cmp-cpus tbody tr { cursor: pointer; }
 .cmp-cpus tbody tr.current > * { background-color: var(--accent-dim); }
 .cmp-cpus tbody tr.current > th { box-shadow: inset 2px 0 var(--accent); }

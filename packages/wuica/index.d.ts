@@ -188,6 +188,10 @@ export interface AnalyzeResult {
   syntax?: 'intel' | 'att';
   /** Assembler warnings, notes (exits taken as not taken), and the decode warning. */
   stderr: StderrLine[];
+  /** Only when this CPU cannot run the code (positions it could not decode, instructions its model has no data for):
+   * why ("needs AVX-512", "12 undecodable"). `tp` is then the reference's number, which leaves that code out: not a
+   * result for this CPU. */
+  unsupported?: string;
 }
 
 /** The compact form of an analysis (summarize(); the MCP `analyze` JSON). */
@@ -203,6 +207,8 @@ export interface AnalyzeSummary {
   bottlenecks: string[];
   limits: Limit[];
   decodeErrors: number;
+  /** As AnalyzeResult's: why this CPU cannot run the code, only then. */
+  unsupported?: string;
   hex?: string;
   loop?: LoopInfo;
   /** The loops of the text that were not analyzed, when it has more than one (listLoops without `auto`). */
@@ -283,7 +289,7 @@ export interface AssembleResult {
 }
 
 export type CompareRow =
-  | { arch: string; name: string; year: number | null; prototype: boolean; code: 0; tp: number; mode: 'loop' | 'unroll'; bottlenecks: string[]; limits: Limit[]; decodeErrors: number; perElement?: number }
+  | { arch: string; name: string; year: number | null; prototype: boolean; code: 0; tp: number; mode: 'loop' | 'unroll'; bottlenecks: string[]; limits: Limit[]; decodeErrors: number; unsupported?: string; perElement?: number }
   | { arch: string; name: string; year: number | null; prototype: boolean; code: 1 | 2 | 3; error: string };
 
 export interface CompareResult {
@@ -442,7 +448,7 @@ export type WhatIfPerElement = WhatIfResult & { elementsPerIteration?: number; p
  * `per` elements per iteration (N for both, or [A, B]). */
 export interface DiffRequest { a: AnalyzeRequest; b: AnalyzeRequest; options?: AnalysisOptions; per?: number | [number, number] }
 /** One side of a DiffResult: as analyze gives it; perElement = tp / per (unrounded, as compare's and what-if's). */
-export interface DiffSide { tp: number; mode: 'loop' | 'unroll'; bottlenecks: string[]; decodeErrors: number; perElement?: number; loop?: LoopInfo; stderr?: StderrLine[] }
+export interface DiffSide { tp: number; mode: 'loop' | 'unroll'; bottlenecks: string[]; decodeErrors: number; unsupported?: string; perElement?: number; loop?: LoopInfo; stderr?: StderrLine[] }
 /** The result of Wuica.diff. tp and limits as analyze gives them; delta (B − A, 0 when the same within 0.25 %) and
  * speedup (A / B) rounded to two decimals; perElement's a, b and delta unrounded; uop changes rounded to two decimals.
  * Both blocks must be analyzed the same way (both loops, or both unrolled): else a Failure "not comparable". */

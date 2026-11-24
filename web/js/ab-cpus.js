@@ -9,20 +9,24 @@ import { h } from './render.js';
 import { makeRequest } from './engine.js';
 import { summarize, resultKey, ResultCache, latestWins } from './compare.js';
 import { verdict, cycles } from './ab-diff.js';
+import { cannotRun } from './caveats.js';
 
 const two = (v) => (typeof v === 'number' && Number.isFinite(v) ? cycles(v) : '');
 const isCancel = (e) => e?.name === 'CancelledError';
 
 // items: the checked CPUs ({key, title, experimental}), results: Map "a:KEY" / "b:KEY" -> summary. Values per element
 // (tp / work). [{key, title, experimental, state: 'ok'|'pending'|'error', a, b, delta, pct, speedup, verdict, current}]
-export function abCpuRows(items, results, { workA = 1, workB = 1, current = null } = {}) {
+// invalidA, invalidB: the side's code cannot run on that CPU (caveats.js cannotRun; codeA, codeB: the analyzed assembly
+// texts, which name the extension): its number is no result, so the row has no verdict
+export function abCpuRows(items, results, { workA = 1, workB = 1, current = null, codeA = null, codeB = null } = {}) {
   return items.map((it) => {
     const ra = results.get(`a:${it.key}`), rb = results.get(`b:${it.key}`);
     const row = { key: it.key, title: it.title ?? it.key, experimental: !!it.experimental, current: it.key === current,
-      state: 'pending', a: null, b: null, delta: null, pct: null, speedup: null, verdict: null, error: null };
-    if (ra && !ra.error) row.a = ra.tp / workA;
-    if (rb && !rb.error) row.b = rb.tp / workB;
+      state: 'pending', a: null, b: null, delta: null, pct: null, speedup: null, verdict: null, error: null, invalidA: null, invalidB: null };
+    if (ra && !ra.error) { row.a = ra.tp / workA; row.invalidA = cannotRun(ra, { arch: it.key, code: codeA }); }
+    if (rb && !rb.error) { row.b = rb.tp / workB; row.invalidB = cannotRun(rb, { arch: it.key, code: codeB }); }
     if (ra?.error || rb?.error) { row.state = 'error'; row.error = ra?.error ?? rb?.error; }
+    else if (ra && rb && (row.invalidA || row.invalidB)) row.state = 'invalid';
     else if (ra && rb) {
       row.state = 'ok';
       row.verdict = verdict(row.a, row.b); // (relative, unrounded: as the headline)
@@ -52,7 +56,7 @@ export function createABCpus(env) {
   let lastRows = null;
   function draw() {
     if (!input) return;
-    const rows = abCpuRows(env.checked(), results, { workA: input.workA, workB: input.workB, current: input.focus });
+    const rows = abCpuRows(env.checked(), results, { workA: input.workA, workB: input.workB, current: input.focus, codeA: input.codeA ?? null, codeB: input.codeB ?? null });
     lastRows = rows;
     const head = h('tr', null, h('th', { scope: 'col', class: 'first', text: 'cpu' }),
       h('th', { scope: 'col', title: unit(), text: 'A' }), h('th', { scope: 'col', title: unit(), text: 'B' }),
@@ -60,15 +64,17 @@ export function createABCpus(env) {
     const body = h('tbody');
     for (const r of rows) {
       const cls = r.verdict === 'better' ? 'ab-better' : r.verdict === 'worse' ? 'ab-worse' : '';
+      const bad = [['A', r.invalidA], ['B', r.invalidB]].filter(([, x]) => x);
       const tr = h('tr', { class: [r.current ? 'current' : '', r.state !== 'ok' ? r.state : ''].filter(Boolean).join(' ') || null,
-        'aria-current': r.current ? 'true' : null, 'data-arch': r.key, title: r.error ?? null },
+        'aria-current': r.current ? 'true' : null, 'data-arch': r.key, title: r.error ?? (bad.length ? bad.map(([t, x]) => `${t}: ${x.title}`).join('\n') : null) },
       h('th', { scope: 'row', class: 'first' },
         h('button', { type: 'button', class: 'plain pick', 'data-focus': `abcpu-${r.key}`, title: `compare in detail on ${r.title}`, 'aria-pressed': r.current ? 'true' : 'false', text: r.key }),
         r.experimental ? h('span', { class: 'proto-mark', 'aria-hidden': 'true', text: 'p' }) : null),
-      h('td', { class: 'ab-cv', text: r.state === 'error' && r.a === null ? '!' : two(r.a) }),
-      h('td', { class: 'ab-cv', text: r.state === 'error' && r.b === null ? '!' : two(r.b) }),
+      h('td', { class: `ab-cv${r.invalidA ? ' invalid' : ''}`, text: r.state === 'error' && r.a === null ? '!' : two(r.a) }),
+      h('td', { class: `ab-cv${r.invalidB ? ' invalid' : ''}`, text: r.state === 'error' && r.b === null ? '!' : two(r.b) }),
       h('td', { class: `ab-d ${cls}`, text: r.delta === null ? '' : r.delta === 0 ? '0' : `${pct(r.pct)}` }),
-      h('td', { class: `ab-cx ${cls}`, text: times(r) }));
+      // a side that cannot run on this CPU: why, instead of the speed-up
+      h('td', { class: `ab-cx ${cls}${bad.length ? ' caveat' : ''}`, text: bad.length ? bad.map(([t, x]) => `${t} ${x.reason}`).join(' · ') : times(r) }));
       tr.addEventListener('click', (e) => { if (!e.target.closest('button')) env.onArch(r.key); });
       tr.querySelector('button.pick').addEventListener('click', () => env.onArch(r.key));
       body.append(tr);
@@ -153,6 +159,7 @@ export function createABCpus(env) {
     // the drawn result is gone (single mode, a failure)
     clear() { input = null; lastRows = null; runner.cancel(); box.hidden = true; },
     // A and B per checked CPU as markdown.js compare takes them (meta.cpus; null: one CPU)
-    rows: () => (!input || box.hidden || !lastRows ? null : lastRows.map((r) => ({ arch: r.key, a: r.a, b: r.b }))),
+    rows: () => (!input || box.hidden || !lastRows ? null : lastRows.map((r) => ({ arch: r.key, a: r.a, b: r.b,
+      ...(r.invalidA ? { unsupportedA: r.invalidA.reason } : {}), ...(r.invalidB ? { unsupportedB: r.invalidB.reason } : {}) }))),
   };
 }

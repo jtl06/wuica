@@ -468,7 +468,11 @@ Response (JSON), on success:
 The fields from `arch` to `trace` are the analysis response of the WebAssembly module (`docs/WASM-API.md` in the wuica
 repository: `rows[].values[i]` belongs to `columns[i]`, and `notes` is `M` macro-fused, `J` JCC erratum or `X`
 unsupported). `hex` is present when `source` was given and holds the assembled bytes. `stderr` holds the assembler's
-warnings, the notes on exits taken as not taken, and the warning "N position(s) could not be decoded". `insights` (REST only; the library's `analyze()` result
+warnings, the notes on exits taken as not taken, and the warning "N position(s) could not be decoded". `unsupported` is
+present only when the CPU cannot run the code (positions its decoder skipped, instructions its model has no data for:
+AVX-512 on SKL or ZEN3): its reason, `"needs AVX-512"` when the analyzed text names an extension the CPU lacks, else
+`"12 undecodable"` or `"3 instructions not supported"`; `tp` is then the reference's number, which leaves that code out,
+and the text, the Markdown and the page do not present it as a result (compare's rows have it too). `insights` (REST only; the library's `analyze()` result
 does not have it, `w.insights(r)` computes it) is the diagnosis described under the compact form below, with `portSet`
 and `issueSlots` when `options.details` is true.
 

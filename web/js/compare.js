@@ -6,6 +6,8 @@
 //   compareKey / sweepKey, ResultCache   results are reused across views and redraws
 //   latestWins     debounced, single-flight scheduling: never queues work, runs only the latest request
 
+import { cannotRun } from './caveats.js';
+
 export const SWEEP_OFFSETS = 64;
 
 // The part of a response the compare views need; error responses (and missing ones) give {error}.
@@ -21,6 +23,8 @@ export function summarize(response) {
     // (the limits, for what-if: a variant is not shown under its Ports or Issue limit, whatif-core.js hardLimit)
     limits: Array.isArray(response.limits) ? response.limits.map((l) => ({ name: String(l.name), tp: Number(l.tp) })) : [],
     decodeErrors: Number(response.decodeErrors) || 0, // positions this CPU's decoder skipped (e.g. AVX2 on SNB)
+    // the instructions its model has no data for (notes X: AVX-512 on ZEN3), by their text (caveats.js cannotRun)
+    xLabels: Array.isArray(response.rows) ? response.rows.filter((x) => x?.kind === 'instr' && x.notes === 'X').map((x) => String(x.label)) : [],
     mock: !!response.mock,
   };
 }
@@ -30,36 +34,35 @@ const round2 = (x) => Math.round(x * 100) / 100;
 
 // items: the menu items in menu order ([{key, title, experimental, ...}]); results: Map key -> summary (absent:
 // not analyzed yet). sort: 'menu' (chronological, the menu's order) | 'tp' (fastest first) | 'tp-desc'.
-// Rows without a result sort last, in menu order. bar: tp relative to the slowest result (0..1). decodeErrors: the
-// positions a CPU could not decode (its result leaves those instructions out); such a row is not the fastest unless
-// every row skipped as much.
-export function compareRows(items, results, { sort = 'menu', current = null } = {}) {
-  const ok = items.map((it) => results.get(it.key)).filter((r) => r && !r.error);
+// Rows without a result sort last, in menu order. bar: tp relative to the slowest result (0..1). invalid: the CPU cannot
+// run the code (caveats.js cannotRun: positions it could not decode, instructions its model has no data for; code: the
+// analyzed assembly text, which names the extension): its number is not a result, so the row is never the fastest, has
+// no bar, does not set the bars' scale, and sorts after the rows with a result.
+export function compareRows(items, results, { sort = 'menu', current = null, code = null } = {}) {
+  const invalid = new Map(items.map((it) => { const r = results.get(it.key); return [it.key, r && !r.error ? cannotRun(r, { arch: it.key, code }) : null]; }));
+  const ok = items.filter((it) => { const r = results.get(it.key); return r && !r.error && !invalid.get(it.key); }).map((it) => results.get(it.key));
   const max = Math.max(0, ...ok.map((r) => r.tp));
-  const fewest = Math.min(...ok.map((r) => r.decodeErrors ?? 0));
-  const complete = ok.filter((r) => (r.decodeErrors ?? 0) === fewest);
-  const min = complete.length ? Math.min(...complete.map((r) => round2(r.tp))) : null;
+  const min = ok.length ? Math.min(...ok.map((r) => round2(r.tp))) : null;
   const rows = items.map((it, index) => {
     const r = results.get(it.key);
     const state = !r ? 'pending' : r.error ? 'error' : 'ok';
+    const bad = invalid.get(it.key) ?? null;
     return {
       key: it.key, title: it.title, experimental: !!it.experimental, index, state,
       tp: state === 'ok' ? r.tp : null,
       bottlenecks: state === 'ok' ? r.bottlenecks : [],
       error: state === 'error' ? r.error : null,
       decodeErrors: state === 'ok' ? r.decodeErrors ?? 0 : 0,
-      bar: state === 'ok' && max > 0 ? r.tp / max : 0,
-      fastest: state === 'ok' && (r.decodeErrors ?? 0) === fewest && round2(r.tp) === min,
+      invalid: bad,
+      bar: state === 'ok' && !bad && max > 0 ? r.tp / max : 0,
+      fastest: state === 'ok' && !bad && round2(r.tp) === min,
       current: it.key === current,
     };
   });
   if (sort === 'tp' || sort === 'tp-desc') {
     const sign = sort === 'tp' ? 1 : -1;
-    rows.sort((a, b) => {
-      if ((a.tp === null) !== (b.tp === null)) return a.tp === null ? 1 : -1;
-      if (a.tp === null) return a.index - b.index;
-      return sign * (a.tp - b.tp) || a.index - b.index;
-    });
+    const rank = (r) => (r.tp === null ? 2 : r.invalid ? 1 : 0);
+    rows.sort((a, b) => rank(a) - rank(b) || (rank(a) === 2 ? a.index - b.index : sign * (a.tp - b.tp) || a.index - b.index));
   }
   return rows;
 }

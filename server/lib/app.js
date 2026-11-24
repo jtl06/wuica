@@ -53,10 +53,11 @@ function compareText(c) {
   let out = `${'Arch'.padEnd(kw)}  ${'Model'.padEnd(nw)}  Year  ${'TP'.padStart(6)}${per ? `  ${'per el'.padStart(6)}` : ''}  Bottlenecks\n`;
   for (const r of c.results) {
     const year = String(r.year ?? '').padEnd(4);
-    const rest = r.code ? `error: ${r.error.split('\n')[0]}` : `${r.bottlenecks.join(', ') || '-'}${r.prototype ? '  [prototype]' : ''}`;
-    out += `${r.arch.padEnd(kw)}  ${r.name.padEnd(nw)}  ${year}  ${(r.code ? '-' : fmt(r.tp)).padStart(6)}${per ? `  ${(r.code ? '-' : fmtEl(r.perElement)).padStart(6)}` : ''}  ${rest}\n`;
+    // (a CPU that cannot run the code, `unsupported`: marked *, the reason after the bottlenecks)
+    const rest = r.code ? `error: ${r.error.split('\n')[0]}` : `${r.bottlenecks.join(', ') || '-'}${r.unsupported ? `  not a result: ${r.unsupported}` : ''}${r.prototype ? '  [prototype]' : ''}`;
+    out += `${r.arch.padEnd(kw)}  ${r.name.padEnd(nw)}  ${year}  ${(r.code ? '-' : `${fmt(r.tp)}${r.unsupported ? '*' : ''}`).padStart(6)}${per ? `  ${(r.code ? '-' : fmtEl(r.perElement)).padStart(6)}` : ''}  ${rest}\n`;
   }
-  return out + `\nTP: cycles per iteration${per ? `; per el: cycles per element (${per} per iteration)` : ''}. [prototype]: experimental model of the fork jtl06/uiCA.\n`;
+  return out + `\nTP: cycles per iteration${per ? `; per el: cycles per element (${per} per iteration)` : ''}.${c.results.some((r) => r.unsupported) ? ' *: not a result: that CPU cannot run some of the code.' : ''} [prototype]: experimental model of the fork jtl06/uiCA.\n`;
 }
 
 function flatText(obj, prefix = '') {

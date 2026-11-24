@@ -218,3 +218,57 @@ export function caveats(response, config = null) {
   if (response && typeof response === 'object') (kept ?? memo.set(response, new Map()).get(response)).set(splitCost, out);
   return out;
 }
+
+// ---- code a CPU cannot run ------------------------------------------------------------------------------------------
+// A block with positions the CPU's decoder skipped (decodeErrors: instructions it does not have, e.g. AVX-512 on SKL,
+// whose bytes it then decodes as other instructions) or instructions its model has no data for (notes 'X': ZEN3 decodes
+// AVX-512 but has none of it) still gets the reference's throughput, which leaves them out: a number, but not a result
+// for that CPU. The page (headline, the table of CPUs, A–B), the Markdown and the CLI's text say so with cannotRun's
+// reason, keep the number reachable, and leave such a CPU out of any "fastest". The engine's numbers do not change.
+//
+// The reason names the extension when it can: from the instructions (the response's unsupported rows; `code`, the
+// analyzed assembly text, for the bytes the decoder skipped, whose rows are not those instructions), only an extension
+// the CPU lacks. Otherwise it counts: "12 undecodable", "3 instructions not supported".
+/** @type {[string, RegExp][]} */
+const EXTENSIONS = [
+  ['AMX', /\btmm\d|\b(?:tdp\w+|tileloadd\w*|tilestored|ldtilecfg|sttilecfg|tilezero|tilerelease)\b/i],
+  ['AVX-512', /\bzmm\d|%?\bk[1-7]\b|\{1to\d+\}|\b(?:kmov|kand|kor|kxor|knot|kshift|kunpck|kortest|ktest|kadd)\w*|\bv(?:pternlog|pcompress|pexpand|compress|expand|permt2|permi2|pmov[a-z]*2m|pmovm2|range|reduce|getexp|getmant|scalef|fixupimm|rcp14|rsqrt14|pconflict|plzcnt|dbpsadbw|align[dq]|pror|prol|psrav[wq]|psllv[w]|psrlvw|cvtt?p[sd]2u|cvtu)\w*/i],
+  ['SHA', /\bsha(?:1|256)\w+/i],
+  ['FMA', /\bvf(?:n?m(?:add|sub)|maddsub|msubadd)\w*/i],
+  ['AVX2', /\bv(?:pbroadcast[bwdq]|broadcasti128|perm[dq]\b|permp[sd]|perm2i128|inserti128|extracti128|p?gather\w+|ps[lr]lv[dq]|psravd|pmaskmov[dq]|pblendd)\b|\bvp(?!(?:extr|insr|cmp[ei]str|clmul|ermilp|erm2f128|test))\w+\s[^\n#;]*\bymm/i],
+  ['BMI2', /\b(?:bzhi|mulx|pdep|pext|rorx|sarx|shlx|shrx)[lq]?\b/i],
+  ['BMI1', /\b(?:andn|bextr|blsi|blsmsk|blsr)[lq]?\b/i],
+  ['ADX', /\b(?:adcx|adox)[lq]?\b/i],
+];
+const SNB_LACKS = ['AMX', 'AVX-512', 'SHA', 'FMA', 'AVX2', 'BMI2', 'BMI1', 'ADX'];
+const SKL_LACKS = ['AMX', 'AVX-512', 'SHA'];
+const AVX512_LACKS = ['AMX', 'SHA'];
+const ICL_LACKS = ['AMX'];
+const ZEN3_LACKS = ['AMX', 'AVX-512'];
+// the extensions of the list each CPU (the keys of archs.js) does not have
+export const LACKS = Object.freeze({
+  SNB: SNB_LACKS, IVB: SNB_LACKS, HSW: ['AMX', 'AVX-512', 'SHA', 'ADX'], BDW: SKL_LACKS, SKL: SKL_LACKS, KBL: SKL_LACKS, CFL: SKL_LACKS,
+  SKX: AVX512_LACKS, CLX: AVX512_LACKS, ICL: ICL_LACKS, TGL: ICL_LACKS, RKL: ICL_LACKS, ICX: ICL_LACKS, ZEN3: ZEN3_LACKS, 'ADL-P': ZEN3_LACKS,
+});
+
+/**
+ * @param {any} r a response (rows: notes 'X'), or a summary with decodeErrors and unsupported rows' labels (xLabels)
+ * @param {{arch?: string | null, code?: string | null}} [opts] the CPU's key; the analyzed assembly text, if any
+ * @returns {{reason: string, title: string, decodeErrors: number, unsupported: number, needs: string[]} | null}
+ */
+export function cannotRun(r, { arch = null, code = null } = {}) {
+  if (!r || typeof r !== 'object' || 'error' in r) return null;
+  const decodeErrors = Number(r.decodeErrors) || 0;
+  const xLabels = Array.isArray(r.rows) ? r.rows.filter((x) => x?.kind === 'instr' && x.notes === 'X').map((x) => String(x.label))
+    : Array.isArray(r.xLabels) ? r.xLabels.map(String) : [];
+  const unsupported = Array.isArray(r.rows) || !Number.isInteger(r.unsupportedCount) ? xLabels.length : r.unsupportedCount;
+  if (!decodeErrors && !unsupported) return null;
+  const lacks = arch ? LACKS[arch] ?? null : null;
+  const texts = [...xLabels, ...(decodeErrors && code ? [String(code)] : [])];
+  const needs = lacks ? EXTENSIONS.filter(([name, re]) => lacks.includes(name) && texts.some((t) => re.test(t))).map(([name]) => name) : [];
+  const counts = [decodeErrors ? `${decodeErrors} undecodable` : '', unsupported ? `${unsupported} instruction${unsupported === 1 ? '' : 's'} not supported` : ''].filter(Boolean).join(', ');
+  const reason = needs.length ? `needs ${needs.join(', ')}` : counts;
+  const what = [decodeErrors ? `${decodeErrors} position${decodeErrors === 1 ? '' : 's'} its decoder skipped` : '', unsupported ? `${unsupported} instruction${unsupported === 1 ? '' : 's'} its model has no data for` : ''].filter(Boolean).join(' and ');
+  const title = `${arch ? `${arch} cannot run this code` : 'code this CPU cannot run'}${needs.length ? ` (it needs ${needs.join(', ')})` : ''}: ${what}. The throughput leaves them out, so it is not a result for this CPU`;
+  return { reason, title, decodeErrors, unsupported, needs };
+}

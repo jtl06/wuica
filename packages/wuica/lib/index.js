@@ -13,6 +13,8 @@ import { fileURLToPath } from 'node:url';
 import { Analyzer, Assembler, parseDiagnostics, codeModeError } from './wasm.js';
 import { archList, DEFAULT_ARCH, ARCH_INFO, ARCH_ORDER } from './archs.js';
 import { insights } from './web/bound-core.js';
+import { cannotRun } from './web/caveats.js';
+import { analyzedLines, analyzedText } from './web/branch-label.js';
 import { instrDetails, detailInsights } from './details.js';
 export { detailInsights };
 import { readMaybeCompressed, readMaybeCompressedSync, tableFile } from './files.js';
@@ -381,7 +383,9 @@ class Wuica {
     const a = await this.machineCode(source, req.syntax ?? 'auto', loopChoice(req.loop), req.func ?? null);
     if (a.code !== CODES.OK) return a;
     if (a.bytes.length === 0) return failure(CODES.REQUEST, 'the source contains no instructions');
-    return { hex: a.hex, assembled: true, stderr: a.stderr, loop: a.loop, syntax: a.syntax.name, ...(a.otherLoops ? { otherLoops: a.otherLoops } : {}), sourceLines: a.sourceLines };
+    // (analyzed: the text of what was analyzed, which names an extension a CPU lacks: web/caveats.js cannotRun)
+    const analyzed = typeof source === 'string' ? analyzedText(analyzedLines(normalizeText(source).replace(/^\uFEFF/, ''), { loop: a.loop })) : null;
+    return { hex: a.hex, assembled: true, stderr: a.stderr, loop: a.loop, syntax: a.syntax.name, ...(a.otherLoops ? { otherLoops: a.otherLoops } : {}), sourceLines: a.sourceLines, analyzed };
   }
 
   // The options of a request with the alignment offset of the code's addresses (objdump input), unless it was given.
@@ -420,7 +424,9 @@ class Wuica {
     r = withSourceLines(r, code.sourceLines);
     const stderr = [...code.stderr];
     if (r.decodeErrors > 0) stderr.push({ text: `Warning: ${r.decodeErrors} position(s) could not be decoded` });
-    return { code: CODES.OK, ...r, ...(code.assembled ? { hex: code.hex, syntax: code.syntax } : {}), ...(code.loop ? { loop: code.loop } : {}), ...(code.otherLoops ? { otherLoops: code.otherLoops } : {}), stderr };
+    // code this CPU cannot run (web/caveats.js cannotRun): the number is the reference's, but not a result for it
+    const bad = cannotRun(r, { arch: r.arch, code: code.analyzed ?? null });
+    return { code: CODES.OK, ...r, ...(bad ? { unsupported: bad.reason } : {}), ...(code.assembled ? { hex: code.hex, syntax: code.syntax } : {}), ...(code.loop ? { loop: code.loop } : {}), ...(code.otherLoops ? { otherLoops: code.otherLoops } : {}), stderr };
   }
 
   // Several blocks on one microarchitecture: [request] -> [analyze() result] in the same order (each exactly what
@@ -509,7 +515,10 @@ class Wuica {
     const results = ids.map((arch, i) => {
       const id = this.resolveArch(arch);
       const { name, year, prototype } = id ? this.#info(id) : { name: String(arch), year: null, prototype: false };
-      return { arch: id ?? String(arch), name, year, prototype, ...fields[i] };
+      const { xLabels, ...f } = fields[i];
+      // code this CPU cannot run (web/caveats.js cannotRun): `unsupported`, the reason
+      const bad = f.code === CODES.OK ? cannotRun({ decodeErrors: f.decodeErrors, xLabels: xLabels ?? [] }, { arch: id, code: code.analyzed ?? null }) : null;
+      return { arch: id ?? String(arch), name, year, prototype, ...f, ...(bad ? { unsupported: bad.reason } : {}) };
     });
     // a CPU that could not decode some instructions (FMA on SNB): its throughput leaves them out
     const decode = results.filter((r) => r.code === CODES.OK && r.decodeErrors > 0)
@@ -596,7 +605,7 @@ class Wuica {
     const ins = base ? { ...base, ...detailInsights(r) } : null;
     return {
       code: r.code, arch: r.arch, name, year, prototype, tp: r.tp, unit: 'cycles per iteration', mode: r.mode,
-      bottlenecks: r.bottlenecks, limits: r.limits, decodeErrors: r.decodeErrors, ...(r.hex ? { hex: r.hex } : {}), ...(r.loop ? { loop: r.loop } : {}), ...(r.otherLoops ? { otherLoops: r.otherLoops } : {}),
+      bottlenecks: r.bottlenecks, limits: r.limits, decodeErrors: r.decodeErrors, ...(r.unsupported ? { unsupported: r.unsupported } : {}), ...(r.hex ? { hex: r.hex } : {}), ...(r.loop ? { loop: r.loop } : {}), ...(r.otherLoops ? { otherLoops: r.otherLoops } : {}),
       stderr: r.stderr, instructions, ...(ins ? { insights: ins } : {}),
     };
   }
