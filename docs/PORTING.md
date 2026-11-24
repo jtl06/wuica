@@ -69,7 +69,7 @@ added to the list in `ci/make-data-asset.sh`.
 - `cargo run --release -p wuica --example phases -- ARCH N HEXFILE...`: the time and the allocations of each phase (native).
 - `cargo run --release -p wuica --example load -- [N] [TABLE...]`: the time of `load_uarch` and of `load_arch` for each table.
 - The WebAssembly module: `node --cpu-prof` on a script that calls `wuica_analyze` in a loop, with
-  `target/wasm32-unknown-unknown/release/wuica_wasm.names.wasm`: the profile names the module's functions from its name section,
+  `target/wasm32-unknown-unknown/release/wuica_wasm.debug.wasm`: the profile names the module's functions from its name section,
   which the shipped `wuica_wasm.wasm` does not have (`build-wasm.sh`; the same code, so a `wasm-function[N]` frame of the shipped
   module is function N of the named one). A function that is inlined into its caller does not appear on its own.
 - Report numbers from aethia under an exclusive perfq lease; the Mac varies by a factor of two when other work runs there.

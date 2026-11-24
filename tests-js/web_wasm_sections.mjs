@@ -1,5 +1,5 @@
 // The WebAssembly modules as they are shipped (build-wasm.sh, web/build.sh): no name section in any of them (it is a quarter
-// of the analyzer and nothing that runs reads it), and the analyzer's copy with names (wuica_wasm.names.wasm, for profiles
+// of the analyzer and nothing that runs reads it), and the analyzer's copy with names (wuica_wasm.debug.wasm, for profiles
 // and stack traces) is the same module: every section but the custom ones byte for byte, so a frame's function index and
 // code offset mean the same in both.
 // Usage: node tests-js/web_wasm_sections.mjs
@@ -28,26 +28,26 @@ function sections(bytes) {
 }
 
 const WASM = 'target/wasm32-unknown-unknown/release/wuica_wasm.wasm';
-const NAMES = 'target/wasm32-unknown-unknown/release/wuica_wasm.names.wasm';
+const DEBUG = 'target/wasm32-unknown-unknown/release/wuica_wasm.debug.wasm';
 const shipped = fs.readFileSync(file(WASM));
 const s = sections(shipped);
 const customs = s.filter((x) => x.id === 0).map((x) => x.name);
 check(!customs.includes('name') && !customs.includes('producers'), `${WASM}: no name or producers section`, customs.join());
 check(s.some((x) => x.id === 10) && s.some((x) => x.id === 11), `${WASM}: has its code and data`);
 
-if (fs.existsSync(file(NAMES))) {
-  const n = sections(fs.readFileSync(file(NAMES)));
+if (fs.existsSync(file(DEBUG))) {
+  const n = sections(fs.readFileSync(file(DEBUG)));
   const nameSec = n.find((x) => x.id === 0 && x.name === 'name');
-  check(nameSec && nameSec.bytes.length > 100000, `${NAMES}: has the name section`, String(nameSec?.bytes.length));
+  check(nameSec && nameSec.bytes.length > 100000, `${DEBUG}: has the name section`, String(nameSec?.bytes.length));
   const core = (list) => list.filter((x) => x.id !== 0);
   const a = core(s), b = core(n);
   check(a.length === b.length && a.every((x, i) => x.id === b[i].id && Buffer.compare(x.bytes, b[i].bytes) === 0),
-    `${NAMES} is ${WASM} with names: the same sections apart from the custom ones`);
+    `${DEBUG} is ${WASM} with names: the same sections apart from the custom ones`);
   // the custom sections come after the code and data (the code offsets in a stack trace are the same in both files)
   const lastCore = (list) => list.findLastIndex((x) => x.id !== 0);
-  check(n.findIndex((x) => x.id === 0) > lastCore(n), `${NAMES}: the custom sections are at the end`);
+  check(n.findIndex((x) => x.id === 0) > lastCore(n), `${DEBUG}: the custom sections are at the end`);
 } else {
-  console.log(`(${NAMES} missing: built elsewhere; its comparison is skipped)`);
+  console.log(`(${DEBUG} missing: built elsewhere; its comparison is skipped)`);
 }
 
 // what the site serves

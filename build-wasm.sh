@@ -42,21 +42,21 @@ out=target/wasm32-unknown-unknown/release
 # profile lose the names, and they keep the function index and the code offset, which are the same in both files because the
 # name section is the last one. So the module that is shipped (wuica_wasm.wasm, which web/build.sh, packages/wuica/build.sh
 # and the tests read) has no name section and no producers section; the same module with them is kept beside it as
-# wuica_wasm.names.wasm, for `node --cpu-prof` and to name the frames of a stack trace (wasm-function[N] is function N there).
+# wuica_wasm.debug.wasm, for `node --cpu-prof` and to name the frames of a stack trace (wasm-function[N] is function N there).
 # The compile time is the same (V8 reads the names only for a stack trace). If cargo did not link again, wuica_wasm.wasm is
-# still the stripped file of the last run and wuica_wasm.names.wasm its copy with names. New files are written and moved
+# still the stripped file of the last run and wuica_wasm.debug.wasm its copy with names. New files are written and moved
 # into place: the file cargo links is a hard link of the one in its build directory.
 rm -f "$out"/.wuica_wasm.*.tmp
 if "$objcopy" --dump-section name="$out/.wuica_wasm.name.tmp" "$out/wuica_wasm.wasm" "$out/.wuica_wasm.copy.tmp" 2>/dev/null; then
-   cp "$out/wuica_wasm.wasm" "$out/.wuica_wasm.names.tmp"
-   "$objcopy" --remove-section=name --remove-section=producers "$out/.wuica_wasm.names.tmp" "$out/.wuica_wasm.stripped.tmp"
-   mv "$out/.wuica_wasm.names.tmp" "$out/wuica_wasm.names.wasm"
+   cp "$out/wuica_wasm.wasm" "$out/.wuica_wasm.debug.tmp"
+   "$objcopy" --remove-section=name --remove-section=producers "$out/.wuica_wasm.debug.tmp" "$out/.wuica_wasm.stripped.tmp"
+   mv "$out/.wuica_wasm.debug.tmp" "$out/wuica_wasm.debug.wasm"
    mv "$out/.wuica_wasm.stripped.tmp" "$out/wuica_wasm.wasm"
-elif [ ! -f "$out/wuica_wasm.names.wasm" ]; then
-   echo "error: $out/wuica_wasm.wasm has no name section and wuica_wasm.names.wasm is missing; delete it and build again" >&2; exit 1
+elif [ ! -f "$out/wuica_wasm.debug.wasm" ]; then
+   echo "error: $out/wuica_wasm.wasm has no name section and wuica_wasm.debug.wasm is missing; delete it and build again" >&2; exit 1
 fi
 rm -f "$out"/.wuica_wasm.*.tmp
-for f in "$out/wuica_wasm.wasm" "$out/wuica_wasm.names.wasm"; do
+for f in "$out/wuica_wasm.wasm" "$out/wuica_wasm.debug.wasm"; do
    if strings "$f" | grep -q "$HOME"; then echo "error: $f contains local paths" >&2; exit 1; fi
 done
-ls -l "$out/wuica_wasm.wasm" "$out/wuica_wasm.names.wasm"
+ls -l "$out/wuica_wasm.wasm" "$out/wuica_wasm.debug.wasm"
