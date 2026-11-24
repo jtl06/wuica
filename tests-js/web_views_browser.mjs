@@ -218,19 +218,26 @@ try {
       const long = []; new PerformanceObserver((l) => { for (const e of l.getEntries()) long.push(Math.round(e.duration)); }).observe({ type: 'longtask' });
       document.querySelector('#bound summary').click();
       await until(() => document.querySelector('.bd-item'));
-      out.items = items().length; out.hot = hot().length; out.rows = trs().length;
+      const drawn = () => [...document.querySelectorAll('table.uops tbody tr[data-row]')];
+      out.items = items().length; out.hot = hot().length; out.rows = drawn().length;
       const t1 = performance.now();
       document.querySelector('.bd-item[data-id="Ports"]').click();
       out.switchMs = performance.now() - t1;
       await wait(100);
       out.long = [...long];
-      // the chain: its largest share is beyond the first 200 rows: the jump draws them all first
+      // the chain: its largest share is beyond the rows drawn (vrows.js): the jump draws it
       document.querySelector('.bd-item[data-id="Dependencies"]')?.click();
       const btns = [...document.querySelectorAll('.bd-row')];
       out.top = btns.length;
       btns[0]?.click();
       await until(() => trs().some((tr) => tr.classList.contains('rj-flash')), 5000).catch(() => {});
-      out.afterJump = [trs().length, trs().findIndex((tr) => tr.classList.contains('rj-flash'))];
+      out.afterJump = [drawn().length, Number(drawn().find((tr) => tr.classList.contains('rj-flash'))?.dataset.row ?? -1)];
+      // once the layout has settled (the tab's scrollers fitted, workspace.js): the row still drawn, in view and focused
+      for (let i = 0; i < 6; i++) await new Promise((res) => requestAnimationFrame(res));
+      await wait(100);
+      const jumped = drawn().find((tr) => Number(tr.dataset.row) === out.afterJump[1]);
+      const jr = jumped?.getBoundingClientRect(), jw = jumped?.closest('.table-wrap')?.getBoundingClientRect();
+      out.settled = !!jumped && jr.top >= Math.max(0, jw.top) - 1 && jr.bottom <= Math.min(innerHeight, jw.bottom) + 1 && document.activeElement === jumped.cells[0];
       return out;`);
     const sha = await analyze((await import('../web/js/examples.js')).SHOWCASE_EXAMPLES[0].hex);
     const edges = sha.criticalPath?.edges ?? [];
@@ -238,8 +245,9 @@ try {
     for (const e of edges) lat.set(e.from, (lat.get(e.from) ?? 0) + e.latency);
     const order = [...lat].sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, 5).map((x) => x[0]);
     check(r.tp === '744.25' && r.closed[0] === false && r.closed[1] === 0 && r.closed[2] === 'closed' && r.closed[3] === 0, 'bound: SHA-256: closed, nothing computed or shaded', JSON.stringify(r.closed));
-    check(r.long.every((ms) => ms < LONG_TASK_MS) && r.switchMs < LONG_TASK_MS && r.items > 5 && r.hot > 0 && r.rows === 200, `bound: SHA-256: opening and switching: no task of ${LONG_TASK_MS} ms or more`, JSON.stringify(r));
-    check(r.top === Math.min(5, order.length) && order[0] >= 200 && r.afterJump[0] === 2949 && r.afterJump[1] === order[0], 'bound: SHA-256: a jump to a chain row beyond the drawn ones draws all rows and flashes it', JSON.stringify([r.top, r.afterJump, order]));
+    check(r.long.every((ms) => ms < LONG_TASK_MS) && r.switchMs < LONG_TASK_MS && r.items > 5 && r.hot > 0 && r.rows < 200, `bound: SHA-256: opening and switching: no task of ${LONG_TASK_MS} ms or more`, JSON.stringify(r));
+    check(r.top === Math.min(5, order.length) && order[0] >= 200 && r.afterJump[0] < 200 && r.afterJump[1] === order[0], 'bound: SHA-256: a jump to a chain row beyond the drawn ones draws it (and only the rows near it) and flashes it', JSON.stringify([r.top, r.afterJump, order]));
+    check(r.settled, 'bound: SHA-256: after the jump the row is drawn, in view and focused (the layout settled)', JSON.stringify([r.afterJump, r.settled]));
     console.log(`bound: SHA-256: long tasks while opening ${JSON.stringify(r.long)} ms, switch ${r.switchMs.toFixed(1)} ms; chain top rows ${order.join(',')}`);
   }
 
@@ -475,10 +483,20 @@ try {
       await until(() => document.querySelector('#deps .dp-body')?.dataset.state === 'done', 60000);
       obs.disconnect();
       const drawn = Math.round(performance.now() - t0);
-      await until(() => document.querySelector('.dp-sl.zero'), 10000); // the slack column: a task of its own
-      return [...out, drawn, long, document.querySelectorAll('.dp-node').length, document.querySelectorAll('.dp-sl.zero').length, document.querySelector('.dp-k.sl')?.title ?? ''];`);
-    check(s[0] === 'trace 2,949 instructions' && s[1] === 0 && s[4] === 2949, 'deps: SHA-256: past its size limit (the button), picking the tab loads it; every instruction is drawn', JSON.stringify(s));
-    check(s[5] > 100 && s[6] && !/too large/.test(s[6]), 'deps: SHA-256: the slack is computed (the chain has slack 0)', JSON.stringify(s.slice(5)));
+      await until(() => document.querySelector('.dp-sl'), 10000); // the slack column: a task of its own
+      const atTop = document.querySelectorAll('.dp-node').length;
+      // (a graph this large draws the instructions near the view, deps.js): scrolled from top to bottom, every
+      // instruction is drawn at some point, and the chain's (slack 0) are counted over all of them
+      const wrap = document.querySelector('#deps .dp-wrap');
+      const reached = new Set(), zero = new Set();
+      for (let y = 0; ; y += Math.max(100, wrap.clientHeight - 40)) {
+        wrap.scrollTop = y; await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
+        for (const n of document.querySelectorAll('.dp-node')) { reached.add(n.dataset.i); if (n.querySelector('.dp-sl.zero')) zero.add(n.dataset.i); }
+        if (wrap.scrollTop + wrap.clientHeight >= wrap.scrollHeight - 1) break;
+      }
+      return [...out, drawn, long, atTop, reached.size, document.querySelector('.dp-k.sl')?.title ?? '', zero.size, reached.has('2948')];`);
+    check(s[0] === 'trace 2,949 instructions' && s[1] === 0 && s[4] > 0 && s[4] < 400 && s[5] === 2949 && s[8], 'deps: SHA-256: past its size limit (the button), picking the tab loads it; those near the view drawn, every instruction (the last one too) reached by scrolling', JSON.stringify(s));
+    check(s[7] > 100 && s[6] && !/too large/.test(s[6]), 'deps: SHA-256: the slack is computed (more than 100 instructions of the chain have slack 0)', JSON.stringify(s.slice(5)));
     console.log(`deps: SHA-256: traced and drawn in ${s[2]} ms after the tab; long tasks ${JSON.stringify(s[3])}`);
   }
 
@@ -542,15 +560,16 @@ try {
     const r = await page.eval(`${HELPERS}
       const got = [];
       Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (t) => { got.push(t); } }, configurable: true });
-      const btn = (k) => document.querySelector('.ex-tools .ex-btn[data-format="' + k + '"]');
-      const out = { labels: [...document.querySelectorAll('.ex-tools > *')].map((e) => e.textContent), inTools: !!btn('md')?.closest('.table-tools') };
-      for (const k of ['md', 'csv', 'json']) { btn(k).click(); await wait(30); }
-      out.flash = btn('json').textContent;
+      // the control at the end of the tab row (copy-view.js): Markdown; Shift+click CSV; Alt+click JSON
+      const c = document.querySelector('#result-body .view-tabs .ws-copy');
+      const out = { label: c?.textContent, last: c === c?.parentElement.lastElementChild };
+      for (const mod of [{}, { shiftKey: true }, { altKey: true }]) { c.dispatchEvent(new MouseEvent('click', { bubbles: true, ...mod })); await wait(50); }
+      out.flash = $('status').textContent;
       out.got = got;
       return out;`);
-    check(r.labels.join() === 'copy,md,csv,json' && r.inTools && r.flash === 'copied', 'copy: three buttons in the tools above the uop table', JSON.stringify(r.labels));
+    check(r.label === 'copy' && r.last && /^copied/.test(r.flash), 'copy: one control, at the end of the tab row', JSON.stringify(r));
     const [md, csv, json] = r.got;
-    check(md?.startsWith('**2.00 cycles/iteration** · SKL') && /\| `add rax, 0x1` +\|/.test(md) && /\[open in wuica\]\(http:\/\/127\.0\.0\.1:\d+\/\?nosw=1#v=1&c=/.test(md), 'copy: Markdown with a link to the page', md);
+    check(md?.startsWith('**2.00 cycles/iteration** · SKL') && /\| `add rax, 0x1` +\|/.test(md) && /\| \*\*Total\*\* +\|/.test(md), 'copy: Markdown, the headline and the uop table (the whole result with its link: "copy all", web_copy_browser)', md);
     check(csv?.split('\r\n').length === want.rows.length + 2 && csv.startsWith('instruction,opcode,notes,MITE'), 'copy: CSV', csv);
     check(JSON.parse(json ?? '{}').response?.tp === want.tp && JSON.parse(json).request?.hex === chain.hex, 'copy: JSON with the request', (json ?? '').slice(0, 200));
   }

@@ -112,7 +112,7 @@ async function site() {
       if (msg.id) { const p = pending.get(msg.id); pending.delete(msg.id); if (msg.error) p.reject(new Error(`${p.method}: ${msg.error.message}`)); else p.resolve(msg.result); return; }
       if (msg.sessionId !== sessionId) return;
       const q = msg.params;
-      if (msg.method === 'Network.requestWillBeSent') reqs.set(q.requestId, { url: q.request.url, phase, bytes: 0, done: false, encoding: '', status: 0 });
+      if (msg.method === 'Network.requestWillBeSent') reqs.set(q.requestId, { url: q.request.url, phase, wall: (q.wallTime ?? 0) * 1000, bytes: 0, done: false, encoding: '', status: 0 });
       if (msg.method === 'Network.responseReceived' && reqs.has(q.requestId)) {
         const r = reqs.get(q.requestId);
         r.status = q.response.status;
@@ -147,6 +147,10 @@ async function site() {
     await cmd('Page.navigate', { url: `${SITE}/` });
     const shown = await waitFor(`/^\\d+\\.\\d\\d$/.test(document.querySelector('.tp .value')?.textContent ?? '')`, 60000);
     phase = 'later';
+    // the moment of the first result by the page's clock (app.js marks it): the requests sent until then are the first
+    // visit's (the assembler, which the page fetches right after it, is not)
+    const shownAt = await evaluate(`return performance.timeOrigin + (performance.getEntriesByName('wuica-first-result')[0]?.startTime ?? performance.now());`).catch(() => null);
+    for (const r of reqs.values()) if (shownAt && r.wall && r.phase === 'first' && r.wall > shownAt) r.phase = 'later';
     const page = await evaluate(`return { version: document.getElementById('app-version')?.textContent ?? null, tp: document.querySelector('.tp .value')?.textContent ?? null, error: document.querySelector('.error-box')?.textContent ?? '' };`).catch((e) => ({ error: e.message }));
     check(page.version === version, `the page's version (footer) is ${version}`, String(page.version));
     check(shown && !page.error, 'an analysis (the default example) gives a throughput', JSON.stringify(page));

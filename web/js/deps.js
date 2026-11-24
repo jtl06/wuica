@@ -10,6 +10,8 @@
 import { h } from './render.js';
 import { jumpToRow } from './rowjump.js';
 import { annotateLatencies, slackOfAsync, fmtSlack } from './deps-slack.js'; // latency per arc, slack per instruction
+import { setCopy } from './copy-view.js';
+import { deps as depsText } from './markdown.js';
 
 // as the trace view (trace.js): a trace grows with instructions × iterations; above this many uops it waits for a click
 const TRACE_LIMIT = 20000;
@@ -128,12 +130,18 @@ export function createDeps(env) {
     body.replaceChildren(h('p', { class: 'hint', text: 'tracing…' }));
     let graph = null, error = null;
     try {
-      const res = await env.engine().analyze({ ...v.request, includeTrace: true, details: true });
-      await yieldToPage(); // a large trace: receiving it, building the graph and drawing it are separate tasks
-      if (res?.error) error = res.error; else graph = depGraph(v.response, res.trace);
-      await yieldToPage();
+      const e = env.engine();
+      if (e.depGraph) { // made in the analyzer's worker: the page does not receive the trace (engine-rpc.js)
+        const made = await e.depGraph(v.request);
+        if (made?.error) error = made.error; else graph = made?.graph ?? null;
+      } else {
+        const res = await e.analyze({ ...v.request, includeTrace: true, details: true });
+        await yieldToPage(); // a large trace: receiving it, building the graph and drawing it are separate tasks
+        if (res?.error) error = res.error; else graph = depGraph(v.response, res.trace);
+        await yieldToPage();
+        if (graph) annotateLatencies(graph, v.response, res.details);
+      }
       if (graph) {
-        annotateLatencies(graph, v.response, res.details);
         await yieldToPage();
         graph.slack = await slackOfAsync(graph, v.response.criticalPath?.ratio, { slice: 12 });
         if (pending !== key) return;
@@ -193,7 +201,31 @@ export function createDeps(env) {
     };
     const latsCrit = s('g', { class: 'dp-lats' }, ...g.edges.filter((e) => e.critical).map((e) => latLabel(e, 'crit')).filter(Boolean));
     const latsSel = s('g', { class: 'dp-lats sel' });
-    svg.append(s('g', { class: 'dp-arcs' }, ...arcs), latsCrit, latsSel, s('g', { class: 'dp-nodes' }, ...labels));
+    // a large graph: only the instructions near the view are in the page, with the arcs that pass there (a graph of
+    // thousands of instructions is tens of thousands of SVG elements, which the page laid out whenever the tab came back)
+    const windowed = n > 300;
+    const gArcs = s('g', { class: 'dp-arcs' }, ...(windowed ? [] : arcs)), gNodes = s('g', { class: 'dp-nodes' }, ...(windowed ? [] : labels));
+    svg.append(gArcs, latsCrit, latsSel, gNodes);
+    let wa = -1, wb = -1;
+    const win = () => {
+      if (!windowed || !svg.isConnected) return;
+      const r = svg.getBoundingClientRect();
+      if (!r.height) return;
+      const wrap = svg.parentElement;
+      const box = wrap && wrap.scrollHeight > wrap.clientHeight + 1 ? wrap.getBoundingClientRect() : { top: 0, bottom: innerHeight };
+      const top = Math.max(box.top, 0), bottom = Math.min(box.bottom, innerHeight);
+      const a = Math.max(0, Math.floor((top - r.top) / ROW) - 40), b = Math.min(n, Math.ceil((bottom - r.top) / ROW) + 40);
+      if (a >= wa && b <= wb && wb - wa < 4 * (b - a + 80)) return;
+      wa = Math.max(0, a - 40); wb = Math.min(n, b + 40);
+      gNodes.replaceChildren(...labels.slice(wa, wb));
+      gArcs.replaceChildren(...arcs.filter((p, k) => { const e = g.edges[k]; return Math.max(e.a, e.b) >= wa && Math.min(e.a, e.b) < wb; }));
+    };
+    let winFrame = 0;
+    const winSoon = () => { if (!winFrame) winFrame = requestAnimationFrame(() => { winFrame = 0; win(); }); };
+    if (windowed) {
+      document.addEventListener('scroll', winSoon, { capture: true, passive: true });
+      if (typeof ResizeObserver === 'function') new ResizeObserver(winSoon).observe(svg);
+    }
 
     const info = h('p', { class: 'dp-info' });
     const describe = (i) => {
@@ -215,10 +247,21 @@ export function createDeps(env) {
       describe(sel);
       if (jump) jumpToRow(root, g.nodes[sel].row);
     };
+    // instruction i in view (drawn first, in a large graph)
+    const reveal = (i) => {
+      if (!windowed) { labels[i].scrollIntoView?.({ block: 'nearest' }); return; }
+      const wrap = svg.parentElement;
+      if (wrap && wrap.scrollHeight > wrap.clientHeight + 1) {
+        const yi = i * ROW;
+        if (yi < wrap.scrollTop) wrap.scrollTop = yi; else if (yi + ROW > wrap.scrollTop + wrap.clientHeight) wrap.scrollTop = yi + ROW - wrap.clientHeight;
+      }
+      win();
+      labels[i].scrollIntoView?.({ block: 'nearest' });
+    };
     svg.addEventListener('click', (e) => { const x = e.target.closest?.('.dp-node'); if (x) select(Number(x.dataset.i), true); });
     svg.addEventListener('keydown', (e) => {
       const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
-      if (step) { e.preventDefault(); select(sel + step); labels[sel].scrollIntoView?.({ block: 'nearest' }); }
+      if (step) { e.preventDefault(); select(sel + step); reveal(sel); }
       else if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); select(e.key === 'Home' ? 0 : n - 1); }
       else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(sel, true); }
     });
@@ -230,6 +273,7 @@ export function createDeps(env) {
       g.edges.some((e) => e.critical) ? h('span', { class: 'dp-k crit', title: 'the critical loop-carried chain, its latency per iteration; the numbers on the arcs are latencies in cycles', text: g.slack ? `chain ${+Number(g.slack.period).toFixed(2)}` : 'chain' }) : null,
       slack ? h('span', { class: 'dp-k sl', title: `slack (the column left of the arcs): cycles an instruction could be delayed in every iteration without lengthening the chain; 0 on the chain, ∞ off every loop-carried cycle${g.slack.partial ? '; too large a graph to compute' : ''}`, text: 'slack' }) : null);
     body.replaceChildren(legend, h('div', { class: 'dp-wrap' }, svg), info);
+    winSoon();
     // the slack column (a large graph: in a task of its own)
     const addSlack = (from, to) => { for (let i = from; i < to; i++) {
       const sv = fmtSlack(slack[i]);
@@ -245,6 +289,8 @@ export function createDeps(env) {
     const { graph, error } = cache;
     if (error) { body.replaceChildren(h('p', { class: 'caveat', text: `no dependencies: ${error}` })); body.dataset.state = 'error'; return; }
     if (!graph) return;
+    const shown = view?.shown ?? null;
+    setCopy('deps', { what: 'the dependencies', md: () => depsText(graph, { shown, slack: graph.slack?.slack ? graph.nodes.map((_, i) => fmtSlack(graph.slack.slack[i])) : null }) });
     const c = graph.edges.filter((e) => e.dist).length;
     hint.textContent = ` · ${graph.edges.length} edge${graph.edges.length === 1 ? '' : 's'}, ${c} ↻`;
     draw(graph);
@@ -257,10 +303,12 @@ export function createDeps(env) {
     const r = v?.response;
     const ok = r && !r.error && Array.isArray(r.rows) && !r.mock && v.request;
     row.hidden = !ok;
+    if (!ok || cache.key !== keyOf(v)) setCopy('deps', null); // (until this result's graph is drawn)
     if (!ok) return;
     const key = keyOf(v);
     if (cache.key !== key) hint.textContent = '';
-    if (!open) { body.replaceChildren(); body.dataset.state = 'closed'; return; }
+    // closed (another tab): the drawn graph of this result stays, so the tab comes back without drawing it again
+    if (!open) { if (!(cache.key === key && body.dataset.state === 'done')) { body.replaceChildren(); body.dataset.state = 'closed'; } return; }
     if (cache.key === key) { if (body.dataset.state !== 'done' || !body.firstChild) paint(); return; }
     const instrs = r.rows.filter((x) => x.kind === 'instr').length;
     const est = traceEstimate(instrs, v.request);

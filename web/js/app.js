@@ -10,7 +10,7 @@ import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES, MOCK_EXAMPLES } from './
 import { fetchBytes, fetchManifest, PATHS, formatSize, whenIdle, gunzip } from './loader.js';
 import { WasmAssembler, isWasm, MAX_CODE_BYTES, tooMuchCode } from './assembler.js';
 import { WorkerAssembler, PageAssembler } from './assembler-rpc.js'; // large sources in a worker of its own
-import { renderResult, renderEmpty, renderFailure, copyText, h, row } from './render.js';
+import { renderResult, renderEmpty, renderFailure, copyText, h, row, messageList } from './render.js';
 import { latestWins } from './compare.js';
 import { createComparePanels } from './compare-view.js';
 import { createTracePanel, createABTracePanel } from './trace.js';
@@ -24,6 +24,9 @@ import { createViews } from './views.js';         // the opt-in views below the 
 import { createABSlots } from './ab-slots.js';     // A–B: the issue slots of both sides
 import { createCmpSlots } from './cmp-slots.js';   // the issue slots per CPU in the CPU table (bound view open)
 import { withRegions } from './asm-regions.js';     // marked regions and .loc lines of pasted assembly
+import { createShipped } from './asm-shipped.js';    // the examples' machine code: their results before the assembler loads
+import { createCopy, setCopy } from './copy-view.js';
+import { report, cpuTable, compare } from './markdown.js';          // copying a view, or the whole result, as text
 import { createRegionChip, createLoopChip } from './region-chip.js';
 import { replacesText, detectSyntax } from './loop-find.js';
 import { createKeys } from './keys.js';           // keyboard shortcuts, the ? overlay
@@ -80,6 +83,7 @@ let lastFragment = null;
 const tables = new Map(); // table name -> promise of "loaded into the engine"
 const tableData = new Map(); // table name -> promise of its bytes (the main engine and the pool's workers share them)
 let assemblerPromise = null;
+let assemblerLoaded = false; // the assembler is there (or known missing): no more answers from the examples' machine code
 let assemblerMissing = false; // true: this build has no assembler (final); a failed load of an existing one is not
 let assemblerError = '';
 let assembling = null;  // AbortController of the assembly of the current run: a newer run or an edit stops it
@@ -149,7 +153,10 @@ const insight = createInsight({
 let pastedSource = null; // the .loc lines of pasted assembly (asm-regions.js), bound to its bytes
 const regionChip = createRegionChip(el.messages, (line) => selectLine(line));
 // what of pasted assembly is analyzed (loop-find.js): the loop chip sets state.loop
-const loopChip = createLoopChip(el.messages, (v) => { if (state.loop === v) return; state.loop = v; changed({ rerun: true }); });
+// (in A's row of controls, after the options: the editor keeps its height)
+// (single: else next to the single / A–B switch; at last under the editor, as before)
+const loopChip = createLoopChip(el.advanced, (v) => { if (state.loop === v) return; state.loop = v; changed({ rerun: true }); }, 'loop-chip',
+  () => [...(document.body.classList.contains('ab-on') ? [] : [document.querySelector('.ab-switch')].filter(Boolean)), el.messages]);
 // Where the alignment offset came from: 'auto' (the analyzed code's address, objdump input: set again for each pick, and
 // back to the default for a text without addresses), 'manual' (by hand, a link, an import: kept until the text is
 // replaced), or null (the default).
@@ -163,6 +170,7 @@ let syntaxChosen = false; // the user picked the syntax (not the page from a pas
 function newTextA() { state.loop = 'auto'; if (alignBy === 'manual') alignBy = null; textA = el.code.value; }
 function newTextB() { bLoop = 'auto'; textB = document.getElementById('code-b')?.value ?? ''; }
 const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o),
+  work: (v) => (v?.side === 'b' ? state.bWork : state.aWork), // elements per iteration of the shown result (its side in A–B)
   assemble: async (text) => { const a = await ensureAssembler(); return a ? a.assemble(text, 'intel') : null; }, cpus: () => checked, onToggle: (open) => { Object.assign(state, open); syncUrl(true); if ('bound' in open) cmpSlots.decorate(); }, getSel: () => state.sel, getSource: () => (ceSource && (!pastedSource || ceSource.hex === lastView?.hex) ? ceSource : pastedSource),
   // llvm-mca (mca.js): its module only if the build has it, downloaded on first use; the bytes as Intel assembly
   mca: {
@@ -175,8 +183,10 @@ let mcaModule = null;
 // The trace (trace.js), below both panes; linked to the uop table (trace-link.js). Its open state and the selected row
 // are in the URL.
 const traceOpened = (open) => { if (state.trace === open) return; state.trace = open; syncUrl(true); };
+// the trace's model made in the analyzer's worker (engine-rpc.js), or null on the page's own thread (trace.js does it)
+const traceModel = (request, opts) => (engine?.traceModel ? engine.traceModel(request, opts) : Promise.resolve(null));
 const tracePanel = createTracePanel({
-  analyze: (request) => engine.analyze(request), config: (v) => uarch?.configs?.[v.archKey],
+  analyze: (request) => engine.analyze(request), config: (v) => uarch?.configs?.[v.archKey], traceModel,
   onToggle: traceOpened,
   onHoverGroup: (g) => traceLink.fromTraceHover(g),
   onPickGroup: (g) => traceLink.fromTracePick(g),
@@ -189,7 +199,7 @@ const traceLink = createTraceLink({
   onWaits: (on) => { state.waits = on; syncUrl(true); },
 });
 // A–B: the traces of both sides on one time axis
-const abTracePanel = createABTracePanel({ analyze: (request) => engine.analyze(request), config: (side) => uarch?.configs?.[side.archKey], onToggle: traceOpened });
+const abTracePanel = createABTracePanel({ analyze: (request) => engine.analyze(request), config: (side) => uarch?.configs?.[side.archKey], traceModel, onToggle: traceOpened });
 let ab = null; // the A–B comparison (ab.js); in A–B mode lastView is {ab: view} (the A–B traces, no compare panels)
 let ce = null; // the Compiler Explorer import (godbolt-ui.js)
 
@@ -211,10 +221,14 @@ function paintStatus() {
   } else {
     el.status.textContent = idleStatus;
     el.statusBar.style.width = '0';
-    el.statusWrap.classList.add('idle'); // dense mode hides it: the result says the same
+    el.statusWrap.classList.add('idle'); // (hidden while idle: the result says the same)
   }
 }
 function setIdle(text) { idleStatus = text; paintStatus(); }
+// Copying as text (copy-view.js): the tab row's control and the key c copy the shown tab; "copy all" the whole result
+createCopy({ copyText, flash: (t, o) => flash(t, o), current: () => document.querySelector('#result-body .view-tab[aria-selected="true"]')?.dataset.tab ?? null,
+  stale: () => !!lastView && (runKey() !== lastRunKey || !!inputErrorNote) });
+
 function flash(text, { error = false, ms = 2500 } = {}) {
   clearTimeout(flashTimer);
   el.statusWrap.classList.remove('idle');
@@ -481,21 +495,7 @@ function selectLine(line) {
 function showMessages(items) {
   const key = JSON.stringify(items);
   if (el.messages.dataset.key === key && el.messages.firstChild) return; // the same: keep them (and their focus)
-  const list = h('ul');
-  for (const d of items) {
-    const where = d.line ? `line ${d.line}${d.column ? ':' + d.column : ''}: ` : '';
-    const text = `${where}${d.severity === 'warning' ? 'warning: ' : ''}${d.message}`;
-    const li = h('li', { class: d.severity === 'error' ? null : d.severity });
-    if (d.line) {
-      const b = h('button', { type: 'button', class: 'plain', title: `select line ${d.line}`, text });
-      b.addEventListener('click', () => selectLine(d.line));
-      li.append(b);
-    } else {
-      li.textContent = text;
-    }
-    list.append(li);
-  }
-  el.messages.replaceChildren(list);
+  el.messages.replaceChildren(...messageList(items, selectLine));
   el.messages.dataset.key = key;
   if (items.some((d) => d.severity === 'error')) el.code.setAttribute('aria-invalid', 'true'); else el.code.removeAttribute('aria-invalid');
 }
@@ -528,6 +528,13 @@ function setMode(mode, converted = null) { // converted: the code in the new for
 
 function ensureAssembler() {
   assemblerPromise ??= (async () => withRegions(await (async () => {
+    try { return await loadAssembler(); } finally { assemblerLoaded = !!assemblerPromise || assemblerMissing; }
+  })()))();
+  return assemblerPromise;
+}
+// (the module, or null; a failure to load an existing one is not final: assemblerPromise is cleared to try again)
+async function loadAssembler() {
+  return await (async () => {
     if (manifest.assembler !== false) { // false: build.sh found no module, so do not even ask for it
       try {
         const bytes = await download('assembler', PATHS.assembler);
@@ -551,9 +558,20 @@ function ensureAssembler() {
     }
     assemblerMissing = true;
     return null;
-  })()))();
-  return assemblerPromise;
+  })();
 }
+
+// The first visit does not wait for the assembler (wuica_asm.wasm, about 940 kB as served): a built-in example's text
+// is answered with its machine code (asm-shipped.js; the same result as assembling it), and the assembler is fetched
+// in the background once the first result is shown, or at once when the visit starts with other code in the link, or
+// when an editor is first focused, edited or pasted into. Code that is not an example waits for it (the status shows
+// its download).
+const shipped = createShipped([...EXAMPLES, ...CLASSIC_EXAMPLES, ...SHOWCASE_EXAMPLES]);
+async function shippedCode(text, syntax, loop) {
+  if (assemblerLoaded || MOCK) return null;
+  return shipped(text, syntax, loop);
+}
+function assemblerSoon() { if (!assemblerPromise && !assemblerLoaded && (state.mode === 'asm' || ab?.active())) ensureAssembler(); }
 
 // The assembler for side B of a run: its jobs stop with the run (as side A's in machineCode()).
 async function assemblerForRun() {
@@ -711,9 +729,10 @@ function showTrace(panel) {
 
 function draw() {
   paintSideEmpty(false);
-  if (!lastView) { showTrace(null); return; }
+  if (!lastView) { showTrace(null); setCopy('all', null); setCopy('diff', null); return; }
   if (lastView.ab) {
     ab.draw(lastView.ab);
+    copyAB(lastView.ab, lastView.snap);
     abTracePanel.setOpen(state.trace);
     showTrace(abTracePanel.update(lastView.ab));
     // the page's views show one side (abSide; the other if it has no result)
@@ -726,15 +745,22 @@ function draw() {
   }
   tracePanel.setOpen(state.trace); // (opened or closed in A–B mode meanwhile)
   const trace = lastView.response && !lastView.response.error && Array.isArray(lastView.response.rows) ? tracePanel.update(lastView) : null;
-  const onUi = (k, v) => { ui[k] = v; if (k === 'hideEmpty' || k === 'allRows') draw(); };
+  const onUi = (k, v) => { ui[k] = v; if (k === 'hideEmpty') draw(); };
   renderResult(el.body, { ...lastView, config: uarch?.configs?.[lastView.archKey], ui, onUi, work: state.aWork, workFlag: !!ab?.flagged?.('a') && state.aWork !== 1 });
   showTrace(trace);
+  copySingle(lastView);
   insight.decorate(el.body, lastView);
   traceLink.decorate(el.body, lastView, { onUi });
   views.decorate(el.body, lastView);
   paintStale();
 }
 
+// p, or null as soon as signal aborts
+function untilAborted(p, signal) {
+  if (!signal) return p;
+  if (signal.aborted) return Promise.resolve(null);
+  return Promise.race([p, new Promise((resolve) => signal.addEventListener('abort', () => resolve(null), { once: true }))]);
+}
 async function machineCode(id) {
   const text = el.code.value;
   pastedSource = null; regionChip.show(null); loopChip.show(null); srcA = null;
@@ -755,22 +781,29 @@ async function machineCode(id) {
     showMessages([{ line: null, column: null, severity: 'error', message: 'No code' }]);
     return null;
   }
-  const assembler = await ensureAssembler();
+  let r = await shippedCode(text, state.syntax, state.loop);
   if (id !== runSeq) return null;
-  if (!assembler) { showAssemblerMissing(); paintDerived(); return null; }
-  let r;
-  try {
-    r = await assembler.assemble(text, state.syntax, { signal: assembling?.signal, loop: state.loop });
-    // a loop picked for another text that has fewer loops: the first one again
-    if (!r.ok && state.loop !== 'auto' && id === runSeq && r.diagnostics.some((d) => /^loop: /.test(d.message))) {
-      state.loop = 'auto';
+  let mock = false;
+  if (!r) {
+    // (the wait for the assembler's download ends with the run's assembly: an edit stops it, liveSchedule)
+    const signal = assembling?.signal ?? null;
+    const assembler = await untilAborted(ensureAssembler(), signal);
+    if (id !== runSeq || signal?.aborted) return null;
+    if (!assembler) { showAssemblerMissing(); paintDerived(); return null; }
+    mock = !!assembler.mock;
+    try {
       r = await assembler.assemble(text, state.syntax, { signal: assembling?.signal, loop: state.loop });
+      // a loop picked for another text that has fewer loops: the first one again
+      if (!r.ok && state.loop !== 'auto' && id === runSeq && r.diagnostics.some((d) => /^loop: /.test(d.message))) {
+        state.loop = 'auto';
+        r = await assembler.assemble(text, state.syntax, { signal: assembling?.signal, loop: state.loop });
+      }
+    } catch (e) {
+      if (e?.name === 'CancelledError') return null; // replaced by a newer run, an edit, or Cancel
+      throw e;
     }
-  } catch (e) {
-    if (e?.name === 'CancelledError') return null; // replaced by a newer run, an edit, or Cancel
-    throw e;
+    if (id !== runSeq) return null;
   }
-  if (id !== runSeq) return null;
   // the alignment offset from the analyzed code's address (objdump), for each pick; none for a text without addresses
   // (not one left from the last text); an offset set by hand, in a link or by an import stays
   if (r.ok && alignBy !== 'manual') {
@@ -783,7 +816,7 @@ async function machineCode(id) {
   // what it assembled to is the result's objdump listing
   const items = [...r.diagnostics];
   if (r.ok && r.bytes.length === 0) items.push({ line: null, column: null, severity: 'error', message: 'No machine code' });
-  if (r.ok && r.bytes.length && assembler.mock) items.push({ line: null, column: null, severity: 'note', message: 'mock assembler' });
+  if (r.ok && r.bytes.length && mock) items.push({ line: null, column: null, severity: 'note', message: 'mock assembler' });
   if (items.length) showMessages(items); else clearMessages();
   if (r.ok && r.bytes.length) { regionChip.show(r.region ?? null, text); loopChip.show(r, text); pastedSource = r.source ? { ...r.source, hex: toHex(r.bytes) } : null; srcA = analyzedLines(text, r); }
   else if (r.choosable) loopChip.show(r, text); // the pick does not assemble: "whole" (or another loop) stays reachable
@@ -830,6 +863,7 @@ async function run({ auto = false } = {}) {
   if (!ready || el.run.disabled) return;
   if (ce?.linkBox()) return; // a box that holds only a Compiler Explorer link is imported (analyze()), never analyzed
   const input = runInput();
+  const inputB = ab?.active() ? ab.getB() : null; // (B's code as this run reads it: the result's copy, snapshotOf)
   let key = runKey(input);
   const messages = !!el.messages.firstChild || !!ab?.hasMessages();
   if (auto && ((busy && key === inflight.key) || key === cancelledKey || (lastView && key === lastRunKey && !messages))) return;
@@ -840,7 +874,7 @@ async function run({ auto = false } = {}) {
   if (!auto) clearMessages();
   const ctrl = new AbortController();
   assembling = ctrl;
-  if (ab?.active()) { await runCompare(id, key, { auto, ctrl }); return; } // awaited: live mode runs one comparison at a time
+  if (ab?.active()) { await runCompare(id, key, { auto, ctrl, snap: () => snapshotOf(input, inputB) }); return; } // awaited: live mode runs one comparison at a time
   const archKey = state.arch;
   let opts = options();
   const item = archItems.get(archKey);
@@ -889,6 +923,7 @@ async function run({ auto = false } = {}) {
       archKey, archTitle: archTitle(archKey, item.experimental), experimental: item.experimental,
       shown: response && !response.error && Array.isArray(response.rows) ? branchLabels(response.rows, srcA) : null,
     };
+    lastView.snap = snapshotOf(input, null);
     lastRunKey = key;
     draw();
     if (response && !response.error) {
@@ -926,7 +961,7 @@ function analyze() {
 }
 
 // A–B mode: both sides, one after the other (ab.js gets the machine code and draws the comparison). auto: as in run().
-async function runCompare(id, key, { auto = false, ctrl = null } = {}) {
+async function runCompare(id, key, { auto = false, ctrl = null, snap = () => null } = {}) {
   const current = () => id === runSeq;
   const opts = options();
   let input;
@@ -958,7 +993,7 @@ async function runCompare(id, key, { auto = false, ctrl = null } = {}) {
     const view = await ab.analyze(input, (hex, arch) => engine.analyze(makeRequest(hex, arch, opts)), current);
     if (!view || !current()) return;
     for (const s of [view.a, view.b]) if (s) s.request = makeRequest(s.hex, s.archKey, opts); // for the traces
-    lastView = { ab: view };
+    lastView = { ab: view, snap: snap() };
     lastRunKey = key;
     draw();
     updateABCpus(view, { auto });
@@ -990,7 +1025,7 @@ function abView() {
   if (!v) return null;
   return okSide(v[abSide]) ? v[abSide] : null; // (never the other side's: its views say there is none)
 }
-// A–B, the side the views show has no result: one line instead of the views (dense.css hides them while one is picked)
+// A–B, the side the views show has no result: one line instead of the views (style.css hides them while one is picked)
 let sideEmpty = null;
 function paintSideEmpty(empty) {
   el.results.classList.toggle('side-empty', empty);
@@ -1003,6 +1038,48 @@ function paintSideEmpty(empty) {
 const bOwnCpu = () => !!state.bArch && state.bArch !== state.arch && archItems.has(state.bArch);
 // the table of A and B per checked CPU (ab-cpus.js); the results of the comparison itself are reused
 const summaryOf = (r) => ({ tp: Number(r.tp), bottlenecks: r.bottlenecks ?? [], mode: r.mode, decodeErrors: Number(r.decodeErrors) || 0, mock: !!r.mock });
+// Copying the whole result as text (copy-view.js; the text: markdown.js): single, the result (report) with the table of
+// the checked CPUs; A–B, the comparison (compare, with A and B per checked CPU), then each side's result. "diff": the
+// comparison of A–B's first tab.
+// A copy is of the result on screen: the code and the link as they were when it was analyzed (snapshotOf, kept with the
+// result), never the editor's text since; the elements per iteration as the result shows them.
+const linkOf = (s) => { const f = encodeState(s); return location.origin + location.pathname + (f ? '#' + f : ''); };
+function snapshotOf(input, inputB) {
+  const a = { mode: input.mode, syntax: input.syntax, text: input.text };
+  const s = { ...collectState(), mode: a.mode, syntax: a.syntax, text: a.text, arch: input.arch };
+  if (inputB) Object.assign(s, { bMode: inputB.mode, bSyntax: inputB.syntax, bText: inputB.text });
+  return { a, b: inputB ? { ...inputB } : null, state: s };
+}
+// the link of the result shown, with the elements per iteration it shows
+const linkNow = (snap) => linkOf(snap ? { ...snap.state, aWork: state.aWork, bWork: state.bWork } : collectState());
+const sideMeta = (s, work) => ({ arch: s.archKey, archTitle: s.archTitle, per: work, config: uarch?.configs?.[s.archKey] ?? null, shown: s.shown ?? null });
+const codeOf = (c) => (c ? { code: String(c.text ?? '').replace(/\s+$/, ''), lang: c.mode === 'hex' ? '' : 'asm' } : {});
+function copySingle(v) {
+  setCopy('diff', null);
+  const r = v.response;
+  if (!r) { setCopy('all', null); return; }
+  const work = state.aWork, snap = v.snap ?? null;
+  setCopy('all', { what: 'the whole result', md: () => {
+    const all = report(r, { ...sideMeta(v, work), ...codeOf(snap?.a), link: linkNow(snap) });
+    const cpus = panels.cpuResults();
+    if (!cpus) return all;
+    // the table of the checked CPUs after the headline and limits
+    const k = all.indexOf('\n\n');
+    return k < 0 ? `${all}\n${cpuTable(cpus, { per: work })}` : `${all.slice(0, k + 2)}${cpuTable(cpus, { per: work })}\n${all.slice(k + 2)}`;
+  } });
+}
+function copyAB(view, snap = null) {
+  const meta = { workA: view.workA, workB: view.workB, archA: view.a?.archKey, archB: view.b?.archKey, shownA: view.a?.shown ?? null, shownB: view.b?.shown ?? null };
+  setCopy('diff', view.cmp?.okA && view.cmp?.okB ? { what: 'the A–B comparison', md: () => compare(view.a.response, view.b.response, { ...meta, cpus: abCpus.rows() }) } : null);
+  setCopy('cpus', null); // (A–B: the table of A and B per CPU is copied with the diff)
+  setCopy('all', { what: 'the whole A–B result', md: () => [
+    compare(view.a?.response, view.b?.response, { ...meta, cpus: abCpus.rows() }),
+    report(view.a?.response, { title: 'A', ...(view.a ? sideMeta(view.a, view.workA) : {}), ...codeOf(snap?.a) }),
+    report(view.b?.response, { title: 'B', ...(view.b ? sideMeta(view.b, view.workB) : {}), ...codeOf(snap?.b) }),
+    `[open in wuica](${linkNow(snap)})\n`,
+  ].join('\n') });
+}
+
 function updateABCpus(view, { auto = false } = {}) {
   const seed = new Map();
   for (const s of [view.a, view.b]) if (okSide(s)) seed.set(`${s.side}:${s.archKey}`, summaryOf(s.response));
@@ -1067,6 +1144,17 @@ function settleMode({ replacing = false } = {}) {
   switchingFrom = null;
 }
 // side A or B, the new format, the box's text for it, apply(converted | null): the switch
+// A built-in example's text in the other format, from the example itself (no assembler needed: the first visit does not
+// wait for it): {text, syntax} or null. Not where the example's machine code is not what its text assembles to.
+function exampleIn(code, mode) {
+  const key = code.mode === 'asm' ? code.syntax : 'hex';
+  const ex = ALL_EXAMPLES.find((e) => e.text?.[key] === code.text);
+  if (!ex) return null;
+  if (mode === 'hex') return typeof ex.text.hex === 'string' ? { text: ex.text.hex } : null;
+  const syntax = code.mode === 'asm' ? code.syntax : state.syntax;
+  return typeof ex.text[syntax] === 'string' ? { text: ex.text[syntax], syntax } : null;
+}
+
 async function switchMode(side, mode, other, apply) {
   const box = side === 'B' ? $('code-b') : el.code;
   const radio = side === 'B' ? $('b-mode-asm') : el.modeAsm;
@@ -1078,7 +1166,7 @@ async function switchMode(side, mode, other, apply) {
   box.readOnly = true;
   if (side === 'A') switchingFrom = before.text;
   let c = null;
-  try { c = await converter.convert(before, mode, other); } catch { c = null; } finally { if (seq === switching[side]) box.readOnly = false; }
+  try { c = exampleIn(before, mode) ?? await converter.convert(before, mode, other); } catch { c = null; } finally { if (seq === switching[side]) box.readOnly = false; }
   const now = get();
   if (seq !== switching[side] || now.mode !== before.mode || radio.checked !== (mode === 'asm')) return; // clicked again, settled, or an import
   if (side === 'A') switchingFrom = null;
@@ -1160,7 +1248,7 @@ function setupFeatures() {
   // side B's loop chip, and its pick back to the first loop when B's text is replaced
   const bCode = document.getElementById('code-b');
   if (bCode) {
-    bLoopChip = createLoopChip(document.getElementById('b-messages'), (v) => { if (bLoop === v) return; bLoop = v; changed({ rerun: true }); }, 'loop-chip-b');
+    bLoopChip = createLoopChip(document.getElementById('b-arch').closest('label'), (v) => { if (bLoop === v) return; bLoop = v; changed({ rerun: true }); }, 'loop-chip-b', () => [document.getElementById('b-messages')]); // (in B's row, else under its editor)
     textB = bCode.value;
     bCode.addEventListener('input', () => {
       if (replacesText(textB, bCode.value)) newTextB(); else textB = bCode.value;
@@ -1305,7 +1393,7 @@ function bind() {
   el.cpuGrid.addEventListener('change', cpusChanged);
   el.cpuAll.addEventListener('click', () => { setChecked([...archItems.keys()]); paintDerived(); syncUrl(true); });
   el.cpuClear.addEventListener('click', () => { setChecked([state.arch]); paintDerived(); syncUrl(true); });
-  // phones: only the checked CPUs show (dense.css); "more" shows them all
+  // phones: only the checked CPUs show (style.css); "more" shows them all
   $('cpu-more')?.addEventListener('click', (e) => {
     const open = el.cpus.classList.toggle('open');
     e.currentTarget.textContent = open ? 'less' : 'more';
@@ -1393,8 +1481,12 @@ async function start() {
   manifest = await fetchManifest();
   el.buildId.textContent = manifest.version;
   registerServiceWorker();
-  // the assembler loads while the analyzer does: the first result in asm mode needs both
-  if (state.mode === 'asm') ensureAssembler();
+  // other code in the link: the assembler loads while the analyzer does (the first result needs both); a built-in
+  // example's needs only the analyzer, and the assembler follows it (assemblerSoon, below)
+  const own = state.mode === 'asm' && !(await shippedCode(el.code.value, state.syntax, state.loop));
+  if (state.mode === 'asm' && (own || ab?.active())) ensureAssembler();
+  for (const box of [el.code, $('code-b')].filter(Boolean)) for (const ev of ['focus', 'input', 'paste']) box.addEventListener(ev, assemblerSoon);
+  whenShown(assemblerSoon);
 
   try {
     const wasmBytes = MOCK ? null : download('analyzer', PATHS.wasm);
@@ -1432,7 +1524,7 @@ async function start() {
 
   ready = true;
   setIdle('ready');
-  if (state.mode === 'asm') {
+  if (state.mode === 'asm' && assemblerPromise) {
     const a = await ensureAssembler();
     if (!a) showAssemblerMissing();
   }
@@ -1443,6 +1535,14 @@ async function start() {
     renderEmpty(el.body);
     if (!hadState && !touched) autoFirst(); // a fresh visit: the default example
   }
+}
+
+// cb, once the first result is on the page (then the assembler loads without delaying it)
+// (it marks the moment as 'wuica-first-result' in the performance timeline: tests-js/web_host_browser.mjs)
+function whenShown(cb) {
+  if (el.results.dataset.run) { cb(); return; }
+  const o = new MutationObserver(() => { if (el.results.dataset.run) { o.disconnect(); performance.mark?.('wuica-first-result'); requestAnimationFrame(() => setTimeout(cb, 0)); } });
+  o.observe(el.results, { attributes: true, attributeFilter: ['data-run'] });
 }
 
 // A fresh visit (no state in the link, nothing typed): the default example is analyzed once, after the next frame

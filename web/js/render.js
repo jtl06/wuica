@@ -4,6 +4,7 @@ import { columnKind } from './bound-core.js';
 import { caveats } from './caveats.js';
 import { formatListing } from './listing.js';
 import { accuracyNote } from './archs.js';
+import { VRows, ALL_UP_TO } from './vrows.js';
 
 const UOPS_INFO = 'https://www.uops.info/';
 
@@ -12,7 +13,6 @@ export const NOTES = Object.freeze({
   J: 'block not in the DSB (uop cache) because of the JCC erratum',
   X: 'instruction not supported (no data)',
 });
-export const LEGEND = Object.freeze({ M: 'macro-fused', J: 'JCC erratum', X: 'no data' });
 
 export function h(tag, attrs, ...children) {
   const el = document.createElement(tag);
@@ -79,13 +79,20 @@ function copyButton(getText, what) {
 }
 
 // A collapsible block of plain text with a copy button; `open` is kept by the caller across redraws.
+// text: the text, or a function that makes it. The text goes into the page when the block is opened: a long block's
+// listing and report are hundreds of kB, which the page would lay out on every result even while they are closed.
 function textBlock(cls, summary, text, open, onToggle) {
+  let made = null;
+  const get = () => (made ??= typeof text === 'function' ? text() : text);
+  const pre = h('pre', { class: cls, tabindex: '0', 'aria-label': summary });
   const d = h('details', { class: `${cls}-wrap text-block`, open },
     h('summary', { text: summary }),
-    copyButton(() => text, summary),
-    h('pre', { class: cls, tabindex: '0', 'aria-label': summary, text }));
+    copyButton(get, summary),
+    pre);
+  const fill = () => { if (!pre.firstChild && (d.open || typeof text !== 'function')) pre.textContent = get(); };
+  fill();
   let last = !!open; // the toggle event also fires for the initial state: report changes only
-  d.addEventListener('toggle', () => { if (d.open !== last) { last = d.open; onToggle(d.open); } });
+  d.addEventListener('toggle', () => { fill(); if (d.open !== last) { last = d.open; onToggle(d.open); } });
   return d;
 }
 
@@ -124,7 +131,7 @@ const MIN_INSTR_PX = { uops: 120, 'ab-diff': 80 };
 const fitting = typeof ResizeObserver === 'function' ? new ResizeObserver((entries) => {
   for (const e of entries) requestAnimationFrame(() => fitInstr(e.target)); // (outside the observer's delivery)
 }) : null;
-// Measured, not computed: the instructions' texts (dense.css caps them, not the cells: a table cell's max-width does not
+// Measured, not computed: the instructions' texts (style.css caps them, not the cells: a table cell's max-width does not
 // bind its column) start uncut and are cut until nothing sticks out of the wrap (scrollWidth also counts what overflows
 // the table: borders, a group's name over a narrow last column, rounding), a few times at most.
 export function fitInstr(wrap) {
@@ -169,8 +176,9 @@ export function uopTable(r, hideEmpty, limit = Infinity, { shown = null } = {}) 
       return h('th', { scope: 'col', class: cls(i, 'pg'), 'data-col': name, title: name }, first ? h('span', { class: 'cg', text: g.group }) : null, g.n);
     }));
 
-  const body = h('tbody');
-  (r.rows.length > limit ? r.rows.slice(0, limit) : r.rows).forEach((x, k) => {
+  // a row of the model (vrows.js draws the rows near the view of a long table)
+  const make = (k) => {
+    const x = r.rows[k];
     const extra = x.kind !== 'instr';
     const text = shown?.[k] ?? x.label;
     let label = text;
@@ -186,8 +194,21 @@ export function uopTable(r, hideEmpty, limit = Infinity, { shown = null } = {}) 
       if (kinds[i] === 'port' && v !== 0) td.style.setProperty('--h', Math.min(1, Math.max(0.12, v)).toFixed(2));
       tr.append(td);
     }
-    body.append(tr);
-  });
+    return tr;
+  };
+  // a long table (drawn in a window): the widest text of each column, in a row that takes no height (visibility:
+  // collapse), so the columns keep their width whichever rows are drawn (the port fit, fitInstr, measures its
+  // instruction too); a short one draws all its rows anyway
+  const body = h('tbody');
+  if (r.rows.length > ALL_UP_TO) {
+    const widest = (texts) => texts.reduce((a, t) => (t.length > a.length ? t : a), '');
+    const label = widest(r.rows.map((x, k) => String(shown?.[k] ?? x.label ?? '')));
+    body.append(h('tr', { class: 'vr-size', 'aria-hidden': 'true' },
+      h('th', { class: 'first' }, h('span', { text: label })),
+      h('td', { class: 'note', text: widest(r.rows.map((x) => String(x.notes ?? ''))) }),
+      cols.map((i) => h('td', { class: cls(i), text: widest(r.rows.map((x) => fmt(Number(x.values?.[i]) || 0))) }))));
+  }
+  const vr = new VRows(body, r.rows.length, make);
 
   const foot = h('tr', null,
     h('th', { scope: 'row', class: 'first', text: 'Total' }),
@@ -195,18 +216,10 @@ export function uopTable(r, hideEmpty, limit = Infinity, { shown = null } = {}) 
     cols.map((i) => h('td', { class: cls(i), text: fmt(totals[i]) })));
 
   const table = h('table', { class: 'grid uops' }, h('thead', null, head), body, h('tfoot', null, foot));
-  return { table, hidden: n - cols.length, notes: new Set(r.rows.map((x) => x.notes).filter((k) => NOTES[k])), more: Math.max(0, r.rows.length - limit) };
+  table.vr = vr;
+  return { table, hidden: n - cols.length, notes: new Set(r.rows.map((x) => x.notes).filter((k) => NOTES[k])), more: 0 };
 }
 
-// A long block (thousands of rows) draws its first rows at once; the rest on request (one long layout otherwise).
-export const ROWS_AT_ONCE = 400;
-export const ROWS_FIRST = 200;
-export const rowLimit = (n, all) => (all || n <= ROWS_AT_ONCE ? Infinity : ROWS_FIRST);
-export function moreRows(more, total, onAll) {
-  const b = h('button', { type: 'button', class: 'plain', text: `show all ${total.toLocaleString('en-US')} rows` });
-  b.addEventListener('click', onAll);
-  return h('p', { class: 'more-rows hint' }, `${more.toLocaleString('en-US')} more rows · `, b);
-}
 
 function mockLine(m, archKey) {
   if (m.synthetic) return 'mock data: synthetic, not a prediction';
@@ -221,7 +234,7 @@ function mockLine(m, archKey) {
 //   byteCount, hex,           the machine code that was analyzed
 //   inputMode,                'asm' | 'hex': the listing remembers its open state per input mode
 //   elapsedMs,                (the cycle-by-cycle trace is drawn by app.js below the result, full width)
-//   ui: { hideEmpty, reportOpen, listingOpen: {asm, hex} (null: closed), allRows }, onUi(name, value)
+//   ui: { hideEmpty, reportOpen, listingOpen: {asm, hex} (null: closed) }, onUi(name, value)
 //   config,                   the CPU's configuration in uarch.json (configs[archKey]), for the caveats (optional)
 // }
 // Known blind spots of the model that the block meets (caveats.js): one small line, the details in the tooltips.
@@ -275,6 +288,7 @@ export function renderResult(root, view) {
           h('span', { class: 'value', title: w > 1 ? `${Number(r.tp).toFixed(2)} cycles/iteration ÷ ${w}` : null, text: w > 1 ? cyc(Number(r.tp) / w) : Number(r.tp).toFixed(2) }), ' ',
           h('span', { class: `unit${view.workFlag ? ' caveat' : ''}`, title: view.workFlag ? 'the code changed since its elements per iteration were set' : null, text: `${w > 1 ? 'cycles/element' : 'cycles/iteration'}${view.workFlag ? '?' : ''}` })),
         h('span', { class: 'meta', title: details }, mode, sep(), h('span', { class: view.experimental ? 'caveat' : null, text: view.archTitle })),
+        copyAllButton(),
         h('span', { class: 'bn-line' }, h('span', { class: 'k', text: bnKey }), ' ',
           r.bottlenecks.length ? h('span', { class: 'bn', text: r.bottlenecks.join(', ') })
             : h('span', { class: 'hint', title: `no single limit explains the throughput${nearestLimit(r, w) ? `; the nearest is ${nearestLimit(r, w)} (the API's insights.largest)` : ''}`,
@@ -290,22 +304,46 @@ export function renderResult(root, view) {
     }
 
     // empty columns are left out, as in uiCA's table
-    const { table, notes, more } = uopTable(r, view.ui.hideEmpty ?? true, rowLimit(r.rows.length, view.ui.allRows), { shown: view.shown });
+    const { table } = uopTable(r, view.ui.hideEmpty ?? true, Infinity, { shown: view.shown });
     out.push(leadRow('uops', // the table says what it is: it gets the whole width
       h('div', { class: 'table-tools' }), // filled by other views (e.g. the cost toggle of insight-view.js); empty otherwise
       watchFit(h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Uops per instruction, average per iteration',
-        title: 'average uops per iteration' }, table)),
-      more ? moreRows(more, r.rows.length, () => view.onUi('allRows', true)) : null,
-      notes.size ? h('p', { class: 'legend' },
-        [...notes].map((k) => h('span', { title: NOTES[k] }, h('b', { text: k }), ` ${LEGEND[k]}`))) : null));
+        title: 'average uops per iteration' }, table))));
 
     const listingOpen = view.ui.listingOpen?.[view.inputMode] ?? false; // collapsed until opened
     out.push(h('div', { class: 'row text-row' }, h('div', { class: 'label', text: 'text' }), h('div', { class: 'field' },
-      textBlock('listing', 'objdump', formatListing(r.rows).text, listingOpen, (open) => view.onUi('listingOpen', { ...view.ui.listingOpen, [view.inputMode]: open })),
-      textBlock('report', 'uiCA report', typeof r.text === 'string' ? r.text : '', view.ui.reportOpen, (open) => view.onUi('reportOpen', open)))));
+      textBlock('listing', 'objdump', r.rows.length > ALL_UP_TO ? () => formatListing(r.rows).text : formatListing(r.rows).text, listingOpen, (open) => view.onUi('listingOpen', { ...view.ui.listingOpen, [view.inputMode]: open })),
+      textBlock('report', 'uiCA report', typeof r.text !== 'string' ? '' : r.rows.length > ALL_UP_TO ? () => r.text : r.text, view.ui.reportOpen, (open) => view.onUi('reportOpen', open)))));
   }
 
   root.replaceChildren(...out);
+}
+
+// The control that copies the whole result (copy-view.js, the provider 'all')
+// The assembler's messages under a code box: a list that scrolls by itself (style.css .messages: a few lines high, so a
+// long list never pushes the box's controls away or draws over them), with their count when there are more than a few.
+// items: [{line, column, severity, message}]; select(line) when a message with a line is clicked.
+export function messageList(items, select) {
+  const list = h('ul', { tabindex: items.length > 4 ? '0' : null, 'aria-label': `${items.length} message${items.length === 1 ? '' : 's'}` });
+  for (const d of items) {
+    const text = `${d.line ? `line ${d.line}${d.column ? ':' + d.column : ''}: ` : ''}${d.severity === 'warning' ? 'warning: ' : ''}${d.message}`;
+    const li = h('li', { class: d.severity === 'error' ? null : d.severity });
+    if (d.line) {
+      const b = h('button', { type: 'button', class: 'plain', title: `select line ${d.line}`, text });
+      b.addEventListener('click', () => select(d.line));
+      li.append(b);
+    } else li.textContent = text;
+    list.append(li);
+  }
+  const errors = items.filter((d) => d.severity === 'error').length;
+  const count = items.length > 4 ? h('p', { class: 'msg-count', text: `${items.length} messages${errors && errors < items.length ? ` (${errors} error${errors === 1 ? '' : 's'})` : ''}` }) : null;
+  return [count, list].filter(Boolean);
+}
+
+export function copyAllButton() {
+  const b = h('button', { type: 'button', class: 'plain copy-all', title: 'copy the whole result as Markdown: the headline, the CPUs, the limits, the caveats, the uop table, the code and the link', text: 'copy all' });
+  b.addEventListener('click', () => document.dispatchEvent(new CustomEvent('wuica:copy', { detail: { tab: 'all', format: 'md' } })));
+  return b;
 }
 
 export function renderEmpty(root, text = '') {

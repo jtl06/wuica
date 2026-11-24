@@ -229,16 +229,16 @@ try {
       $('mode-hex').click();
       set($('examples'), 'sha256');
       // (the state, not a run: the showcase loads its assembly first, and another run may end meanwhile)
-      await until(() => tp() === '744.25' && !$('results').hasAttribute('aria-busy') && !$('result-body').classList.contains('stale') && document.querySelectorAll('table.uops tbody tr').length >= 200, 120000);
+      await until(() => tp() === '744.25' && !$('results').hasAttribute('aria-busy') && !$('result-body').classList.contains('stale') && (document.querySelector('table.uops')?.vr?.count ?? 0) >= 2949, 120000);
       await tab('table');
-      document.querySelectorAll('table.uops tbody tr')[3].cells[2].click();
+      document.querySelector('table.uops tbody tr[data-row="3"]').cells[2].click(); // (vrows.js: the rows near the view are drawn)
       const s = await snap();
       // each view in turn (the trace and the dependency graph load past their size limits when their tab is picked)
       const open = [];
       for (const name of ['bound', 'try', 'bytes', 'deps']) { await tab(name); open.push((await snap()).open.join()); }
       await wait(500);
       const viewsLong = [...long];
-      // the trace of 2,949 instructions: built on the main thread once its tab is picked (not asserted: printed)
+      // the trace of 2,949 instructions: its model built in the analyzer's worker once its tab is picked
       await tab('trace'); await until(() => trace().wuicaTrace?.model, 60000); open.push(snapOpen()); await wait(500);
       return { long: viewsLong, traceLong: long.slice(viewsLong.length), tp: s.tp, open, card: !!s.card };`);
     check(r.tp === '744.25' && r.open.join() === 'bound,whatif,codemap,deps,trace' && r.card, 'showcase: SHA-256 with each view in turn and a card', JSON.stringify(r));

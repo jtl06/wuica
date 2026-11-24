@@ -199,6 +199,13 @@ try {
         o.ab = overflow(); o.abStacked = rect('#code-b').top > rect('#code').bottom && Math.abs(rect('#code-b').left - rect('#code').left) < 2;
         o.abSide = rect('#results').left > rect('#code').right; o.abBelow = rect('#results').top > rect('#run').bottom; o.abTable = $('cmp-cpus').offsetParent === null;
         o.abCpus = [...document.querySelectorAll('#ab-cpus tbody tr')].map((tr) => tr.dataset.arch).join();
+        // from 1200 px the table of the CPUs and the headline side by side while the headline fits there (nothing cut);
+        // else (and below 1200 px) the headline under the table
+        await wait(100);
+        const lead = document.querySelector('#ab-cpus + .row.lead'), cr = rect('#ab-cpus'), lr = lead ? rect(lead) : null;
+        o.abBesideOn = ${w} >= 1200 && $('result-body').classList.contains('ab-beside');
+        o.abBeside = lr ? (o.abBesideOn ? lr.left >= cr.right && lr.top < cr.bottom : lr.top >= cr.bottom - 1) : null;
+        o.abCut = [...lead.querySelectorAll('.ab-meta, .ab-delta')].filter((e) => e.scrollWidth > e.clientWidth + 1).map((e) => e.textContent);
         // the A–B traces (the trace tab stays open)
         await until(() => tpanel()?.wuicaTraces); await wait(100);
         o.abTrace = overflow(); o.abTraceBelow = document.querySelector('.view-tab[aria-selected="true"]')?.dataset.tab === 'trace' && rect(tpanel()).top >= rect('#result-body').bottom && rect(tpanel()).right > rect(tpanel()).left;
@@ -210,6 +217,7 @@ try {
     check(out.every((m) => m.sweep[0] === 'sweep' && m.single <= 0 && m.pop <= 0 && m.ab <= 0), 'layout: no sideways scrolling from 320 to 2560 px (single with three CPUs, the sweep and the report open; the options open; A–B)', JSON.stringify(out));
     check(out.every((m) => m.trace <= 0 && m.traceWide && m.abTrace <= 0 && m.abTraceBelow), 'layout: the trace (with the wait column and a selected row) and the A–B traces (their tab): no sideways scrolling from 320 to 2560 px', JSON.stringify(out.map((m) => [m.w, m.trace, m.traceWide, m.abTrace, m.abTraceBelow])));
     check(out.every((m) => m.side === m.w >= 1200), 'layout: input and result side by side from 1200 px, stacked below', JSON.stringify(out.map((m) => [m.w, m.side])));
+    check(out.every((m) => m.abBeside === true && (m.w < 1440 || m.abBesideOn) && (!m.abBesideOn || m.abCut.length === 0)), 'layout: A–B: the table of the CPUs and the headline side by side from 1200 px when the headline fits there (from 1440 px here), nothing of it cut; else stacked', JSON.stringify(out.map((m) => [m.w, m.abBeside, m.abBesideOn, m.abCut])));
     check(out.every((m) => m.abStacked && m.abTable && m.abSide === m.w >= 1200 && (m.w >= 1200 || m.abBelow) && m.abCpus === 'SKL,ZEN3,ADL-P'), 'layout: A–B: A over B, the result beside them from 1200 px (below on narrow screens); its own table of the CPUs, not single mode\'s', JSON.stringify(out.map((m) => [m.w, m.abStacked, m.abSide, m.abBelow, m.abTable, m.abCpus])));
     // the default toolbar (assembly: the syntax menu too) with the options open, around the phone breakpoint and the two panes
     const pop = [];
@@ -341,30 +349,32 @@ try {
       $('examples').value = 'sha256'; $('examples').dispatchEvent(new Event('change', { bubbles: true })); await until(() => document.querySelector('#result-body .tp .value')?.textContent === '744.25' && !$('results').hasAttribute('aria-busy') && !$('result-body').classList.contains('stale'), 120000);
       const ms = performance.now() - t0;
       await wait(300);
-      const out = { opts, ms, long: [...long], tp: tp(), asm: $('mode-asm').checked && $('code').value.startsWith('loop:') && $('code').value.includes('mov qword ptr [rsp+0x98], r8'), rows: document.querySelectorAll('table.uops tbody tr').length,
-        more: document.querySelector('.more-rows')?.innerText, status: $('status').textContent, cost: $('result-body').dataset.cost,
+      const out = { opts, ms, long: [...long], tp: tp(), asm: $('mode-asm').checked && $('code').value.startsWith('loop:') && $('code').value.includes('mov qword ptr [rsp+0x98], r8'), rows: document.querySelectorAll('table.uops tbody tr[data-row]').length,
+        count: document.querySelector('table.uops').vr?.count, span: (() => { const t = document.querySelector('table.uops'); return Math.round(t.tBodies[0].getBoundingClientRect().height / t.querySelector('tbody tr[data-row]').getBoundingClientRect().height); })(), status: $('status').textContent, cost: $('result-body').dataset.cost,
         closed: [...document.querySelectorAll('details.text-block, details.trace-panel')].every((d) => !d.open), meta: document.querySelector('#result-body .meta').title };
       // the cost column waits for a click (2,949 analyses)
       document.querySelector('.ins-cost-box').click(); await until(() => $('result-body').dataset.cost === 'waiting', 10000);
       out.costWait = [$('result-body').dataset.cost, document.querySelector('.ins-cost-status button')?.textContent];
       document.querySelector('.ins-cost-box').click(); await wait(100);
-      // all rows on request
+      // every row a scroll away (vrows.js): the last one drawn at the end of the scroll range
       const t1 = performance.now();
-      document.querySelector('.more-rows button').click(); await wait(50);
-      out.all = [document.querySelectorAll('table.uops tbody tr').length, Math.round(performance.now() - t1), !document.querySelector('.more-rows')];
+      const w = document.querySelector('#result-body .table-wrap'); w.scrollTop = w.scrollHeight; await wait(100);
+      const drawn = [...document.querySelectorAll('table.uops tbody tr[data-row]')];
+      out.all = [Number(drawn.at(-1)?.dataset.row), Math.round(performance.now() - t1), drawn.length];
+      w.scrollTop = 0;
       // three CPUs (the pool): the table of their throughputs
       cpus('SKL', 'ZEN3', 'ADL-P'); await until(tableDone, 60000);
       out.cpus = rows(); out.cpusInfo = $('cmp-cpus-info').textContent;
       return out;`);
     check(r.opts.at(-1) === 'showcase:sha256', 'showcase: its own group at the end of the examples', JSON.stringify(r.opts));
     check(r.tp === '744.25' && r.asm && /^2949 instructions · 11602 bytes/.test(r.meta), 'showcase: SHA-256 (2,949 instructions) gives 744.25 on SKL; the input switches to Intel assembly', JSON.stringify([r.tp, r.asm, r.meta]));
-    check(r.rows === 200 && /^2,749 more rows · show all 2,949 rows$/.test(r.more) && r.closed && r.cost === 'off', 'showcase: the first 200 rows are drawn, the rest on request; objdump, report and trace stay closed; no cost column', JSON.stringify([r.rows, r.more, r.closed, r.cost]));
+    check(r.count >= 2949 && r.rows < 200 && r.span >= r.count && r.closed && r.cost === 'off', 'showcase: the rows near the view are drawn, every row a scroll away (the table\'s height is all of them); objdump, report and trace stay closed; no cost column', JSON.stringify([r.count, r.rows, r.span, r.closed, r.cost]));
     check(/^744\.25 cycles\/iteration · SKL · \d+(\.\d)? ms$/.test(r.status), 'showcase: the status line shows the analysis time', r.status);
     check(r.costWait[0] === 'waiting' && /compute \(\d{4} analyses\)/.test(r.costWait[1] ?? ''), 'showcase: the cost column waits for a click', JSON.stringify(r.costWait));
-    check(r.all[0] === 2949 && r.all[2], 'showcase: "show all" draws every row', JSON.stringify(r.all));
+    check(r.all[0] === r.count - 1 && r.all[2] < 200, 'showcase: at the end of the scroll range, the last row is drawn (and few others)', JSON.stringify([r.all, r.count]));
     check(r.cpus.map((x) => x.join(':')).join() === 'SKL:744.25,ZEN3:620.75,ADL-P:587.00', 'showcase: the table of three CPUs (as uiCA: 744.25, 620.75, 587)', JSON.stringify([r.cpus, r.cpusInfo]));
     check(r.long.every((ms) => ms < LONG_TASK_MS), `showcase: no long task of ${LONG_TASK_MS} ms or more while it loads`, JSON.stringify(r.long));
-    console.log(`showcase: example to result ${r.ms.toFixed(0)} ms (${r.status}); long tasks meanwhile ${JSON.stringify(r.long)} ms; all rows drawn in ${r.all[1]} ms; three CPUs: ${r.cpusInfo}`);
+    console.log(`showcase: example to result ${r.ms.toFixed(0)} ms (${r.status}); long tasks meanwhile ${JSON.stringify(r.long)} ms; scrolled to the last row in ${r.all[1]} ms; three CPUs: ${r.cpusInfo}`);
   }
 
   const problems = page.take();

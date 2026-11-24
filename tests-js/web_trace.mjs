@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import zlib from 'node:zlib';
 import readline from 'node:readline';
 import { buildModel, relevantRounds, rangeChoices, selectRows, cycleSpan, uopDetails, tableRows, toTSV, TABLE_HEAD, STAGES, uopKey, traceEstimate, TRACE_LIMIT,
-  rowGroups, rowOfGroup, groupKey, waitBreakdown, uopWaits, waitText, abWindow, roundStart, roundEnds } from '../web/js/trace.js';
+  rowGroups, rowOfGroup, groupKey, waitBreakdown, uopWaits, waitText, abWindow, roundStart, roundEnds, shownSpan, STUB_C, portGroupName, portGroups, sameTrace } from '../web/js/trace.js';
 import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
@@ -67,6 +67,18 @@ const every = Number(process.argv[2] || 4);
   check(uopKey({ rnd: 1, instrID: 2, lamUopID: 0, fUopID: 0 }) === '1/2/0/0/-', 'mini: keys');
   let threw = false; try { buildModel({}); } catch { threw = true; }
   check(threw, 'mini: not a trace');
+  // the span as drawn: short waits (none here: 2 cycles) change nothing; a long one starts the row 3·STUB_C before ready
+  check(JSON.stringify(shownSpan(m, rows)) === '[1,7]' && JSON.stringify(shownSpan(m, rows, 'full')) === '[1,7]', 'mini: the span as drawn, no long wait', JSON.stringify(shownSpan(m, rows)));
+  const long = { nCycles: 80, issueDispatchDelay: 0, uops: [{ iq: 0, idq: 1, issued: 2, ready: 60, dispatched: 61, executed: 64, retired: 65 }, { iq: null, idq: 1, issued: 2, ready: 3, dispatched: 3, executed: 4, retired: 66 }] };
+  check(JSON.stringify(shownSpan(long, [0])) === `[${60 - 3 * STUB_C - 1},66]` && JSON.stringify(shownSpan(long, [0], 'full')) === JSON.stringify(cycleSpan(long, [0])) && JSON.stringify(shownSpan(long, [0, 1])) === '[1,67]', 'the span as drawn: a long wait shortened (from just before ready); in full, from the front end', JSON.stringify([shownSpan(long, [0]), shownSpan(long, [0], 'full'), shownSpan(long, [0, 1])]));
+  // the compact port strip: groups of ports
+  check(['Port 0', 'ALU0', '(SA1)', 'FPSt1', 'AGU2', 'p'].map(portGroupName).join() === 'P,ALU,SA,FPSt,AGU,p', 'port groups by name', ['Port 0', 'ALU0', '(SA1)', 'FPSt1', 'AGU2', 'p'].map(portGroupName).join());
+  const gs = portGroups(m, m.ports.map((p, i) => ({ ...p, i })).filter((p) => p.used > 0)); // (as the viewer: the used ports, with their index)
+  check(gs.map((g) => `${g.name}:${g.ports.length}:${g.pre[m.nCycles]}`).join() === 'P:2:2,ALU:1:1', 'mini: the groups with their busy ports per cycle', JSON.stringify(gs.map((g) => [g.name, g.ports.length, g.pre[m.nCycles]])));
+  // the same trace: in the same window, yes; a uop on another port, no
+  const w0 = { from: 0, to: 0, origin: 0 };
+  const other = buildModel(trace, { portNames: { a: 'ALU0' } }); other.uops[1].port = '0';
+  check(sameTrace(m, w0, buildModel(trace, { portNames: { a: 'ALU0' } }), w0) && !sameTrace(m, w0, other, w0), 'mini: the same trace, or not', '');
   check(traceEstimate(50, { minIterations: 10, minCycles: 500 }) < TRACE_LIMIT && traceEstimate(3000, { minIterations: 20, minCycles: 500 }) > TRACE_LIMIT, 'size guard');
 
   // the uop table's rows as groups of the trace: the stack-sync row is the push's; the macro-fused jnz is the dec's

@@ -21,6 +21,26 @@ export class CancelledError extends Error {
   constructor() { super('cancelled'); this.name = 'CancelledError'; }
 }
 
+// A large answer in parts: the long arrays of an answer (the details' rows of a long block, the uops of a trace's model)
+// go first, in slices, each a message of its own; the answer itself follows with them left empty and a note of where they
+// belong. Reading one message of tens of MB of objects took the page a tenth of a second at once (WorkerEngine joins them).
+const PARTS = [['details', 'rows', 400], ['model', 'uops', 4000]];
+export function inParts(answer) {
+  const v = answer?.ok ? answer.value : null;
+  const out = [];
+  if (v && typeof v === 'object') {
+    for (const [obj, key, size] of PARTS) {
+      const holder = obj === 'details' ? v.details : v[obj];
+      const list = holder?.[key];
+      if (!Array.isArray(list) || list.length <= size) continue;
+      for (let i = 0; i < list.length; i += size) out.push({ id: answer.id, part: `${obj}.${key}`, items: list.slice(i, i + size) });
+      holder[key] = [];
+    }
+  }
+  out.push(answer);
+  return out;
+}
+
 export function createHandler() {
   let engine = null;
   const ops = {
@@ -28,6 +48,29 @@ export function createHandler() {
     loadUarch: ({ bytes }) => engine.loadUarch(bytes),
     loadArch: ({ name, bytes }) => engine.loadArch(name, bytes),
     analyze: ({ request }) => engine.analyze(request),
+    // the dependency view's graph of a run (deps.js), made here from its trace: the page does not receive the trace
+    async depGraph({ request }) {
+      const res = await engine.analyze({ ...request, includeTrace: true, details: true });
+      if (!res || res.error) return { error: res?.error ?? 'no response' };
+      const [{ depGraph }, { annotateLatencies }] = await Promise.all([import('./deps.js'), import('./deps-slack.js')]);
+      const graph = depGraph(res, res.trace);
+      if (graph) annotateLatencies(graph, res, res.details);
+      return { graph };
+    },
+    // a run's trace as the trace view's model (trace.js buildModel), made here: the trace of a large block is tens of
+    // MB of objects, which took the page a fifth of a second to receive and read; the model is about half of it.
+    // {response (without the trace), model} or {response} if there is no trace.
+    async traceModel({ request, opts }) {
+      const response = await engine.analyze(request);
+      if (!response || response.error || !response.trace) return { response, model: null };
+      const { buildModel } = await import('./trace.js');
+      const t0 = performance.now();
+      const model = buildModel(response.trace, opts);
+      model.buildMs = performance.now() - t0;
+      delete model.index; // (only buildModel's own)
+      const { trace, ...rest } = response;
+      return { response: rest, model };
+    },
     decode: ({ code, chip }) => engine.decode(code, chip),
     memory: () => engine.memory(),
     warmUp: async ({ arch }) => { await engine.analyze(makeRequest(WARM_HEX, arch)); }, // the result is not used
@@ -104,11 +147,18 @@ export class WorkerEngine {
         throw new Error(`the analyzer's worker could not be started: ${e?.message ?? e}`);
       }
       this.#worker = worker;
+      const parts = new Map(); // id -> {path -> items}: the parts of a large answer (inParts)
       worker.onmessage = (ev) => {
         const m = ev.data;
         const p = this.#pending.get(m?.id);
         if (!p || worker !== this.#worker) return;
+        if (m.part) { const got = parts.get(m.id) ?? new Map(); parts.set(m.id, got); const list = got.get(m.part) ?? []; got.set(m.part, list); for (const x of m.items) list.push(x); return; }
         this.#pending.delete(m.id);
+        const got = parts.get(m.id);
+        if (got) {
+          parts.delete(m.id);
+          if (m.ok) for (const [path, list] of got) { const [obj, key] = path.split('.'); const holder = obj === 'details' ? m.value?.details : m.value?.[obj]; if (holder) holder[key] = list; }
+        }
         if (m.ok) p.resolve(m.value);
         else p.reject(m.engineError ? new EngineError(m.error) : new Error(m.error));
       };
@@ -171,6 +221,18 @@ export class WorkerEngine {
   async decode(code, chip) {
     await this.#live();
     return this.#send('decode', { code, chip });
+  }
+
+  // the dependency view's graph of a run, made in the worker (createHandler: depGraph)
+  async depGraph(request) {
+    await this.#live();
+    return this.#send('depGraph', { request });
+  }
+
+  // the trace view's model of a run, made in the worker (createHandler: traceModel)
+  async traceModel(request, opts) {
+    await this.#live();
+    return this.#send('traceModel', { request, opts });
   }
 
   async memory() {

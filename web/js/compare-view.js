@@ -7,6 +7,8 @@
 
 import { h, cyc } from './render.js';
 import { makeRequest } from './engine.js';
+import { setCopy } from './copy-view.js';
+import { sweep as sweepText, cpuTable } from './markdown.js';
 import { ARCH_INFO, PROTOTYPE } from './archs.js';
 import {
   summarize, compareRows, sweepData, sweepLayout, compareKey, sweepKey, resultKey, ResultCache, latestWins, SWEEP_OFFSETS,
@@ -226,6 +228,18 @@ export function createComparePanels(env) {
     return b;
   }
 
+  // the table of the checked CPUs as markdown.js cpuTable takes it (null: one CPU); a CPU not analyzed yet says so
+  function cpuResults() {
+    if (!env.multi() || !input) return null;
+    return env.checked().map((it) => {
+      const r = cpus.results.get(it.key);
+      const info = ARCH_INFO[it.key];
+      const row = { arch: it.key, name: info?.name ?? '', year: info?.year ?? '' };
+      if (!r || r.error) return { ...row, code: 1, error: r?.error ?? 'not analyzed yet' };
+      return { ...row, tp: r.tp, bottlenecks: r.bottlenecks, decodeErrors: r.decodeErrors, ...(it.experimental ? { prototype: true } : {}) };
+    });
+  }
+
   function drawCpus(p) {
     const work = env.work?.() ?? 1; // elements per iteration: per element
     const rows = compareRows(env.checked(), p.results, { sort, current: input?.arch ?? null });
@@ -235,7 +249,8 @@ export function createComparePanels(env) {
       h('th', { scope: 'col', class: 'cmp-name' }, ''),
       h('th', { scope: 'col', 'aria-sort': ariaSort('tp') }, sortButton('tp', sort === 'tp' ? 'cycles ↑' : sort === 'tp-desc' ? 'cycles ↓' : 'cycles', 'sort by throughput (cycles/iteration)')),
       h('th', { scope: 'col', class: 'cmp-bar', 'aria-hidden': 'true' }),
-      h('th', { scope: 'col', class: 'cmp-bn', text: 'bottleneck' }));
+      h('th', { scope: 'col', class: 'cmp-bn' }, 'bottleneck', copyButton()));
+    setCopy('cpus', { what: 'the table of the checked CPUs', md: () => cpuTable(cpuResults(), { per: work }) });
     const body = h('tbody');
     for (const r of rows) {
       const info = ARCH_INFO[r.key];
@@ -262,6 +277,13 @@ export function createComparePanels(env) {
     if (p.waitingForClick) parts.unshift(runButton(p));
     p.body.replaceChildren(...parts);
     if (input) env.decorateCpus?.(p.body.querySelector('table'), { hex: input.hex, options: input.options }); // cmp-slots.js
+  }
+
+  // the table's copy control (copy-view.js; the same look as the tab row's)
+  function copyButton() {
+    const b = h('button', { type: 'button', class: 'plain ws-copy cmp-copy', title: 'copy this table as Markdown', text: 'copy' });
+    b.addEventListener('click', (e) => { e.stopPropagation(); document.dispatchEvent(new CustomEvent('wuica:copy', { detail: { tab: 'cpus', format: 'md' } })); });
+    return b;
   }
 
   function runButton(p) {
@@ -293,6 +315,8 @@ export function createComparePanels(env) {
   function drawSweep(p) {
     const points = Array.from({ length: SWEEP_OFFSETS }, (_, k) => p.results.get(k));
     const d = sweepData(points);
+    const arch = input?.arch ?? '';
+    setCopy('sweep', { what: 'the sweep', md: () => sweepText(d, arch), csv: () => `offset,cycles\r\n${d.values.map((v, i) => `${i},${v === null ? '' : v}`).join('\r\n')}\r\n` });
     const cur = cursor ?? input?.options.alignmentOffset ?? 0;
     const width = Math.max(240, Math.round((p.body.clientWidth || 602) - 2)); // inside the 1px border
     const height = 120;
@@ -381,7 +405,7 @@ export function createComparePanels(env) {
   function showCpus() {
     const on = env.multi();
     env.els.cpus.hidden = !on;
-    if (!on) cpus.runner.cancel();
+    if (!on) { cpus.runner.cancel(); setCopy('cpus', null); }
     return on;
   }
   return {
@@ -401,6 +425,7 @@ export function createComparePanels(env) {
     // the checked CPUs changed (or single / A–B): show or hide the table; it computes what is missing
     // the elements per iteration changed: the table again (no new analysis)
     redrawCpus() { if (showCpus() && input) cpus.redraw(); },
+    cpuResults,
     refreshCpus() {
       if (!showCpus()) return;
       if (input) cpus.update(false); else env.wantResult();

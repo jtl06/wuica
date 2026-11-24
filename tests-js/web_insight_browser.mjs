@@ -139,7 +139,7 @@ const HELPERS = `
   const runAnyway = () => { for (const b of document.querySelectorAll('.ins-cost-status button')) b.click(); };
   const done = async (start) => { const n = $('results').dataset.run; start(); await until(() => $('results').dataset.run !== n); };
   const costDone = async (start) => { await start(); await until(() => (runAnyway(), body().dataset.cost === 'done')); }; // the state changes at once on a change
-  const instrRows = () => [...document.querySelectorAll('table.uops tbody tr:not(.extra)')];
+  const instrRows = () => [...document.querySelectorAll('table.uops tbody tr[data-row]:not(.extra)')];
   const cost = () => instrRows().map((tr) => tr.querySelector('td.ins-cost')?.textContent ?? null);
   const top = () => instrRows().map((tr, i) => tr.querySelector('td.ins-cost.top') ? i : -1).filter((i) => i >= 0);
   const head = () => [...document.querySelectorAll('table.uops thead th')].map((th) => th.textContent);
@@ -158,9 +158,9 @@ try {
       await until(() => (runAnyway(), document.querySelector('.tp .value') && body().dataset.cost === 'done'));
       const out = { tp: document.querySelector('.tp .value').textContent, cost: cost(), top: top(), head: head(), hash: location.hash };
       const chain = document.querySelector('.ins-chain-row');
-      // the chain on one line; its length (the hint) is hidden in the dense layout, the Dependencies limit says it
+      // the chain on one line; its length in the tooltip (the Dependencies limit says it too)
       out.chain = [chain?.querySelector('.label').textContent, chain?.querySelector('.field').innerText.replace(/\\s+/g, ' ').trim(),
-        chain?.querySelector('.hint')?.textContent.replace(/\\s+/g, ' ').trim(), chain && getComputedStyle(chain.querySelector('.field')).whiteSpace];
+        /^2\\.00 cycles\\/iteration;/.test(chain?.title ?? '') ? '2.00 cycles/iteration' : chain?.title, chain && getComputedStyle(chain.querySelector('.field')).whiteSpace];
       out.afterLimits = chain?.previousElementSibling?.querySelector('.limits') !== null;
       out.marked = instrRows().map((tr) => tr.classList.contains('ins-on-chain') ? tr.cells[0].dataset.chain : '');
       out.title = instrRows()[0].cells[0].title;

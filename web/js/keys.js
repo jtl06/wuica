@@ -23,6 +23,7 @@ export const KEYS = [
   { show: ['n', 'p'], label: 'hot rows', action: ['hotNext', 'hotPrev'], keys: ['n', 'p'] },
   { show: ['1–9'], label: 'tabs, in their order', action: TABS.map((n) => `tab:${n}`), keys: TABS.map(String) },
   { show: ['a'], label: 'A–B', action: 'ab', keys: ['a'] },
+  { show: ['c'], label: 'copy the view (Markdown)', action: 'copy', keys: ['c'] },
   { show: ['Esc'], label: 'close', action: 'escape', keys: ['Escape'] },
   { show: ['?'], label: 'keys', action: 'help', keys: ['?'] },
 ];
@@ -74,12 +75,13 @@ export function createKeys(env = {}) {
   let dialog = null, back = null;
 
   const table = () => document.querySelector('table.uops.tl-linkable');
-  const rows = () => table()?.tBodies[0]?.rows ?? [];
-  const current = () => table()?.querySelector('tbody tr.tl-sel')?.sectionRowIndex ?? -1;
+  // the rows by index (vrows.js: a long table draws the rows near the view); the selection is trace-link.js's
+  const vr = () => table()?.vr ?? null;
+  const current = () => vr()?.data.sel ?? -1;
 
   // select a row as a click does, keep it in view and give it the focus (the arrows go on from there)
   function select(row) {
-    const tr = rows()[row];
+    const tr = vr()?.reveal(row);
     if (!tr) return;
     tr.click();
     tr.focus({ preventScroll: true });
@@ -93,7 +95,7 @@ export function createKeys(env = {}) {
     if (r.top < 0 || r.bottom > Math.min(innerHeight, top)) tr.scrollIntoView({ block: 'center' });
   }
   function step(dir) {
-    const n = rows().length;
+    const n = vr()?.count ?? 0;
     if (!n) return;
     const cur = current();
     select(cur < 0 ? (dir > 0 ? 0 : n - 1) : Math.max(0, Math.min(n - 1, cur + dir)));
@@ -101,13 +103,7 @@ export function createKeys(env = {}) {
   // the rows the bound view shades (its selected resource; the shade's --bd is the share), hottest first; else the
   // critical chain's, in table order
   function hot(dir) {
-    const items = [], chain = [];
-    const all = rows();
-    for (let i = 0; i < all.length; i++) {
-      const tr = all[i];
-      if (tr.classList.contains('bd-hot')) items.push({ row: i, weight: Number.parseFloat(tr.cells[0].style.getPropertyValue('--bd')) || 0 });
-      else if (!items.length && tr.classList.contains('ins-on-chain')) chain.push(i);
-    }
+    const items = vr()?.data.hot ?? [], chain = vr()?.data.chain ?? [];
     const row = stepIn(items.length ? hotOrder(items) : chain, current(), dir);
     if (row >= 0) select(row);
   }
@@ -210,6 +206,7 @@ export function createKeys(env = {}) {
     next: () => step(1), prev: () => step(-1),
     hotNext: () => hot(1), hotPrev: () => hot(-1),
     ab,
+    copy: () => document.querySelector('#result-body .view-tabs .ws-copy')?.click(),
   };
 
   document.addEventListener('keydown', (e) => {

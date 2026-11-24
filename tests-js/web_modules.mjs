@@ -139,7 +139,14 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
     check(p.ok && p.hex === ex.hex && p.format === 'listing', `example ${ex.id}: the hex text parses to its machine code`, JSON.stringify(p));
     check(ex.text.intel.trim() !== '' && ex.text.att.trim() !== '' && ex.text.intel.split('\n').length === ex.text.att.split('\n').length, `example ${ex.id}: both syntaxes`);
   }
-  for (const ex of EXAMPLES) check(cases.some((c) => c.hex === ex.hex && c.arch === ex.arch), `example ${ex.id}: the mock has the reference's result for ${ex.arch}`);
+  // (avx ships the assembler's encoding of a recorded block, which the mock answers with that block: engine-mock.js SAME_AS)
+  const mock = new MockEngine();
+  await mock.loadUarch(JSON.stringify(UARCH));
+  for (const ex of EXAMPLES) {
+    await mock.loadArch(UARCH.configs[ex.arch].name, '{}');
+    const r = await mock.analyze(makeRequest(ex.hex, ex.arch));
+    check(r.mock?.exact === true && cases.some((c) => c.hex === r.mock.hex && c.arch === ex.arch), `example ${ex.id}: the mock has the reference's result for ${ex.arch}`, JSON.stringify(r.mock));
+  }
   check(MOCK_EXAMPLES.some((e) => e.hex === SYNTHETIC_HEX) && MOCK_EXAMPLES.some((e) => e.hex === MOCK_ERROR_HEX), 'examples: the mock-only ones reach the synthetic and the error case');
   const asm = new MockAssembler();
   const ok = await asm.assemble(EXAMPLES[0].text.att + '\n  # comment\n', 'att');

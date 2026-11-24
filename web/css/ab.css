@@ -14,23 +14,20 @@ body.ab-on #cmp-cpus { display: none !important; }
 .ab-b { min-width: 0; }
 .ab-b > .messages { margin-top: 0.3rem; }
 .ab-head { display: inline-flex; align-items: center; gap: 0.3rem 0.75rem; }
-.ab-b-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.75rem; margin: 0.45rem 0 0.35rem; }
+.ab-b-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.6rem; margin: 0.45rem 0 0.35rem; }
 body.ab-on .toolbar .code-hint { display: none; } /* A's row has the elements per iteration at its end instead */
 .ab-work { margin-left: auto; gap: 0.4rem; }
-.ab-work-in { width: 5.5ch; }
-.dense .ab-work-in { width: 5.5ch; }
-.dense #examples { width: 11ch; } /* (the toolbar holds the elements per iteration too) */
+input.ab-work-in { width: 5.5ch; } /* (input: over the number fields' width) */
 .ab-work.flag .ab-work-k { color: var(--caveat); }
 .ab-work.flag .ab-work-in { border-color: var(--caveat); }
 #b-arch { max-width: 16ch; }
 body.ab-on #examples { width: 10ch; }
 body.ab-on .toolbar .choice, .ab-head .choice { gap: 0.25rem 0.8rem; }
-.dense body.ab-on .toolbar, .dense .ab-b-head { column-gap: 0.6rem; }
 @media (max-width: 1199px) {
   body.ab-on #code, body.ab-on #code-b { height: 11rem; min-height: 6rem; }
 }
 @media (max-width: 640px) {
-  html.dense body.ab-on #code, html.dense body.ab-on #code-b { height: 8rem; }
+  body.ab-on #code, body.ab-on #code-b { height: 8rem; }
 }
 /* wide: the input pane a little wider than in single mode (two rows of controls) */
 @media (min-width: 1200px) {
@@ -50,8 +47,7 @@ body.ab-on .toolbar .choice, .ab-head .choice { gap: 0.25rem 0.8rem; }
 
 /* ---- the result: two lines on top ---- */
 .ab-tp { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.1rem 0.6rem; }
-.ab-tp .value { font-size: 1.6rem; line-height: 1.2; color: var(--heading); font-variant-numeric: tabular-nums; }
-.dense .ab-tp .value { font-size: 1.35rem; line-height: 1.15; }
+.ab-tp .value { font-size: 1.35rem; line-height: 1.15; color: var(--heading); font-variant-numeric: tabular-nums; }
 .ab-tp .value.ab-none { color: var(--subtle); }
 .ab-tp .unit { color: var(--text); }
 .ab-tp .unit.caveat { color: var(--caveat); cursor: help; }
@@ -150,3 +146,23 @@ table.grid.ab-limits { width: auto; min-width: min(100%, 36rem); }
 .ab-col[data-side="a"] .grid.uops tbody tr.abd-only > * { background-color: color-mix(in srgb, var(--caveat) 12%, var(--surface)); }
 .ab-col[data-side="b"] .grid.uops tbody tr.abd-only > * { background-color: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
 .ab-col .grid.uops tbody tr.abd-only > th.first { box-shadow: inset 3px 0 var(--side), inset -1px 0 var(--border); }
+
+/* wide: the table per CPU and the two lines on top side by side, so the tabs start higher; only while the two lines fit
+   beside the table (ab.js sets .ab-beside) */
+@media (min-width: 1200px) {
+  body.ab-on #result-body.ab-beside { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 1.5rem; align-items: start; }
+  body.ab-on #result-body.ab-beside > * { grid-column: 1 / -1; min-width: 0; }
+  body.ab-on #result-body.ab-beside > #ab-cpus:not([hidden]) { grid-column: 1; margin-bottom: 0.3rem; }
+  body.ab-on #result-body.ab-beside > #ab-cpus:not([hidden]) + .row.lead { grid-column: 2; align-self: center; }
+}
+
+/* wide: the diff tab in the pane's height (workspace.js fits its scrollers): A and B side by side when each half has
+   room for its columns (workspace.js sets .ab-side), else stacked; the folds (Δ, limits, slots, text) closed are one
+   line under the tables, an open one takes the width below that line */
+@media (min-width: 1200px) {
+  .ab-stack.ab-side { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 1rem; }
+  #ab-main > .field { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 2.5ch; }
+  #ab-main > .field > * { flex: 1 0 100%; min-width: 0; }
+  #ab-main > .field > .row:has(> .field > details.ab-fold:not([open])) { flex: 0 0 auto; display: flex; column-gap: 0.8ch; }
+  #ab-main > .field > .row:has(> .field > details.ab-fold[open]) { order: 1; }
+}

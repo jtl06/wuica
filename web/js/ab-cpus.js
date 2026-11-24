@@ -49,9 +49,11 @@ export function createABCpus(env) {
   const keyOf = (x) => JSON.stringify([x.a, x.b, x.options, env.checked().map((i) => i.key)]);
   const unit = () => (input && (input.workA !== 1 || input.workB !== 1) ? 'cycles/element' : 'cycles/iteration');
 
+  let lastRows = null;
   function draw() {
     if (!input) return;
     const rows = abCpuRows(env.checked(), results, { workA: input.workA, workB: input.workB, current: input.focus });
+    lastRows = rows;
     const head = h('tr', null, h('th', { scope: 'col', class: 'first', text: 'cpu' }),
       h('th', { scope: 'col', title: unit(), text: 'A' }), h('th', { scope: 'col', title: unit(), text: 'B' }),
       h('th', { scope: 'col', title: 'B against A, in percent', text: 'Δ%' }), h('th', { scope: 'col', class: 'ab-cx', title: 'B against A', text: '' }));
@@ -149,6 +151,8 @@ export function createABCpus(env) {
       runner.schedule(auto ? 150 : 0);
     },
     // the drawn result is gone (single mode, a failure)
-    clear() { input = null; runner.cancel(); box.hidden = true; },
+    clear() { input = null; lastRows = null; runner.cancel(); box.hidden = true; },
+    // A and B per checked CPU as markdown.js compare takes them (meta.cpus; null: one CPU)
+    rows: () => (!input || box.hidden || !lastRows ? null : lastRows.map((r) => ({ arch: r.key, a: r.a, b: r.b }))),
   };
 }

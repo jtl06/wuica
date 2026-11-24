@@ -29,8 +29,9 @@ const KEY = {
 const letter = (k) => ({ code: /^\d$/.test(k) ? `Digit${k}` : `Key${k.toUpperCase()}`, keyCode: k.toUpperCase().charCodeAt(0) });
 
 const KH = `${HELPERS}
-  const trs = () => [...(document.querySelector('table.uops.tl-linkable')?.tBodies[0]?.rows ?? [])];
-  const sel = () => trs().findIndex((tr) => tr.classList.contains('tl-sel'));
+  // (the rows drawn: a long table draws those near the view, vrows.js; data-row is the row of the result)
+  const trs = () => [...(document.querySelector('table.uops.tl-linkable')?.querySelectorAll('tbody tr[data-row]') ?? [])];
+  const sel = () => Number(document.querySelector('table.uops.tl-linkable tbody tr.tl-sel')?.dataset.row ?? -1);
   const dlg = () => $('keys');
   const card = () => { const c = $('icard'); return c && !c.hidden ? Number(c.dataset.row) : -1; };
   const act = () => { const a = document.activeElement; return a ? (a.id || a.tagName) : ''; };
@@ -216,20 +217,20 @@ try {
     // (the showcase loads its assembly first, showcase-asm.js: wait for its own result)
     // (wait for the state: the SHA-256 result drawn and current, nothing running; not for one run, which may be another's)
     await page.eval(`${KH} await until(settled, 60000); set($('examples'), 'sha256');
-      await until(() => tp() === '744.25' && trs().length >= 200 && settled() && $('mode-asm').checked && $("code").value.startsWith("loop:\\n  mov qword ptr [rsp+0x98], r8"), 120000);
+      await until(() => tp() === '744.25' && (document.querySelector('table.uops')?.vr?.count ?? 0) >= 2949 && settled() && $('mode-asm').checked && $("code").value.startsWith("loop:\\n  mov qword ptr [rsp+0x98], r8"), 120000);
       document.activeElement?.blur(); return 1;`);
     const r = await page.eval(`${KH}
-      const n = trs().length, ms = [], s0 = sel();
+      const n = document.querySelector('table.uops').vr.count, ms = [], s0 = sel();
       for (let i = 0; i < 5; i++) { const t0 = performance.now(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', bubbles: true, cancelable: true })); ms.push(performance.now() - t0); }
       // past the fold: the row stays in view, above the card (it sticks to the bottom of a long table)
       for (let i = 0; i < 40; i++) document.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', bubbles: true, cancelable: true }));
-      const r = trs()[sel()].getBoundingClientRect(), c = $('icard').getBoundingClientRect();
+      const r = document.querySelector('table.uops tbody tr.tl-sel').getBoundingClientRect(), c = $('icard').getBoundingClientRect();
       const seen = r.top >= 0 && r.bottom <= Math.min(innerHeight, $('icard').classList.contains('stick') ? c.top : Infinity);
       return { n, s0, sel: sel() - 40, card: card() - 40, ms, seen, r: [r.top, r.bottom], c: [c.top, c.bottom], h: innerHeight };`);
     const want = r.s0 < 0 ? 4 : r.s0 + 5;
     check(r.seen, 'SHA-256: j past the fold: the row in view, not under the card', JSON.stringify(r));
-    check(r.n >= 200 && r.sel === want && r.card === want, 'SHA-256: j moves through the drawn rows', JSON.stringify(r));
-    console.log(`SHA-256 (${r.n} rows drawn): j handler ${r.ms.map((x) => x.toFixed(1)).join(', ')} ms`);
+    check(r.n >= 2949 && r.sel === want && r.card === want, 'SHA-256: j moves row by row (drawn as it goes)', JSON.stringify(r));
+    console.log(`SHA-256 (${r.n} rows): j handler ${r.ms.map((x) => x.toFixed(1)).join(', ')} ms`);
   }
 
   const problems = page.take();

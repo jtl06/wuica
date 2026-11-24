@@ -49,7 +49,8 @@ function build(tag) {
 const sockets = new Set();
 let root = dist;
 const requests = []; // the paths the page requested, in order
-const server = http.createServer(hostHandler(() => root, { onRequest: (p) => requests.push(p.replace(/\?.*$/, '')) }));
+const requestTimes = []; // when (Date.now())
+const server = http.createServer(hostHandler(() => root, { onRequest: (p) => { requests.push(p.replace(/\?.*$/, '')); requestTimes.push(Date.now()); } }));
 server.on('connection', (s) => { sockets.add(s); s.on('close', () => sockets.delete(s)); });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const origin = `http://127.0.0.1:${server.address().port}`;
@@ -169,9 +170,13 @@ try {
 
   // first visit (no worker yet) at the address that the host redirects
   await goto(`${origin}/index.html`);
+  // (the requests until the default example's result is on the page: the moment it appeared, from the page's clock)
+  await waitFor(`document.querySelector('#result-body .tp .value')`, 60000);
+  const shownAt = await evaluate(`return performance.timeOrigin + (performance.getEntriesByName('wuica-first-result')[0]?.startTime ?? performance.now());`);
+  const firstRequests = new Set(requests.filter((p, i) => p !== '/index.html' && requestTimes[i] <= shownAt));
+  check(!firstRequests.has('/wuica_asm.wasm'), 'first visit: the default example\'s result does not wait for the assembler', [...firstRequests].filter((p) => /wasm/.test(p)).join());
   const first = await works('first visit, at /index.html');
   check(first.path === '/', 'first visit: /index.html is redirected to /', first.path);
-  const firstRequests = new Set(requests.filter((p) => p !== '/index.html'));
   // the worker has installed (everything cached) and controls the page
   const installed = await waitFor(`/works offline/.test(document.getElementById('status').textContent)`, 60000);
   if (!(await evaluate('return !!navigator.serviceWorker.controller'))) await reload();

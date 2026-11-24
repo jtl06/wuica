@@ -26,7 +26,7 @@ export function createViews(env) {
   const icard = createICard({ details, getSel: () => env.getSel?.() ?? -1 });
   const srcmap = createSrcMap({ getSource: () => env.getSource?.() ?? null, onToggle: (open) => env.onToggle?.({ srcmap: open }) });
   const mca = createMca({ ...(env.mca ?? {}), onToggle: (open) => env.onToggle?.({ mca: open }) });
-  const parts = [bound, srcmap, whatif, codemap, deps, mca, createExport(), icard];
+  const parts = [bound, srcmap, whatif, codemap, deps, mca, createExport({ work: env.work }), icard];
   let last = null; // [root, view] of the last decoration
   return {
     decorate(root, view) { last = [root, view]; for (const p of parts) p.decorate(root, view); },

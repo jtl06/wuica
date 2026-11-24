@@ -1,4 +1,0 @@
-/* Copy the result (js/export.js): at the end of the tools above the uop table. */
-.ex-tools { display: inline-flex; gap: 0 1.25ch; margin-left: auto; color: var(--subtle); }
-.ex-btn { color: var(--subtle); }
-.ex-btn:hover:not(:disabled) { color: var(--accent-hover); }

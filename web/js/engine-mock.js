@@ -51,6 +51,10 @@ export const MOCK_ERROR_HEX = '0f0b';
 
 const CASES = [...RECORDED.map(expand), SYNTHETIC];
 
+// Machine code that is another encoding of a recorded block (the same instructions): answered with that block's result.
+// examples.js 'avx' ships the assembler's `49 01 ca` for `add r10, rcx`; the corpus's block has `4c 03 d1`.
+const SAME_AS = new Map([['c4e2d5aaf44901ca4d0fafc049ffcf75ef', 'c4e2d5aaf44c03d14d0fafc049ffcf75ef']]);
+
 export function recordedCases() {
   return CASES.map((c) => ({ hex: c.hex, arch: c.response.arch, source: c.source }));
 }
@@ -76,7 +80,8 @@ export class MockEngine {
 
   // The same failures as the specification lists, then a canned response.
   async analyze(request) {
-    const hex = String(request?.hex ?? '').toLowerCase();
+    const given = String(request?.hex ?? '').toLowerCase();
+    const hex = SAME_AS.get(given) ?? given;
     const arch = request?.arch;
     if (!this.#configs) return { error: 'uarch.json has not been loaded' };
     const cfg = this.#configs[arch];

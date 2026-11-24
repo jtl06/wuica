@@ -159,6 +159,12 @@ try {
       setCode(c.value.replace(/^# LLVM-MCA-.*$/gm, ''));
       await done(() => $('run').click());
       out.after = { rows: instrRows().length, chip: chip(), loop: loopChip(), options: [...$('loop-chip').options].map((o) => o.text) };
+      // where it is: in a row of controls when that row has room for it (the row is no taller with it: the editor keeps
+      // its height), else under the editor
+      { const lc = $('loop-chip'), row = lc.parentElement, h1 = row.getBoundingClientRect().height;
+        lc.hidden = true; const h0 = row.getBoundingClientRect().height; lc.hidden = false;
+        out.place = [row.classList.contains('toolbar') || row.classList.contains('pane-head') ? 'row' : lc.previousElementSibling === $('input-messages') ? 'under' : row.className,
+          h1 - h0 < lc.offsetHeight / 2, Math.round(h0), Math.round(h1)]; }
       await done(() => pickLoop('whole'));
       out.whole = { rows: instrRows().length, loop: loopChip(), hash: location.hash };
       await done(() => pickLoop('0'));
@@ -179,6 +185,7 @@ try {
     check(/LLVM-MCA-BEGIN/.test(r.title) && /IACA/.test(r.title) && r.messages === '', 'the chip\'s tooltip lists the markers; no messages', JSON.stringify(r));
     check(r.sel === '# LLVM-MCA-BEGIN hot', 'a click on the chip selects the BEGIN line', JSON.stringify(r.sel));
     check(r.after.rows === 3 && r.after.chip === null && r.after.loop === 'loop .L1' && r.after.options.join() === 'loop .L1,whole', 'no markers: the loop is found, the loop chip', JSON.stringify(r.after));
+    check(r.place[0] === 'row' && r.place[1], 'the loop chip: in a row of controls (it has room: the row is no taller with it)', JSON.stringify(r.place));
     check(r.whole.rows > 6 && r.whole.loop === 'whole' && /[#&]lp=whole(&|$)/.test(r.whole.hash) && r.loop0.rows === 3, 'the loop chip: the whole listing (in the link), and the loop again', JSON.stringify([r.whole, r.loop0]));
     check(r.again.rows === 3 && r.again.chip === '▣ hot 1/2', 'markers again: the region', JSON.stringify(r.again));
     check(r.hex.chip === null && r.hex.lines === 3, 'to hex: the region\'s 3 instructions, no chip', JSON.stringify(r.hex));
@@ -372,15 +379,20 @@ try {
       const chipB = () => { const c = $('loop-chip-b'); return c && !c.hidden ? c.options[c.selectedIndex]?.text ?? null : null; };
       await until(() => chipB());
       const out = { start: [chipB(), loopChip()] };
-      const c = $('loop-chip-b'); c.value = '1'; c.dispatchEvent(new Event('change', { bubbles: true }));
+      const c = $('loop-chip-b'); c.focus(); c.value = '1'; c.dispatchEvent(new Event('change', { bubbles: true }));
       await until(() => chipB() === 'loop .L2');
       await wait(300);
       out.picked = chipB();
+      out.focus = document.activeElement?.id; // (a pick by keyboard: the focus stays on the chip after the new analysis)
       const b = $('code-b'); b.value = 'h:\\n  xor eax, eax\\n.L7:\\n  sub rbx, 3\\n  dec rdx\\n  jnz .L7\\n  xor ecx, ecx\\n.L8:\\n  add rsi, rdi\\n  dec r8\\n  jnz .L8\\n  ret\\n'; b.dispatchEvent(new Event('input', { bubbles: true }));
       await until(() => chipB() === 'loop .L7', 10000).catch(() => {});
       out.replaced = chipB();
+      // (B's row has no room at this width: under B's editor; A's code keeps its height)
+      out.placeB = $('loop-chip-b').previousElementSibling?.id ?? $('loop-chip-b').parentElement.className;
       return out;`);
+    check(rb.placeB === 'b-messages' || rb.placeB === 'ab-head ab-b-head', 'A–B: B\'s chip in its row, or under its editor when the row has no room', JSON.stringify(rb.placeB));
     check(rb.start[0] === 'loop .L1' && rb.start[1] === null, 'A–B: side B has its own loop chip', JSON.stringify(rb));
+    check(rb.focus === 'loop-chip-b', 'A–B: after a pick the focus stays on B\'s chip', JSON.stringify(rb.focus));
     check(rb.picked === 'loop .L2' && rb.replaced === 'loop .L7', 'A–B: B picks its second loop; a new B text starts at the first', JSON.stringify(rb));
     check(page.problems.length === 0, 'no console errors (review)', page.problems.join('\n'));
     await page.cmd('Page.close');

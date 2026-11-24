@@ -173,7 +173,7 @@ export function createPool({ size, spawn, tableOf, tableBytes, maxTables = Infin
       if (!j.batch.over) {
         s.phase = 'analyze';
         s.since = now();
-        response = await engine.analyze(j.request);
+        response = await engine.analyze(typeof j.request === 'function' ? j.request() : j.request);
         counts.analyses++;
         if (response?.trapped) { counts.traps++; engine.cancel(); } // a fresh worker, with the same tables, for the next job
         else if (now() - s.since >= memoryCheckMs && typeof engine.memory === 'function' && typeof engine.recycle === 'function') {
@@ -220,7 +220,8 @@ export function createPool({ size, spawn, tableOf, tableBytes, maxTables = Infin
     maxTables: cap,
     counts,
 
-    // items: [{request, ...}] (request: see docs/WASM-API.md); onResult(item, response, error) for each, in the order
+    // items: [{request, ...}] (request: see docs/WASM-API.md; or a function that makes it when the job starts, with the
+    // item's arch beside it: a large batch's requests need not all be in memory at once); onResult(item, response, error) for each, in the order
     // they finish (error: an Error if there is no response). Resolves to true when every item has its result, false
     // if the batch was stopped (signal aborted, or isStale() true).
     run(items, { signal = null, isStale = null, onResult = null } = {}) {
@@ -237,7 +238,7 @@ export function createPool({ size, spawn, tableOf, tableBytes, maxTables = Infin
         if (signal?.aborted || isStale?.()) { b.finish(false); return; }
         if (!items.length) { b.finish(true); return; }
         signal?.addEventListener('abort', onAbort);
-        for (const item of items) queue.push({ batch: b, item, request: item.request, table: tableOf(item.request.arch), attempts: 0 });
+        for (const item of items) queue.push({ batch: b, item, request: item.request, table: tableOf(item.arch ?? item.request.arch), attempts: 0 });
         pump();
       });
     },

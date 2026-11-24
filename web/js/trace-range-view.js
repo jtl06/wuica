@@ -17,7 +17,7 @@ const label = (r) => (r.a === r.b ? `c ${r.a}` : `c ${r.a}–${r.b}`);
 const HEAD_KEYS = 'the cycles under a drag on the head of the trace, or [ and ] on the focused timeline';
 
 // where the focus goes from the bound view once its range is gone: its summary, or its tab when the tabbed workspace
-// hides the summary of the open view (workspace.js, dense.css)
+// hides the summary of the open view (workspace.js, style.css)
 function home(el) {
   const sum = el.closest('details')?.querySelector(':scope > summary');
   if (sum && sum.getClientRects().length) return sum;

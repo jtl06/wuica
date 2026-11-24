@@ -2,6 +2,9 @@
 // parser reads, so the examples also show that disassembly output can be pasted). The four blocks are in the
 // corpus of the Python reference, so the mock engine has the reference's result for them
 // (see mock-data.js; `arch` is the microarchitecture that result was recorded for). Menu group "basics".
+// An example's machine code is what the assembler makes of its text (tests-js/web_qa.mjs, web_asm_shipped.mjs), so that
+// its result can be shown before the assembler has loaded (asm-shipped.js): 'avx' has `49 01 ca` for `add r10, rcx`,
+// where the corpus has `4c 03 d1` (the mock engine takes it for the recorded block: engine-mock.js SAME_AS).
 
 import { SHA256_BLOCK_HEX } from './showcase.js';
 
@@ -30,7 +33,7 @@ export const EXAMPLES = [
   ex('avx', 'AVX: FMA, add and multiply', 'ADL-P',
     ['loop:', '  vfmsub213pd ymm6, ymm5, ymm4', '  add r10, rcx', '  imul r8, r8', '  dec r15', '  jnz loop'],
     ['loop:', '  vfmsub213pd %ymm4, %ymm5, %ymm6', '  addq %rcx, %r10', '  imulq %r8, %r8', '  decq %r15', '  jnz loop'],
-    [['c4 e2 d5 aa f4', 'vfmsub213pd ymm6, ymm5, ymm4'], ['4c 03 d1', 'add r10, rcx'], ['4d 0f af c0', 'imul r8, r8'],
+    [['c4 e2 d5 aa f4', 'vfmsub213pd ymm6, ymm5, ymm4'], ['49 01 ca', 'add r10, rcx'], ['4d 0f af c0', 'imul r8, r8'],
       ['49 ff cf', 'dec r15'], ['75 ef', 'jnz 0x0']]),
   ex('stack', 'Stack: pops after an add to rsp', 'SKL',
     ['loop:', '  add rsp, 8', '  mov rsi, rbx', '  mov rdx, rbp', '  pop rbx', '  pop rbp', '  mov edi, eax', '  dec r15', '  jnz loop'],

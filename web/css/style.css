@@ -1,5 +1,7 @@
-/* wuica: one dark, terminal-like theme. Everything is monospace, 15px, weight 400; headings differ by colour
-   and spacing only. Flat regions, thin lines, no shadows, no rounded corners. */
+/* wuica: one dark, terminal-like theme. Everything is monospace, 13px (14px on phones), weight 400; headings differ
+   by colour and spacing only. Flat regions, thin lines, no shadows, no rounded corners. A compact layout: tight
+   spacing, little chrome (no pane titles, no idle status); the result pane is a tabbed workspace (the table or A–B's
+   diff, and the views; js/workspace.js), the window's height on wide screens, with a foldable input pane. */
 
 @font-face {
   font-family: "IBM Plex Mono";
@@ -104,11 +106,12 @@
 html {
   background: var(--background);
   color: var(--text);
-  font: 400 15px/1.55 var(--mono);
+  font: 400 13px/1.4 var(--mono);
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
   scroll-padding-top: 1rem;
 }
+@media (max-width: 640px) { html { font-size: 14px; } }
 body { margin: 0; min-height: 100vh; }
 
 h1, h2, h3, p, ul, ol, dl, dd, fieldset, legend, pre, table { margin: 0; padding: 0; font: inherit; }
@@ -142,27 +145,26 @@ a.ext:hover { color: var(--external); text-decoration-color: currentColor; }
   align-items: baseline;
   justify-content: space-between;
   gap: 0.25rem 2rem;
-  padding-top: 1.5rem;
-  padding-bottom: 1rem;
+  padding-top: 0.4rem;
+  padding-bottom: 0.4rem;
   border-bottom: 1px solid var(--border);
 }
 .brand { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.75rem; min-width: 0; }
 .brand h1 { color: var(--accent); }
 .badge { color: var(--caveat); border: 1px solid currentColor; padding: 0 0.4rem; font-size: 0.8667rem; line-height: 1.35; }
-.tagline { color: var(--description); }
-.top nav { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 1.5rem; }
+.top nav { display: flex; flex-wrap: wrap; align-items: baseline; gap: 1.1rem; }
 .top nav a, .top nav button.plain { color: var(--text); text-decoration: none; }
 .top nav a:hover, .top nav button.plain:hover { color: var(--accent); }
 .top nav a.gh { display: inline-flex; align-self: center; color: var(--subtle); }
 .top nav a.gh:hover, .top nav a.gh:focus-visible { color: var(--accent); }
 
-main { padding-top: 0.5rem; padding-bottom: 2rem; }
+main { padding-top: 0; padding-bottom: 0.75rem; }
 
-.block, .pane { padding: 1.25rem 0 1.5rem; border-bottom: 1px solid var(--border); min-width: 0; }
-.block > h2, .pane > h2 { color: var(--heading); margin-bottom: 0.75rem; }
+.block, .pane { padding: 0.5rem 0 0.6rem; border-bottom: 1px solid var(--border); min-width: 0; }
+.block > h2 { color: var(--heading); }
 
-.bottom { padding-top: 1.25rem; padding-bottom: 2.5rem; color: var(--subtle); }
-.bottom p + p { margin-top: 0.4rem; }
+.bottom { padding-top: 0.6rem; padding-bottom: 1rem; color: var(--subtle); font-size: 0.9rem; }
+.bottom p + p { margin-top: 0.15rem; }
 .bottom .small { font-size: 0.85em; color: var(--subtle); }
 
 /* visually hidden, still read (labels of controls whose content says what they are) */
@@ -170,15 +172,16 @@ main { padding-top: 0.5rem; padding-bottom: 2rem; }
 
 /* ---- the input pane: a toolbar, the code, the CPUs, the actions ------------------------------------------------ */
 
-.pane-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 2rem; margin-bottom: 0.6rem; }
-.pane-head > h2 { color: var(--heading); }
+.pane-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 1.25rem; margin-bottom: 0.35rem; }
+.pane-head > h2 { color: var(--heading); position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; } /* (the panes say what they are) */
 .ab-switch { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 1.25rem; }
-.toolbar { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1rem; margin-bottom: 0.5rem; }
+.toolbar { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.6rem; margin-bottom: 0.35rem; }
+.toolbar .choice { gap: 0.25rem 0.8rem; }
 .toolbar .code-hint { margin-left: auto; }
 .toolbar .code-hint:empty { display: none; }
 
 /* one dense grid: the label, the CPUs in order of release, all / clear */
-.cpus { display: grid; grid-template-columns: repeat(auto-fill, minmax(7.75ch, 1fr)); align-items: baseline; gap: 0.1rem 0.6rem; margin-top: 0.6rem; }
+.cpus { display: grid; grid-template-columns: repeat(auto-fill, minmax(7.75ch, 1fr)); align-items: baseline; gap: 0 0.5rem; margin-top: 0.4rem; }
 .cpu-grid { display: contents; }
 .cpus-label { color: var(--accent); cursor: help; }
 .cpu-grid label.cpu { white-space: nowrap; cursor: pointer; color: var(--subtle); }
@@ -191,7 +194,7 @@ main { padding-top: 0.5rem; padding-bottom: 2rem; }
 .cpu-tools { grid-column: span 2; display: inline-flex; justify-content: flex-end; gap: 1rem; white-space: nowrap; }
 .cpu-tools button.plain:disabled { opacity: 0.45; text-decoration: none; }
 
-.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.25rem; margin-top: 0.7rem; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.9rem; margin-top: 0.45rem; }
 
 /* the options: a popover under the toolbar, at its left edge and never wider (in the flow on phones) */
 details.pop > summary { color: var(--text); }
@@ -208,7 +211,7 @@ details.pop[open] > summary { color: var(--accent); }
 
 /* ---- rows: a label column and a content column ----------------------------------------------------------- */
 
-.row { display: grid; grid-template-columns: var(--label-width) minmax(0, 1fr); column-gap: 1rem; padding: 0.3rem 0; }
+.row { display: grid; grid-template-columns: var(--label-width) minmax(0, 1fr); column-gap: 0.75rem; padding: 0.12rem 0; }
 .row > .label { color: var(--accent); }
 .row > .field { min-width: 0; }
 .field.wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.25rem; }
@@ -229,7 +232,7 @@ textarea, select, input[type="number"] {
   background: var(--surface);
   border: 1px solid var(--control-border);
   border-radius: 0;
-  padding: 0.25rem 0.5rem;
+  padding: 0.15rem 0.4rem;
 }
 textarea {
   display: block;
@@ -245,7 +248,7 @@ textarea {
 }
 textarea::placeholder { color: var(--subtle); opacity: 1; }
 textarea[aria-invalid="true"] { border-color: var(--caveat); }
-select { max-width: 100%; padding-right: 0.25rem; }
+select { max-width: 100%; }
 select:disabled, button:disabled, input:disabled { opacity: 0.55; cursor: not-allowed; }
 input[type="number"] { width: 9ch; }
 input[type="radio"], input[type="checkbox"] { accent-color: var(--accent); margin: 0 0.35rem 0 0; vertical-align: -1px; }
@@ -259,7 +262,7 @@ button {
   background: transparent;
   border: 1px solid var(--control-border);
   border-radius: 0;
-  padding: 0.25rem 0.9rem;
+  padding: 0.1rem 0.6rem;
   cursor: pointer;
 }
 button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-hover); background: var(--accent-dim); }
@@ -274,10 +277,14 @@ button.plain:hover:not(:disabled) { background: none; text-decoration-color: cur
 .choice label:has(input:checked) { color: var(--accent); }
 label.inline { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--subtle); }
 label.inline select { color: var(--text); }
-#examples { width: 14ch; } /* the menu itself shows the whole titles */
+#examples { width: 11ch; } /* the menu itself shows the whole titles (the toolbar holds the elements per iteration too) */
 
 .field > .hint { margin-top: 0.3rem; }
 .messages:empty { display: none; }
+/* (a long list scrolls in its own box, render.js messageList: the code box above and the controls below keep their room) */
+.messages { flex: none; }
+.messages > ul { max-height: 7.2em; overflow-y: auto; overscroll-behavior: contain; }
+.messages .msg-count { margin: 0 0 0.1rem; font-size: 0.92em; }
 .messages { margin-top: 0.3rem; color: var(--caveat); }
 .messages li { padding: 0.05rem 0; }
 .messages .warning { color: var(--date); }
@@ -293,19 +300,32 @@ fieldset.opt { display: grid; gap: 0.2rem; }
 fieldset.opt > legend { float: left; margin-bottom: 0.2rem; }
 fieldset.opt > label { clear: both; padding-left: 1.5ch; }
 
-.status { margin-left: auto; flex: 1 1 20ch; min-width: 0; text-align: right; color: var(--subtle); min-height: 1.85em; }
-.result-head { flex-wrap: nowrap; margin-bottom: 0.4rem; }
+/* the status: empty while idle; when it says something (for a moment), in the top bar between the name and the links,
+   clear of the result's tables; on phones at the bottom of the window */
+.status { margin-left: auto; flex: 1 1 20ch; min-width: 0; text-align: right; color: var(--subtle); min-height: 0; background: var(--background); padding-left: 1ch; }
+.pane-result { position: relative; }
+.result-head { flex-wrap: nowrap; position: absolute; top: 0.5rem; right: 0; margin: 0; z-index: 2; pointer-events: none; max-width: 60%; }
+.result-head:has(.status.idle) { display: none; }
+@media (min-width: 641px) {
+  .result-head { position: fixed; top: 0; left: 50%; transform: translateX(-50%); right: auto; height: var(--top-h, 2.4rem);
+    display: flex; align-items: center; max-width: 40vw; z-index: 30; }
+  .result-head .status { text-align: center; }
+}
 .status .bar { display: block; height: 2px; margin-top: 2px; background: transparent; }
 .status .bar > span { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.15s linear; }
 .status.error { color: var(--caveat); }
-@media (max-width: 640px) { .result-head { flex-wrap: wrap; } .status { margin-left: 0; flex-basis: 100%; text-align: left; } }
+@media (max-width: 640px) {
+  .result-head { flex-wrap: wrap; position: fixed; top: auto; bottom: 0; left: 0; right: 0; max-width: none; z-index: 30;
+    border-top: 1px solid var(--border); padding: 0.25rem var(--page-gutter); background: var(--background); }
+  .status { margin-left: 0; flex-basis: 100%; text-align: left; }
+}
 
 .notice { border: 1px solid var(--caveat); color: var(--caveat); background: var(--surface); padding: 0.5rem 0.75rem; margin-top: 1rem; }
 .notice p + p { margin-top: 0.3rem; }
 
 /* ---- result --------------------------------------------------------------------------------------------- */
 
-#results { min-height: 31rem; }
+#results { min-height: 0; }
 #result-body { transition: opacity 0.1s; }
 #results[aria-busy="true"] #result-body, #result-body.stale { opacity: 0.55; }
 .empty { color: var(--subtle); }
@@ -313,8 +333,9 @@ fieldset.opt > label { clear: both; padding-left: 1.5ch; }
 
 .row.lead { grid-template-columns: minmax(0, 1fr); }
 .tp { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.1rem 2ch; }
-.tp .value { font-size: 1.6rem; line-height: 1.2; color: var(--heading); }
+.tp .value { font-size: 1.35rem; line-height: 1.15; color: var(--heading); }
 .tp .unit { color: var(--text); }
+.copy-all { color: var(--subtle); text-decoration: none; } /* (copy-view.js: the whole result) */
 .k { color: var(--accent); }
 .meta { color: var(--description); }
 .meta .sep { color: var(--subtle); }
@@ -330,21 +351,25 @@ fieldset.opt > label { clear: both; padding-left: 1.5ch; }
 .limits .is-bottleneck .name, .limits .is-bottleneck .val { color: var(--heading); }
 .limits .is-bottleneck .gauge > span { background: var(--accent); }
 
-.table-tools { display: flex; flex-wrap: wrap; gap: 0.25rem 1.5rem; align-items: center; color: var(--subtle); margin-bottom: 0.35rem; }
+.table-tools { display: flex; flex-wrap: wrap; gap: 0.25rem 1.5rem; align-items: center; color: var(--subtle); margin-bottom: 0.2rem; }
 .table-tools label { cursor: pointer; }
 
-.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); max-width: 100%; }
+.table-wrap { overflow-x: auto; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); max-width: 100%; }
+.table-wrap thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); }
 table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
 table.grid { width: 100%; }
-.grid th, .grid td { padding: 0.15rem 0.6ch; white-space: nowrap; text-align: right; font-weight: 400; }
-.grid thead th { color: var(--subtle); border-bottom: 1px solid var(--border); padding-top: 0.3rem; padding-bottom: 0.3rem; }
+.grid th, .grid td { padding: 0.05rem 0.6ch; white-space: nowrap; text-align: right; font-weight: 400; }
+.grid thead th { color: var(--subtle); border-bottom: 1px solid var(--border); padding-top: 0.15rem; padding-bottom: 0.15rem; }
 .grid tbody th, .grid tfoot th, .grid thead th:first-child { text-align: left; }
 .grid tbody th { color: var(--code); }
 .grid tbody th a { color: var(--external); }
+/* a long table drawn in a window (vrows.js): the spacers that stand for the rows not drawn, and the row that holds each
+   column's widest text so the columns keep their width (it takes no height) */
+.grid tbody tr.vr-pad > td { padding: 0; border: 0; background: none; }
+.grid tbody tr.vr-size { visibility: collapse; }
 .grid tbody tr:hover > * { background-color: var(--accent-dim); }
 .grid tbody tr:hover > td.heat { background-color: transparent; } /* the shading alone: keeps its text AA */
-.grid tfoot th, .grid tfoot td { border-top: 1px solid var(--border); color: var(--description); padding-top: 0.3rem; padding-bottom: 0.3rem; }
-.grid .first { padding-left: 0.75rem; }
+.grid tfoot th, .grid tfoot td { border-top: 1px solid var(--border); color: var(--description); padding-top: 0.15rem; padding-bottom: 0.15rem; }
 .grid .grp { border-left: 1px solid var(--border); }
 .grid td.note, .grid th.note { text-align: center; color: var(--date); }
 .grid thead th.note { color: var(--subtle); }
@@ -356,10 +381,26 @@ table.grid { width: 100%; }
 .grid tr.extra td.heat { background-image: linear-gradient(rgb(var(--accent-rgb) / calc(var(--h, 0) * var(--heat-extra))), rgb(var(--accent-rgb) / calc(var(--h, 0) * var(--heat-extra)))); }
 .grid tr.unsupported th { color: var(--caveat); }
 
-.more-rows { margin-top: 0.35rem; }
-.legend { color: var(--subtle); display: flex; flex-wrap: wrap; gap: 0.1rem 2ch; margin-top: 0.35rem; }
-.legend b { font-weight: 400; color: var(--date); }
-.legend span { cursor: help; }
+/* the uop table: tight port columns, the instruction column stays in view while the ports scroll sideways */
+.grid.uops th, .grid.uops td { padding-left: 0.45ch; padding-right: 0.45ch; }
+.grid.uops .first { padding-left: 0.6rem; }
+.grid.uops th.first { position: sticky; left: 0; z-index: 1; background-color: var(--surface); box-shadow: inset -1px 0 var(--border);
+  overflow: hidden; text-overflow: ellipsis; }
+.grid.uops thead th.first { z-index: 3; }
+/* the instruction's text cut to fit the ports (render.js fitInstr; the text, not the cell: a cell's max-width does not
+   bind its column); A–B's Δ table cuts its instruction columns the same way */
+.grid.uops tbody th.first > :first-child, .grid.ab-diff td.ab-i > span:first-child {
+  display: inline-block; vertical-align: bottom; max-width: var(--ins-max, none); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 640px) { .grid.uops th.first { max-width: 45vw; } .grid.uops tbody th.first > :first-child { max-width: min(var(--ins-max, 45vw), calc(45vw - 1.5rem)); } } /* (phones: the ports keep room) */
+/* the port columns: a group's name once (P, ALU, AGU, FP, SD), over one number per column (render.js) */
+.grid.uops:has(.cg) thead th, .grid.ab-diff:has(.cg) thead th { vertical-align: bottom; }
+.grid.uops thead th.pg, .grid.ab-diff thead th.pg { text-align: right; }
+/* (in the flow, over the group's first number: its column is at least as wide, nothing sticks out of the table) */
+.grid.uops .cg, .grid.ab-diff .cg { display: block; text-align: left; color: var(--description); }
+.grid.ab-diff thead th.pg { position: sticky; }
+/* (opaque tints: the cells scroll under it) */
+.grid.uops tbody tr:hover > th.first, .grid.uops tbody tr.tl-linked > th.first { background-color: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
+.grid.uops tbody tr.tl-sel > th.first { background-color: color-mix(in srgb, var(--accent) 16%, var(--surface)); }
 
 .text-block { position: relative; }
 .text-row > .field { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 3ch; }
@@ -435,28 +476,133 @@ table.cmp-cpus { width: 100%; }
 
 /* ---- the checked CPUs (above the result) and the views below both panes ------------------------------------------ */
 
-.multi { margin-bottom: 0.9rem; }
+.multi { margin-bottom: 0.5rem; }
 .multi-info { margin-top: 0.2rem; font-size: 0.8667rem; }
 .multi-info:empty { display: none; }
-.more { padding-top: 0.75rem; padding-bottom: 0.9rem; }
+
+/* ---- the result as a tabbed workspace (workspace.js): the first tab and the views; one shows at a time ---------- */
+
+.view-tabs {
+  display: flex; flex-wrap: nowrap; align-items: flex-end; gap: 0 2px; margin: 0.45rem 0 0; padding: 0;
+  border-bottom: 1px solid var(--control-border); overflow-x: auto; scrollbar-width: none;
+}
+.view-tabs::-webkit-scrollbar { display: none; }
+.view-tab {
+  flex: none; padding: 0.1rem 0.8rem; margin-bottom: -1px; color: var(--description);
+  border: 1px solid var(--border); border-bottom-color: var(--control-border); background: transparent;
+}
+.view-tab:hover:not(:disabled) { background: var(--accent-dim); color: var(--accent-hover); border-color: var(--border); border-bottom-color: var(--control-border); }
+.view-tab[aria-selected="true"] {
+  color: var(--heading); background: var(--surface);
+  border-color: var(--control-border); border-bottom-color: var(--surface); border-top: 2px solid var(--accent);
+}
+/* the copy control of the shown tab: the end of the row (after A–B's side switch) */
+.ws-copy { flex: none; margin: 0 0 0.2rem auto; padding-left: 1rem; }
+.ws-side + .ws-copy { margin-left: 0; }
+th .cmp-copy { float: right; margin: 0; padding: 0 0 0 1rem; font-weight: normal; }
+/* A–B: the side the views show, at the end of the row */
+.ws-side { flex: none; display: inline-flex; gap: 2px; margin: 0 0 0.2rem auto; padding-left: 1rem; }
+.ws-side .ws-side-btn { padding: 0 0.45em; border: 0; min-width: 1.9em; opacity: 0.4; } /* (.ws-side: over .ab-tag's padding) */
+.ws-side .ws-side-btn.on { opacity: 1; }
+.ws-side .ws-side-btn:hover:not(:disabled) { opacity: 0.8; color: var(--background); background: var(--accent); }
+.ws-side .ws-side-btn.b:hover:not(:disabled) { background: var(--code); }
+#result-body > .row.lead:has(> .field > .table-wrap) { padding-top: 0.35rem; }
+#result-body > .ws-main { padding-top: 0.35rem; }
+/* a view is open: the table and what follows it give way */
+#results.view-on #result-body > .view-tabs ~ * { display: none; }
+#more { padding: 0; margin: 0; border: 0; }
+#more > .row { display: none; }
+#more > .row:has(> .field > details[open]) { display: block; padding: 0.4rem 0 0; }
+#more > .row > .label,
+#more > .row > .field > details[open] > summary { display: none; }
+
+/* the chain: one line (the whole chain is in the row's tooltip; its length is the Dependencies limit) */
+.ins-chain-row > .field { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ic-ins { overflow-wrap: anywhere; } /* (the instruction card: the whole instruction, also where the table cuts it) */
+
+/* ---- the limitations: one paragraph ------------------------------------------------------------------------- */
+
+#about > h2 { display: inline; margin: 0 1ch 0 0; }
+#about ul.terse { display: inline; }
+#about ul.terse li { display: inline; color: var(--subtle); }
+#about ul.terse li + li::before { content: " · "; }
 
 /* ---- wide screens: input | result side by side (in A–B mode too: A over B in the input pane) ------------------- */
 
+/* a workspace the window's height: the input pane's code boxes and the shown tab's scrollers (workspace.js) take what is
+   left; the tabs stay at the top of the result pane */
 @media (min-width: 1200px) {
   :root { --max-width: 1680px; --page-gutter: clamp(1.5rem, 2.5vw, 3rem); }
-  .top { padding-top: 1rem; padding-bottom: 0.75rem; }
   .panes {
     display: grid; grid-template-columns: minmax(0, clamp(24rem, 34vw, 36rem)) minmax(0, 1fr);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border); height: calc(100vh - var(--top-h, 2.4rem));
   }
-  .pane { border-bottom: 0; padding-top: 1rem; }
-  .pane-input { padding-right: 2rem; }
-  .pane-result { padding-left: 2rem; border-left: 1px solid var(--border); min-height: 0; }
-  /* the code box fills the height of the window (about 20 lines at 800 px) */
-  body:not(.ab-on) #code { height: clamp(16rem, calc(100vh - 22rem), 60rem); min-height: 16rem; }
+  .pane { border-bottom: 0; }
+  .pane-input { padding-right: 1rem; display: flex; flex-direction: column; min-height: 0; overflow: hidden; position: relative; }
+  .pane-input .code-field { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+  #code, #code-b { flex: 1 1 0; height: auto; min-height: 6rem; resize: none; }
+  body:not(.ab-on) #code { height: clamp(14rem, calc(100vh - 13.5rem), 60rem); min-height: 8rem; }
+  /* A–B: A over B, each half of what is left */
+  .code-field.ab-grid > .ab-a-col, .code-field.ab-grid > .ab-b { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+  .pane-result { padding-left: 1rem; border-left: 1px solid var(--border); min-height: 0; overflow-y: auto; }
+  .view-tabs { position: sticky; top: -0.5rem; z-index: 3; background: var(--background); padding-top: 0.25rem; }
 }
-@media (min-width: 1200px) and (max-width: 1359px) {
-  body:not(.ab-on) #code { height: clamp(16rem, calc(100vh - 23.5rem), 60rem); } /* the CPUs take a row more */
+
+/* ---- the input pane folds to a labelled strip at the left edge (workspace.js; wide screens) ------------------ */
+
+.input-fold { display: none; }
+@media (min-width: 1200px) {
+  .input-fold {
+    display: block; position: absolute; top: 0.45rem; right: 0.15rem; z-index: 4;
+    padding: 0 0.35rem; line-height: 1.3; color: var(--subtle); border-color: var(--border);
+  }
+  /* folded: a narrow column with the button: "input ▸", written downwards, the whole height */
+  .input-folded .panes { grid-template-columns: 1.7rem minmax(0, 1fr); }
+  .input-folded .pane-input { padding: 0; overflow: visible; }
+  .input-folded .pane-input > :not(.input-fold) { display: none; }
+  .input-folded .pane-result { padding-left: 0.9rem; }
+  .input-folded .input-fold {
+    left: 0; right: auto; top: 0.5rem; bottom: 0.6rem; width: 1.7rem; padding: 0.7rem 0; text-align: start;
+    writing-mode: vertical-rl; letter-spacing: 0.05em;
+    color: var(--accent); background: var(--surface); border-color: var(--control-border);
+  }
+  .input-folded .input-fold:hover { color: var(--accent-hover); background: var(--accent-dim); border-color: var(--accent); }
+}
+
+/* ---- phones: only the checked CPUs, the rest behind "more" (app.js); shorter code boxes ---------------------- */
+
+.cpu-more { display: none; }
+@media (max-width: 640px) {
+  .cpus:not(.open) .cpu-grid label.cpu:not(:has(input:checked)) { display: none; }
+  .cpus .cpu-more { display: inline; }
+  .cpus { grid-template-columns: repeat(auto-fill, minmax(7ch, 1fr)); }
+  #code { min-height: 7rem; height: 9.5rem; } /* (A–B's: ab.css) */
+}
+
+/* ---- no scrolling (from 1200 × 700): the window is the page; the top bar, the panes and a one-line footer fill it
+   exactly, and only the inside of what is read scrolls (workspace.js fits the scrollers of the shown tab into the
+   result pane). The limitations open from the top bar as a popover. Shorter windows and phones scroll. ---- */
+@media (min-width: 1200px) and (min-height: 700px) {
+  body { height: 100vh; min-height: 0; display: flex; flex-direction: column; }
+  body > .top, body > .bottom { flex: none; width: 100%; }
+  body > main { flex: 1 1 0; min-height: 0; width: 100%; display: flex; flex-direction: column; padding-bottom: 0; }
+  main > .notice { flex: none; }
+  .panes { flex: 1 1 0; min-height: 0; height: auto; }
+  .bottom { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 1ch; padding-top: 0.2rem; padding-bottom: 0.25rem; font-size: 0.85rem; }
+  .bottom p + p { margin-top: 0; }
+  .bottom p + p::before { content: "· "; }
+  #about {
+    position: fixed; z-index: 40; top: calc(var(--top-h, 2.4rem) + 0.25rem); right: var(--page-gutter); max-width: min(46rem, calc(100vw - 2 * var(--page-gutter)));
+    padding: 0.5rem 0.8rem; background: var(--background); border: 1px solid var(--control-border); border-top: 2px solid var(--accent);
+  }
+  :root:not(.about-open) #about { display: none; }
+  #about ul.terse, #about ul.terse li { display: block; }
+  #about ul.terse li + li::before { content: none; }
+  #about > h2 { display: block; margin: 0 0 0.2rem; }
+}
+/* (shorter windows: the input pane scrolls, so Analyze and the CPUs stay reachable under the code boxes' floors) */
+@media (min-width: 1200px) and (max-height: 699px) {
+  .pane-input { overflow-y: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {

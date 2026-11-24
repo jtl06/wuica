@@ -35,16 +35,15 @@ const loadTable = async (arch) => {
   if (!engine.hasArch(table)) await engine.loadArch(table, zlib.gunzipSync(fs.readFileSync(path.join(dist, 'data/arch', `${table}.bin.gz`))));
 };
 if (fs.existsSync(path.join(dist, 'wuica_asm.wasm'))) {
-  // the text gives the listed machine code, or an encoding of the same instructions with the same result (LLVM picks
-  // "add r10, rcx" = 49 01 ca where the listing of the example "avx", from the reference's corpus, has 4c 03 d1)
+  // the text gives exactly the listed machine code (examples.js: 'avx' lists the assembler's 49 01 ca for "add r10, rcx",
+  // not the corpus's 4c 03 d1; the page shows an example's result before the assembler has loaded, asm-shipped.js)
   const asm = await WasmAssembler.create(fs.readFileSync(path.join(dist, 'wuica_asm.wasm')));
   await loadTable('SKL');
   for (const ex of all) {
     for (const syntax of ['intel', 'att']) {
       const r = await asm.assemble(ex.text[syntax], syntax);
       const hex = r.ok ? toHex(r.bytes) : null;
-      const same = hex === ex.hex || (hex !== null && hex.length === ex.hex.length
-        && (await engine.analyze(makeRequest(hex, 'SKL'))).text === (await engine.analyze(makeRequest(ex.hex, 'SKL'))).text);
+      const same = hex === ex.hex;
       check(same && r.diagnostics.length === 0, `example ${ex.id}: the ${syntax} text assembles to its machine code`, JSON.stringify([hex, ex.hex, r.diagnostics]));
     }
   }
