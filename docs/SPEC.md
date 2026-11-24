@@ -147,6 +147,10 @@ The reference commit whose model and data are shipped is recorded once, in `ci/d
   the long texts (objdump, uiCA report) go into the page when opened.
   `tests-js/web_host_browser.mjs` checks this against a host emulation (`tests-js/static-host.mjs`) that redirects like the
   real host (Cloudflare static assets).
+- Copying as text (`web/js/copy-view.js`): a control at the end of the tab row copies the shown view as Markdown
+  (Shift+click CSV, Alt+click JSON where the view has them; the key `c` does the same), and one next to the headline
+  copies the whole result. The text comes from each view's model through `web/js/markdown.js` (shared with the npm
+  package), never from the drawn rows, so a windowed table is copied whole (`tests-js/web_copy_browser.mjs`).
 - All page state (input text as base64url, mode, CPUs, options, open views, A–B side B) is in the URL fragment
   (`web/js/url-state.js`, at most 200,000 characters of text from a link). Links are shareable without a server.
 
