@@ -327,6 +327,9 @@ the reference machine (`UICA_DIR`, default `/data/projects/wuica-fuzz/uica`: a w
   options and the end of the block), classified (port divergence, reference crash or hang, or a deviation of
   `docs/DEVIATIONS.md`) and written to `DIR/findings/<class>-<CPU>-<hash>.json`; `DIR/summary.json` has the verdicts per CPU.
   `fuzz.py replay FINDING.json` runs a finding again.
+- Checked against two deliberate changes of `sim/frontend.rs` (3,000 cases each, seed 1): 2 predecoder stall cycles per LCP
+  instead of 3 (204 cases differ, minimized to `sub ax, 0xae` on TGL), and the DSB rule for 16-byte blocks with LCP and
+  macro-fusible instructions at 3 instead of 2 (2 cases, minimized to 6 such instructions and a `jp` on ICL).
 
 ## Shared code
 
