@@ -14,7 +14,7 @@
 // carries both sides. The page (app.js) runs the analyses: inputs() gets the machine code of both sides,
 // analyze() runs them, draw() shows the result. All text goes in through textContent.
 
-import { h, uopTable, NOTES, watchFit, nearestLimit, columnGroup } from './render.js';
+import { h, uopTable, NOTES, watchFit, nearestLimit, columnGroup, copyAllButton } from './render.js';
 import { caveats } from './caveats.js';
 import { GROUP_LABEL } from './archs.js';
 import { compareResponses, signed, cycles, signedCycles } from './ab-diff.js';
@@ -478,6 +478,7 @@ export function createAB(api) {
         h('span', { class: 'ab-verdict', text: t.verdict === 'better' ? 'B better' : t.verdict === 'worse' ? 'B worse' : 'no change' }),
         t.verdict === 'same' ? null : ` Δ ${sign2(t.delta)} (${percent(t.pct)}) · ${speed}`));
     }
+    line.append(copyAllButton());
     const meta = h('div', { class: 'meta ab-meta' }, sideMeta('A', a), sep(), sideMeta('B', b), cmp.okA && cmp.okB ? [sep(), bottlenecks(view), notModelled(view)] : null);
     meta.title = meta.textContent; // (one line on wider screens, cut with …: the whole of it here)
     // the same in one line, for screen readers and for copying

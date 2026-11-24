@@ -23,6 +23,7 @@ export const KEYS = [
   { show: ['n', 'p'], label: 'hot rows', action: ['hotNext', 'hotPrev'], keys: ['n', 'p'] },
   { show: ['1–9'], label: 'tabs, in their order', action: TABS.map((n) => `tab:${n}`), keys: TABS.map(String) },
   { show: ['a'], label: 'A–B', action: 'ab', keys: ['a'] },
+  { show: ['c'], label: 'copy the view (Markdown)', action: 'copy', keys: ['c'] },
   { show: ['Esc'], label: 'close', action: 'escape', keys: ['Escape'] },
   { show: ['?'], label: 'keys', action: 'help', keys: ['?'] },
 ];
@@ -205,6 +206,7 @@ export function createKeys(env = {}) {
     next: () => step(1), prev: () => step(-1),
     hotNext: () => hot(1), hotPrev: () => hot(-1),
     ab,
+    copy: () => document.querySelector('#result-body .view-tabs .ws-copy')?.click(),
   };
 
   document.addEventListener('keydown', (e) => {

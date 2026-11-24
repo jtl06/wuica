@@ -9,6 +9,8 @@
 // env: { available(), module() -> promise of a WebAssembly.Module, toAsm(hex) -> promise of {text} | null,
 //        spawn() -> Worker, onToggle(open) }
 import { h } from './render.js';
+import { setCopy } from './copy-view.js';
+import { mcaMd } from './md-views.js';
 
 // uiCA's microarchitectures -> llvm -mcpu (LLVM has no Kaby Lake or Coffee Lake model: they are Skylake)
 export const MCPU = {
@@ -120,6 +122,8 @@ export function createMca(env = {}) {
         return;
       }
       const m = parseMca(res.out);
+      const out = res.out;
+      setCopy('mca', { what: "llvm-mca's text", md: () => mcaMd(out, `${m.iterations} iterations`) });
       const uica = Number(r.tp ?? r.throughput);
       const diff = m.perIteration && uica ? (100 * (m.perIteration - uica)) / uica : null;
       hint.textContent = m.perIteration ? ` · ${fmt(m.perIteration)} cycles/iteration` : '';

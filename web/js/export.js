@@ -3,7 +3,7 @@
 //
 // The first half has no DOM (tests-js/web_export.mjs runs it under Node).
 
-import { h, copyText } from './render.js';
+import { setCopy } from './copy-view.js';
 
 const r2 = (v) => (typeof v === 'number' && Number.isFinite(v) && v !== 0 ? String(Math.round(v * 100) / 100) : '');
 const used = (r) => r.columns.map((_, i) => i).filter((i) => r.rows.some((x) => Number(x.values?.[i]) || 0));
@@ -41,31 +41,19 @@ export function toJSON(r, request) {
   return JSON.stringify({ request: request ?? null, response: rest }, null, 1) + '\n';
 }
 
-// ---- the view ----------------------------------------------------------------------------------------------------
+// ---- the view: the result's table tab copies through the tab row's control (copy-view.js) ------------------------------
 
 export function createExport() {
   return {
     decorate(root, view) {
       const r = view?.response;
-      const tools = root?.querySelector('.table-tools');
-      if (!tools || !r || r.error || !Array.isArray(r.rows)) return;
-      tools.querySelector('.ex-tools')?.remove();
-      const make = {
-        md: () => toMarkdown(r, { archKey: view.archKey, archTitle: view.archTitle, link: location.href }),
+      if (!r || r.error || !Array.isArray(r.rows)) { setCopy('table', null); return; }
+      setCopy('table', {
+        what: 'the uop table',
+        md: () => toMarkdown(r, { archKey: view.archKey, archTitle: view.archTitle, link: typeof location !== 'undefined' ? location.href : null }),
         csv: () => toCSV(r),
         json: () => toJSON(r, view.request),
-      };
-      const titles = { md: 'copy the result as a Markdown table', csv: 'copy the uop table as CSV', json: 'copy the request and the response as JSON' };
-      const buttons = Object.keys(make).map((k) => {
-        const b = h('button', { type: 'button', class: 'plain ex-btn', 'data-format': k, title: titles[k], text: k });
-        b.addEventListener('click', async () => {
-          const ok = await copyText(make[k]());
-          b.textContent = ok ? 'copied' : 'failed';
-          setTimeout(() => { b.textContent = k; }, 1500);
-        });
-        return b;
       });
-      tools.append(h('span', { class: 'ex-tools', role: 'group', 'aria-label': 'copy the result' }, h('span', { class: 'ex-k', text: 'copy' }), ...buttons));
     },
     setOpen() {},
   };

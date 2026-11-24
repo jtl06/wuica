@@ -331,6 +331,7 @@ fieldset.opt > label { clear: both; padding-left: 1.5ch; }
 .tp { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.1rem 2ch; }
 .tp .value { font-size: 1.35rem; line-height: 1.15; color: var(--heading); }
 .tp .unit { color: var(--text); }
+.copy-all { color: var(--subtle); text-decoration: none; } /* (copy-view.js: the whole result) */
 .k { color: var(--accent); }
 .meta { color: var(--description); }
 .meta .sep { color: var(--subtle); }
@@ -491,6 +492,9 @@ table.cmp-cpus { width: 100%; }
   color: var(--heading); background: var(--surface);
   border-color: var(--control-border); border-bottom-color: var(--surface); border-top: 2px solid var(--accent);
 }
+/* the copy control of the shown tab: the end of the row (after A–B's side switch) */
+.ws-copy { flex: none; margin: 0 0 0.2rem auto; padding-left: 1rem; }
+.ws-side + .ws-copy { margin-left: 0; }
 /* A–B: the side the views show, at the end of the row */
 .ws-side { flex: none; display: inline-flex; gap: 2px; margin: 0 0 0.2rem auto; padding-left: 1rem; }
 .ws-side .ws-side-btn { padding: 0 0.45em; border: 0; min-width: 1.9em; opacity: 0.4; } /* (.ws-side: over .ab-tag's padding) */

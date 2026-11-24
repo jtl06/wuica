@@ -10,6 +10,8 @@
 import { h } from './render.js';
 import { jumpToRow } from './rowjump.js';
 import { annotateLatencies, slackOfAsync, fmtSlack } from './deps-slack.js'; // latency per arc, slack per instruction
+import { setCopy } from './copy-view.js';
+import { depsMd } from './md-views.js';
 
 // as the trace view (trace.js): a trace grows with instructions × iterations; above this many uops it waits for a click
 const TRACE_LIMIT = 20000;
@@ -287,6 +289,7 @@ export function createDeps(env) {
     const { graph, error } = cache;
     if (error) { body.replaceChildren(h('p', { class: 'caveat', text: `no dependencies: ${error}` })); body.dataset.state = 'error'; return; }
     if (!graph) return;
+    setCopy('deps', { what: 'the dependencies', md: () => depsMd(graph) });
     const c = graph.edges.filter((e) => e.dist).length;
     hint.textContent = ` · ${graph.edges.length} edge${graph.edges.length === 1 ? '' : 's'}, ${c} ↻`;
     draw(graph);
@@ -299,6 +302,7 @@ export function createDeps(env) {
     const r = v?.response;
     const ok = r && !r.error && Array.isArray(r.rows) && !r.mock && v.request;
     row.hidden = !ok;
+    if (!ok || cache.key !== keyOf(v)) setCopy('deps', null); // (until this result's graph is drawn)
     if (!ok) return;
     const key = keyOf(v);
     if (cache.key !== key) hint.textContent = '';

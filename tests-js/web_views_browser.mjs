@@ -545,13 +545,14 @@ try {
     const r = await page.eval(`${HELPERS}
       const got = [];
       Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (t) => { got.push(t); } }, configurable: true });
-      const btn = (k) => document.querySelector('.ex-tools .ex-btn[data-format="' + k + '"]');
-      const out = { labels: [...document.querySelectorAll('.ex-tools > *')].map((e) => e.textContent), inTools: !!btn('md')?.closest('.table-tools') };
-      for (const k of ['md', 'csv', 'json']) { btn(k).click(); await wait(30); }
-      out.flash = btn('json').textContent;
+      // the control at the end of the tab row (copy-view.js): Markdown; Shift+click CSV; Alt+click JSON
+      const c = document.querySelector('#result-body .view-tabs .ws-copy');
+      const out = { label: c?.textContent, last: c === c?.parentElement.lastElementChild, old: !!document.querySelector('.ex-tools') };
+      for (const mod of [{}, { shiftKey: true }, { altKey: true }]) { c.dispatchEvent(new MouseEvent('click', { bubbles: true, ...mod })); await wait(50); }
+      out.flash = $('status').textContent;
       out.got = got;
       return out;`);
-    check(r.labels.join() === 'copy,md,csv,json' && r.inTools && r.flash === 'copied', 'copy: three buttons in the tools above the uop table', JSON.stringify(r.labels));
+    check(r.label === 'copy' && r.last && !r.old && /^copied/.test(r.flash), 'copy: one control, at the end of the tab row', JSON.stringify(r));
     const [md, csv, json] = r.got;
     check(md?.startsWith('**2.00 cycles/iteration** · SKL') && md.includes('| `add rax, 0x1` |') && /\[wuica\]\(http:\/\/127\.0\.0\.1:\d+\/\?nosw=1#v=1&c=/.test(md), 'copy: Markdown with a link to the page', md);
     check(csv?.split('\r\n').length === want.rows.length + 2 && csv.startsWith('instruction,opcode,notes,MITE'), 'copy: CSV', csv);

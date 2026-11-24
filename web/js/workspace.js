@@ -254,6 +254,22 @@
       var f = g.querySelector('[data-tab="' + focusName + '"]');
       if (f) f.focus({ preventScroll: true });
     }
+    // the copy control of the shown tab, at the end of the row (copy-view.js does the copying)
+    var c = document.createElement('button');
+    c.type = 'button';
+    c.className = 'plain ws-copy';
+    c.setAttribute('data-tab', 'copy');
+    c.setAttribute('aria-keyshortcuts', 'c');
+    c.title = 'copy this view as text: Markdown; Shift+click: CSV, Alt+click: JSON, where the view has them (c)';
+    c.textContent = 'copy';
+    c.addEventListener('click', function (e) {
+      var shown = (strip.querySelector('.view-tab[aria-selected="true"]') || strip.querySelector('.view-tab'));
+      try {
+        document.dispatchEvent(new CustomEvent('wuica:copy', { detail: { tab: shown ? shown.getAttribute('data-tab') : null, format: e.shiftKey ? 'csv' : e.altKey ? 'json' : 'md' } }));
+      } catch (err) { /* old browsers */ }
+    });
+    strip.appendChild(c);
+    if (focusName === 'copy') c.focus({ preventScroll: true });
   }
 
   // the strip sits in the result, right above its first section (the result is drawn anew on every run)

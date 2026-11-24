@@ -7,6 +7,8 @@
 
 import { h } from './render.js';
 import { jumpToRow } from './rowjump.js';
+import { setCopy } from './copy-view.js';
+import { bytesMd } from './md-views.js';
 
 const LINE = 64;
 const hex2 = (n) => `0x${n.toString(16).padStart(2, '0')}`;
@@ -161,6 +163,8 @@ export function createCodeMap(env = {}) {
     const r = view?.response;
     model = r && !r.error ? codeMapModel(r, view.hex, view.request?.alignmentOffset ?? 0) : null;
     row.hidden = !model;
+    const m = model;
+    setCopy('bytes', m ? { what: 'the bytes', md: () => bytesMd(m) } : null);
     if (!model) { body.replaceChildren(); return; }
     const n = model.lines.length;
     hint.textContent = ` · ${model.bytes} B, ${n} line${n === 1 ? '' : 's'}`;

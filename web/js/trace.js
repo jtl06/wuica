@@ -17,6 +17,8 @@
 
 import { ISSUE_H, issueLog, issueShare, drawIssueStrip, issueText } from './trace-issue.js'; // the issue strip (details)
 import { attachRange } from './trace-range-view.js'; // a cycle range for the bound view (viewer.ext: its hooks)
+import { setCopy } from './copy-view.js';
+import { traceMd } from './md-views.js';
 
 // ---- the model (no DOM) ----------------------------------------------------------------------------------------
 
@@ -322,6 +324,19 @@ export function tableRows(model, rows) {
       ...STAGES.map(([f]) => (u[f] === null ? '' : String(u[f]))), dep]);
   }
   return out;
+}
+
+// The copy control of the trace tab (copy-view.js): the shown rows of the viewers (A–B: A's, then B's) as tables
+const csvOf = (head, rows) => [head, ...rows].map((r) => r.map((c) => (/[",\n\r]/.test(String(c)) ? `"${String(c).replace(/"/g, '""')}"` : String(c))).join(',')).join('\r\n') + '\r\n';
+function copyTrace(viewers) {
+  const live = viewers.filter(Boolean);
+  if (!live.length) { setCopy('trace', null); return; }
+  const cap = (v) => `${v.tag ? `${v.tag}: ` : ''}${v.rows.length} uops, cycles ${v.c0}–${v.c1}`;
+  setCopy('trace', {
+    what: 'the trace (the shown rows)',
+    md: () => live.map((v) => traceMd(TABLE_HEAD, tableRows(v.model, v.rows), cap(v))).join('\n'),
+    csv: () => live.map((v) => csvOf(TABLE_HEAD, tableRows(v.model, v.rows))).join('\r\n'),
+  });
 }
 
 export function toTSV(model, rows) {
@@ -1593,6 +1608,7 @@ export function createTracePanel({ analyze, config = () => null, traceModel = nu
       if (viewer && viewer.model === tr.model) return;
       viewer?.destroy();
       viewer = new Viewer(tr.model, state, { onHoverGroup: (g) => onHoverGroup?.(g), onPickGroup: (g) => { selKey = groupKey(g); onPickGroup?.(g); } });
+      copyTrace([viewer]);
       viewer.view = view;
       viewer.linkKey = linkKey; viewer.selKey = selKey;
       viewer.root.dataset.buildMs = tr.buildMs.toFixed(1);
@@ -1753,6 +1769,7 @@ export function createABTracePanel({ analyze, config = () => null, traceModel = 
     const va = new Viewer(ma, st(), { sync, fixed: w.a, tag: same ? 'A = B' : 'A' });
     const vb = same ? null : new Viewer(mb, st(), { sync, fixed: w.b, tag: 'B', compare: va });
     viewers = vb ? [va, vb] : [va];
+    copyTrace(viewers);
     sync.viewers = viewers;
 
     // scrolled together when the rows line up (the diff's alignment), unless unlocked

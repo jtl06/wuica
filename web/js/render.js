@@ -288,6 +288,7 @@ export function renderResult(root, view) {
           h('span', { class: 'value', title: w > 1 ? `${Number(r.tp).toFixed(2)} cycles/iteration ÷ ${w}` : null, text: w > 1 ? cyc(Number(r.tp) / w) : Number(r.tp).toFixed(2) }), ' ',
           h('span', { class: `unit${view.workFlag ? ' caveat' : ''}`, title: view.workFlag ? 'the code changed since its elements per iteration were set' : null, text: `${w > 1 ? 'cycles/element' : 'cycles/iteration'}${view.workFlag ? '?' : ''}` })),
         h('span', { class: 'meta', title: details }, mode, sep(), h('span', { class: view.experimental ? 'caveat' : null, text: view.archTitle })),
+        copyAllButton(),
         h('span', { class: 'bn-line' }, h('span', { class: 'k', text: bnKey }), ' ',
           r.bottlenecks.length ? h('span', { class: 'bn', text: r.bottlenecks.join(', ') })
             : h('span', { class: 'hint', title: `no single limit explains the throughput${nearestLimit(r, w) ? `; the nearest is ${nearestLimit(r, w)} (the API's insights.largest)` : ''}`,
@@ -316,6 +317,13 @@ export function renderResult(root, view) {
   }
 
   root.replaceChildren(...out);
+}
+
+// The control that copies the whole result (copy-view.js, the provider 'all')
+export function copyAllButton() {
+  const b = h('button', { type: 'button', class: 'plain copy-all', title: 'copy the whole result as Markdown: the headline, the CPUs, the limits, the caveats, the uop table, the code and the link', text: 'copy all' });
+  b.addEventListener('click', () => document.dispatchEvent(new CustomEvent('wuica:copy', { detail: { tab: 'all', format: 'md' } })));
+  return b;
 }
 
 export function renderEmpty(root, text = '') {

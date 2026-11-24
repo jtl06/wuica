@@ -24,7 +24,8 @@ import { createViews } from './views.js';         // the opt-in views below the 
 import { createABSlots } from './ab-slots.js';     // A–B: the issue slots of both sides
 import { createCmpSlots } from './cmp-slots.js';   // the issue slots per CPU in the CPU table (bound view open)
 import { withRegions } from './asm-regions.js';     // marked regions and .loc lines of pasted assembly
-import { createShipped } from './asm-shipped.js';    // the examples' machine code: their results before the assembler loads
+import { createShipped, NOT_AS_ASSEMBLED } from './asm-shipped.js';    // the examples' machine code: their results before the assembler loads
+import { createCopy } from './copy-view.js';          // copying a view, or the whole result, as text
 import { createRegionChip, createLoopChip } from './region-chip.js';
 import { replacesText, detectSyntax } from './loop-find.js';
 import { createKeys } from './keys.js';           // keyboard shortcuts, the ? overlay
@@ -222,6 +223,9 @@ function paintStatus() {
   }
 }
 function setIdle(text) { idleStatus = text; paintStatus(); }
+// Copying as text (copy-view.js): the tab row's control and the key c copy the shown tab; "copy all" the whole result
+createCopy({ copyText, flash: (t, o) => flash(t, o), current: () => document.querySelector('#result-body .view-tab[aria-selected="true"]')?.dataset.tab ?? null });
+
 function flash(text, { error = false, ms = 2500 } = {}) {
   clearTimeout(flashTimer);
   el.statusWrap.classList.remove('idle');
@@ -1097,6 +1101,17 @@ function settleMode({ replacing = false } = {}) {
   switchingFrom = null;
 }
 // side A or B, the new format, the box's text for it, apply(converted | null): the switch
+// A built-in example's text in the other format, from the example itself (no assembler needed: the first visit does not
+// wait for it): {text, syntax} or null. Not where the example's machine code is not what its text assembles to.
+function exampleIn(code, mode) {
+  const key = code.mode === 'asm' ? code.syntax : 'hex';
+  const ex = ALL_EXAMPLES.find((e) => e.text?.[key] === code.text && (code.mode !== 'asm' || !NOT_AS_ASSEMBLED.has(e.id)));
+  if (!ex) return null;
+  if (mode === 'hex') return typeof ex.text.hex === 'string' ? { text: ex.text.hex } : null;
+  const syntax = code.mode === 'asm' ? code.syntax : state.syntax;
+  return typeof ex.text[syntax] === 'string' ? { text: ex.text[syntax], syntax } : null;
+}
+
 async function switchMode(side, mode, other, apply) {
   const box = side === 'B' ? $('code-b') : el.code;
   const radio = side === 'B' ? $('b-mode-asm') : el.modeAsm;
@@ -1108,7 +1123,7 @@ async function switchMode(side, mode, other, apply) {
   box.readOnly = true;
   if (side === 'A') switchingFrom = before.text;
   let c = null;
-  try { c = await converter.convert(before, mode, other); } catch { c = null; } finally { if (seq === switching[side]) box.readOnly = false; }
+  try { c = exampleIn(before, mode) ?? await converter.convert(before, mode, other); } catch { c = null; } finally { if (seq === switching[side]) box.readOnly = false; }
   const now = get();
   if (seq !== switching[side] || now.mode !== before.mode || radio.checked !== (mode === 'asm')) return; // clicked again, settled, or an import
   if (side === 'A') switchingFrom = null;

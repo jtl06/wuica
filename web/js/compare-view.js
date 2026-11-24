@@ -7,6 +7,8 @@
 
 import { h, cyc } from './render.js';
 import { makeRequest } from './engine.js';
+import { setCopy } from './copy-view.js';
+import { sweepMd } from './md-views.js';
 import { ARCH_INFO, PROTOTYPE } from './archs.js';
 import {
   summarize, compareRows, sweepData, sweepLayout, compareKey, sweepKey, resultKey, ResultCache, latestWins, SWEEP_OFFSETS,
@@ -293,6 +295,8 @@ export function createComparePanels(env) {
   function drawSweep(p) {
     const points = Array.from({ length: SWEEP_OFFSETS }, (_, k) => p.results.get(k));
     const d = sweepData(points);
+    const arch = input?.arch ?? '';
+    setCopy('sweep', { what: 'the sweep', md: () => sweepMd(d, arch), csv: () => `offset,cycles\r\n${d.values.map((v, i) => `${i},${v === null ? '' : v}`).join('\r\n')}\r\n` });
     const cur = cursor ?? input?.options.alignmentOffset ?? 0;
     const width = Math.max(240, Math.round((p.body.clientWidth || 602) - 2)); // inside the 1px border
     const height = 120;
