@@ -8,10 +8,15 @@ uiCA's predictions, bit for bit, from a Rust core that runs natively and as WebA
 
 ## Reference
 
-The reference ("oracle") is the Python uiCA of the fork [jtl06/uiCA](https://github.com/jtl06/uiCA), branch `perf`, commit
-`8f24bd3` (improve-r4 `a5ef6c2` plus the determinism fix `9b69d9d`, which the port depends on: before it, the scheduler iterated
-over a set of objects and results could differ between runs), with the fixes of the inputs on which it raised an exception: branch
-`crash-fixes` (`docs/DEVIATIONS.md`, `docs/PORTING.md`). All fixtures are exported from that branch.
+The reference ("oracle") is the Python uiCA of the fork [jtl06/uiCA](https://github.com/jtl06/uiCA). The commit whose model and
+data wuica ships is written in one place, `ci/data-asset.txt` (`uica_commit`; at the time of writing `640e40e` on the branch
+`improve-r9`); `wuica --version -json` and `GET /api/version` report it, and `docs/PORTING.md` ("The reference") lists the
+branches it builds on.
+
+History: the first reference was the branch `perf`, commit `8f24bd3` (improve-r4 `a5ef6c2` plus the determinism fix `9b69d9d`,
+which the port depends on: before it, the scheduler iterated over a set of objects and results could differ between runs), with
+the fixes of the inputs on which it raised an exception: branch `crash-fixes` (`docs/DEVIATIONS.md`, `docs/PORTING.md`). The
+current fixtures are exported from the shipped reference above.
 
 On the branch `model-r7`, the reference is the fork's branch `improve-r7` (model at `f4a7868`: the model changes of round 7 on top
 of `improve-r6`, `21b0b17`, which merged the round-6 model with `crash-fixes`; see docs/ACCURACY.md); its data and fixtures are
@@ -73,7 +78,7 @@ basic blocks, all microbench microbenchmarks, blocks of 10/100/1000 instructions
 |---|---|---|---|
 | decoder output | `fixtures/decode_fixtures.jsonl.gz` (file × XED chip: hex, list of dicts) | `tools/export_decode_fixtures.py` | `crates/wuica-xed/tests/fixtures.rs`, `tests-js/decode_fixtures.mjs` |
 | instruction objects | `fixtures/generated/instr_fixtures.jsonl.gz` (8056 cases: file × configuration × options that affect them): every field of every `Instr` after `getInstructions`, `adjustLatenciesAndAddMergeUops` and `computeUopProperties`; the JSON form of `wuica_core::model::InstrList` | `tools/export_fixtures.py` | `crates/wuica-core/tests/model_fixtures.rs` (the model holds everything), builder test |
-| simulation result | `fixtures/generated/sim_fixtures.jsonl.gz` (9899 cases: file × configuration, and 8 option variants for 24 files): throughput and the detailed text output; the `-json` output for 1119 cases | `tools/export_fixtures.py` | simulator test |
+| simulation result | `fixtures/generated/sim_fixtures.jsonl.gz` (9899 cases: file × configuration, and 8 option variants for 24 files): throughput and the detailed text output; the `-json` output for 1121 cases (and 798 of the 7182 cases of the extra set, `docs/PORTING.md`) | `tools/export_fixtures.py` | simulator test |
 
 The fixtures in `fixtures/generated/` and the tables in `data/` are generated (they are large): run `tools/export_data.py` and
 `tools/export_fixtures.py` against a uiCA installation. No case has an `error` field: the four cases on which the unfixed
@@ -121,8 +126,8 @@ Packages 1 and 2 define the input of 3; 4 and 5 only consume its output.
 
 ## Open questions
 
-- **Input.** The first version takes machine code as hex. Assembly text would need an assembler in the browser.
-- **uops.info data.** No license is stated for it. The tables are therefore generated locally and not committed; publishing a
-  build that contains them (e.g. a hosted page) needs the authors' permission.
-- **Size.** The WebAssembly module with XED is 3.4 MB (0.6 MB gzipped), before the simulator. The instruction tables are
-  0.6–3.4 MB of Python source per architecture; they are loaded per architecture on demand.
+- **Input.** Settled: assembly text is assembled in the browser by LLVM's assembler compiled to WebAssembly (`assembler/`).
+- **uops.info data.** The tables are derived from uops.info data via uiCA and generated locally; the repository does not state
+  a license for them.
+- **Size.** The analyzer module (XED and the simulator) is 4.31 MB (0.92 MB gzipped, 0.63 MB brotli); the instruction tables
+  are 0.46–1.77 MB of JSON per table, loaded per table on demand (`docs/SPEC.md`, "Sizes of what ships").

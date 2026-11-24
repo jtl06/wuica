@@ -25,6 +25,7 @@ simulated as if unrolled; the ZEN3, ADL-P and ICX models are the fork's prototyp
 | Fixture cases identical to the reference | 17,081 simulation cases (+3,419 in an optional set), 12,046 instruction-builder cases, 3,948 decoder cases | Last local `scripts/check.sh full` logs (section 7.6) |
 | Time per analysis (WebAssembly, warm) | 0.52 ms (BHive block), 0.63 ms (random loop), 36 ms (2,949-instruction SHA-256 block) | Commit `623a117` message, measurement machine (Ryzen 7 7735U), Node 22; before model rounds 6–9 |
 | Analyzer module | 4.31 MB raw, 630 kB brotli q11 (package), 867 kB as the live site serves it | Section 7.1 |
+| First visit in assembly mode (analyzer, assembler, SKL table, page shell) | 2.19 MB as the live site serves it; the same files weigh 1.64 MB at brotli q11 (+34 % served) | Section 7.1 |
 | Accuracy of the prototypes, held out, within 10 % | ZEN3 84.4 % / 87.7 %, ADL-P 90.9 % / 92.6 %, ICX 85.8 % / 89.7 % (random loops / BHive blocks) | `docs/ACCURACY.md`, "Round 9" |
 | Python reference, same work | 40–55 ms per analysis plus interpreter start | `README.md`, "Status" |
 
@@ -205,7 +206,9 @@ site sent with `Accept-Encoding: br, gzip` (`curl -s -o /dev/null -w '%{size_dow
 - Of the analyzer's 1,876,261 bytes of function bodies, 1,021,456 are XED's C functions (`xed3_phash*` 707,472,
   `xed3_capture*` 254,593), by the function names in the name section. The content of the 1.13 MB data section is not
   attributed yet (an audit is in progress, section 9).
-- First visit in assembly mode, before the first result: analyzer + assembler + SKL table + shell ≈ 2.2 MB served. The other
+- First visit in assembly mode, before the first result: analyzer + assembler + SKL table + shell (HTML, `uarch.json`, all JS,
+  CSS, fonts) = 2,190,673 bytes served (866,526 + 941,580 + 42,085 + 340,482); the same files at brotli q11 are 1,639,934
+  bytes (629,775 + 687,897 + 28,369 + 293,893), so the host's compression costs 551 kB (+34 %). The other
   14 tables (about 1.24 MB served) are prefetched after it; llvm-mca (1.1 MB) only on use.
 - Whole site: 111 files, 27.7 MB on disk (`du -sk web/dist`).
 - npm package 0.1.8 (`npm pack` of `packages/wuica` after `build.sh`): tarball 2,105,320 bytes, unpacked 2,375,054 bytes, 47
@@ -330,15 +333,12 @@ Check this table before suggesting an optimization. "Identical results" means ru
 
 ## 9. In progress for 0.1.9 (not released; on branches, may change)
 
-- Several inputs per CLI run (`wuica a.s b.s …`, `-files LIST`; one table, a row per file; library `analyzeMany`,
-  `compareMany`); the thread count chosen by the amount of work (none below about 0.3 s of work, then one thread per 0.15 s,
-  2 to 8); one compiled module shared across worker threads (in 0.1.8 the threads already share one memory-capped module,
-  compiled separately from the main thread's; section 4.5).
-- Instruction tables shipped in a build-time binary form (`data/arch/<NAME>.bin`, read into the same structures); JSON stays
-  the export and interchange format.
-- Object files as CLI input (ELF / Mach-O x86-64 read as `llvm-objdump -d` text of their code).
-- A redesigned trace view and a layout in which panes do not scroll.
-- A model round on two known ZEN3 errors (section 10.1).
+- Several inputs per CLI run.
+- Thread count chosen by the workload, and one compiled module shared across worker threads.
+- The shipped JSON tables replaced by a build-time binary form (JSON stays the export format).
+- Object files as CLI input.
+- A redesigned trace view and a layout without pane scrolling.
+- A model round on the two known ZEN3 errors (section 10.1).
 - An audit of what the WebAssembly modules contain.
 
 ## 10. Known weaknesses and open questions
@@ -398,28 +398,21 @@ Check this table before suggesting an optimization. "Identical results" means ru
 ### 10.6 Process and project
 
 - Single maintainer. The reference fork, the port and the measurements are done by the same person.
-- The fork's reference commit (`640e40e`, branch `improve-r9`) is public: GitHub's compare API shows `improve-r9` one commit
-  ahead of it (`gh api repos/jtl06/uiCA/compare/640e40e...improve-r9`). `docs/PORTING.md` still says "not pushed yet".
 - Licensing of the instruction tables: they are derived from uops.info data via uiCA and generated locally; the repository
   does not state a license for them.
-- The page allows the host's analytics beacon (`script-src https://static.cloudflareinsights.com`, `connect-src
-  https://cloudflareinsights.com`; `web/index.html` comment: "injected by the host"). The repository does not establish
-  what the beacon sends; whether it can read the URL fragment (which holds the user's code) is an open question.
+- Analytics: the live 0.1.8 page loads no analytics script (the served HTML has none, and at run time there are no external
+  script elements and no requests to `cloudflareinsights.com`), so nothing is sent today. The CSP would still allow the
+  host's beacon if the host injected it (`script-src https://static.cloudflareinsights.com`, `connect-src
+  https://cloudflareinsights.com`; `web/index.html`), and what it would send, in particular whether it includes the URL
+  fragment that holds the user's code, is not established. Open question: should the CSP allow it at all?
 - The CSP is a `<meta>` tag, not a header (`web/_headers` sets no CSP).
 
 ### 10.7 Where the docs and the code disagree (the code wins)
 
 | Doc | Says | Code / logs |
 |---|---|---|
-| `README.md`, "Status" and table | 15,259 test cases; builder "11,096 + 3135 cases" | 17,081 simulation cases (+3,419); 8,056 + 3,990 builder cases |
-| `docs/DESIGN.md`, "Reference" | Leads with branch `perf`, `8f24bd3`; later references only per wuica branch ("On the branch `model-r9`, the reference is … `improve-r9`") | `ci/data-asset.txt` and `docs/PORTING.md`: the shipped reference is `improve-r9`, `640e40e` |
-| `docs/DESIGN.md`, fixtures table | `-json` output for 1,119 cases | 1,919 traces in main+extra (+3,419 in `more`) |
-| `docs/DESIGN.md`, "Open questions" | Input is hex only; module 3.4 MB | Assembly input via LLVM; module 4.31 MB |
-| `docs/PORTING.md`, "Fixtures" | Extra set: 6,156 simulation, 3,420 instruction cases | 7,182 and 3,990 (round-9 blocks added) |
-| `docs/PORTING.md`, "The reference" | `improve-r9` "not pushed yet" | On the fork's remote (section 10.6) |
-| `docs/ACCURACY.md` | Round 8's tables follow "Method of round 9" without a "Round 8" heading | — |
-| `Cargo.toml` | Workspace version 0.1.0 | Package and server 0.1.8 |
-| `packages/wuica/README.md` | Describes 0.1.8 (`-example`, …) | The registry's latest is 0.1.7, so `npx wuica-cli` does not have 0.1.8's features yet |
+| `Cargo.toml` | Workspace version 0.1.0 (the crates are not published) | Package and server 0.1.8 |
+| `packages/wuica/README.md` | Describes 0.1.8 (`-example`, …) | At the time of writing the registry's latest is 0.1.7, so `npx wuica-cli` does not have 0.1.8's features yet |
 
 ## 11. Feedback wanted
 

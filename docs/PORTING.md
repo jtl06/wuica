@@ -100,9 +100,9 @@ added to the list in `ci/make-data-asset.sh`.
 
 ## The reference
 
-The reference is [jtl06/uiCA](https://github.com/jtl06/uiCA), branch `improve-r9` (model at commit `640e40e`; not pushed yet,
-worktree aethia `/data/projects/uica-r9`): the model changes of round 9 (see `docs/ACCURACY.md`) on top of `improve-r8` (model
-`c899be7`: the changes of round 8) on top of `improve-r7` (model `f4a7868`: the changes of round 7) on top of `improve-r6`
+The reference is [jtl06/uiCA](https://github.com/jtl06/uiCA), branch `improve-r9` (model and data at commit `640e40e`, pushed;
+the branch tip is `5a07a40`; worktree aethia `/data/projects/uica-r9`): the model changes of round 9 (see `docs/ACCURACY.md`)
+on top of `improve-r8` (model `c899be7`: the changes of round 8) on top of `improve-r7` (model `f4a7868`: the changes of round 7) on top of `improve-r6`
 (`21b0b17`: the model changes of round 6, `9bed908`, merged with branch
 `crash-fixes`, `f85fcbd`: branch `perf` (`adf62ae`, whose output is identical to that of `8f24bd3`) plus the fixes of the inputs on
 which uiCA raised an exception, `docs/DEVIATIONS.md`). All fixtures in `fixtures/generated` are exported from it
@@ -145,7 +145,8 @@ with `"error": "InputError: <message>"` must give an error with the text `<messa
 six more, `x_r9_*.s`) for paths that
 the main corpus does not reach (ZMM registers, stack operations, high-8 registers, LCP, lock, rep, fences, microcode, x87, ...,
 and four blocks for the crash fixes: `x_dsb_fused_mid*.s`, `x_push_mem_pair.s`, `x_stack_init.s`), each with all option variants
-and the `-json` output (6156 simulation cases, 3420 instruction-object cases). Every case was run in a new process (`FRESH=1`),
+and, for some cases, the `-json` output (7182 simulation cases, 798 of them with the `-json` output; 3990 instruction-object
+cases). Every case was run in a new process (`FRESH=1`),
 like a run of the command-line tool: the reference modifies its instruction tables in place for code that uses ZMM registers, so
 within one process earlier cases can change later ones (the main set has no ZMM code).
 
