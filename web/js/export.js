@@ -13,14 +13,15 @@ export function toMarkdown(r, meta = {}) {
   return report(r, { arch: meta.archKey, archTitle: meta.archTitle, link: meta.link, config: meta.config ?? null, shown: meta.shown ?? null });
 }
 
-export function createExport() {
+// env: {work(view) -> the elements per iteration the result shows (its headline is per element then)}
+export function createExport(env = {}) {
   return {
     decorate(root, view) {
       const r = view?.response;
       if (!r || r.error || !Array.isArray(r.rows)) { setCopy('table', null); return; }
       setCopy('table', {
         what: 'the uop table',
-        md: () => `${headline(r, { arch: view.archKey, archTitle: view.archTitle })}\n\n${uopTable(r, { shown: view.shown })}\n`,
+        md: () => `${headline(r, { arch: view.archKey, archTitle: view.archTitle, per: env.work?.(view) ?? 1 })}\n\n${uopTable(r, { shown: view.shown })}\n`,
         csv: () => toCSV(r),
         json: () => toJSON(r, view.request),
       });

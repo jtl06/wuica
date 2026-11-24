@@ -265,9 +265,10 @@ export function compare(a, b, meta = {}) {
 const pct = (u) => `${Math.round(u * 100)}%`;
 
 // The bound view (bound-core.js): how busy each resource is, the binding one, the next limit; the instructions with the
-// largest share of the selected resource (an item's id, as the view's; default: the binding one).
-/** @param {any} r a response (as analyze returns it) @param {string | null} [selected] */
-export function bound(r, selected = null) {
+// largest share of the selected resource (an item's id, as the view's; default: the binding one). meta: the branch
+// labels as the page shows them (shownLabels: {shown | src | source}).
+/** @param {any} r a response (as analyze returns it) @param {string | null} [selected] @param {any} [meta] */
+export function bound(r, selected = null, meta = {}) {
   const m = boundModel(r);
   if (!m) return '';
   const sel = selected ?? m.binding[0] ?? null;
@@ -278,40 +279,46 @@ export function bound(r, selected = null) {
   const rows = m.items.map((x) => [text(x.name), x.group, f2(x.cycles), pct(x.util), m.binding.includes(x.id) ? 'yes' : '']);
   const b = sel ? blame(r, sel) : null;
   const top = topRows(b, 5);
-  const shares = b && top.length ? `top of ${text(it?.name ?? sel)} (by ${b.unit}):\n\n${table(['Instruction', 'Share'], top.map(({ row, share }) => [code(r.rows[row].label), pct(share)]), ['l', 'r'])}` : null;
+  const labels = shownLabels(r, meta);
+  const shares = b && top.length ? `top of ${text(it?.name ?? sel)} (by ${b.unit}):\n\n${table(['Instruction', 'Share'], top.map(({ row, share }) => [code(labels[row] ?? r.rows[row].label), pct(share)]), ['l', 'r'])}` : null;
   return join([head, table(['Resource', 'Group', 'Cycles/iteration', 'Busy', 'Binding'], rows, ['l', 'l', 'r', 'r', 'c']), shares]);
 }
 
 // The bytes view: each instruction's place on the cache lines at the alignment offset (the page's codemap.js
-// codeMapModel: {bytes, offset, instrs: [{label, start, end, fused, jcc, cross16, cross32, cross64}], counts}).
+// codeMapModel: {bytes, offset, instrs: [{row, label, start, end, fused, jcc, cross16, cross32, cross64}], counts}).
+// shown: the label of each row of the response as the page shows it (branch targets: shownLabels), or null.
 /**
  * @param {{bytes: number, offset: number, counts: {cross16: number, cross32: number, cross64: number},
- *   instrs: {label: string, start: number, end: number, fused?: boolean, jcc?: boolean, cross16?: boolean, cross32?: boolean, cross64?: boolean}[]} | null} m
+ *   instrs: {row?: number, label: string, start: number, end: number, fused?: boolean, jcc?: boolean, cross16?: boolean, cross32?: boolean, cross64?: boolean}[]} | null} m
+ * @param {{shown?: string[] | null}} [opts]
  */
-export function bytes(m) {
+export function bytes(m, { shown = null } = {}) {
   if (!m) return '';
+  const label = (/** @type {{row?: number, label: string}} */ x) => (shown && x.row !== undefined ? shown[x.row] ?? x.label : x.label);
   const head = `**bytes** · ${m.bytes} bytes from offset ${m.offset} · crossing 16 B: ${m.counts.cross16}, 32 B: ${m.counts.cross32}, 64 B: ${m.counts.cross64}`;
-  const rows = m.instrs.map((x) => [code(x.label), `0x${x.start.toString(16)}`, String(x.end - x.start),
+  const rows = m.instrs.map((x) => [code(label(x)), `0x${x.start.toString(16)}`, String(x.end - x.start),
     [x.cross16 ? '16' : '', x.cross32 ? '32' : '', x.cross64 ? '64' : ''].filter(Boolean).join(' '), [x.fused ? 'fused' : '', x.jcc ? 'JCC' : ''].filter(Boolean).join(' ')]);
   return join([head, table(['Instruction', 'Start', 'Bytes', 'Crosses', 'Notes'], rows, ['l', 'r', 'r', 'l', 'l'])]);
 }
 
 // The deps view: its arcs (producer → consumer, the iterations between them, the latency, the critical chain) and the
 // slack of each instruction (the page's deps.js depGraph: {nodes: [{label}], edges: [{a, b, dist, lat, mem, critical}],
-// slack: {period}}). slack: the slack of each node as the view writes it (deps-slack.js fmtSlack), or null.
+// slack: {period}}). slack: the slack of each node as the view writes it (deps-slack.js fmtSlack), or null; shown: the
+// label of each row of the response as the page shows it (shownLabels), or null.
 /**
- * @param {{nodes: {label: string}[], edges: {a: number, b: number, dist: number, lat?: number | null, mem?: boolean, critical?: boolean}[],
+ * @param {{nodes: {row?: number, label: string}[], edges: {a: number, b: number, dist: number, lat?: number | null, mem?: boolean, critical?: boolean}[],
  *   slack?: {period: number} | null} | null} g
- * @param {{slack?: string[] | null}} [opts]
+ * @param {{slack?: string[] | null, shown?: string[] | null}} [opts]
  */
-export function deps(g, { slack = null } = {}) {
+export function deps(g, { slack = null, shown = null } = {}) {
   if (!g) return '';
+  const label = (/** @type {{row?: number, label: string}} */ n) => (shown && n.row !== undefined ? shown[n.row] ?? n.label : n.label);
   const carried = g.edges.filter((e) => e.dist).length;
   const head = `**deps** · ${g.edges.length} arcs, ${carried} carried into a later iteration${g.slack ? ` · chain ${+Number(g.slack.period).toFixed(2)} cycles/iteration` : ''}`;
   const lat = (e) => (e.lat === null || e.lat === undefined ? '' : String(+Number(e.lat).toFixed(2)));
   const arcs = table(['From', 'To', 'Iterations', 'Latency', 'Chain'],
-    g.edges.map((e) => [code(g.nodes[e.a].label), code(g.nodes[e.b].label), String(e.dist), lat(e) + (e.mem ? ' (memory)' : ''), e.critical ? 'yes' : '']), ['l', 'l', 'r', 'r', 'c']);
-  const sl = slack ? table(['Instruction', 'Slack'], g.nodes.map((n, i) => [code(n.label), text(slack[i])]), ['l', 'r']) : null;
+    g.edges.map((e) => [code(label(g.nodes[e.a])), code(label(g.nodes[e.b])), String(e.dist), lat(e) + (e.mem ? ' (memory)' : ''), e.critical ? 'yes' : '']), ['l', 'l', 'r', 'r', 'c']);
+  const sl = slack ? table(['Instruction', 'Slack'], g.nodes.map((n, i) => [code(label(n)), text(slack[i])]), ['l', 'r']) : null;
   return join([head, arcs, sl]);
 }
 

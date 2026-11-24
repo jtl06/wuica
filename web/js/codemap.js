@@ -164,7 +164,8 @@ export function createCodeMap(env = {}) {
     model = r && !r.error ? codeMapModel(r, view.hex, view.request?.alignmentOffset ?? 0) : null;
     row.hidden = !model;
     const m = model;
-    setCopy('bytes', m ? { what: 'the bytes', md: () => bytesText(m) } : null);
+    const shown = view?.shown ?? null;
+    setCopy('bytes', m ? { what: 'the bytes', md: () => bytesText(m, { shown }) } : null);
     if (!model) { body.replaceChildren(); return; }
     const n = model.lines.length;
     hint.textContent = ` · ${model.bytes} B, ${n} line${n === 1 ? '' : 's'}`;

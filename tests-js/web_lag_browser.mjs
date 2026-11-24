@@ -45,8 +45,8 @@ try {
 
   await p.eval(`${PRE} await settle(); return 1;`);
   const pick = await step('pick SHA-256', `$('examples').value = 'sha256'; $('examples').dispatchEvent(new Event('change', { bubbles: true })); await until(() => (document.querySelector('#result-body .meta')?.title ?? '').startsWith('2949 instructions'), 120000)`,
-    `const t = document.querySelector('#result-body table.uops'); return { count: t.vr.count, button: !!document.querySelector('.more-rows button') };`);
-  check(pick.count >= 2949 && !pick.button, 'every row is a scroll away (no "show all")', JSON.stringify(pick));
+    `const t = document.querySelector('#result-body table.uops'); return { count: t.vr.count, span: Math.round(t.tBodies[0].getBoundingClientRect().height / t.querySelector('tbody tr[data-row]').getBoundingClientRect().height) };`);
+  check(pick.count >= 2949 && pick.span >= pick.count, 'every row is a scroll away (the table is as tall as all its rows)', JSON.stringify(pick));
   const end = await step('scroll the table to its end', `const w = document.querySelector('#result-body .table-wrap'); for (let i = 0; i < 30; i++) { w.scrollTop += 2000; await new Promise((r) => requestAnimationFrame(r)); }`,
     `const t = document.querySelector('#result-body table.uops'); const rows = [...t.querySelectorAll('tbody tr[data-row]')]; return { last: Number(rows.at(-1)?.dataset.row), count: t.vr.count };`);
   check(end.last === end.count - 1, 'scrolled to the end: the last row is drawn', JSON.stringify(end));

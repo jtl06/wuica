@@ -104,7 +104,8 @@ export function createBound(env = {}) {
     const r = view?.response;
     const m = r && !r.error ? boundModel(r) : null;
     row.hidden = !m;
-    setCopy('bound', m ? { what: 'the bound view', md: () => boundText(r, selected) } : null);
+    const shown = view?.shown ?? null;
+    setCopy('bound', m ? { what: 'the bound view', md: () => boundText(r, selected, { shown }) } : null);
     if (!m) { clean(); return; }
     hint.textContent = m.next ? ` · next ${m.next.name} ≤×${m.next.speedup.toFixed(1)}` : '';
     hint.title = m.next ? `without the bottleneck, at best ${f2(m.next.tp)} cycles/iteration (the next limit): up to ${m.next.speedup.toFixed(2)}× faster` : '';

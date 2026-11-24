@@ -14,7 +14,7 @@
 // carries both sides. The page (app.js) runs the analyses: inputs() gets the machine code of both sides,
 // analyze() runs them, draw() shows the result. All text goes in through textContent.
 
-import { h, uopTable, NOTES, watchFit, nearestLimit, columnGroup, copyAllButton } from './render.js';
+import { h, uopTable, NOTES, watchFit, nearestLimit, columnGroup, copyAllButton, messageList } from './render.js';
 import { caveats } from './caveats.js';
 import { GROUP_LABEL } from './archs.js';
 import { compareResponses, signed, cycles, signedCycles } from './ab-diff.js';
@@ -280,18 +280,7 @@ export function createAB(api) {
     bCode.setSelectionRange(start, start + lines[line - 1].length);
   }
   function showB(items) {
-    const list = h('ul');
-    for (const d of items) {
-      const text = `${d.line ? `line ${d.line}${d.column ? ':' + d.column : ''}: ` : ''}${d.severity === 'warning' ? 'warning: ' : ''}${d.message}`;
-      const li = h('li', { class: d.severity === 'error' ? null : d.severity });
-      if (d.line) {
-        const b = h('button', { type: 'button', class: 'plain', title: `select line ${d.line}`, text });
-        b.addEventListener('click', () => selectLine(d.line));
-        li.append(b);
-      } else li.textContent = text;
-      list.append(li);
-    }
-    bMessages.replaceChildren(list);
+    bMessages.replaceChildren(...messageList(items, selectLine));
     if (items.some((d) => d.severity === 'error')) bCode.setAttribute('aria-invalid', 'true');
   }
 
@@ -608,15 +597,18 @@ export function createAB(api) {
       }
     } else for (let k = 0; k < Math.min(rowsOf(view.a).length, rowsOf(view.b).length); k++) { map[0].set(k, k); map[1].set(k, k); }
     let following = false;
-    // (the rows are of one height, vrows.js: the row at a scroll position is a division)
-    const rowH = (w) => w.querySelector('table')?.vr?.rowH || 19;
+    // (by rows: the row at the top of one table and how far into it, the same in the other; vrows.js offsetOf and rowAt
+    // measure a short table's rows, a long one's by its row height)
+    const vrOf = (w) => w.querySelector('table')?.vr ?? null;
     wraps.forEach((w, k) => w.addEventListener('scroll', () => {
       if (following) return;
       const other = wraps[1 - k];
-      const lo = Math.floor(w.scrollTop / rowH(w));
+      const va = vrOf(w), vb = vrOf(other);
+      if (!va || !vb) return;
+      const lo = va.rowAt(w.scrollTop);
       const j = map[k].get(lo);
       if (j === undefined) return;
-      const t = j * rowH(other) + (w.scrollTop - lo * rowH(w));
+      const t = vb.offsetOf(j) + (w.scrollTop - va.offsetOf(lo));
       if (Math.abs(other.scrollTop - t) < 1) return;
       following = true;
       other.scrollTop = t;

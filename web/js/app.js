@@ -10,7 +10,7 @@ import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES, MOCK_EXAMPLES } from './
 import { fetchBytes, fetchManifest, PATHS, formatSize, whenIdle, gunzip } from './loader.js';
 import { WasmAssembler, isWasm, MAX_CODE_BYTES, tooMuchCode } from './assembler.js';
 import { WorkerAssembler, PageAssembler } from './assembler-rpc.js'; // large sources in a worker of its own
-import { renderResult, renderEmpty, renderFailure, copyText, h, row } from './render.js';
+import { renderResult, renderEmpty, renderFailure, copyText, h, row, messageList } from './render.js';
 import { latestWins } from './compare.js';
 import { createComparePanels } from './compare-view.js';
 import { createTracePanel, createABTracePanel } from './trace.js';
@@ -24,7 +24,7 @@ import { createViews } from './views.js';         // the opt-in views below the 
 import { createABSlots } from './ab-slots.js';     // A–B: the issue slots of both sides
 import { createCmpSlots } from './cmp-slots.js';   // the issue slots per CPU in the CPU table (bound view open)
 import { withRegions } from './asm-regions.js';     // marked regions and .loc lines of pasted assembly
-import { createShipped, NOT_AS_ASSEMBLED } from './asm-shipped.js';    // the examples' machine code: their results before the assembler loads
+import { createShipped } from './asm-shipped.js';    // the examples' machine code: their results before the assembler loads
 import { createCopy, setCopy } from './copy-view.js';
 import { report, cpuTable, compare } from './markdown.js';          // copying a view, or the whole result, as text
 import { createRegionChip, createLoopChip } from './region-chip.js';
@@ -170,6 +170,7 @@ let syntaxChosen = false; // the user picked the syntax (not the page from a pas
 function newTextA() { state.loop = 'auto'; if (alignBy === 'manual') alignBy = null; textA = el.code.value; }
 function newTextB() { bLoop = 'auto'; textB = document.getElementById('code-b')?.value ?? ''; }
 const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o),
+  work: (v) => (v?.side === 'b' ? state.bWork : state.aWork), // elements per iteration of the shown result (its side in A–B)
   assemble: async (text) => { const a = await ensureAssembler(); return a ? a.assemble(text, 'intel') : null; }, cpus: () => checked, onToggle: (open) => { Object.assign(state, open); syncUrl(true); if ('bound' in open) cmpSlots.decorate(); }, getSel: () => state.sel, getSource: () => (ceSource && (!pastedSource || ceSource.hex === lastView?.hex) ? ceSource : pastedSource),
   // llvm-mca (mca.js): its module only if the build has it, downloaded on first use; the bytes as Intel assembly
   mca: {
@@ -225,7 +226,8 @@ function paintStatus() {
 }
 function setIdle(text) { idleStatus = text; paintStatus(); }
 // Copying as text (copy-view.js): the tab row's control and the key c copy the shown tab; "copy all" the whole result
-createCopy({ copyText, flash: (t, o) => flash(t, o), current: () => document.querySelector('#result-body .view-tab[aria-selected="true"]')?.dataset.tab ?? null });
+createCopy({ copyText, flash: (t, o) => flash(t, o), current: () => document.querySelector('#result-body .view-tab[aria-selected="true"]')?.dataset.tab ?? null,
+  stale: () => !!lastView && (runKey() !== lastRunKey || !!inputErrorNote) });
 
 function flash(text, { error = false, ms = 2500 } = {}) {
   clearTimeout(flashTimer);
@@ -493,21 +495,7 @@ function selectLine(line) {
 function showMessages(items) {
   const key = JSON.stringify(items);
   if (el.messages.dataset.key === key && el.messages.firstChild) return; // the same: keep them (and their focus)
-  const list = h('ul');
-  for (const d of items) {
-    const where = d.line ? `line ${d.line}${d.column ? ':' + d.column : ''}: ` : '';
-    const text = `${where}${d.severity === 'warning' ? 'warning: ' : ''}${d.message}`;
-    const li = h('li', { class: d.severity === 'error' ? null : d.severity });
-    if (d.line) {
-      const b = h('button', { type: 'button', class: 'plain', title: `select line ${d.line}`, text });
-      b.addEventListener('click', () => selectLine(d.line));
-      li.append(b);
-    } else {
-      li.textContent = text;
-    }
-    list.append(li);
-  }
-  el.messages.replaceChildren(list);
+  el.messages.replaceChildren(...messageList(items, selectLine));
   el.messages.dataset.key = key;
   if (items.some((d) => d.severity === 'error')) el.code.setAttribute('aria-invalid', 'true'); else el.code.removeAttribute('aria-invalid');
 }
@@ -744,7 +732,7 @@ function draw() {
   if (!lastView) { showTrace(null); setCopy('all', null); setCopy('diff', null); return; }
   if (lastView.ab) {
     ab.draw(lastView.ab);
-    copyAB(lastView.ab);
+    copyAB(lastView.ab, lastView.snap);
     abTracePanel.setOpen(state.trace);
     showTrace(abTracePanel.update(lastView.ab));
     // the page's views show one side (abSide; the other if it has no result)
@@ -767,6 +755,12 @@ function draw() {
   paintStale();
 }
 
+// p, or null as soon as signal aborts
+function untilAborted(p, signal) {
+  if (!signal) return p;
+  if (signal.aborted) return Promise.resolve(null);
+  return Promise.race([p, new Promise((resolve) => signal.addEventListener('abort', () => resolve(null), { once: true }))]);
+}
 async function machineCode(id) {
   const text = el.code.value;
   pastedSource = null; regionChip.show(null); loopChip.show(null); srcA = null;
@@ -791,8 +785,10 @@ async function machineCode(id) {
   if (id !== runSeq) return null;
   let mock = false;
   if (!r) {
-    const assembler = await ensureAssembler();
-    if (id !== runSeq) return null;
+    // (the wait for the assembler's download ends with the run's assembly: an edit stops it, liveSchedule)
+    const signal = assembling?.signal ?? null;
+    const assembler = await untilAborted(ensureAssembler(), signal);
+    if (id !== runSeq || signal?.aborted) return null;
     if (!assembler) { showAssemblerMissing(); paintDerived(); return null; }
     mock = !!assembler.mock;
     try {
@@ -867,6 +863,7 @@ async function run({ auto = false } = {}) {
   if (!ready || el.run.disabled) return;
   if (ce?.linkBox()) return; // a box that holds only a Compiler Explorer link is imported (analyze()), never analyzed
   const input = runInput();
+  const inputB = ab?.active() ? ab.getB() : null; // (B's code as this run reads it: the result's copy, snapshotOf)
   let key = runKey(input);
   const messages = !!el.messages.firstChild || !!ab?.hasMessages();
   if (auto && ((busy && key === inflight.key) || key === cancelledKey || (lastView && key === lastRunKey && !messages))) return;
@@ -877,7 +874,7 @@ async function run({ auto = false } = {}) {
   if (!auto) clearMessages();
   const ctrl = new AbortController();
   assembling = ctrl;
-  if (ab?.active()) { await runCompare(id, key, { auto, ctrl }); return; } // awaited: live mode runs one comparison at a time
+  if (ab?.active()) { await runCompare(id, key, { auto, ctrl, snap: () => snapshotOf(input, inputB) }); return; } // awaited: live mode runs one comparison at a time
   const archKey = state.arch;
   let opts = options();
   const item = archItems.get(archKey);
@@ -926,6 +923,7 @@ async function run({ auto = false } = {}) {
       archKey, archTitle: archTitle(archKey, item.experimental), experimental: item.experimental,
       shown: response && !response.error && Array.isArray(response.rows) ? branchLabels(response.rows, srcA) : null,
     };
+    lastView.snap = snapshotOf(input, null);
     lastRunKey = key;
     draw();
     if (response && !response.error) {
@@ -963,7 +961,7 @@ function analyze() {
 }
 
 // A–B mode: both sides, one after the other (ab.js gets the machine code and draws the comparison). auto: as in run().
-async function runCompare(id, key, { auto = false, ctrl = null } = {}) {
+async function runCompare(id, key, { auto = false, ctrl = null, snap = () => null } = {}) {
   const current = () => id === runSeq;
   const opts = options();
   let input;
@@ -995,7 +993,7 @@ async function runCompare(id, key, { auto = false, ctrl = null } = {}) {
     const view = await ab.analyze(input, (hex, arch) => engine.analyze(makeRequest(hex, arch, opts)), current);
     if (!view || !current()) return;
     for (const s of [view.a, view.b]) if (s) s.request = makeRequest(s.hex, s.archKey, opts); // for the traces
-    lastView = { ab: view };
+    lastView = { ab: view, snap: snap() };
     lastRunKey = key;
     draw();
     updateABCpus(view, { auto });
@@ -1043,16 +1041,26 @@ const summaryOf = (r) => ({ tp: Number(r.tp), bottlenecks: r.bottlenecks ?? [], 
 // Copying the whole result as text (copy-view.js; the text: markdown.js): single, the result (report) with the table of
 // the checked CPUs; A–B, the comparison (compare, with A and B per checked CPU), then each side's result. "diff": the
 // comparison of A–B's first tab.
-const linkNow = () => { const f = encodeState(collectState()); return location.origin + location.pathname + (f ? '#' + f : ''); };
+// A copy is of the result on screen: the code and the link as they were when it was analyzed (snapshotOf, kept with the
+// result), never the editor's text since; the elements per iteration as the result shows them.
+const linkOf = (s) => { const f = encodeState(s); return location.origin + location.pathname + (f ? '#' + f : ''); };
+function snapshotOf(input, inputB) {
+  const a = { mode: input.mode, syntax: input.syntax, text: input.text };
+  const s = { ...collectState(), mode: a.mode, syntax: a.syntax, text: a.text, arch: input.arch };
+  if (inputB) Object.assign(s, { bMode: inputB.mode, bSyntax: inputB.syntax, bText: inputB.text });
+  return { a, b: inputB ? { ...inputB } : null, state: s };
+}
+// the link of the result shown, with the elements per iteration it shows
+const linkNow = (snap) => linkOf(snap ? { ...snap.state, aWork: state.aWork, bWork: state.bWork } : collectState());
 const sideMeta = (s, work) => ({ arch: s.archKey, archTitle: s.archTitle, per: work, config: uarch?.configs?.[s.archKey] ?? null, shown: s.shown ?? null });
-const codeOf = ({ mode, text }) => ({ code: String(text ?? '').replace(/\s+$/, ''), lang: mode === 'hex' ? '' : 'asm' });
+const codeOf = (c) => (c ? { code: String(c.text ?? '').replace(/\s+$/, ''), lang: c.mode === 'hex' ? '' : 'asm' } : {});
 function copySingle(v) {
   setCopy('diff', null);
   const r = v.response;
   if (!r) { setCopy('all', null); return; }
-  const work = state.aWork;
+  const work = state.aWork, snap = v.snap ?? null;
   setCopy('all', { what: 'the whole result', md: () => {
-    const all = report(r, { ...sideMeta(v, work), ...codeOf({ mode: state.mode, text: el.code.value }), link: linkNow() });
+    const all = report(r, { ...sideMeta(v, work), ...codeOf(snap?.a), link: linkNow(snap) });
     const cpus = panels.cpuResults();
     if (!cpus) return all;
     // the table of the checked CPUs after the headline and limits
@@ -1060,15 +1068,15 @@ function copySingle(v) {
     return k < 0 ? `${all}\n${cpuTable(cpus, { per: work })}` : `${all.slice(0, k + 2)}${cpuTable(cpus, { per: work })}\n${all.slice(k + 2)}`;
   } });
 }
-function copyAB(view) {
+function copyAB(view, snap = null) {
   const meta = { workA: view.workA, workB: view.workB, archA: view.a?.archKey, archB: view.b?.archKey, shownA: view.a?.shown ?? null, shownB: view.b?.shown ?? null };
   setCopy('diff', view.cmp?.okA && view.cmp?.okB ? { what: 'the A–B comparison', md: () => compare(view.a.response, view.b.response, { ...meta, cpus: abCpus.rows() }) } : null);
   setCopy('cpus', null); // (A–B: the table of A and B per CPU is copied with the diff)
   setCopy('all', { what: 'the whole A–B result', md: () => [
     compare(view.a?.response, view.b?.response, { ...meta, cpus: abCpus.rows() }),
-    report(view.a?.response, { title: 'A', ...(view.a ? sideMeta(view.a, view.workA) : {}), ...codeOf({ mode: state.mode, text: el.code.value }) }),
-    report(view.b?.response, { title: 'B', ...(view.b ? sideMeta(view.b, view.workB) : {}), ...codeOf(ab.getB()) }),
-    `[open in wuica](${linkNow()})\n`,
+    report(view.a?.response, { title: 'A', ...(view.a ? sideMeta(view.a, view.workA) : {}), ...codeOf(snap?.a) }),
+    report(view.b?.response, { title: 'B', ...(view.b ? sideMeta(view.b, view.workB) : {}), ...codeOf(snap?.b) }),
+    `[open in wuica](${linkNow(snap)})\n`,
   ].join('\n') });
 }
 
@@ -1140,7 +1148,7 @@ function settleMode({ replacing = false } = {}) {
 // wait for it): {text, syntax} or null. Not where the example's machine code is not what its text assembles to.
 function exampleIn(code, mode) {
   const key = code.mode === 'asm' ? code.syntax : 'hex';
-  const ex = ALL_EXAMPLES.find((e) => e.text?.[key] === code.text && (code.mode !== 'asm' || !NOT_AS_ASSEMBLED.has(e.id)));
+  const ex = ALL_EXAMPLES.find((e) => e.text?.[key] === code.text);
   if (!ex) return null;
   if (mode === 'hex') return typeof ex.text.hex === 'string' ? { text: ex.text.hex } : null;
   const syntax = code.mode === 'asm' ? code.syntax : state.syntax;

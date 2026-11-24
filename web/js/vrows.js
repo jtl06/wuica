@@ -86,6 +86,22 @@ export class VRows {
     return tr ?? null;
   }
 
+  // Where row k starts, in px below row 0 (for keeping two tables' scroll positions in step, ab.js): a short table's
+  // drawn rows where they are; a long table's by its measured row height (the window's rows are of one height).
+  offsetOf(k) {
+    if (this.windowed) return k * (this.rowH || 19);
+    const a = this.rows.get(0), b = this.rows.get(k);
+    return a && b ? b.getBoundingClientRect().top - a.getBoundingClientRect().top : 0;
+  }
+  // the last row that starts at or above y px below row 0
+  rowAt(y) {
+    if (this.count <= 0) return 0;
+    if (this.windowed) return Math.max(0, Math.min(this.count - 1, Math.floor(y / (this.rowH || 19))));
+    let lo = 0, hi = this.count - 1;
+    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (this.offsetOf(m) <= y + 0.5) lo = m; else hi = m - 1; }
+    return lo;
+  }
+
   // the rows near the view (after a scroll, a resize, the table being shown)
   update() {
     if (!this.windowed || !this.tbody.isConnected) return;

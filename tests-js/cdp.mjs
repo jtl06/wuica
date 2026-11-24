@@ -59,7 +59,21 @@ export function checker(label) {
 }
 
 /** copies web/dist to a temporary directory (a running check.sh may rebuild web/dist meanwhile) */
-export function copyDist(dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-dist-'))) {
+// A copy of web/dist in the OS's temporary folder (a suite may change it); removed when the process ends, however it ends
+// (normally, process.exit, an uncaught error, Ctrl+C or SIGTERM). A directory given by the caller is the caller's.
+const copies = new Set();
+let cleanupHooked = false;
+function removeCopies() { for (const d of copies) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* gone */ } } copies.clear(); }
+function hookCleanup() {
+  if (cleanupHooked) return;
+  cleanupHooked = true;
+  process.on('exit', removeCopies);
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(sig, () => { removeCopies(); process.exit(128 + (sig === 'SIGINT' ? 2 : sig === 'SIGTERM' ? 15 : 1)); });
+  }
+}
+export function copyDist(dir = null) {
+  if (!dir) { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-dist-')); copies.add(dir); hookCleanup(); }
   fs.cpSync(DIST, dir, { recursive: true });
   return dir;
 }

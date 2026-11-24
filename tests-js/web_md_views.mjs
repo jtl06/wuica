@@ -5,7 +5,7 @@
 //
 //   node tests-js/web_md_views.mjs
 import fs from 'node:fs';
-import { bound, bytes, deps, sweep, traceRange, mcaText } from '../web/js/markdown.js';
+import { bound, bytes, deps, sweep, traceRange, mcaText, shownLabels } from '../web/js/markdown.js';
 import { codeMapModel } from '../web/js/codemap.js';
 import { depGraph } from '../web/js/deps.js';
 import { annotateLatencies, slackOf, fmtSlack } from '../web/js/deps-slack.js';
@@ -28,22 +28,32 @@ if (!fs.existsSync(wasm)) {
   await e.loadUarch(fs.readFileSync(new URL('data/uarch.json', root)));
   await e.loadArch('SKL', tableBytes('SKL'));
   const ex = EXAMPLES[0]; // the default example
-  const r = await e.analyze(makeRequest(ex.hex, 'SKL', { includeTrace: true, details: true }));
-  const g = depGraph(r, r.trace);
-  annotateLatencies(g, r, r.details);
+  // (as the page: the result; the dependencies from a run with the trace and details, as the analyzer's worker makes
+  // them, engine-rpc.js depGraph; the slack by the result's critical path, deps.js)
+  const r = await e.analyze(makeRequest(ex.hex, 'SKL'));
+  const traced = await e.analyze({ ...makeRequest(ex.hex, 'SKL'), includeTrace: true, details: true });
+  const g = depGraph(traced, traced.trace);
+  annotateLatencies(g, traced, traced.details);
   g.slack = slackOf(g, r.criticalPath?.ratio);
   const points = [];
   for (let k = 0; k < 64; k++) points.push(summarize(await e.analyze(makeRequest(ex.hex, 'SKL', { alignmentOffset: k }))));
-  const m = buildModel(r.trace, {});
+  const m = buildModel(traced.trace, {});
   const rows = selectRows(m, m.relevant.first, m.relevant.first + 2);
+  // (the branch targets as the page shows them: the labels of the example's text)
+  const shown = shownLabels(r, { source: ex.text.intel });
   const texts = {
-    bound: bound(r),
-    bytes: bytes(codeMapModel(r, ex.hex, 0)),
-    deps: deps(g, { slack: g.slack?.slack ? g.nodes.map((_, i) => fmtSlack(g.slack.slack[i])) : null }),
+    bound: bound(r, null, { shown }),
+    bytes: bytes(codeMapModel(r, ex.hex, 0), { shown }),
+    deps: deps(g, { shown, slack: g.slack?.slack ? g.nodes.map((_, i) => fmtSlack(g.slack.slack[i])) : null }),
     sweep: sweep(sweepData(points), 'SKL'),
     trace: traceRange(TABLE_HEAD, tableRows(m, rows), `${rows.length} uops`),
     mca: mcaText('Iterations:        100\nInstructions:      400\n', '100 iterations'),
   };
+  // branch targets as the page shows them (the labels of the text: shownLabels), in every view that lists instructions
+  check(shown.includes('jnz loop'), 'the default example\'s branch, as the page shows it: jnz loop', JSON.stringify(shown));
+  for (const [k, t] of Object.entries({ bytes: bytes(codeMapModel(r, ex.hex, 0), { shown }), deps: deps(g, { shown, slack: g.nodes.map((_, i) => fmtSlack(g.slack?.slack?.[i] ?? 0)) }), bound: bound(r, 'Dependencies', { shown }) })) {
+    check(!/jnz 0x/.test(t) && (k === 'bound' || t.includes('`jnz loop`')), `${k}: the branch copied as the page shows it (jnz loop, not its offset)`, t);
+  }
   if (process.env.WUICA_UPDATE_GOLDEN) {
     fs.mkdirSync(GOLD, { recursive: true });
     for (const [k, t] of Object.entries(texts)) fs.writeFileSync(new URL(`${k}.md`, GOLD), t);

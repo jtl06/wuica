@@ -17,7 +17,7 @@
 
 import { ISSUE_H, issueLog, issueShare, drawIssueStrip, issueText } from './trace-issue.js'; // the issue strip (details)
 import { attachRange } from './trace-range-view.js'; // a cycle range for the bound view (viewer.ext: its hooks)
-import { setCopy } from './copy-view.js';
+import { setCopy, waitCopy } from './copy-view.js';
 import { traceRange } from './markdown.js';
 
 // ---- the model (no DOM) ----------------------------------------------------------------------------------------
@@ -1574,7 +1574,8 @@ export function createTracePanel({ analyze, config = () => null, traceModel = nu
   let pending = null; // {view, key}: scroll to this instruction once the trace is shown
   let lastOpen = false;
 
-  const message = (text, ...extra) => { viewer?.destroy(); viewer = null; details.wuicaTrace = null; body.replaceChildren(el('p', { class: 'trace-msg', text }, ...extra)); };
+  // (no viewer: nothing to copy; while the trace is made, its control says so)
+  const message = (text, ...extra) => { viewer?.destroy(); viewer = null; details.wuicaTrace = null; setCopy('trace', null); body.replaceChildren(el('p', { class: 'trace-msg', text }, ...extra)); };
 
   function want(force = false) {
     const v = view;
@@ -1624,7 +1625,7 @@ export function createTracePanel({ analyze, config = () => null, traceModel = nu
       message(`The trace of ${g.instrs} instructions × ${g.iterations} iterations would be very large. `, gate(button('load it anyway', () => want(true))));
       return;
     }
-    if (tr.state === 'loading') { message('simulating again with the trace…'); body.firstChild.classList.add('loading'); return; }
+    if (tr.state === 'loading') { message('simulating again with the trace…'); body.firstChild.classList.add('loading'); waitCopy('trace', 'the trace'); return; }
     const e = tr.error;
     const retry = () => { if (tr) tr.state = 'idle'; want(); };
     message(e?.name === 'CancelledError' ? 'The trace was cancelled. ' : `${String(e?.message ?? e).replace(/^(?!The trace)/, 'The trace could not be made: ')} `, button('try again', retry));
@@ -1652,6 +1653,7 @@ export function createTracePanel({ analyze, config = () => null, traceModel = nu
         linkKey = null;
         if (pending && pending.view !== v) pending = null;
         if (viewer) { viewer.destroy(); viewer = null; details.wuicaTrace = null; }
+        setCopy('trace', null); // (the old result's trace: never copied for this one)
         state.scale = null; state.fit = true; state.scrollLeft = 0; state.scrollTop = 0;
         body.replaceChildren();
         render();
@@ -1692,7 +1694,7 @@ export function createABTracePanel({ analyze, config = () => null, traceModel = 
   let viewers = [], sync = null, lastOpen = false;
   const usable = (s) => !!s && !!s.request && !!s.response && typeof s.response === 'object' && !('error' in s.response) && Array.isArray(s.response.rows);
 
-  const message = (text, ...extra) => { destroy(); body.replaceChildren(el('p', { class: 'trace-msg', text }, ...extra)); };
+  const message = (text, ...extra) => { destroy(); setCopy('trace', null); body.replaceChildren(el('p', { class: 'trace-msg', text }, ...extra)); };
   function destroy() { for (const v of viewers) v.destroy(); viewers = []; sync = null; details.wuicaTraces = null; }
 
   function want(force = false) {
@@ -1729,7 +1731,7 @@ export function createABTracePanel({ analyze, config = () => null, traceModel = 
     if (job.state === 'missing') { message('Both sides need a result.'); return; }
     if (job.state === 'mock') { message('The mock engine (?mock=1) has no traces.'); return; }
     if (job.state === 'large') { message('The traces would be very large. ', gate(button('load them anyway', () => want(true)))); return; }
-    if (job.state === 'loading') { message('simulating both again with the trace…'); body.firstChild.classList.add('loading'); return; }
+    if (job.state === 'loading') { message('simulating both again with the trace…'); body.firstChild.classList.add('loading'); waitCopy('trace', 'the trace'); return; }
     const e = job.error;
     message(e?.name === 'CancelledError' ? 'The trace was cancelled. ' : `${String(e?.message ?? e).replace(/^(?!The trace)/, 'The trace could not be made: ')} `,
       button('try again', () => { if (job) job.state = 'idle'; want(); }));
@@ -1836,6 +1838,7 @@ export function createABTracePanel({ analyze, config = () => null, traceModel = 
         view = v;
         job = null;
         destroy();
+        setCopy('trace', null);
         body.replaceChildren();
         render();
       }

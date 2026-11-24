@@ -7,8 +7,12 @@
 const providers = new Map(); // tab name ('table', 'diff', 'bound', ..., 'all': the whole result) -> {what, md, csv?, json?}
 
 // A view says how it is copied: what (a few words for the status line), md (), and csv (), json () if it has them.
-// null: nothing to copy.
+// null: nothing to copy. A view whose text is being made (a new result's trace, llvm-mca running) says so with
+// waitCopy(tab, what): its control copies nothing until the view has its text, and the status line says why.
+// A copy is of the result on screen (its code, link and options as they were analyzed); if the input has changed
+// since (the result is stale), the status line says so.
 export function setCopy(tab, provider) { if (provider) providers.set(tab, provider); else providers.delete(tab); }
+export function waitCopy(tab, what) { providers.set(tab, { what, waiting: true }); }
 export const getCopy = (tab) => providers.get(tab) ?? null;
 export const FORMATS = (p) => ['md', 'csv', 'json'].filter((f) => typeof p?.[f] === 'function');
 export const formatOf = (e) => (e?.shiftKey ? 'csv' : e?.altKey ? 'json' : 'md');
@@ -17,15 +21,18 @@ export function titleOf(p, base = 'copy this view') {
   return `${base} as Markdown${f.includes('csv') ? '; Shift+click: CSV' : ''}${f.includes('json') ? '; Alt+click: JSON' : ''} (c)`;
 }
 
-// env: {copyText(text) -> promise of ok, flash(text, {error}), current() -> the shown tab's name}
+// env: {copyText(text) -> promise of ok, flash(text, {error}), current() -> the shown tab's name, stale() -> the result
+// shown is for an earlier input}
 export function createCopy(env) {
   async function copy(tab, format = 'md') {
     const p = getCopy(tab);
+    if (p?.waiting) { env.flash(`not copied: ${p.what} is not ready yet`); return false; }
     const f = p && typeof p[format] === 'function' ? format : 'md';
     const text = p ? p[f]?.() : '';
     if (!text) { env.flash('nothing to copy here'); return false; }
     const ok = await env.copyText(text);
-    env.flash(ok ? `copied: ${p.what}${f === 'md' ? '' : ` (${f})`}` : 'copy failed: the clipboard is not available here', { error: !ok });
+    const stale = ok && env.stale?.() ? ' · stale: the result shown is for an earlier input' : '';
+    env.flash(ok ? `copied: ${p.what}${f === 'md' ? '' : ` (${f})`}${stale}` : 'copy failed: the clipboard is not available here', { error: !ok });
     return ok;
   }
   if (typeof document !== 'undefined') {

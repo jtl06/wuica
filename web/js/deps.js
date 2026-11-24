@@ -289,7 +289,8 @@ export function createDeps(env) {
     const { graph, error } = cache;
     if (error) { body.replaceChildren(h('p', { class: 'caveat', text: `no dependencies: ${error}` })); body.dataset.state = 'error'; return; }
     if (!graph) return;
-    setCopy('deps', { what: 'the dependencies', md: () => depsText(graph, { slack: graph.slack?.slack ? graph.nodes.map((_, i) => fmtSlack(graph.slack.slack[i])) : null }) });
+    const shown = view?.shown ?? null;
+    setCopy('deps', { what: 'the dependencies', md: () => depsText(graph, { shown, slack: graph.slack?.slack ? graph.nodes.map((_, i) => fmtSlack(graph.slack.slack[i])) : null }) });
     const c = graph.edges.filter((e) => e.dist).length;
     hint.textContent = ` · ${graph.edges.length} edge${graph.edges.length === 1 ? '' : 's'}, ${c} ↻`;
     draw(graph);

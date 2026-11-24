@@ -380,7 +380,8 @@
     bindFold();
     bindAbout();
     // a view points at a row of the table (rowjump.js): the table tab
-    document.addEventListener('wuica:show-table', function () { if (opened[0]) choose(null); });
+    // (a jump to a row: the table shown and fitted now, so the row it scrolls to stays in view: rowjump.js)
+    document.addEventListener('wuica:show-table', function () { if (opened[0]) choose(null); fit(); });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
   else bind();

@@ -66,6 +66,31 @@ try {
     await page.close();
   }
 
+  // live: an edit while the assembler is held back, then the text back to the example shown: the page is not busy any
+  // more (the edit's run is dropped), and stays so when the assembler arrives
+  {
+    hold = true; asked.length = 0;
+    const page = await open();
+    await page.goto(`${srv.origin}/?nosw=1`);
+    const r = await page.eval(`${HELPERS}
+      await until(() => window.__first && tp(), 60000); await wait(300);
+      if (!$('live').checked) $('live').click();
+      await wait(300);
+      const text = $('code').value, run = runId();
+      set($('code'), text.replace('add rax, 1', 'add rax, 2'));
+      await until(() => $('results').hasAttribute('aria-busy'), 8000).catch(() => {});
+      const busy = $('results').hasAttribute('aria-busy');
+      set($('code'), text);
+      await wait(1500);
+      return { busy, after: $('results').hasAttribute('aria-busy'), tp: tp(), stale: $('result-body').classList.contains('stale'), run: runId() === run, status: $('status').textContent };`);
+    check(r.busy && !r.after && r.tp === '2.00' && !r.stale && r.run, 'live: the text back to the example shown while the assembler is on its way: no longer busy, the result current', JSON.stringify(r));
+    release();
+    const later = await page.eval(`${HELPERS} await wait(2500); return { busy: $('results').hasAttribute('aria-busy'), tp: tp(), stale: $('result-body').classList.contains('stale') };`);
+    check(!later.busy && later.tp === '2.00' && !later.stale, 'live: and when the assembler arrives, nothing changes', JSON.stringify(later));
+    check(page.problems.length === 0, 'no console errors (live, back to the example)', page.problems.join('\n'));
+    await page.close();
+  }
+
   // a fresh visit: an example picked from the menu, and A–B, before the assembler is there
   {
     hold = true; asked.length = 0;

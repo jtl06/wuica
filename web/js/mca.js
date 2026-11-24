@@ -9,7 +9,7 @@
 // env: { available(), module() -> promise of a WebAssembly.Module, toAsm(hex) -> promise of {text} | null,
 //        spawn() -> Worker, onToggle(open) }
 import { h } from './render.js';
-import { setCopy } from './copy-view.js';
+import { setCopy, waitCopy } from './copy-view.js';
 import { mcaText } from './markdown.js';
 
 // uiCA's microarchitectures -> llvm -mcpu (LLVM has no Kaby Lake or Coffee Lake model: they are Skylake)
@@ -94,30 +94,34 @@ export function createMca(env = {}) {
     const v = view, r = v?.response;
     const ok = r && !r.error && Array.isArray(r.rows) && !r.mock && v.hex;
     row.hidden = !ok;
-    if (!ok || !open) return;
+    if (!ok) { setCopy('mca', null); return; }
     const arch = v.archKey;
     const cpu = MCPU[arch];
     const instrs = r.rows.filter((x) => x.kind === 'instr').length;
     const iterations = mcaIterations(instrs);
     const k = [v.hex, cpu, iterations, timeline, bottleneck].join('|');
     if (k === key) return;
+    // (another result or other options: the text shown before is not copied for it)
+    if (!open) { setCopy('mca', null); return; }
     key = k;
+    waitCopy('mca', "llvm-mca's text");
     const mine = ++seq;
     const tools = h('div', { class: 'mca-tools' },
       option('timeline', 'llvm-mca -timeline: the first iterations, cycle by cycle', () => timeline, (x) => { timeline = x; }),
       option('bottlenecks', 'llvm-mca -bottleneck-analysis', () => bottleneck, (x) => { bottleneck = x; }));
-    if (!cpu) { body.replaceChildren(tools, h('p', { class: 'hint', text: `llvm-mca has no model for ${arch}.` })); return; }
+    if (!cpu) { setCopy('mca', null); body.replaceChildren(tools, h('p', { class: 'hint', text: `llvm-mca has no model for ${arch}.` })); return; }
     body.replaceChildren(tools, h('p', { class: 'hint', text: 'llvm-mca: loading…' }));
     try {
       const asm = await env.toAsm(v.hex);
       if (mine !== seq) return;
-      if (!asm) { body.replaceChildren(tools, h('p', { class: 'hint', text: 'The machine code could not be turned into assembly for llvm-mca.' })); return; }
+      if (!asm) { setCopy('mca', null); body.replaceChildren(tools, h('p', { class: 'hint', text: 'The machine code could not be turned into assembly for llvm-mca.' })); return; }
       const args = ['-mtriple=x86_64-unknown-linux-gnu', `-mcpu=${cpu}`, `-iterations=${iterations}`, '-'];
       if (timeline) args.splice(-1, 0, '-timeline', '-timeline-max-iterations=3');
       if (bottleneck) args.splice(-1, 0, '-bottleneck-analysis');
       const res = await run(args, '.intel_syntax noprefix\n' + asm.text);
       if (mine !== seq) return;
       if (res.error || res.code !== 0) {
+        setCopy('mca', null);
         body.replaceChildren(tools, h('pre', { class: 'mca-out error-box', text: res.error ? `llvm-mca stopped: ${res.error}` : (res.err || res.out || `llvm-mca exited with ${res.code}`) }));
         return;
       }
@@ -138,6 +142,7 @@ export function createMca(env = {}) {
     } catch (e) {
       if (mine !== seq) return;
       key = '';
+      setCopy('mca', null);
       body.replaceChildren(tools, h('p', { class: 'messages', text: `llvm-mca could not be loaded: ${e?.message ?? e}` }));
     }
   }

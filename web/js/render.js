@@ -320,6 +320,26 @@ export function renderResult(root, view) {
 }
 
 // The control that copies the whole result (copy-view.js, the provider 'all')
+// The assembler's messages under a code box: a list that scrolls by itself (style.css .messages: a few lines high, so a
+// long list never pushes the box's controls away or draws over them), with their count when there are more than a few.
+// items: [{line, column, severity, message}]; select(line) when a message with a line is clicked.
+export function messageList(items, select) {
+  const list = h('ul', { tabindex: items.length > 4 ? '0' : null, 'aria-label': `${items.length} message${items.length === 1 ? '' : 's'}` });
+  for (const d of items) {
+    const text = `${d.line ? `line ${d.line}${d.column ? ':' + d.column : ''}: ` : ''}${d.severity === 'warning' ? 'warning: ' : ''}${d.message}`;
+    const li = h('li', { class: d.severity === 'error' ? null : d.severity });
+    if (d.line) {
+      const b = h('button', { type: 'button', class: 'plain', title: `select line ${d.line}`, text });
+      b.addEventListener('click', () => select(d.line));
+      li.append(b);
+    } else li.textContent = text;
+    list.append(li);
+  }
+  const errors = items.filter((d) => d.severity === 'error').length;
+  const count = items.length > 4 ? h('p', { class: 'msg-count', text: `${items.length} messages${errors && errors < items.length ? ` (${errors} error${errors === 1 ? '' : 's'})` : ''}` }) : null;
+  return [count, list].filter(Boolean);
+}
+
 export function copyAllButton() {
   const b = h('button', { type: 'button', class: 'plain copy-all', title: 'copy the whole result as Markdown: the headline, the CPUs, the limits, the caveats, the uop table, the code and the link', text: 'copy all' });
   b.addEventListener('click', () => document.dispatchEvent(new CustomEvent('wuica:copy', { detail: { tab: 'all', format: 'md' } })));

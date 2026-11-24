@@ -5,7 +5,7 @@
 //
 //   node tests-js/web_asm_shipped.mjs
 import fs from 'node:fs';
-import { createShipped, NOT_AS_ASSEMBLED } from '../web/js/asm-shipped.js';
+import { createShipped } from '../web/js/asm-shipped.js';
 import { withRegions } from '../web/js/asm-regions.js';
 import { WasmAssembler } from '../web/js/assembler.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
@@ -54,10 +54,8 @@ if (!fs.existsSync(asmPath) || !fs.existsSync(wasmPath)) {
       both++;
       const real = await A.assemble(text, syntax, { loop: 'auto' });
       const fromCode = await shipped(text, syntax, 'auto');
-      if (NOT_AS_ASSEMBLED.has(ex.id)) {
-        check(fromCode === null && real.ok && Buffer.from(real.bytes).toString('hex') !== ex.hex, `${ex.id} (${syntax}): its machine code is not what its text assembles to, so it is not answered`);
-        continue;
-      }
+      // (the example's own bytes are the assembler's: so switching it between hex and assembly keeps its result)
+      check(real.ok && Buffer.from(real.bytes).toString('hex') === ex.hex, `${ex.id} (${syntax}): its machine code is what its text assembles to`, real.ok ? Buffer.from(real.bytes).toString('hex') + ' vs ' + ex.hex : JSON.stringify(real.diagnostics));
       check(fromCode !== null, `${ex.id} (${syntax}): answered from its machine code`);
       if (!fromCode) continue;
       answered++;

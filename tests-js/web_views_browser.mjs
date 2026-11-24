@@ -232,6 +232,12 @@ try {
       btns[0]?.click();
       await until(() => trs().some((tr) => tr.classList.contains('rj-flash')), 5000).catch(() => {});
       out.afterJump = [drawn().length, Number(drawn().find((tr) => tr.classList.contains('rj-flash'))?.dataset.row ?? -1)];
+      // once the layout has settled (the tab's scrollers fitted, workspace.js): the row still drawn, in view and focused
+      for (let i = 0; i < 6; i++) await new Promise((res) => requestAnimationFrame(res));
+      await wait(100);
+      const jumped = drawn().find((tr) => Number(tr.dataset.row) === out.afterJump[1]);
+      const jr = jumped?.getBoundingClientRect(), jw = jumped?.closest('.table-wrap')?.getBoundingClientRect();
+      out.settled = !!jumped && jr.top >= Math.max(0, jw.top) - 1 && jr.bottom <= Math.min(innerHeight, jw.bottom) + 1 && document.activeElement === jumped.cells[0];
       return out;`);
     const sha = await analyze((await import('../web/js/examples.js')).SHOWCASE_EXAMPLES[0].hex);
     const edges = sha.criticalPath?.edges ?? [];
@@ -241,6 +247,7 @@ try {
     check(r.tp === '744.25' && r.closed[0] === false && r.closed[1] === 0 && r.closed[2] === 'closed' && r.closed[3] === 0, 'bound: SHA-256: closed, nothing computed or shaded', JSON.stringify(r.closed));
     check(r.long.every((ms) => ms < LONG_TASK_MS) && r.switchMs < LONG_TASK_MS && r.items > 5 && r.hot > 0 && r.rows < 200, `bound: SHA-256: opening and switching: no task of ${LONG_TASK_MS} ms or more`, JSON.stringify(r));
     check(r.top === Math.min(5, order.length) && order[0] >= 200 && r.afterJump[0] < 200 && r.afterJump[1] === order[0], 'bound: SHA-256: a jump to a chain row beyond the drawn ones draws it (and only the rows near it) and flashes it', JSON.stringify([r.top, r.afterJump, order]));
+    check(r.settled, 'bound: SHA-256: after the jump the row is drawn, in view and focused (the layout settled)', JSON.stringify([r.afterJump, r.settled]));
     console.log(`bound: SHA-256: long tasks while opening ${JSON.stringify(r.long)} ms, switch ${r.switchMs.toFixed(1)} ms; chain top rows ${order.join(',')}`);
   }
 
@@ -477,11 +484,19 @@ try {
       obs.disconnect();
       const drawn = Math.round(performance.now() - t0);
       await until(() => document.querySelector('.dp-sl'), 10000); // the slack column: a task of its own
-      // (a graph this large draws the instructions near the view, deps.js: the map is as tall as all of them)
-      const rows = Math.round((Number(document.querySelector('.dp-map').getAttribute('height')) - 4) / 18);
-      return [...out, drawn, long, document.querySelectorAll('.dp-node').length, document.querySelectorAll('.dp-sl').length, document.querySelector('.dp-k.sl')?.title ?? '', rows];`);
-    check(s[0] === 'trace 2,949 instructions' && s[1] === 0 && s[7] === 2949 && s[4] > 0 && s[4] < 400, 'deps: SHA-256: past its size limit (the button), picking the tab loads it; the map has every instruction, those near the view drawn', JSON.stringify(s));
-    check(s[5] > 0 && s[6] && !/too large/.test(s[6]), 'deps: SHA-256: the slack is computed', JSON.stringify(s.slice(5)));
+      const atTop = document.querySelectorAll('.dp-node').length;
+      // (a graph this large draws the instructions near the view, deps.js): scrolled from top to bottom, every
+      // instruction is drawn at some point, and the chain's (slack 0) are counted over all of them
+      const wrap = document.querySelector('#deps .dp-wrap');
+      const reached = new Set(), zero = new Set();
+      for (let y = 0; ; y += Math.max(100, wrap.clientHeight - 40)) {
+        wrap.scrollTop = y; await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
+        for (const n of document.querySelectorAll('.dp-node')) { reached.add(n.dataset.i); if (n.querySelector('.dp-sl.zero')) zero.add(n.dataset.i); }
+        if (wrap.scrollTop + wrap.clientHeight >= wrap.scrollHeight - 1) break;
+      }
+      return [...out, drawn, long, atTop, reached.size, document.querySelector('.dp-k.sl')?.title ?? '', zero.size, reached.has('2948')];`);
+    check(s[0] === 'trace 2,949 instructions' && s[1] === 0 && s[4] > 0 && s[4] < 400 && s[5] === 2949 && s[8], 'deps: SHA-256: past its size limit (the button), picking the tab loads it; those near the view drawn, every instruction (the last one too) reached by scrolling', JSON.stringify(s));
+    check(s[7] > 100 && s[6] && !/too large/.test(s[6]), 'deps: SHA-256: the slack is computed (more than 100 instructions of the chain have slack 0)', JSON.stringify(s.slice(5)));
     console.log(`deps: SHA-256: traced and drawn in ${s[2]} ms after the tab; long tasks ${JSON.stringify(s[3])}`);
   }
 
@@ -547,12 +562,12 @@ try {
       Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (t) => { got.push(t); } }, configurable: true });
       // the control at the end of the tab row (copy-view.js): Markdown; Shift+click CSV; Alt+click JSON
       const c = document.querySelector('#result-body .view-tabs .ws-copy');
-      const out = { label: c?.textContent, last: c === c?.parentElement.lastElementChild, old: !!document.querySelector('.ex-tools') };
+      const out = { label: c?.textContent, last: c === c?.parentElement.lastElementChild };
       for (const mod of [{}, { shiftKey: true }, { altKey: true }]) { c.dispatchEvent(new MouseEvent('click', { bubbles: true, ...mod })); await wait(50); }
       out.flash = $('status').textContent;
       out.got = got;
       return out;`);
-    check(r.label === 'copy' && r.last && !r.old && /^copied/.test(r.flash), 'copy: one control, at the end of the tab row', JSON.stringify(r));
+    check(r.label === 'copy' && r.last && /^copied/.test(r.flash), 'copy: one control, at the end of the tab row', JSON.stringify(r));
     const [md, csv, json] = r.got;
     check(md?.startsWith('**2.00 cycles/iteration** · SKL') && /\| `add rax, 0x1` +\|/.test(md) && /\| \*\*Total\*\* +\|/.test(md), 'copy: Markdown, the headline and the uop table (the whole result with its link: "copy all", web_copy_browser)', md);
     check(csv?.split('\r\n').length === want.rows.length + 2 && csv.startsWith('instruction,opcode,notes,MITE'), 'copy: CSV', csv);
