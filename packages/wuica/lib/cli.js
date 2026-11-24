@@ -3,7 +3,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { createWuica, normalizeHex, listLoops, whatIf, WHAT_IF_VARIANTS, CODES, examples, findExample, objectKind } from './index.js';
+import { createWuica, normalizeHex, listLoops, whatIf, WHAT_IF_VARIANTS, CODES, examples, findExample, objectKind, markdown } from './index.js';
+import { analyzedLines } from './web/branch-label.js';
 
 export const VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
@@ -49,6 +50,9 @@ Output:
   -per N                 the loop does N elements (bytes, floats, ...) per iteration: also print cycles per element
                          (what-if values too)
   -whatif                the what-if variants (unrolled, N accumulators, front end, fusion) per microarchitecture
+  -md                    print GitHub-flavoured Markdown instead of the text report (for an issue, a review, a
+                         chat): the result with its uop table, the CPU table, the what-if and loop tables; not with
+                         -json or -TPonly
   -json                  print the response as JSON
   -trace                 with -json: include the cycle-by-cycle events (large)
   -details               with -json: include the details (allowed ports, latencies, port set, issue slots)
@@ -104,7 +108,7 @@ const FLAGS = {
   examples: ['examples'], example: ['example', 1], show: ['show'], files: ['files', 1], report: ['report'], funcs: ['funcs'],
   arch: ['arch', 1], list: ['list'], hex: ['hex'], att: ['att'], intel: ['intel'], raw: ['raw', 1], data: ['data', 1],
   loop: ['loop', 1], loops: ['loops'], func: ['func', 1], per: ['per', 1], whatif: ['whatif'], threads: ['threads', 1],
-  tponly: ['tpOnly'], json: ['json'], trace: ['trace'], details: ['details'],
+  tponly: ['tpOnly'], json: ['json'], md: ['md'], trace: ['trace'], details: ['details'],
   alignmentoffset: ['alignmentOffset', 1], initpolicy: ['initPolicy', 1], simplefrontend: ['simpleFrontEnd'],
   nomicrofusion: ['noMicroFusion'], nomacrofusion: ['noMacroFusion'], miniterations: ['minIterations', 1], mincycles: ['minCycles', 1],
 };
@@ -143,6 +147,7 @@ export function parseArgs(argv) {
       default: o[name] = takes ? v : true;
     }
   }
+  if (o.md && (o.json || o.tpOnly)) throw new UsageError(`-md: Markdown instead of the text report; not with ${o.json ? '-json (JSON is its own format)' : '-TPonly (one number per line)'}`);
   o.arch = o.arch.trim();
   if (o.arch.toLowerCase() === 'list') o.list = true;
   // several microarchitectures: all, or a comma-separated list
@@ -360,6 +365,25 @@ function whatIfTerse(x, prefix = '') {
   return x.variants.map((v) => `${prefix}${v.id} ${v.error ? 'error' : `${fmt(v.tp)}${v.perElement !== undefined ? ` ${fmtEl(v.perElement)}` : ''}`}\n`).join('');
 }
 
+// -md: "SKL · Skylake (2015)"
+function archTitle(w, id) {
+  const a = w.archs().find((x) => x.id === id);
+  return a ? `${id} · ${a.name}${a.year ? ` (${a.year})` : ''}` : id;
+}
+// -md: the analyzed lines of an assembly input, for the branch targets as labels (branch-label.js); null for machine code
+const srcOf = (req, r) => (req.source ? analyzedLines(String(req.source).replace(/\r\n?/g, '\n'), r) : null);
+// -md: the assembly that was analyzed (the loop's lines, or all of the text), for the report's code block; none for
+// machine code or a text longer than MD_CODE_LINES lines
+const MD_CODE_LINES = 200;
+function analyzedCode(req, r) {
+  if (!req.source) return null;
+  const lines = String(req.source).replace(/\r\n?/g, '\n').split('\n');
+  const p = r.loop;
+  const part = p && p.line && p.endLine ? lines.slice(p.line - 1, p.endLine) : lines;
+  const text = part.join('\n').replace(/^\n+|\s+$/g, '');
+  return text && part.length <= MD_CODE_LINES ? text : null;
+}
+
 // argv: the arguments after the program name. io: {stdin, stdout, stderr}. Returns the exit code: the result's
 // `code` (0 ok, 1 bad request or usage, 2 assembler error, 3 analysis error).
 export async function main(argv, io = { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr }) {
@@ -423,6 +447,7 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
       const ls = listLoops(req.source, { func: o.func ?? null });
       if (ls.error) return fail(CODES.REQUEST, ls.error);
       if (o.json) { out.write(JSON.stringify({ code: 0, loops: ls }) + '\n'); return 0; }
+      if (o.md) { out.write(markdown.loops(ls)); return 0; }
       if (!ls.length) { out.write('no loops\n'); return 0; }
       printLoops(ls, out);
       return 0;
@@ -456,6 +481,13 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
       }
       printStderr(c, err, input.name);
       printAnalyzed(c, err, o);
+      if (o.md) {
+        const results = c.results.map((r, k) => ({ ...r, ...(extra[k].ins?.caveats ? { caveats: extra[k].ins.caveats } : {}) }));
+        out.write(markdown.cpuTable({ ...c, results }, { per: o.per }));
+        for (const x of Object.values(wi ?? {})) out.write('\n' + markdown.whatIf(x));
+        if (base?.code === 0 && !o.per) { const s = inductionSteps(base); if (s.length) err.write(stepLine(s)); }
+        return status;
+      }
       const kw = Math.max(4, ...c.results.map((r) => r.arch.length));
       const nw = Math.max(5, ...c.results.map((r) => r.name.length));
       const bns = c.results.map((r, k) => (r.code ? `error: ${r.error.split('\n')[0]}` : r.bottlenecks.join(', ') || (extra[k].ins?.largest ? `- (nearest ${extra[k].ins.largest.join(', ')})` : '-')));
@@ -493,6 +525,13 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
     printStderr(r, err, input.name);
     if (r.code) return r.code;
     printAnalyzed(r, err, o);
+    if (o.md) {
+      out.write(markdown.report(r, { arch: archTitle(w, r.arch), per: o.per, insights: ins, src: srcOf(req, r), code: analyzedCode(req, r) }));
+      for (const x of Object.values(wi ?? {})) out.write('\n' + markdown.whatIf(x));
+      const steps = !o.per ? inductionSteps(r) : [];
+      if (steps.length) err.write(stepLine(steps));
+      return 0;
+    }
     if (o.tpOnly) {
       out.write(`${fmt(r.tp)}${o.per ? ` ${fmtEl(per(r.tp))}` : ''}\n`);
       for (const x of Object.values(wi ?? {})) out.write(whatIfTerse(x));
@@ -568,6 +607,12 @@ async function batch(w, o, io) {
       const code = ls.error ? CODES.REQUEST : 0;
       worst = Math.max(worst, code);
       if (o.json) { docs.push({ file: it.name, ...(ls.error ? { code, error: ls.error, stderr: [{ text: ls.error }] } : { code: 0, loops: ls }) }); continue; }
+      if (o.md) {
+        out.write(`${it === items[0] ? '' : '\n'}### ${markdown.text(it.name)}\n\n`);
+        if (ls.error) err.write(`${it.name}: ${ls.error}\n`);
+        out.write(ls.error ? `error: ${markdown.text(ls.error)}\n` : markdown.loops(ls));
+        continue;
+      }
       out.write(`==> ${it.name} <==\n`);
       if (ls.error) err.write(`${it.name}: ${ls.error}\n`);
       else if (!ls.length) out.write('no loops\n');
@@ -639,6 +684,8 @@ async function batch(w, o, io) {
     return worst;
   }
 
+  if (o.md) return batchMarkdown(w, o, out, items, docs, worst);
+
   // the table
   const loopOf = (it) => { const d = docs.get(it).doc; return d.code && !d.results ? '-' : d.loop ? (d.loop.name.replace(/^loop /, '') + (d.loop.function ? ` (${d.loop.function})` : '')) : 'as is'; };
   const fw = Math.max(4, ...items.map((it) => it.name.length)), lw = Math.max(4, ...items.map((it) => loopOf(it).length));
@@ -671,6 +718,37 @@ async function batch(w, o, io) {
     if (!wi) continue;
     out.write(`\n==> ${it.name} <==\n`);
     Object.values(wi).forEach((x, k) => out.write((k ? '\n' : '') + (x.code ? `What if (${x.arch}): ${x.error}\n` : whatIfTable(x))));
+  }
+  return worst;
+}
+
+// -md with several inputs: the files x CPUs table (a CPU column also with one CPU), then with -report each file's
+// report, then each file's what-if tables, under a heading per file
+async function batchMarkdown(w, o, out, items, docs, worst) {
+  const info = new Map(w.archs().map((a) => [a.id, a]));
+  const named = (r) => (r.code || r.name ? r : { ...r, name: info.get(r.arch)?.name ?? '', year: info.get(r.arch)?.year ?? null, prototype: !!info.get(r.arch)?.prototype });
+  const rows = items.map((it) => {
+    const d = docs.get(it).doc;
+    if (d.results) return { file: it.name, result: { ...d, results: d.results.map(named) } };
+    if (d.code) return { file: it.name, result: d };
+    return { file: it.name, result: { ...named(d), caveats: d.insights?.caveats ?? [] } };
+  });
+  out.write(markdown.cpuTable(rows, { per: o.per }));
+  if (o.report) {
+    for (const it of items) {
+      const d = docs.get(it);
+      if (d.r?.code === 0) { out.write('\n' + markdown.report(d.r, { title: it.name, arch: archTitle(w, d.r.arch), per: o.per, insights: d.ins, src: srcOf(it.req, d.r) })); continue; }
+      if (d.c) for (const r of d.c.results.filter((x) => x.code === 0)) {
+        const full = await w.analyze(r.arch, it.req);
+        if (full.code === 0) out.write('\n' + markdown.report(full, { title: `${it.name} (${r.arch})`, arch: archTitle(w, r.arch), per: o.per, insights: w.insights(full), src: srcOf(it.req, full) }));
+      }
+    }
+  }
+  for (const it of items) {
+    const wi = docs.get(it).wi;
+    if (!wi) continue;
+    out.write(`\n### ${markdown.text(it.name)}\n`);
+    for (const x of Object.values(wi)) out.write('\n' + markdown.whatIf(x));
   }
   return worst;
 }

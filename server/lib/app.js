@@ -10,10 +10,11 @@
 //   GET  /api/version            versions
 //   POST /mcp                    MCP (tools list_archs, analyze, what_if, compare_archs, assemble)
 //
-// JSON by default; `Accept: text/plain` gives uiCA's text report (or the stderr lines of a failure).
+// JSON by default; `Accept: text/plain` gives uiCA's text report (or the stderr lines of a failure); `Accept:
+// text/markdown` on analyze and compare gives the package's Markdown (markdown.report, markdown.cpuTable).
 
 import http from 'node:http';
-import { createWuica, ARCH_FIELDS, detailInsights } from 'wuica';
+import { createWuica, ARCH_FIELDS, detailInsights, markdown } from 'wuica';
 import { createMcpServer } from './mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { resolveConfig } from './config.js';
@@ -77,7 +78,7 @@ function index() {
       'POST /mcp': 'remote MCP server (Streamable HTTP): tools list_archs, analyze, what_if, compare_archs, assemble',
       'GET /healthz': 'health',
     },
-    formats: 'JSON; send "Accept: text/plain" for uiCA\'s text report',
+    formats: 'JSON; send "Accept: text/plain" for uiCA\'s text report, "Accept: text/markdown" (analyze, compare) for Markdown',
   };
 }
 
@@ -140,11 +141,11 @@ export async function createApp(options = {}) {
     }
   }
 
-  function send(res, status, body, { text = false, headers = {} } = {}) {
+  function send(res, status, body, { text = false, headers = {}, type = 'text/plain' } = {}) {
     const isText = typeof body === 'string';
     const payload = isText ? body : JSON.stringify(body);
     res.writeHead(status, {
-      'Content-Type': isText || text ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8',
+      'Content-Type': isText || text ? `${type}; charset=utf-8` : 'application/json; charset=utf-8',
       'Content-Length': Buffer.byteLength(payload),
       ...headers,
     });
@@ -162,6 +163,16 @@ export async function createApp(options = {}) {
     const a = String(req.headers.accept ?? '');
     return /\btext\/plain\b/i.test(a) && !/\bapplication\/json\b/i.test(a);
   };
+  const wantsMarkdown = (req) => {
+    const a = String(req.headers.accept ?? '');
+    return /\btext\/markdown\b/i.test(a) && !/\bapplication\/json\b/i.test(a);
+  };
+  const archTitle = (id) => { const a = facade.archs().find((x) => x.id === id); return a ? `${id} · ${a.name}${a.year ? ` (${a.year})` : ''}` : id; };
+  // a result as Markdown: status as for JSON
+  function sendMarkdown(res, r, md, extraStatus) {
+    const status = r[STATUS] ?? extraStatus ?? (r.code === 1 ? 400 : 200);
+    send(res, status, md, { type: 'text/markdown', headers: r[RETRY_AFTER] ? { 'Retry-After': String(r[RETRY_AFTER]) } : {} });
+  }
 
   function checkKeys(body, allowed) {
     if (body === null || typeof body !== 'object' || Array.isArray(body)) return failure('the request body must be a JSON object');
@@ -268,6 +279,9 @@ export async function createApp(options = {}) {
       const ins = r.code === 0 && !wantText ? facade.insights(r) : null;
       if (ins) r.insights = { ...ins, ...detailInsights(r) }; // with options.details: portSet, issueSlots
       const unknownArch = r.code === 1 && facade.resolveArch(arch) === null && /^unknown microarchitecture/.test(r.error ?? '');
+      if (!wantText && wantsMarkdown(req)) {
+        return sendMarkdown(res, r, markdown.report(r, { arch: r.code ? arch : archTitle(r.arch), insights: r.insights ?? null, source: typeof body?.source === 'string' ? body.source : undefined }), unknownArch ? 404 : undefined);
+      }
       return sendResult(res, r, wantText, (x) => x.text, unknownArch ? 404 : undefined);
     }
     if (p === '/api/compare') {
@@ -276,6 +290,7 @@ export async function createApp(options = {}) {
       const body = await readJson(req);
       const r = await facade.compare(body, ctx);
       ctx.code = r.code;
+      if (!wantText && wantsMarkdown(req)) return sendMarkdown(res, r, r.code ? markdown.report(r) : markdown.cpuTable(r));
       return sendResult(res, r, wantText, compareText);
     }
     if (p === '/api/assemble') {

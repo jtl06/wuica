@@ -16,5 +16,5 @@ critical chain (4 cycles of latency): `vfmadd231ps ymm0, ymm4, ymmword ptr [rsi+
 | `vfmadd231ps ymm3, ymm7, ymmword ptr [rsi+rax*4+0x60]` |       |   1 |      2 |     2 |   0.38 |   0.62 |        |      1 |        |        |
 | `add rax, 0x20`                                        |       |   1 |      1 |     1 |        |        |        |        |      1 |        |
 | `cmp rax, rdx`                                         |       |   1 |      1 |     1 |        |        |        |        |        |      1 |
-| `jb 0xffffffffffffffc7`                                |   M   |     |        |       |        |        |        |        |        |        |
+| `jb loop`                                              |   M   |     |        |       |        |        |        |        |        |        |
 | **Total**                                              |       |  10 |     14 |    14 |   2.02 |   1.98 |      4 |      4 |      1 |      1 |

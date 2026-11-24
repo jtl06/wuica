@@ -20,7 +20,7 @@ bottleneck: Dependencies (both)
 |     | `vfmadd231ps ymm0, ymm7, ymmword ptr [rsi+rax*4+0x60]` | `vfmadd231ps ymm0, ymm7, ymmword ptr [rsi+rax*4+0x60]` |        |          |          |          |          |          |          |
 |     | `add rax, 0x20`                                        | `add rax, 0x20`                                        |        |          |          |          |          |          |          |
 |     | `cmp rax, rdx`                                         | `cmp rax, rdx`                                         |        |          |          |          |          |          |          |
-|     | `jb 0xffffffffffffffc7`                                | `jb 0xffffffffffffffc7`                                |        |          |          |          |          |          |          |
+|     | `jb 0x0`                                               | `jb 0x0`                                               |        |          |          |          |          |          |          |
 |     | **Total**                                              |                                                        |        |          |          |          |          |          |          |
 
 no change; Δ: B − A, uops per iteration

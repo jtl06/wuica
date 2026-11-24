@@ -17,7 +17,7 @@ const R = {
   rows: [
     { kind: 'regMerge', label: '<Register Merge Uop>', notes: '', values: [0, 0, 1, 0.5, 0.5] },
     { kind: 'instr', label: 'add rax, 0x1', opcode: '4883C001', notes: '', values: [0, 1, 1, 0.333333, 0.666667] },
-    { kind: 'instr', label: 'jnz 0x0', opcode: '75F3', notes: 'M', values: [0, 0, 0, 0, 0] },
+    { kind: 'instr', label: 'jnz 0xfffffffffffffffc', opcode: '75FA', notes: 'M', values: [0, 0, 0, 0, 0] }, // to the block's start: "jnz 0x0" (branch-label.js)
   ],
   text: 'report', trace: null,
 };

@@ -15,6 +15,7 @@
 
 import { insights } from './bound-core.js';
 import { compareResponses, cycles, signed, signedCycles } from './ab-diff.js';
+import { branchLabels, analyzedLines } from './branch-label.js';
 
 export { cycles, signedCycles };
 
@@ -64,6 +65,18 @@ export function table(head, rows, align = []) {
 const BR = '\\\n';
 const join = (blocks) => blocks.filter((b) => b !== null && b !== undefined && b !== '').join('\n\n') + '\n';
 
+// Branch targets as the page shows them (branch-label.js): the label written in the text, a numeric label as written,
+// the nearest label plus an offset, else the offset in the block ("jnz 0x0"), never the analyzer's 64-bit relative
+// value. meta.shown: the labels per row (the page's view.shown); else meta.src ({text, from, to}: the analyzed lines of
+// the assembly, branch-label.js analyzedLines); else meta.source (the assembly text of the request: its analyzed lines
+// from the result's loop); else the block's offsets.
+export function shownLabels(r, meta = {}) {
+  const rows = Array.isArray(r?.rows) ? r.rows : [];
+  const shown = Array.isArray(meta.shown) && meta.shown.length === rows.length ? meta.shown : branchLabels(rows, meta.src ?? (typeof meta.source === 'string' ? analyzedLines(meta.source, r) : null));
+  return rows.map((x, i) => String(shown[i] ?? x.label ?? ''));
+}
+const cell = (row, label) => (row.kind === 'instr' ? code(label) : text(label));
+
 // ---- one result -----------------------------------------------------------------------------------------------------
 
 // "Issue 3.50" (per element with `per`): the largest limit(s), the nearest bound when uiCA names no bottleneck
@@ -84,11 +97,13 @@ export function headline(r, meta = {}) {
   return `${head} · ${text(meta.archTitle ?? meta.arch ?? r.arch)} · ${r.mode === 'loop' ? 'loop' : 'unrolled'} · bottleneck: ${bn}`;
 }
 
-// The uop table: every row, the columns that are used, the totals.
-export function uopTable(r) {
+// The uop table: every row (branch targets as shownLabels), the columns that are used, the totals.
+//   meta: {shown | src | source} (shownLabels)
+export function uopTable(r, meta = {}) {
+  const labels = shownLabels(r, meta);
   const cols = r.columns.map((_, i) => i).filter((i) => r.rows.some((x) => Number(x.values?.[i]) || 0));
   const tot = cols.map((i) => r.rows.reduce((s, x) => s + (Number(x.values?.[i]) || 0), 0));
-  const rows = r.rows.map((x) => [x.kind === 'instr' ? code(x.label) : text(x.label), text(x.notes ?? ''), ...cols.map((i) => uopValue(Number(x.values?.[i])))]);
+  const rows = r.rows.map((x, k) => [cell(x, labels[k]), text(x.notes ?? ''), ...cols.map((i) => uopValue(Number(x.values?.[i])))]);
   rows.push(['**Total**', '', ...tot.map(uopValue)]);
   return table(['Instruction', 'Notes', ...cols.map((i) => text(r.columns[i]))], rows, ['l', 'c', ...cols.map(() => 'r')]);
 }
@@ -96,7 +111,8 @@ export function uopTable(r) {
 // The whole result: the headline, the limits, the next limit, what the model does not simulate (caveats), the
 // critical chain, the uop table, the code (if given), a link (if given). A failure: its error and stderr lines.
 //   meta: {arch, archTitle, per, insights (bound-core.js insights(r, config), e.g. the library's w.insights(r)) or config
-//          (the CPU's configuration in uarch.json, for the caveats), code, lang, link, title (a heading)}
+//          (the CPU's configuration in uarch.json, for the caveats), shown | src | source (shownLabels), code, lang, link,
+//          title (a heading)}
 export function report(r, meta = {}) {
   const blocks = [];
   if (meta.title) blocks.push(`## ${text(meta.title)}`);
@@ -110,6 +126,7 @@ export function report(r, meta = {}) {
   }
   const per = meta.per > 1 ? meta.per : 1;
   const ins = meta.insights ?? insights(r, meta.config ?? null);
+  const labels = shownLabels(r, meta);
   const lines = [headline(r, meta)];
   if (r.limits?.length) lines.push(`limits: ${r.limits.map((l) => `${l.name} ${per > 1 ? cycles(Number(l.tp) / per) : f2(l.tp)}`).join(' · ')}`);
   if (ins?.next && ins.binding.length) lines.push(`next limit: ${ins.next.limit} ${per > 1 ? cycles(ins.next.tp / per) : f2(ins.next.tp)} (at most ${f2(ins.next.maxSpeedup)}x faster without ${ins.binding.join(', ')})`);
@@ -118,9 +135,9 @@ export function report(r, meta = {}) {
   if (ins?.caveats?.length) blocks.push(ins.caveats.map((c) => `- **not modelled:** ${text(c.text)}: ${text(c.title)}`).join('\n'));
   if (ins?.chain?.length) {
     const lat = ins.chain.reduce((s, e) => s + (Number(e.latency) || 0), 0);
-    blocks.push(`critical chain (${lat} cycle${lat === 1 ? '' : 's'} of latency): ${ins.chain.map((e) => `${code(e.instr)} (${text(e.operand)}, ${e.latency})`).join(' → ')}`);
+    blocks.push(`critical chain (${lat} cycle${lat === 1 ? '' : 's'} of latency): ${ins.chain.map((e) => `${code(labels[e.index] ?? e.instr)} (${text(e.operand)}, ${e.latency})`).join(' → ')}`);
   }
-  blocks.push(uopTable(r));
+  blocks.push(uopTable(r, { shown: labels }));
   if (meta.code) blocks.push(fence(meta.code, meta.lang ?? 'asm'));
   if (meta.link) blocks.push(`[open in wuica](${meta.link})`);
   return join(blocks);
@@ -199,7 +216,8 @@ const MARK_TEXT = { changed: 'same instruction, other uops', modified: 'changed 
 // Two results, A and B (ab-diff.js, as the page compares them): the summary line, the bottlenecks, the limits, and the
 // instructions aligned with the change (B − A) of every shared column; with meta.cpus ([{arch, a, b}]: the throughputs of
 // both sides per CPU) the A/B/Δ table per CPU.
-//   meta: {workA, workB (elements per iteration of each side), archA, archB, cpus}
+//   meta: {workA, workB (elements per iteration of each side), archA, archB, cpus, shownA | srcA, shownB | srcB
+//          (each side's branch labels, shownLabels)}
 export function compare(a, b, meta = {}) {
   const cmp = compareResponses(a, b, { workA: meta.workA ?? 1, workB: meta.workB ?? null });
   const unit = cmp.perElement ? 'cycles per element' : 'cycles per iteration';
@@ -220,7 +238,9 @@ export function compare(a, b, meta = {}) {
   }
   const d = cmp.diff;
   if (d?.rows?.length) {
-    const label = (u) => (u ? (u.row.kind === 'instr' ? code(u.label) : text(u.label)) : '');
+    const shown = new Map();
+    for (const [r, sh, src] of [[a, meta.shownA, meta.srcA], [b, meta.shownB, meta.srcB]]) shownLabels(r, { shown: sh, src }).forEach((l, i) => shown.set(r.rows[i], l));
+    const label = (u) => (u ? cell(u.row, shown.get(u.row) ?? u.label) : '');
     const rows = d.rows.map((x) => [MARK[x.status], label(x.a), label(x.b), ...x.deltas.map((v) => signed(v))]);
     rows.push(['', '**Total**', '', ...d.totals.map((v) => signed(v))]);
     blocks.push(table(['', 'A', 'B', ...d.columns.map((c) => (c.name === 'Issued' ? 'Δ uops' : `Δ ${text(c.name)}`))], rows, ['c', 'l', 'l', ...d.columns.map(() => 'r')]));

@@ -9,9 +9,9 @@ import { report, toCSV, toJSON } from './markdown.js';
 export { toCSV, toJSON };
 
 // Markdown of the whole result (markdown.js report): the headline, limits, caveats, chain, uop table, a link back.
-//   meta: {archKey, archTitle, link, config (the CPU's configuration, for the caveats)}
+//   meta: {archKey, archTitle, link, config (the CPU's configuration, for the caveats), shown (the branch labels shown)}
 export function toMarkdown(r, meta = {}) {
-  return report(r, { arch: meta.archKey, archTitle: meta.archTitle, link: meta.link, config: meta.config ?? null });
+  return report(r, { arch: meta.archKey, archTitle: meta.archTitle, link: meta.link, config: meta.config ?? null, shown: meta.shown ?? null });
 }
 
 // ---- the view ----------------------------------------------------------------------------------------------------
@@ -24,7 +24,7 @@ export function createExport() {
       if (!tools || !r || r.error || !Array.isArray(r.rows)) return;
       tools.querySelector('.ex-tools')?.remove();
       const make = {
-        md: () => toMarkdown(r, { archKey: view.archKey, archTitle: view.archTitle, link: location.href }),
+        md: () => toMarkdown(r, { archKey: view.archKey, archTitle: view.archTitle, link: location.href, shown: view.shown }),
         csv: () => toCSV(r),
         json: () => toJSON(r, view.request),
       };

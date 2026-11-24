@@ -5,11 +5,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { createWuica, findExample, markdown, whatIf, WHAT_IF_VARIANTS, listLoops } from '../lib/index.js';
+import { analyzedLines } from '../lib/web/branch-label.js';
 
-const GOLDEN = path.join(path.dirname(fileURLToPath(import.meta.url)), 'golden');
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const GOLDEN = path.join(HERE, 'golden');
+const BIN = path.resolve(HERE, '../bin/wuica.js');
+const run = (args, input = '') => {
+  const r = spawnSync(process.execPath, [BIN, ...args], { input, encoding: 'utf8' });
+  return { code: r.status, out: r.stdout, err: r.stderr };
+};
 const w = await createWuica();
 const ex = (name) => findExample(name).intel;
 
@@ -40,16 +49,26 @@ const tools = { assemble: (t) => w.assemble(t, 'intel') };
 test('report: the default example (chain) on SKL, with the code and a link', async () => {
   const src = ex('chain');
   const r = await w.analyze('SKL', { source: src });
-  const meta = { arch: 'SKL', archTitle: 'SKL · Skylake (2015)', insights: w.insights(r), code: src, link: 'https://example.invalid/#v=1' };
+  const meta = { arch: 'SKL', archTitle: 'SKL · Skylake (2015)', insights: w.insights(r), src: analyzedLines(src, r), code: src, link: 'https://example.invalid/#v=1' };
   const md = markdown.report(r, meta);
   golden('report-chain-SKL', md);
   assert.equal(markdown.report(r, meta), md, 'deterministic');
   assert.match(md, /critical chain/);
+  assert.match(md, /\| `jnz loop` +\|/, 'the branch target as the label written in the text');
+});
+
+test('branch targets: the label in the text, else the offset in the block, never the 64-bit relative value', async () => {
+  const r = await w.analyze('SKL', { source: ex('chain') });
+  assert.match(markdown.uopTable(r), /\| `jnz 0x0` +\|/, 'machine code: the offset in the block');
+  assert.match(markdown.uopTable(r, { shown: r.rows.map((x) => (x.kind === 'instr' && /^jnz/.test(x.label) ? 'jnz top' : null)) }), /`jnz top`/, 'the labels the page shows');
+  const both = markdown.compare(r, await w.analyze('SKL', { source: ex('chain') }), { srcA: analyzedLines(ex('chain'), r) });
+  assert.match(both, /\| `jnz loop` +\| `jnz 0x0` +\|/, 'A with its text, B without');
+  for (const md of [markdown.report(r), markdown.uopTable(r), both]) assert.doesNotMatch(md, /0xffff/);
 });
 
 test('report: per element, an unknown bottleneck', async () => {
   const r = await w.analyze('SKL', { source: ex('dot4') });
-  golden('report-dot4-SKL-per32', markdown.report(r, { arch: 'SKL', per: 32, insights: w.insights(r) }));
+  golden('report-dot4-SKL-per32', markdown.report(r, { arch: 'SKL', per: 32, insights: w.insights(r), src: analyzedLines(ex('dot4'), r) }));
   const u = { ...r, bottlenecks: [] };
   assert.match(markdown.headline(u, { arch: 'SKL' }), /bottleneck: unknown · nearest Ports, Dependencies 4\.00$/);
 });
@@ -83,7 +102,7 @@ test('compare: dot1 (A) against dot4 (B), per element, with the table per CPU', 
     const [ra, rb] = [await w.analyze(arch, { source: ex('dot1') }), await w.analyze(arch, { source: ex('dot4') })];
     cpus.push({ arch, a: ra.code ? null : ra.tp / 32, b: rb.code ? null : rb.tp / 32 });
   }
-  golden('compare-dot1-dot4', markdown.compare(a, b, { workA: 32, workB: 32, archA: 'SKL', archB: 'SKL', cpus }));
+  golden('compare-dot1-dot4', markdown.compare(a, b, { workA: 32, workB: 32, archA: 'SKL', archB: 'SKL', cpus, srcA: analyzedLines(ex('dot1'), a), srcB: analyzedLines(ex('dot4'), b) }));
   golden('compare-same', markdown.compare(a, a));
 });
 
@@ -105,4 +124,41 @@ test('escaping: pipes and backticks in instruction text, cells padded by charact
   assert.equal(markdown.text('x|y `z`'), 'x\\|y \\`z\\`');
   assert.equal(markdown.fence('a ``` b'), '````\na ``` b\n````');
   assert.equal(markdown.table(['A', 'Δ'], [['ü', '−1']], ['l', 'r']), '| A   |   Δ |\n|-----|----:|\n| ü   |  −1 |');
+});
+
+test('wuica -md: a single run, -arch A,B,C, -whatif, -loops, several files, -per; not with -json or -TPonly', () => {
+  const one = run(['-example', 'chain', '-md']);
+  assert.equal(one.code, 0);
+  wellFormed(one.out, '-md');
+  assert.match(one.out, /^\*\*2\.00 cycles\/iteration\*\* · SKL · Skylake \(2015\) · loop · bottleneck: Dependencies\\$/m);
+  assert.match(one.out, /\| `jnz loop` +\|/);
+  assert.match(one.out, /```asm\nloop:\n  add rax, 1\n/);
+  const cpus = run(['-example', 'saxpy', '-arch', 'SKL,ZEN3,ADL-P', '-md']);
+  assert.equal(cpus.code, 0);
+  assert.equal(cpus.out, fs.readFileSync(path.join(GOLDEN, 'cpus-saxpy.md'), 'utf8'), 'the CPU table as the library makes it');
+  const wi = run(['-example', 'dot1', '-whatif', '-md']);
+  assert.equal(wi.code, 0);
+  wellFormed(wi.out, '-whatif -md');
+  assert.ok(wi.out.endsWith(fs.readFileSync(path.join(GOLDEN, 'whatif-dot1-SKL.md'), 'utf8')), 'the report, then the what-if table');
+  const per = run(['-example', 'dot1', '-per', '8', '-md']);
+  assert.match(per.out, /^\*\*2\.00 cycles\/element\*\* \(16\.00 cycles\/iteration, 8 elements per iteration\)/);
+  const loops = run(['-example', 'dot1', '-loops', '-md']);
+  assert.equal(loops.code, 0);
+  assert.match(loops.out, /^\| +# \| Label +\| Function/);
+  // several files (one fails: the largest status, a row that says so)
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'wuica-md-'));
+  fs.writeFileSync(path.join(dir, 'a.s'), ex('saxpy'));
+  fs.writeFileSync(path.join(dir, 'b.s'), 'foo rax\n');
+  const many = spawnSync(process.execPath, [BIN, 'a.s', 'b.s', '-arch', 'SKL,ZEN3', '-md', '-per', '8'], { cwd: dir, encoding: 'utf8' });
+  assert.equal(many.status, 2);
+  wellFormed(many.stdout, 'several files');
+  assert.match(many.stdout, /^\| File \| Loop +\| CPU +\| Model +\| Year \| +TP \| per el \| Bottlenecks/);
+  assert.match(many.stdout, /\| b\.s +\| - +\|.*\| error: assembly failed/);
+  fs.rmSync(dir, { recursive: true, force: true });
+  for (const other of ['-json', '-TPonly']) {
+    const bad = run(['-example', 'chain', '-md', other]);
+    assert.equal(bad.code, 1);
+    assert.equal(bad.out, '');
+    assert.match(bad.err, new RegExp(`-md: .*not with ${other}`));
+  }
 });

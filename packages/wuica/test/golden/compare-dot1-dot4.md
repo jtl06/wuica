@@ -20,7 +20,7 @@ bottleneck: A Dependencies → B Dependencies, Ports
 |  ~  | `vfmadd231ps ymm0, ymm7, ymmword ptr [rsi+rax*4+0x60]` | `vfmadd231ps ymm3, ymm7, ymmword ptr [rsi+rax*4+0x60]` |        |    −0.35 |    +0.35 |          |          |          |          |
 |  •  | `add rax, 0x20`                                        | `add rax, 0x20`                                        |        |          |          |          |          |     +0.8 |     −0.8 |
 |     | `cmp rax, rdx`                                         | `cmp rax, rdx`                                         |        |          |          |          |          |          |          |
-|     | `jb 0xffffffffffffffc7`                                | `jb 0xffffffffffffffc7`                                |        |          |          |          |          |          |          |
+|     | `jb loop`                                              | `jb loop`                                              |        |          |          |          |          |          |          |
 |     | **Total**                                              |                                                        |        |    −0.12 |    +0.12 |          |          |     +0.8 |     −0.8 |
 
 • same instruction, other uops · ~ changed operands; Δ: B − A, uops per iteration
