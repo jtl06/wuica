@@ -52,8 +52,6 @@ claims a gain: keep it only if the number holds, and results stay bit-identical 
    background or on the first edit.
 3. Ship the analyzer without its name section; keep the unstripped module as a build artifact for profiling.
 4. Tables keyed by the numeric XED iform, if that lets XED's iform string table leave the module without changing output.
-5. On-demand table lookup: keep a table as bytes with an index and decode only the entries a block uses; with it, the
-   audit of which table fields the simulation uses and which only the report needs.
 
 ### 3. Interfaces for agents
 
@@ -83,3 +81,4 @@ claims a gain: keep it only if the number holds, and results stay bit-identical 
 | One LLVM module for the assembler and llvm-mca | The assembler is built assembler-only and is on every visitor's path; llvm-mca is loaded on demand |
 | Heaviest-first job queue for compare | The threads already pull from one queue and a compare's jobs are the same size |
 | A native Rust API server | Low traffic today, and the assembler is a WebAssembly module either way; revisit if load grows |
+| On-demand table lookup (tables read in place, entries decoded on first use) | Built and measured (commit `1b014e2`, reverted by `a296b2c`): tables ready in 24 ms instead of 62 ms and 14 MB instead of 39 MB of module memory for all 15, but the tables grow 32 % as shipped (797 kB to 1,049 kB) and small blocks get 1.0 to 2.8 % slower on ZEN3 and ADL-P in the module |
