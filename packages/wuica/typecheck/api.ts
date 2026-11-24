@@ -1,7 +1,7 @@
 // The public API as the README shows it, compiled against index.d.ts (tsc --noEmit, scripts/typecheck.mjs; never run: outside test/, so node --test does not pick it up):
 // the declarations are what a TypeScript user of `wuica-cli` sees. The end of the file checks that the implementation
 // (lib/index.js, typed by tsc from its JavaScript and JSDoc) has every declared export with a compatible type.
-import { createWuica, markdown, whatIf, WHAT_IF_VARIANTS, listLoops, examples, findExample, normalizeHex, detectSyntax, insights,
+import { createWuica, markdown, whatIf, diffResult, WHAT_IF_VARIANTS, listLoops, examples, findExample, normalizeHex, detectSyntax, insights,
   OPTION_DEFAULTS, ARCH_FIELDS, DEFAULT_ARCH, ARCH_ORDER, ARCH_INFO, objectKind } from 'wuica-cli';
 import type { AnalyzeResult, CompareResult, Failure, Wuica, WhatIfResult, LoopListing, Insights, CliAnalyzeJson } from 'wuica-cli';
 import * as impl from '../lib/index.js';
@@ -50,6 +50,12 @@ async function readme(): Promise<void> {
   void cm;
   const df = await w.diff('SKL', { a: { source: 'add rax, 1' }, b: { hex: '4801d8' }, per: [1, 2] });
   if (df.code === 0) void [df.speedup, df.perElement?.b, df.ports[0]?.delta, df.instructions.changes[0]?.status];
+  if (r.code === 0) {
+    const dr = diffResult(r, r);
+    // @ts-expect-error a failure (analyses of two modes) has no speedup: diffResult returns DiffResult | Failure
+    void dr.speedup;
+    if (dr.code === 0) void dr.speedup;
+  }
   const wi = await w.whatIf('SKL', { source: 'add rax, 1', variants: ['acc4'], per: 8 });
   if (wi.code === 0) void wi.perElement;
   const x = await whatIf((arch, req) => w.analyze(arch, req), 'SKL', { source: 'add rax, 1' }, WHAT_IF_VARIANTS, { assemble: (t) => w.assemble(t) });

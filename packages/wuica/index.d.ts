@@ -424,6 +424,9 @@ export interface WhatIfResult {
     alignment?: { min: number; median: number; max: number; best: number; worst: number; spread: number; offset: number } }[];
   /** With accumulator variants: the best N (the smallest within 1% of the fastest; 1 = as it is) and its tp. */
   accumulators?: { best: number; tp: number };
+  /** From the API server: its time limit for the whole request ("deadline") ran out, or it was busy, after the base:
+   * the variants without a result have error "not run: <notRun>" (align: with how many offsets were analyzed). */
+  notRun?: string;
 }
 
 /** The CLI's `-json -whatif`: one WhatIfResult per CPU, keyed by its id, with one CPU as with several. With `-per N`,
@@ -463,7 +466,7 @@ export function diffRequest(w: Pick<Wuica, 'analyze'>, arch: string, request: Di
 /** The two analyses and the result (for diffMarkdown), or the failure. */
 export function diffAnalyses(w: Pick<Wuica, 'analyze'>, arch: string, request: DiffRequest): Promise<{ result: DiffResult; a: AnalyzeResult; b: AnalyzeResult; per: [number, number] | null; sourceA: string | null; sourceB: string | null } | { failure: Failure }>;
 /** The result from two analyze() responses. */
-export function diffResult(a: AnalyzeResult, b: AnalyzeResult, options?: { per?: [number, number] | null; sourceA?: string | null; sourceB?: string | null }): DiffResult;
+export function diffResult(a: AnalyzeResult, b: AnalyzeResult, options?: { per?: [number, number] | null; sourceA?: string | null; sourceB?: string | null }): DiffResult | Failure;
 /** Markdown of diffAnalyses' result (the page's A–B tables; markdown.compare), naming the microarchitecture (archTitle, else its id), with the warnings. */
 export function diffMarkdown(x: Awaited<ReturnType<typeof diffAnalyses>>, options?: { archTitle?: string }): string;
 /** The result as text (wuica diff; REST text/plain). */
