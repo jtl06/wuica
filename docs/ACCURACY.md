@@ -9,7 +9,85 @@ uiCA with its own instruction data, used as a reference.
 Percentages are the share of loops whose predicted throughput is within 5, 10 or 20% of the measured one; MAPE is the mean absolute
 percentage error. All tools are compared on the same loops (those for which every tool gives a prediction).
 
-## Round 9 (current model)
+## Round 10 (current model)
+
+"Before" is the fork's `improve-r9` at `640e40e` (branch `model-r9`), "after" is `improve-r10` at `7301b04` (branch `model-r10`).
+The round looked for the scheduler behavior behind two ZEN3 errors left open in round 9 (the scalar prefix sum, shuffle-heavy vector
+loops) with loop benchmarks on the Ryzen (`microbench/lb/r10a.txt` to `r10d.txt`). One mechanism was found and modeled (a bypass
+delay between vector domains); the two errors themselves are not fixed.
+
+### ZEN3 — measured on a Ryzen 7 7735U (Zen 3+)
+
+| Set | Loops | Tool | ≤5% | ≤10% | ≤20% | MAPE |
+|---|---:|---|---:|---:|---:|---:|
+| random loops (holdout8) | 1956 | uiCA ZEN3, before | 76.3% | 85.6% | 94.7% | 3.9% |
+|  |  | uiCA ZEN3, after | 76.4% | 85.7% | 94.8% | 3.8% |
+|  |  | llvm-mca `znver3` | 43.3% | 56.0% | 75.9% | 17.0% |
+| real-code blocks (bhive6) | 1895 | uiCA ZEN3, before | 85.6% | 88.8% | 92.8% | 3.9% |
+|  |  | uiCA ZEN3, after | 85.6% | 88.8% | 92.8% | 3.9% |
+|  |  | llvm-mca `znver3` | 67.4% | 71.3% | 80.7% | 11.6% |
+| dogfood loops (gcc -O3, measured in the dogfood runs) | 21 | uiCA ZEN3, before |  | 57.1% |  |  |
+|  |  | uiCA ZEN3, after |  | 57.1% |  |  |
+
+### ADL-P — measured on a Core i7-12650H (P-core)
+
+| Set | Loops | Tool | ≤5% | ≤10% | ≤20% | MAPE |
+|---|---:|---|---:|---:|---:|---:|
+| random loops (holdout8) | 1923 | uiCA ADL-P, before | 83.8% | 90.7% | 97.0% | 2.6% |
+|  |  | uiCA ADL-P, after | 83.8% | 90.7% | 97.0% | 2.6% |
+|  |  | uiCA RKL (original uiCA) | 43.4% | 48.0% | 67.2% | 17.6% |
+|  |  | llvm-mca `alderlake` | 29.3% | 33.8% | 44.4% | 35.2% |
+| real-code blocks (bhive6) | 1837 | uiCA ADL-P, before | 89.2% | 91.5% | 94.1% | 3.6% |
+|  |  | uiCA ADL-P, after | 89.2% | 91.5% | 94.1% | 3.6% |
+|  |  | uiCA RKL (original uiCA) | 68.0% | 70.4% | 75.7% | 12.2% |
+|  |  | llvm-mca `alderlake` | 63.7% | 66.2% | 72.8% | 20.3% |
+
+### ICX — measured on a Xeon Gold 6314U (Ice Lake-SP)
+
+| Set | Loops | Tool | ≤5% | ≤10% | ≤20% | MAPE |
+|---|---:|---|---:|---:|---:|---:|
+| random loops (holdout8) | 1867 | uiCA ICX, before | 70.4% | 85.6% | 98.2% | 3.7% |
+|  |  | uiCA ICX, after | 70.4% | 85.6% | 98.2% | 3.7% |
+|  |  | uiCA ICL (original uiCA) | 65.1% | 78.7% | 93.1% | 6.3% |
+|  |  | llvm-mca `icelake-server` | 42.2% | 54.7% | 71.0% | 22.5% |
+| real-code blocks (bhive6) | 1869 | uiCA ICX, before | 82.0% | 88.2% | 96.2% | 3.3% |
+|  |  | uiCA ICX, after | 82.0% | 88.2% | 96.2% | 3.3% |
+|  |  | uiCA ICL (original uiCA) | 79.3% | 84.8% | 92.8% | 5.0% |
+|  |  | llvm-mca `icelake-server` | 64.9% | 70.1% | 77.0% | 12.0% |
+
+ADL-P and ICX are unchanged by construction (the change is in the ZEN3 configuration only).
+
+### Change in round 10
+
+- ZEN3: a vector value that passes between the integer domain (`vpaddd`, `vpalignr`, shifts, blends, `vpmuludq`, ...), the
+  floating-point domain (`vmulps`, `vmaxps`, `vandps`, FMA, ...) and the lane-crossing permutes `vperm2i128`/`vperm2f128` arrives one
+  cycle later (`domainBypassDelay`). Measured: 4-op chains alternating `vpaddd`/`vmaxps`, `vpalignr`/`vmaxps` or `vpalignr`/`vandps`
+  take 8.0 cycles per iteration (predicted 4.0 before, 8.0 now), `vperm2i128`/`vpaddd` twice 12.95 (8.0 -> 12.0); chains within one
+  domain stay at 4.0. Development sets: dev13, dev11 and holdout5 +0.1 point each (7 loops fixed, none broken).
+
+### What the measurements showed (not modeled)
+
+- **Scalar prefix sum** (1.00 measured, 1.36 predicted, bottleneck "unknown"): adding one macro-op that needs no ALU (a `nop` or an
+  eliminated move) makes it 1.34, a `lea` 1.42, a load 1.37; the sum reduction with two accumulators goes from 1.00 to 1.53 with one
+  `nop`; loops of 1-cycle chains without loads stay at 1.00 with 6 macro-ops. So the hardware's slowdown is not contention for ALU
+  ports. Loads and stores do not take ALU issue slots (3 loads + 3 adds + `dec; jne`: 1.17, 2 stores + 3 adds: 1.00). A fused
+  CMP/TEST + Jcc takes no ALU slot, and all branches share two branch units (round 9). Ruled out by simulation against these loops
+  (`microbench/measurements/lb/r10_policies.txt`): ALU port choice by least occupancy with the slot freed at issue, ties to the
+  lowest port, round robin per port set or globally, by issue slot, least occupancy at the start of the cycle, and dispatch to any
+  free ALU (round 9); none reproduces both the 1.00 and the 1.34 of the prefix sum. On Intel, the plain sum loop really is slow on
+  the Xeon 6314U (sum 1.39, prefix sum 1.43, two accumulators 1.72 cycles per iteration; original uiCA ICL predicts 1.48, 1.61, 1.89)
+  and runs at 0.97-1.00 on the i7-12650H.
+- **Shuffle-heavy loops** (13-29% optimistic): 8 `vmulps` + 6 `vpalignr` take 5.58 cycles grouped, 5.22 interleaved and 5.59 with the
+  shuffles first (perfect balance: 4.67), so the order matters (pipes chosen when the uops enter the scheduler); mixes of 8-10 uops
+  balance perfectly (4 `vmulps` + 6 `vpalignr`: 3.35). `vpermd`: 1, 2, 4, 8 in a row take 1.00, 2.65, 5.35, 10.64 cycles, also with
+  `nop`s between them (not a dispatch burst), but 2.00 and 3.91 for 2 and 4 with `vaddps` between them (not a flat throughput limit).
+  Without its two `vperm2i128` the dogfood loop `udiv_v` takes 5.74 instead of 7.33 cycles (the model: 5.00 / 5.20): lane-crossing
+  permutes cost more in mixes than their port data says.
+
+Dogfood loops (ZEN3, measured / before / after): `fir8_s` 5.20 / 4.51 / 4.51, `fir8_s2` 6.66 / 5.26 / 5.41, `udiv_v` 7.31 / 5.20 /
+5.33, `udiv_v2` 2.69 / 2.24 / 2.24, `psum_v2` 4.22 / 3.35 / 3.32, `psum` 1.00 / 1.36 / 1.36.
+
+## Round 9
 
 "Before" is the fork's `improve-r8` at `c899be7` (the model of the previous wuica data, branch `model-r8`), "after" is `improve-r9`
 at `640e40e` (the model of the branch `model-r9`). This round fixed bugs that two dogfood runs of wuica found by measuring real loops
@@ -97,6 +175,8 @@ Not fixed (measured, see the fork's `microbench/lb/` and `microbench/measurement
   measured for this round (`microbench/lb/r9a.txt`, `r9b.txt`, `r9c.txt`: loops called from C on buffers, the slope per iteration from
   perf cycles); every change was checked against the earlier development and check sets (`dev13`, `dev11`, `holdout5`, the
   development half of `bhive1`, `bhive3`) and the hand-written sets, and kept only if none got worse.
+
+## Round 8
 
 "Before" is the fork's `improve-r7` at `f4a7868` (the model of the previous wuica data, branch `model-r7`), "after" is `improve-r8`
 at `c899be7` (the model of the branch `model-r8`).
