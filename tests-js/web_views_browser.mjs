@@ -486,9 +486,19 @@ try {
         const x = d[2], y = Number(t.getAttribute('y')) - 4, tx = Number(t.getAttribute('x'));
         const near = Math.round((y - ROW / 2 - 2) / ROW); // (the row nearest, drawn or not)
         if (near !== a || y < Math.min(yc(a), yc(b)) - 3 || y > Math.max(yc(a), yc(b)) + 3 || Math.abs(tx - x) > 2) bad.push([t.textContent, a, b, y, near, tx, x]);
+      }
+      // and no two labels run into each other (several arcs leave one instruction: add r8's)
+      // (an arc of the chain that is also the selected instruction's is written twice, in the same place)
+      const boxes = [...document.querySelectorAll('.dp-lat')].map((t) => [t.textContent, t.getBBox(), t.dataset.k]);
+      for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+        if (boxes[i][2] === boxes[j][2]) continue;
+        const [p, q] = [boxes[i][1], boxes[j][1]];
+        if (p.x < q.x + q.width - 0.5 && q.x < p.x + p.width - 0.5 && p.y < q.y + q.height - 0.5 && q.y < p.y + p.height - 0.5) bad.push(['overlap', boxes[i][0], boxes[j][0], p.x, p.y, q.x, q.y]);
       }`;
-    for (const [name, copies] of [['fnv', 2], ['long', 60]]) {
-      await page.goto(`${origin}/?nosw=1#v=1&deps=1&m=asm&s=intel&c=${b64(fnv(copies))}`);
+    // (fan: one value read by several instructions, their arcs side by side)
+    const fan = 'loop:\n  imul rax, rcx\n  add rbx, rax\n  add rdx, rax\n  add rsi, rax\n  add r9, rax\n  add r10, rax\n  add r11, rax\n  dec r15\n  jnz loop\n';
+    for (const [name, copies, text] of [['fnv', 2, fnv(2)], ['long', 60, fnv(60)], ['fan', 1, fan]]) {
+      await page.goto(`${origin}/?nosw=1#v=1&deps=1&m=asm&s=intel&c=${b64(text)}`);
       await page.result();
       const l = await page.eval(`${HELPERS}
         await until(() => document.querySelector('#deps .dp-body')?.dataset.state === 'done', 60000); await wait(100);
@@ -501,8 +511,12 @@ try {
         for (let i = 0; i < mid + 2; i++) svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
         await wait(300);
         { ${LATS} crit.sel = { n: document.querySelectorAll('.dp-lat.on').length, seen, bad: bad.slice(0, 5) }; }
+        // the add of the index: read by every load (carried) and the compare
+        const add = [...document.querySelectorAll('.dp-node')].find((n) => /^(add r8|imul rax)/.test(n.getAttribute('aria-label')));
+        if (add) { add.dispatchEvent(new MouseEvent('click', { bubbles: true })); await wait(300); }
+        { ${LATS} crit.add = { found: !!add, n: document.querySelectorAll('.dp-lat.on').length, bad: bad.slice(0, 5) }; }
         return crit;`);
-      check(l.n > 2 && l.imul3 && l.bad.length === 0 && l.sel.n > 0 && l.sel.bad.length === 0, `deps (${name}, ${l.nodes} rows drawn): each latency beside its arc, nearest the row of the instruction that produces the value`, JSON.stringify(l));
+      check((name === 'fan' || (l.n > 2 && l.imul3)) && l.bad.length === 0 && l.sel.n > 0 && l.sel.bad.length === 0 && (name === 'long' || (l.add.found && l.add.n > 0 && l.add.bad.length === 0)), `deps (${name}, ${l.nodes} rows drawn): each latency beside its arc, nearest the row of the instruction that produces the value`, JSON.stringify(l));
     }
 
     await page.goto(`${origin}/?nosw=1`);
