@@ -6,6 +6,7 @@ import {
 } from '../web/js/ab-diff.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { DEFAULT_STATE, encodeState, decodeState } from '../web/js/url-state.js';
+import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -112,7 +113,7 @@ const wasm = new URL('target/wasm32-unknown-unknown/release/wuica_wasm.wasm', ro
 if (fs.existsSync(wasm) && fs.existsSync(new URL('data/uarch.json', root))) {
   const e = await WasmEngine.create(fs.readFileSync(wasm));
   await e.loadUarch(fs.readFileSync(new URL('data/uarch.json', root)));
-  for (const t of ['SKL', 'ZEN3']) await e.loadArch(t, fs.readFileSync(new URL(`data/arch/${t}.json`, root)));
+  for (const t of ['SKL', 'ZEN3']) await e.loadArch(t, tableBytes(t));
   const chain = '4883c0014883c00149ffcf75f3';          // add rax,1; add rax,1; dec r15; jnz
   const better = '4883c00249ffcf75f7';                  // add rax,2; dec r15; jnz
   const a = await e.analyze(makeRequest(chain, 'SKL')), b = await e.analyze(makeRequest(better, 'SKL'));

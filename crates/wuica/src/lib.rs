@@ -23,7 +23,9 @@ impl Engine {
         Ok(())
     }
 
-    /// Loads the content of `data/arch/<name>.json`.
+    /// Loads the content of `data/arch/<name>.json` (with the feature `json-tables`, on by default: the native tools and
+    /// tests; the WebAssembly module that ships reads only the binary form, [`Engine::load_arch_bin`]).
+    #[cfg(feature = "json-tables")]
     pub fn load_arch(&mut self, name: &str, json: &str) -> Result<(), String> {
         self.tables.insert(name.to_string(), ArchData::from_json(json).map_err(|e| format!("{name}.json: {e}"))?);
         Ok(())

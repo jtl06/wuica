@@ -12,6 +12,7 @@ import { DEFAULT_STATE, encodeState, decodeState, clampInt } from '../web/js/url
 import { WasmAssembler, parseDiagnostics, isWasm, stripHints } from '../web/js/assembler.js';
 import { MockAssembler } from '../web/js/assembler-mock.js';
 import { formatListing } from '../web/js/listing.js';
+import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -107,7 +108,11 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
   check(Array.isArray(d) && d.length === 2949 && /^jnz /.test(d.at(-1).asm) && sha.hex.length === 2 * 11602, 'showcase: 2,949 instructions, 11,602 bytes, ends in a branch', `${d?.length} ${d?.at?.(-1)?.asm}`);
   if (exists('data/uarch.json') && exists('data/arch/SKL.json')) {
     await real.loadUarch(fs.readFileSync(new URL('data/uarch.json', root)));
-    await real.loadArch('SKL', fs.readFileSync(new URL('data/arch/SKL.json', root)));
+    await real.loadArch('SKL', tableBytes('SKL'));
+    // the module that ships reads only binary tables: a JSON table is an error that says so
+    let jsonError = '';
+    try { await real.loadArch('SKX', fs.readFileSync(new URL('data/arch/SKX.json', root))); } catch (e) { jsonError = String(e.message); }
+    check(/reads only binary tables \(data\/arch\/<NAME>\.bin, written from the JSON by tools\/encode-tables\.sh\)/.test(jsonError) && !real.hasArch('SKX'), 'a JSON table: an error that says the module reads binary tables', jsonError);
     const t0 = performance.now();
     const r = await real.analyze(makeRequest(sha.hex, 'SKL'));
     const ms = performance.now() - t0;

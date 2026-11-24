@@ -8,6 +8,7 @@
 //
 //   node tests-js/web_interfaces_browser.mjs [MODULE_CASES] [PAGE_CASES] [--seed N]   (default 300 and 30, seed 1)
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { findChrome, launch, serve, copyDist, Page, HELPERS, checker, ROOT } from './cdp.mjs';
@@ -31,7 +32,7 @@ await engine.loadUarch(uarchBytes);
 const uarch = JSON.parse(uarchBytes);
 async function reference(c) {
   const table = uarch.configs[c.arch].name;
-  if (!engine.hasArch(table)) await engine.loadArch(table, fs.readFileSync(path.join(dir, 'data/arch', `${table}.bin`)));
+  if (!engine.hasArch(table)) await engine.loadArch(table, zlib.gunzipSync(fs.readFileSync(path.join(dir, 'data/arch', `${table}.bin.gz`))));
   return engine.analyze(makeRequest(c.hex, c.arch, c.options));
 }
 
@@ -48,6 +49,7 @@ try {
   // in chunks: one evaluation returns every response by value, and a very large one never arrives
   await page.eval(`
     const { WasmEngine, makeRequest } = await import('/js/engine.js');
+    const { gunzip } = await import('/js/loader.js');
     const bytes = async (p) => new Uint8Array(await (await fetch(p)).arrayBuffer());
     const e = await WasmEngine.create(await bytes('/wuica_wasm.wasm'));
     const uarchBytes = await bytes('/data/uarch.json');
@@ -57,7 +59,7 @@ try {
       const out = [];
       for (const c of cases) {
         const t = configs[c.arch].name;
-        if (!e.hasArch(t)) await e.loadArch(t, await bytes('/data/arch/' + t + '.bin'));
+        if (!e.hasArch(t)) await e.loadArch(t, await gunzip(await bytes('/data/arch/' + t + '.bin.gz')));
         out.push(await e.analyze(makeRequest(c.hex, c.arch, c.options)));
       }
       return out;

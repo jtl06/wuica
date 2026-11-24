@@ -5,108 +5,21 @@
 // Each is shown per original iteration, with Δ and the speedup; a link opens the variant in a new tab. The analyses run
 // only while the view is open (on the worker pool if the page has one), are cached, and a large block waits for a click.
 //
-// The first half has no DOM (tests-js/web_whatif.mjs runs it under Node).
+// The experiments and their results (no DOM) are whatif-core.js, which the npm package shares; this file runs them on
+// the page's engines and renders them.
 
 import { h } from './render.js';
 import { makeRequest } from './engine.js';
 import { summarize, resultKey, ResultCache, latestWins } from './compare.js';
 import { encodeState } from './url-state.js';
-import { ACCUMULATORS, accumulatorText, bestAccumulators } from './accum.js';
+import { experiments, outcome, weight, bestOf } from './whatif-core.js';
 import { toHex } from './hex-input.js';
 
+export { instrRanges, unrollHex, experiments, outcome, weight, bestOf } from './whatif-core.js';
+
 const BUDGET_MS = 2000; // more (estimated) waits for a click
-const UNROLL = [2, 4, 8];
 const f2 = (x) => Number(x).toFixed(2);
 const isCancel = (e) => e?.name === 'CancelledError';
-
-// The instructions of a response as byte ranges of the code: [{row, start, end, fused}], or null if the rows do not
-// make up the code (undecodable bytes).
-export function instrRanges(response, hex) {
-  const rows = response?.rows;
-  if (!Array.isArray(rows)) return null;
-  const out = [];
-  let at = 0;
-  rows.forEach((x, row) => {
-    if (x.kind !== 'instr') return;
-    const op = String(x.opcode ?? '').toLowerCase();
-    out.push({ row, start: at, end: at + op.length / 2, op, fused: x.notes === 'M' });
-    at += op.length / 2;
-  });
-  if (!out.length || out.map((i) => i.op).join('') !== String(hex ?? '').toLowerCase()) return null;
-  return out;
-}
-
-// The loop unrolled n times: n copies of the body, then the loop's branch once (with the instruction it is macro-fused
-// with). Registers are not renamed: the dependencies stay; what goes is the loop overhead (n − 1 branches and their
-// compares) and the front end sees a longer body. {ok, hex, tail} or {ok: false, reason}.
-export function unrollHex(response, hex, n) {
-  if (response?.mode !== 'loop') return { ok: false, reason: 'not a loop' };
-  const ins = instrRanges(response, hex);
-  if (!ins) return { ok: false, reason: 'the code has bytes that are not instructions' };
-  const last = ins.length - 1;
-  const tailFrom = ins[last].fused && last > 0 ? ins[last - 1].start : ins[last].start;
-  if (tailFrom === 0) return { ok: false, reason: 'nothing but the branch' };
-  const code = String(hex).toLowerCase();
-  return { ok: true, hex: code.slice(0, 2 * tailFrom).repeat(n) + code.slice(2 * tailFrom), tail: tailFrom === ins[last].start ? 1 : 2 };
-}
-
-const FLAGS = [
-  ['simpleFrontEnd', 'simple front end', 'detailed front end', 'a front end limited only by the issue width (uiCA -simpleFrontEnd); not always faster'],
-  ['noMacroFusion', 'no macro-fusion', 'macro-fusion', 'compare and branch not fused (uiCA -noMacroFusion)'],
-  ['noMicroFusion', 'no micro-fusion', 'micro-fusion', 'load and operation not fused (uiCA -noMicroFusion)'],
-];
-
-// The experiments for a response: [{id, label, title, hex, options, per}] (analyses) and, if the chain is a limit,
-// {id: 'nochain', label, estimate, title} (no analysis: the largest other limit, as uiCA computes them).
-// The accumulator variants have `text` (assembly, accum.js) instead of hex until it is assembled; one that cannot be
-// made has `error` (one row, 'acc').
-//   options: the request's options (alignmentOffset, ..., without hex, arch, includeTrace)
-export function experiments(response, hex, options) {
-  const out = [];
-  for (const n of UNROLL) {
-    const u = unrollHex(response, hex, n);
-    if (u.ok) out.push({ id: `unroll${n}`, label: `unroll ×${n}`, per: n, hex: u.hex, options,
-      title: `${n} copies of the loop body and one branch${u.tail === 2 ? ' (with its macro-fused compare)' : ''}; registers not renamed, so the dependencies stay; per original iteration` });
-  }
-  if (response?.mode === 'loop' && response.criticalPath?.edges?.length) {
-    for (const n of ACCUMULATORS) {
-      const a = accumulatorText(response, hex, n);
-      // none possible: one row with the reason; a larger N alone (no free registers left): its row with the reason
-      if (!a.ok && n === ACCUMULATORS[0]) { out.push({ id: 'acc', label: 'accumulators', per: 1, error: a.reason, options, title: `N accumulators: ${a.reason}` }); break; }
-      if (!a.ok) { out.push({ id: `acc${n}`, label: `${n} accumulators`, per: n, error: a.reason, options, title: `${n} accumulators: ${a.reason}` }); continue; }
-      const names = a.renamed.map((x) => `${x.from} → ${x.to.join(', ')}`).join('; ');
-      out.push({ id: `acc${n}`, label: `${n} accumulators`, per: n, text: a.text, options,
-        title: `unrolled ×${n} with the chain's register renamed in each copy (${names}): ${n} independent chains; per original iteration` });
-    }
-  }
-  for (const [k, on, off, what] of FLAGS) {
-    const v = !options?.[k];
-    out.push({ id: k, label: v ? on : off, per: 1, hex: String(hex).toLowerCase(), options: { ...options, [k]: v }, title: v ? what : `${off} (as without uiCA -${k})` });
-  }
-  const lims = Array.isArray(response?.limits) ? response.limits : [];
-  const dep = lims.find((l) => l.name === 'Dependencies');
-  const others = lims.filter((l) => l.name !== 'Dependencies').map((l) => Number(l.tp));
-  if (dep && others.length) {
-    const est = Math.max(...others);
-    out.push({ id: 'nochain', label: 'no chain', estimate: est, per: 1,
-      title: `at best the largest other limit (${lims.filter((l) => l.name !== 'Dependencies' && Number(l.tp) === est).map((l) => l.name).join(', ')}): an estimate without the loop-carried dependencies, not a simulation` });
-  }
-  return out;
-}
-
-// One result line: {tp (per original iteration), delta, speedup, comparable} from a summary ({tp, mode} or {error}).
-export function outcome(base, exp, r) {
-  if (exp.error) return { error: exp.error };
-  if (exp.estimate !== undefined) {
-    const tp = exp.estimate;
-    return { tp, delta: tp - base.tp, speedup: tp > 0 ? base.tp / tp : Infinity, estimate: true };
-  }
-  if (!r) return null;
-  if (r.error) return { error: r.error };
-  if (r.mode && base.mode && r.mode !== base.mode) return { error: `analyzed ${r.mode === 'loop' ? 'as a loop' : 'unrolled'}: not comparable` };
-  const tp = r.tp / exp.per;
-  return { tp, delta: tp - base.tp, speedup: tp > 0 ? base.tp / tp : Infinity };
-}
 
 export const formatDelta = (d) => (Math.abs(d) < 0.005 ? '0.00' : `${d < 0 ? '−' : '+'}${Math.abs(d).toFixed(2)}`);
 export const formatSpeedup = (s) => (Number.isFinite(s) ? `×${s.toFixed(2)}` : '—');
@@ -114,21 +27,6 @@ export const formatSpeedup = (s) => (Number.isFinite(s) ? `×${s.toFixed(2)}` : 
 // The fragment of the page with a variant (machine code without spaces: the fragment takes up to 200,000 characters,
 // enough for 100 kB of code, e.g. SHA-256 unrolled ×8).
 export const variantFragment = (exp, arch) => encodeState({ mode: 'hex', text: exp.hex, arch, cpus: '', ...exp.options });
-
-// The size of an experiment relative to the block (the time of its analysis grows about linearly).
-export const weight = (exp, baseBytes) => (exp.estimate !== undefined || exp.error ? 0 : exp.hex ? (exp.hex.length / 2) / Math.max(1, baseBytes) : exp.per);
-
-// The best number of accumulators from the base throughput and the results of the accumulator variants ({n, tp} or
-// null if none has a result).
-export function bestOf(baseTp, exps, results) {
-  const tps = new Map([[1, Number(baseTp)]]);
-  for (const x of exps) {
-    if (!/^acc\d+$/.test(x.id)) continue;
-    const r = results.get(x.id);
-    if (r && !r.error && Number.isFinite(r.tp)) tps.set(x.per, r.tp / x.per);
-  }
-  return tps.size > 1 ? bestAccumulators(tps) : null;
-}
 
 // ---- the view ----------------------------------------------------------------------------------------------------
 

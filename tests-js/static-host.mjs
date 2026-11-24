@@ -4,7 +4,9 @@
 //   /dir (a directory)            -> 307 to /dir/
 //   /404, anything missing        -> the content of 404.html with status 404
 //   _headers                      -> its rules are applied to the responses; _headers and _redirects are not served
-// The query string is kept in redirects. Content types as the host sends them (application/wasm for .wasm).
+// The query string is kept in redirects. Content types as the host sends them (application/wasm for .wasm,
+// application/gzip for .gz, application/octet-stream for what it does not know). The responses are not compressed here;
+// transferSize() says what the host would send: it compresses only the content types of COMPRESSED_TYPES.
 // A redirect is what broke the service worker once (a cached redirected response for the page made every later visit
 // fail): the tests must see the same redirects as the real site.
 //
@@ -12,12 +14,38 @@
 //   const server = http.createServer(hostHandler(() => dist));      // a function: the root may change between requests
 import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
 
 export const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'application/javascript', '.mjs': 'application/javascript', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.wasm': 'application/wasm', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8',
-  '.png': 'image/png', '.ico': 'image/x-icon', '.br': 'application/octet-stream',
+  '.png': 'image/png', '.ico': 'image/x-icon', '.br': 'application/octet-stream', '.gz': 'application/gzip',
+  '.xml': 'application/xml',
 };
+
+// The content types the host compresses (gzip or brotli, as the browser accepts): Cloudflare's list,
+// https://developers.cloudflare.com/speed/optimization/content/compression/ (as of 2026-04-17). Everything else
+// (application/octet-stream, application/gzip, font/woff2, image/png) goes as it is: a large file of another type must be
+// compressed already (0.1.9 shipped its tables as .bin, application/octet-stream: 6.4 MB instead of 0.8).
+export const COMPRESSED_TYPES = new Set(['text/html', 'text/richtext', 'text/plain', 'text/css', 'text/x-script', 'text/x-component',
+  'text/x-java-source', 'text/x-markdown', 'application/javascript', 'application/x-javascript', 'text/javascript', 'text/js',
+  'image/x-icon', 'image/vnd.microsoft.icon', 'application/x-perl', 'application/x-httpd-cgi', 'text/xml', 'application/xml',
+  'application/rss+xml', 'application/vnd.api+json', 'application/x-protobuf', 'application/json', 'multipart/bag',
+  'multipart/mixed', 'application/xhtml+xml', 'font/ttf', 'font/otf', 'font/x-woff', 'image/svg+xml',
+  'application/vnd.ms-fontobject', 'application/ttf', 'application/x-ttf', 'application/otf', 'application/x-otf',
+  'application/truetype', 'application/opentype', 'application/x-opentype', 'application/font-woff', 'application/eot',
+  'application/font', 'application/font-sfnt', 'application/wasm', 'application/javascript-binast',
+  'application/manifest+json', 'application/ld+json', 'application/graphql+json', 'application/geo+json']);
+
+export const contentType = (file) => TYPES[path.extname(file)] ?? 'application/octet-stream';
+export const compressedByHost = (file) => COMPRESSED_TYPES.has(contentType(file).split(';')[0].trim());
+
+// The bytes the host sends for a file: compressed (estimated as gzip at level 6, what it uses at least) if its content
+// type is on the list, else the file as it is.
+export function transferSize(file) {
+  const bytes = fs.readFileSync(file);
+  return compressedByHost(file) ? zlib.gzipSync(bytes, { level: 6 }).length : bytes.length;
+}
 
 const isFile = (p) => { try { return fs.statSync(p).isFile(); } catch { return false; } };
 const isDir = (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
@@ -54,7 +82,7 @@ export function hostHandler(getRoot, { onRequest } = {}) {
     for (const rule of readHeaders(root)) if (rule.pattern.test(url.pathname)) for (const [k, v] of rule.headers) headers[k] = v;
     const redirect = (to) => res.writeHead(307, { ...headers, location: to + url.search }).end();
     const send = (status, file) => {
-      res.writeHead(status, { ...headers, 'content-type': TYPES[path.extname(file)] ?? 'application/octet-stream' });
+      res.writeHead(status, { ...headers, 'content-type': contentType(file) });
       if (req.method === 'HEAD') res.end(); else fs.createReadStream(file).pipe(res);
     };
     const notFound = () => {

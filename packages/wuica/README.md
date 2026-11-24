@@ -129,8 +129,9 @@ w.insights(r);                                            // the diagnosis alone
 ```
 
 Methods never throw for bad input: they resolve to a failure `{code, error, stderr}` (see the contract below).
-`createWuica({ dataDir })` reads the tables from another directory (`uarch.json` and `arch/<NAME>.json` or the binary
-`arch/<NAME>.bin`, plain or `.br`). `w.disassemble(bytes)` turns an object file into the text `analyze` reads. TypeScript declarations are included (`index.d.ts`).
+`createWuica({ dataDir })` reads the tables from another directory (`uarch.json` and the binary `arch/<NAME>.bin`,
+plain or `.br`; a uiCA export's `arch/<NAME>.json` is converted by `tools/encode-tables.sh IN_DIR OUT_DIR` of the
+repository: the analyzer that ships reads no JSON tables). `w.disassemble(bytes)` turns an object file into the text `analyze` reads. TypeScript declarations are included (`index.d.ts`).
 
 `compare`, `analyzeMany(arch, requests)` and `compareMany(requests, {archs})` analyze on worker threads when the work
 is worth it: by default the number of threads comes from the work (the tables to load, the analyses and their
@@ -153,7 +154,7 @@ wuica loop.s                         # assembly file (syntax detected), uiCA's r
 wuica loop.s -arch ICL -TPonly       # only the throughput
 cat loop.s | wuica -arch ZEN3        # stdin (or "-")
 wuica -att loop_att.s                # AT&T syntax, forced (-intel forces Intel)
-wuica 4801d84801c349ffcf75f5         # a hex argument (as in the Rust CLI)
+wuica 4801d84801c349ffcf75f5         # a hex argument (as in the repository's reference binary)
 wuica -hex code.txt                  # hex from a file or stdin ("48 01 d8", "0x48,0x01" are fine)
 wuica -raw code.bin                  # raw machine code
 wuica loop.s -arch all               # throughput table for every microarchitecture (in parallel)
@@ -390,7 +391,7 @@ Request:
 - The source must be 64-bit code: `.code16`, `.code16gcc` and `.code32` are an error (code 1), since the analyzer
   only models 64-bit mode. `assemble` alone accepts them.
 - `loop` exists in the library, REST (`/api/analyze`, `/api/compare`), the MCP tools `analyze`, `what_if` and
-  `compare_archs`, and the package's CLI (`wuica -loop auto|whole|N`). The native CLI (`crates/wuica-cli`) reads
+  `compare_archs`, and the package's CLI (`wuica -loop auto|whole|N`). The reference/test binary (`crates/wuica-cli`) reads
   machine code only (hex or `-raw`), so it has no `-loop`.
 
 ### Option ranges per interface
@@ -401,7 +402,7 @@ which clamps it into its range.
 
 | Interface | `alignmentOffset` | `minIterations` | `minCycles` | Other limits |
 |---|---|---|---|---|
-| library, `wuica` CLI, native CLI (`crates/wuica-cli`) | any integer (negative values and values above 63 are simulated as given) | any integer | any integer | none; very large values run out of memory (library: code 3) |
+| library, `wuica` CLI, the reference/test binary (`crates/wuica-cli`) | any integer (negative values and values above 63 are simulated as given) | any integer | any integer | none; very large values run out of memory (library: code 3) |
 | MCP tools of `wuica mcp` (stdio) | 0–63 | 1–100000 | 1–1000000 | |
 | REST API (`server/`) | any integer | at most 1000 | at most 20000 | `source` at most 64 KB, `hex` at most 65536 characters, at most 10,000 instructions |
 | remote MCP (`server/`, `/mcp`) | 0–63 | 1–1000 | 1–20000 | as REST |
@@ -524,7 +525,8 @@ npm pack                         # wuica-cli-<version>.tgz
 `build.sh` uses `target/wasm32-unknown-unknown/release/wuica_wasm.wasm` (it runs `./build-wasm.sh` if the file is
 missing), `assembler/dist/wuica_asm.wasm` and `data/`. The instruction tables are shipped in a binary form
 (`dist/data/arch/<NAME>.bin.br`, written from `data/arch/*.json` by `tools/encode-tables.sh`; 6.4 MB instead of
-14.6 MB, and loaded about 40% faster); `createWuica({ dataDir })` also reads JSON tables. `dist/manifest.json` records
+14.6 MB, and loaded about 40% faster); the analyzer module is built without the JSON table loader (the Cargo feature
+`json-tables` of `crates/wuica`, which the native tools and tests use). `dist/manifest.json` records
 the size and SHA-256 of each
 uncompressed file.
 

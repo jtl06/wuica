@@ -10,6 +10,7 @@ import { withRegions } from '../web/js/asm-regions.js';
 import { WasmAssembler } from '../web/js/assembler.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES } from '../web/js/examples.js';
+import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + String(detail).slice(0, 2000) : ''}`); } }
@@ -46,7 +47,7 @@ if (!fs.existsSync(asmPath) || !fs.existsSync(wasmPath)) {
   for (const ex of examples) {
     const arch = ex.arch ?? 'SKL';
     const table = uarch.configs[arch].name;
-    if (!loaded.has(table)) { await e.loadArch(table, fs.readFileSync(new URL(`data/arch/${table}.json`, root))); loaded.add(table); }
+    if (!loaded.has(table)) { await e.loadArch(table, tableBytes(table)); loaded.add(table); }
     for (const syntax of ['intel', 'att']) {
       const text = ex.text[syntax];
       if (typeof text !== 'string') continue;

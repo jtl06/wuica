@@ -39,6 +39,12 @@ in the instruction fixtures only when set); in `uiCA.py` the FP non-scheduling q
 ZEN3: at most that many uops for the FP ports wait in the scheduler, younger ones wait in order and are not dispatched before they
 enter it). Ported in `instr_builder.rs` (`register_versions`, `address_line_key`, `split_load_patterns`) and `sim/scheduler.rs`.
 
+On the branch `model-r10`, the reference is the fork's branch `improve-r10` (the changes of round 10 on top of `improve-r9`). New
+since round 9, in `uiCA.py`: `vectorDomain` and `domainBypassDelay` (ZEN3: 1): a vector instruction of the integer domain (P...),
+the floating-point domain (...PS/PD/SS/SD, FMA) or the lane-crossing domain (VPERM2I128/VPERM2F128) that reads a register written by
+an instruction of another domain (not a load) gets it that many cycles later; store-data uops are exempt. Ported in `sim/prep.rs`
+(`vector_domain`, the instruction flags `DOMAIN_*`) and `sim/scheduler.rs` (`get_ready_for_dispatch_cycle`).
+
 Not ported:
 
 - the `CLX_SimplePorts*` configurations (they use Python's `random.choice`; they are ablation variants of the uiCA paper);

@@ -10,6 +10,7 @@ import zlib from 'node:zlib';
 import readline from 'node:readline';
 import { buildModel, relevantRounds, rangeChoices, selectRows, cycleSpan, uopDetails, tableRows, toTSV, TABLE_HEAD, STAGES, uopKey, traceEstimate, TRACE_LIMIT,
   rowGroups, rowOfGroup, groupKey, waitBreakdown, uopWaits, waitText, abWindow, roundStart, roundEnds, shownSpan, STUB_C, portGroupName, portGroups, sameTrace } from '../web/js/trace.js';
+import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -198,14 +199,14 @@ if (fs.existsSync(wasmPath) && fs.existsSync(new URL('data/uarch.json', root))) 
   const hex = body + '0f85' + rel;
   // the LSD (Haswell): its uops have no IDQ (or predecode) event, so their queue time is unknown, not 0
   {
-    await e.loadArch(configs.HSW.name, fs.readFileSync(new URL(`data/arch/${configs.HSW.name}.json`, root)));
+    await e.loadArch(configs.HSW.name, tableBytes(configs.HSW.name));
     const r = await e.analyze(makeRequest('f3480fb80cc74801ca48ffc04839f072ef', 'HSW', { includeTrace: true })); // popcnt loop
     const m = buildModel(r.trace, { issueDispatchDelay: configs.HSW.issueDispatchDelay, retireWidth: configs.HSW.retireWidth });
     const wb = waitBreakdown(m);
     check(m.uops.every((u) => u.idq === null && u.iq === null) && wb.size > 0 && [...wb.values()].every((w) => w.queue === null && w.nq === 0 && w.total > 0), 'HSW (LSD): the queue wait is unknown; the other parts are there', JSON.stringify([...wb]));
   }
   for (const arch of ['SKL', 'ZEN3']) {
-    await e.loadArch(configs[arch].name, fs.readFileSync(new URL(`data/arch/${configs[arch].name}.json`, root)));
+    await e.loadArch(configs[arch].name, tableBytes(configs[arch].name));
     const r = await e.analyze(makeRequest(hex, arch, { includeTrace: true }));
     check(!r.error && r.trace && r.trace.instructions.length === 50, `${arch}: the analyzer returns a trace with includeTrace`, r.error);
     if (!r.trace) continue;

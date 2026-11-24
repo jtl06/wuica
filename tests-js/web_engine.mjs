@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import { WasmEngine, EngineError, makeRequest, REQUEST_DEFAULTS } from '../web/js/engine.js';
 import { WorkerEngine, CancelledError, createHandler, inParts } from '../web/js/engine-rpc.js';
+import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -237,7 +238,7 @@ if (!fs.existsSync(wasmPath)) {
   const dataDir = new URL('../data/', import.meta.url);
   if (e.capabilities.analyze && fs.existsSync(new URL('uarch.json', dataDir))) {
     await e.loadUarch(fs.readFileSync(new URL('uarch.json', dataDir)));
-    await e.loadArch('SKL', fs.readFileSync(new URL('arch/SKL.json', dataDir)));
+    await e.loadArch('SKL', tableBytes('SKL'));
     const r = await e.analyze(makeRequest('4883c0014883c00149ffcf75f3', 'SKL'));
     check(r.tp === 2 && r.mode === 'loop' && r.rows.length === 4 && r.rows.every((x) => x.values.length === r.columns.length), 'real: analyze (reference: 2.00 cycles)', JSON.stringify(r).slice(0, 300));
     const noTable = await e.analyze(makeRequest('90', 'HSW'));
@@ -247,7 +248,7 @@ if (!fs.existsSync(wasmPath)) {
     check(opt.tp === 2 && opt.rows.at(-1).notes === '' && r.rows.at(-1).notes === 'M', 'real: options reach the analysis (no macro-fusion)', JSON.stringify(opt.rows?.at(-1)));
     // An input on which the Python reference itself fails (fixture s2_0394.o on IVB): whatever the module does,
     // the engine answers with a response and keeps working.
-    await e.loadArch('IVB', fs.readFileSync(new URL('arch/IVB.json', dataDir)));
+    await e.loadArch('IVB', tableBytes('IVB'));
     const hard = await e.analyze(makeRequest('C4E3F960E603488B9EC0020000440FB6D2492BD54E8D542D004D8BD849FFCF75DF', 'IVB'));
     console.log('real: the input on which the reference fails ->', JSON.stringify(hard).slice(0, 160));
     check(typeof hard.error === 'string' || typeof hard.tp === 'number', 'real: such an input gives a response');

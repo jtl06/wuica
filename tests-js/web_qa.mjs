@@ -6,6 +6,7 @@
 //
 //   node tests-js/web_qa.mjs [--seed N]
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES } from '../web/js/examples.js';
@@ -31,7 +32,7 @@ await engine.loadUarch(uarchBytes);
 const configs = JSON.parse(uarchBytes).configs;
 const loadTable = async (arch) => {
   const table = configs[arch].name;
-  if (!engine.hasArch(table)) await engine.loadArch(table, fs.readFileSync(path.join(dist, 'data/arch', `${table}.bin`)));
+  if (!engine.hasArch(table)) await engine.loadArch(table, zlib.gunzipSync(fs.readFileSync(path.join(dist, 'data/arch', `${table}.bin.gz`))));
 };
 if (fs.existsSync(path.join(dist, 'wuica_asm.wasm'))) {
   // the text gives the listed machine code, or an encoding of the same instructions with the same result (LLVM picks

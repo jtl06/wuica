@@ -26,7 +26,7 @@ simulated as if unrolled; the ZEN3, ADL-P and ICX models are the fork's prototyp
 | Time per analysis (WebAssembly, warm) | 0.52 ms (BHive block), 0.63 ms (random loop), 36 ms (2,949-instruction SHA-256 block) | Commit `623a117` message, measurement machine (Ryzen 7 7735U), Node 22; before model rounds 6–9 |
 | Analyzer module | 4.31 MB raw, 630 kB brotli q11 (package), 867 kB as the live site serves it | Section 7.1 |
 | First visit in assembly mode (analyzer, assembler, SKL table, page shell) | 2.19 MB as the live site serves it; the same files weigh 1.64 MB at brotli q11 (+34 % served). After 0.1.9 the default first visit does not wait for the assembler: 1.14 MB before the first result (local host, brotli q2) | Section 7.1; `docs/PORTING.md`, "Size of the modules" |
-| Accuracy of the prototypes, held out, within 10 % | ZEN3 84.4 % / 87.7 %, ADL-P 90.9 % / 92.6 %, ICX 85.8 % / 89.7 % (random loops / BHive blocks) | `docs/ACCURACY.md`, "Round 9" |
+| Accuracy of the prototypes, held out, within 10 % | ZEN3 85.7 % / 88.8 %, ADL-P 90.7 % / 91.5 %, ICX 85.6 % / 88.2 % (random loops / BHive blocks) | `docs/ACCURACY.md`, "Round 10"; guarded by `wuica:accuracy_gate` |
 | Python reference, same work | 40–55 ms per analysis plus interpreter start | `README.md`, "Status" |
 
 ## 3. Hard rules
@@ -61,7 +61,7 @@ A suggestion that breaks one of these will not be taken, whatever it gains. Each
  assembler: LLVM 22.1.2 MC as wasm32-wasi       assembler/wuica_asm.cpp → wuica_asm.wasm            (C++, compiled)
    │  bytes of .text only
    ▼  hex
- ┌──────────────────────── wuica_wasm.wasm (or the native CLI) ───────────────────────────────────── (Rust + C) ─┐
+ ┌──────────────────────── wuica_wasm.wasm (or the reference binary) ─────────────────────────────── (Rust + C) ─┐
  │ decode: Intel XED, the version uiCA pins     crates/wuica-xed (shim/wuica_xed.c, src/lib.rs)                  │
  │ instruction builder + uops.info tables       crates/wuica-core/src/instr_builder.rs, data.rs, config.rs       │
  │ pipeline simulation                          crates/wuica-core/src/sim/{frontend,renamer,scheduler,prep,…}.rs │
@@ -82,12 +82,12 @@ The Python file each Rust module mirrors: `instructions.py` → `instr_builder.r
 |---|---|---|---|
 | Decoder | C (XED subset, `third_party/xed`) + Rust wrapper | `crates/wuica-xed` | The pinned XED plus a shim produce "the same records as uiCA's Python `xed` module" (`docs/DESIGN.md`, "Architecture"), checked at the decoder boundary |
 | Builder, simulator, analysis, report | Rust, no I/O, no C | `crates/wuica-core` | The exact port (rules 1–2); runs natively for tests and as wasm |
-| Engine facade | Rust | `crates/wuica/src/lib.rs` (`Engine`: `load_uarch`, `load_arch`, `analyze`, `analyze_json`) | One entry point for wasm and native CLI |
+| Engine facade | Rust | `crates/wuica/src/lib.rs` (`Engine`: `load_uarch`, `load_arch_bin`, `load_arch` (JSON, feature `json-tables`: native tools and tests only), `analyze`, `analyze_json`) | One entry point for wasm and the reference binary |
 | WebAssembly exports | Rust | `crates/wuica-wasm/src/{lib,alloc}.rs` | Plain C ABI, no wasm-bindgen; own small-block allocator |
-| Native CLI | Rust | `crates/wuica-cli/src/main.rs` | Comparing with the reference; **machine code only** (hex or `-raw`) |
+| Reference/test binary | Rust | `crates/wuica-cli/src/main.rs` | Not a product: an independent interface for the exactness checks (`scripts/check.mjs`, `tests-js/interfaces.mjs`); **machine code only** (hex or `-raw`) |
 | Assembler | C++ (LLVM MC) as wasm32-wasip1, no imports | `assembler/` | Instruction lengths must match a real assembler; identical bytes to `llvm-mc` (`assembler/README.md`) |
 | llvm-mca view | C++ (LLVM 22.1.2 `llvm-mca`) as wasm | `mca/` | Side-by-side comparison in the page only |
-| Syntax detection, loop finding, regions, `;` comments, objdump text | JavaScript | `web/js/loop-find.js`, `asm-regions.js`, `asm-text.js` (copies in `packages/wuica/lib/web/`) | Written for the page; reused by the package. The repository records no design reason for not doing this in Rust; the effect is that the native CLI has none of it (section 8.4) |
+| Syntax detection, loop finding, regions, `;` comments, objdump text | JavaScript | `web/js/loop-find.js`, `asm-regions.js`, `asm-text.js` (copies in `packages/wuica/lib/web/`) | Written for the page; reused by the package. The repository records no design reason for not doing this in Rust; the effect is that the reference binary has none of it (section 8.4) |
 | Insights, what-if, N accumulators, caveats | JavaScript | `web/js/{bound,insight,whatif,accum,caveats}.js`; package: `lib/insights.js`, `lib/whatif.js` (own implementations, kept equal by `tests-js/web_bound.mjs`, `web_whatif.mjs`), `lib/web/{accum,caveats}.js` (copies) | Derived from the response; not in uiCA |
 | UI, worker pool, service worker, Compiler Explorer import | JavaScript, no framework, no bundler | `web/js/*.js` (61 files, 14,037 lines), `web/css/`, `web/sw.js` | Static hosting, no build step but copying (`web/build.sh`) |
 | CLI, library, stdio MCP | JavaScript (Node ≥ 20) | `packages/wuica/{bin,lib}`, `index.d.ts` | Same wasm modules as the page |
@@ -100,7 +100,7 @@ during a simulation (`docs/DESIGN.md`, "Data layout in the simulator").
 
 | Module | Built by | Exports | Memory (from the module's memory section) | Loaded |
 |---|---|---|---|---|
-| `wuica_wasm.wasm` (analyzer) | `build-wasm.sh`: `cargo build -p wuica-wasm --target wasm32-unknown-unknown --release`, fat LTO, 1 codegen unit, opt-level 3 | `memory`, `wuica_alloc`, `wuica_free`, `wuica_result_ptr`, `wuica_decode`, `wuica_load_uarch`, `wuica_load_arch`, `wuica_analyze` | initial 34 pages (2.1 MiB), **no maximum** (up to 4 GiB) | Page: at start. Package: in `createWuica` |
+| `wuica_wasm.wasm` (analyzer) | `build-wasm.sh`: `cargo build -p wuica-wasm --target wasm32-unknown-unknown --release`, fat LTO, 1 codegen unit, opt-level 3 | `memory`, `wuica_alloc`, `wuica_free`, `wuica_result_ptr`, `wuica_decode`, `wuica_load_uarch`, `wuica_load_arch` (binary tables only; JSON with the Cargo feature `json-tables`), `wuica_load_arch_bin`, `wuica_analyze` | initial 34 pages (2.1 MiB), **no maximum** (up to 4 GiB) | Page: at start. Package: in `createWuica` |
 | `wuica_asm.wasm` (assembler) | `assembler/build.sh` (x86-64 Linux; `-Oz`, full LTO, a size patch) | `_initialize`, `malloc`, `free`, `wuica_assemble`, `wuica_fatal_message` | max 256 MiB | Page: at start in assembly mode (the default), else on first use. Package: on first assembly |
 | `wuica_mca.wasm` (llvm-mca) | `mca/build.sh` | `wuica_mca_run`, `wuica_mca_output`, … | max 1 GiB | Page only, when the `mca` tab is first opened |
 
@@ -156,8 +156,8 @@ Full contracts: `docs/WASM-API.md` (module), `packages/wuica/README.md` ("API co
 
 | Interface | Input | Can | Cannot |
 |---|---|---|---|
-| Module `wuica_analyze(request JSON)` | `{hex, arch, alignmentOffset, initPolicy, simpleFrontEnd, noMicroFusion, noMacroFusion, minIterations, minCycles, includeTrace, details}` | Response: `tp`, `mode` (`loop`/`unroll`), `decodeErrors`, `bottlenecks`, `limits`, `columns`/`rows` (uop table), `text` (uiCA's report), `trace` (uiCA's `-json`), `criticalPath`, `details` (not in uiCA; adding it changes no other field) | Assembly; loop finding; insights; tables must be loaded first (`wuica_load_uarch`, `wuica_load_arch`) |
-| Native CLI `crates/wuica-cli` | Hex argument or `-raw FILE`; `-data DIR` | uiCA's report, `-TPonly`, `-json`, `-trace`, `-details`, uiCA's options | Assembly, objdump text, loop finding, several CPUs per run, what-if, caveats, insights |
+| Module `wuica_analyze(request JSON)` | `{hex, arch, alignmentOffset, initPolicy, simpleFrontEnd, noMicroFusion, noMacroFusion, minIterations, minCycles, includeTrace, details}` | Response: `tp`, `mode` (`loop`/`unroll`), `decodeErrors`, `bottlenecks`, `limits`, `columns`/`rows` (uop table), `text` (uiCA's report), `trace` (uiCA's `-json`), `criticalPath`, `details` (not in uiCA; adding it changes no other field) | Assembly; loop finding; insights; tables must be loaded first (`wuica_load_uarch`, `wuica_load_arch_bin`) |
+| Reference/test binary `crates/wuica-cli` (not a product) | Hex argument or `-raw FILE`; `-data DIR` | uiCA's report, `-TPonly`, `-json`, `-trace`, `-details`, uiCA's options | Assembly, objdump text, loop finding, several CPUs per run, what-if, caveats, insights |
 | npm CLI `wuica` | Assembly file (syntax detected), stdin, hex, `-raw`, objdump text, `-example NAME` | Loop finding (`-loops`, `-loop N\|LABEL\|whole`, `-func`), `-arch A,B,…\|all` (one table), `-per N`, `-whatif`, `-json`, caveats and nearest limit after the report, exit codes 0/1/2/3 | One input per run; object files (use `objdump -d`) |
 | Library `createWuica()` | `analyze(arch, {source\|hex, syntax, loop, func, options})`, `compare`, `assemble`, `archs`, `summarize`, `insights`, `whatIf` | Never throws on bad input: resolves to `{code, error, stderr}`; recovers from traps (`trapped: true`) | — |
 | Stdio MCP (`wuica mcp`, `wuica-mcp`) | JSON-RPC 2.0 over stdio, protocol revisions 2025-11-25 … 2024-11-05 | Tools `analyze`, `what_if`, `compare_archs`, `list_archs`, `assemble`; arguments checked against JSON Schemas | Resources, prompts; option ranges narrower than the library's |
@@ -171,20 +171,28 @@ Result codes everywhere: 0 ok, 1 bad request, 2 assembler error, 3 analysis fail
 The port reproduces the reference exactly, so these numbers hold for both (`docs/ACCURACY.md`). They cover only the fork's
 three models; uiCA's Intel models are unchanged by the fork's rounds and are not measured in this repository.
 
-Round 9, held-out sets (generated and measured before any model change, scored once at the end); share of loops within 10 %
+Round 10, held-out sets (generated and measured at the start of the round, scored once at the end); share of loops within 10 %
 of measured cycles per iteration, and MAPE:
 
-| Model (measured on) | Random loops `holdout7` | BHive blocks `bhive5` | llvm-mca, same sets | Nearest original uiCA model |
+| Model (measured on) | Random loops `holdout8` | BHive blocks `bhive6` | llvm-mca, same sets | Nearest original uiCA model |
 |---|---|---|---|---|
-| ZEN3 (Ryzen 7 7735U, Zen 3+) | 1960 loops: 84.4 %, 4.2 % | 1941: 87.7 %, 3.9 % | `znver3`: 55.2 % / 71.8 % | — |
-| ADL-P (Core i7-12650H, P-core) | 1933: 90.9 %, 2.8 % | 1896: 92.6 %, 3.2 % | `alderlake`: 32.3 % / 68.8 % | RKL: 47.1 % / 71.3 % |
-| ICX (Xeon Gold 6314U) | 1879: 85.8 %, 3.9 % | 1928: 89.7 %, 3.0 % | `icelake-server`: 53.0 % / 69.5 % | ICL: 78.4 % / 85.6 % |
+| ZEN3 (Ryzen 7 7735U, Zen 3+) | 1956 loops: 85.7 %, 3.8 % | 1895: 88.8 %, 3.9 % | `znver3`: 56.0 % / 71.3 % | — |
+| ADL-P (Core i7-12650H, P-core) | 1923: 90.7 %, 2.6 % | 1837: 91.5 %, 3.6 % | `alderlake`: 33.8 % / 66.2 % | RKL: 48.0 % / 70.4 % |
+| ICX (Xeon Gold 6314U) | 1867: 85.6 %, 3.7 % | 1869: 88.2 %, 3.3 % | `icelake-server`: 54.7 % / 70.1 % | ICL: 78.7 % / 84.8 % |
 
-Method (`docs/ACCURACY.md`, "Method of round 9", "Method of round 6"): `perf stat` user-mode cycles, pinned to one core, best
+The random held-out sets no longer discriminate between model variants (rounds 7-10 moved them by tenths of a point), so further
+model work starts from measured real loops and an identified mechanism; the measured sets now guard what exists. The suite
+`wuica:accuracy_gate` (`crates/wuica/tests/accuracy_gate.rs`) predicts 7,925 measured loops (the held-out sets of rounds 9 and 10 on
+all three CPUs and the 21 dogfood loops, `fixtures/generated/accuracy.jsonl.gz` from the CI data asset), reproduces the tables of
+`docs/ACCURACY.md` exactly, and fails when a share within 5/10/20 % moves by more than 0.1 point or the MAPE by more than 0.02
+(`crates/wuica/tests/accuracy_expected.json`; about 2 s). The remaining errors and the explanations that measurements ruled out are in
+`docs/ACCURACY.md`, "Known errors and what was ruled out".
+
+Method (`docs/ACCURACY.md`, "Method of round 10", "Method of round 6"): `perf stat` user-mode cycles, pinned to one core, best
 of three runs, nothing else on the machine; loops whose two fastest runs differ by more than 2 % are dropped. Random loops
 come from the fork's `microbench/fuzz/fuzz_gen.py`; real-code blocks from BHive, run as loop bodies. Development used other
 sets (`dev13`, earlier hold-outs, hand-written loops) and 21 "dogfood" loops from real use (ZEN3 within 10 %: 47.6 % → 57.1 %
-in round 9). Each model was measured on one machine.
+in round 9, unchanged in round 10). Each model was measured on one machine.
 
 ## 7. Measurements
 
@@ -254,7 +262,7 @@ installed from the local tarball.
 | `wuica -example sha256 -arch SKL -TPonly` | 0.18 s | 165 MB |
 | `wuica -example sha256 -arch all` (default threads) | 0.51 s | 670 MB |
 | `wuica -example sha256 -arch all -threads 1` | 0.70 s | 310 MB |
-| native `wuica <saxpy hex> -arch SKL -TPonly` (`check-fast` profile, 50 runs in a loop) | 7 ms per run | 10 MB |
+| reference binary `wuica <saxpy hex> -arch SKL -TPonly` (`check-fast` profile, 50 runs in a loop) | 7 ms per run | 10 MB |
 
 ### 7.4 Memory inside the module
 
@@ -282,7 +290,8 @@ Counts from the last local `scripts/check.sh full` run (development machine, 202
 | End to end, bytes → complete report text | `wuica:end_to_end` (native), `tests-js/analyze_fixtures.mjs 1` in 4 shards (wasm: `tp` and `text`) | 17,081 cases each |
 | `details` changes no other field; critical path; dependency cycle | `wuica:details`, `critical_path`, `wuica-core:dependency_cycle` | 9,899; 9,899 (8,512 with a path); 36,138 |
 | No panics | `wuica:fuzz_short`, `details_fuzz` (`crates/wuica/tests/fuzz/mod.rs`) | random real encodings, random options, all 15 CPUs |
-| Same result through every interface but the page | `tests-js/interfaces.mjs` (library, wasm via `engine.js`, native CLI, npm CLI, REST, both MCP servers; random requests) | 2,647 checks |
+| Same result through every interface but the page | `tests-js/interfaces.mjs` (library, wasm via `engine.js`, the reference binary, npm CLI, REST, both MCP servers; random requests) | 2,647 checks |
+| Accuracy of the prototype models against measured loops | `wuica:accuracy_gate` | 7,925 loops, 22,905 predictions, per set and CPU |
 | npm package; server | `node --test` | 83; 63 tests |
 | Page logic in Node (30 suites) | `tests-js/web_*.mjs` without a browser | 23,314 checks |
 | Page in headless Chrome (19 suites) | `tests-js/web_*_browser.mjs`, `web_browser*.mjs` via `tests-js/cdp.mjs` | 1,276 checks |
@@ -296,7 +305,7 @@ inputs on which upstream uiCA raises an exception and what the fork does instead
 CI (`.github/workflows/ci.yml`): every push to main and every pull request runs `scripts/check.sh full --no-skip` on
 ubuntu-latest (Rust 1.100, Node 22, the runner's clang and Chrome, 1 Chrome suite at a time); a skipped suite fails. It does
 not run the optional set `more` (not in the data asset, `ci/make-data-asset.sh`), does not build the assembler or llvm-mca
-(downloaded), and does not check against real hardware.
+(downloaded), and does not measure on real hardware (the accuracy gate compares with measurements recorded in the data asset).
 
 ## 8. Already done, and tried and rejected
 
@@ -333,7 +342,7 @@ Check this table before suggesting an optimization. "Identical results" means ru
 | More threads for `-arch all` | 12 or 15 threads slower than 4–8; on a small block 15 threads 12 % slower than none | `docs/PORTING.md`, "Speed" |
 | A V8 code cache for the module in Node | Not available: `v8.serialize` of a module is empty in Node 22 and 26; in Chrome `compileStreaming`'s cache sped up compilation, not the first analysis | `docs/PORTING.md`, "Speed" |
 | Early stop of the simulation once it is periodic | The owner reports it was measured and not kept; **no numbers are recorded in the repository** | — |
-| Model changes (each round): e.g. ZEN3 fused CMP/TEST+Jcc on branch ports, ALU uops dispatched to any free ALU, steering to the producer's port, a `vpermd` throughput limit; others per round | Each fixed its target and made held-out or hand-written sets worse | `docs/ACCURACY.md`, "Not fixed", "Tried and not kept" (rounds 7 and 8) |
+| Model changes (each round): e.g. ZEN3 fused CMP/TEST+Jcc on branch ports, ALU uops dispatched to any free ALU, steering to the producer's port, a `vpermd` throughput limit; others per round | Each fixed its target and made held-out or hand-written sets worse; in round 10 eight port-assignment policies and the reviewer's hypotheses were ruled out by measurement | `docs/ACCURACY.md`, "Known errors and what was ruled out", "Tried and not kept" (rounds 7 and 8) |
 
 ### 8.3 Measured, gain available, deliberately not taken
 
@@ -357,11 +366,13 @@ Check this table before suggesting an optimization. "Identical results" means ru
 
 ### 10.1 Model
 
-- **Remaining ZEN3 errors** (`docs/ACCURACY.md`, round 9, "Not fixed"): the scalar prefix sum (`add edx, [rdi+rax*4]; mov
-  [rsi+rax*4], edx; inc rax; cmp rcx, rax; jne`) is predicted 1.36 cycles per iteration against 1.00 measured (a sum
-  reduction: 1.55 vs 1.07); in the model the index chain loses ALU ports to the older accumulator chain. Shuffle-heavy vector
-  loops are 13–29 % optimistic (8 `vmulps` + 6 `vpalignr`: 4.67 predicted, 5.58 measured; `vpermd` costs 1.33 cycles when
-  two or more are in a loop). The fixes tried are in section 8.2.
+- **Remaining ZEN3 errors** (`docs/ACCURACY.md`, "Known errors and what was ruled out", with every explanation that measurements
+  ruled out and the loop benchmarks that reproduce them): the scalar prefix sum (`add edx, [rdi+rax*4]; mov [rsi+rax*4], edx; inc
+  rax; cmp rcx, rax; jne`) is predicted 1.36 cycles per iteration against 1.00 measured (a sum reduction: 1.55 vs 1.07); on the
+  hardware one more macro-op that does not execute (a `nop`) makes it 1.34, so it is not ALU-port contention, and none of eight
+  port-assignment policies reproduces it. Shuffle-heavy vector loops are 13-29 % optimistic (8 `vmulps` + 6 `vpalignr`: 4.67
+  predicted, 5.58 measured, 5.22 when interleaved; `vpermd` costs 1.33 cycles back to back, 1.00 with `vaddps` between them;
+  lane-crossing permutes cost more in mixes than their port data says). The fixes tried are in section 8.2.
 - **Not modelled**: cache misses, branch mispredictions, frequency changes; loads at constant addresses crossing a line; the
   extra latency of line-crossing loads (+1 cycle on the Ryzen, +6 to +7 on the Intel CPUs); store forwarding through an
   indexed read-modify-write whose address depends on data. A branch inside the loop body makes uiCA simulate both sides one
@@ -389,7 +400,7 @@ Check this table before suggesting an optimization. "Identical results" means ru
 
 ### 10.4 Interfaces
 
-- **The native Rust CLI takes machine code only**: syntax detection, loop finding, regions, what-if, caveats and insights
+- **The reference/test binary (Rust, not a product) takes machine code only**: syntax detection, loop finding, regions, what-if, caveats and insights
   exist only in JavaScript. A Rust user or a future native server gets less than `npx wuica-cli`.
 - The package's `insights.js` and `whatif.js` re-implement the page's `bound.js` and `whatif.js`; agreement is tested on the
   built-in examples only (`tests-js/web_bound.mjs`, `web_whatif.mjs`).

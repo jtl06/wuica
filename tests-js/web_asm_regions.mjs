@@ -8,6 +8,7 @@ import { WasmAssembler } from '../web/js/assembler.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { srcModel } from '../web/js/srcmap.js';
 import { EXAMPLES, SHOWCASE_EXAMPLES } from '../web/js/examples.js';
+import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -189,7 +190,7 @@ dot:
     } else {
       const e = await WasmEngine.create(fs.readFileSync(wasm));
       await e.loadUarch(fs.readFileSync(new URL('data/uarch.json', root)));
-      await e.loadArch('SKL', fs.readFileSync(new URL('data/arch/SKL.json', root)));
+      await e.loadArch('SKL', tableBytes('SKL'));
       const h = hex(m.bytes);
       const resp = await e.analyze(makeRequest(h, 'SKL'));
       const sm = srcModel(resp, { ...m.source, hex: h }, h);
