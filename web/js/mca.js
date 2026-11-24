@@ -10,7 +10,7 @@
 //
 // env: { available(), module() -> promise of a WebAssembly.Module, toAsm(hex) -> promise of {text} | null,
 //        spawn() -> Worker, onToggle(open) }
-import { h } from './render.js';
+import { h, sideTag } from './render.js';
 import { setCopy, waitCopy } from './copy-view.js';
 import { mcaText } from './markdown.js';
 
@@ -111,14 +111,14 @@ export function createMca(env = {}) {
     const cpu = MCPU[arch];
     const instrs = r.rows.filter((x) => x.kind === 'instr').length;
     const iterations = mcaIterations(instrs);
-    const k = [v.hex, cpu, iterations, timeline, bottleneck].join('|');
+    const k = [v.side ?? '', v.hex, cpu, iterations, timeline, bottleneck].join('|');
     if (k === key) return;
     // (another result or other options: the text shown before is not copied for it)
     if (!open) { setCopy('mca', null); key = ''; seq++; return; } // (a run still going gives no copy now)
     key = k;
     waitCopy('mca', "llvm-mca's text");
     const mine = ++seq;
-    const tools = h('div', { class: 'mca-tools' },
+    const tools = h('div', { class: 'mca-tools' }, sideTag(v), // (A–B: whose block)
       option('timeline', 'llvm-mca -timeline: the first iterations, cycle by cycle', () => timeline, (x) => { timeline = x; }),
       option('bottlenecks', 'llvm-mca -bottleneck-analysis', () => bottleneck, (x) => { bottleneck = x; }));
     if (!cpu) { setCopy('mca', null); body.replaceChildren(tools, h('p', { class: 'hint', text: `llvm-mca has no model for ${arch}.` })); return; }

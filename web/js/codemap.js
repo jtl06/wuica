@@ -5,7 +5,7 @@
 //
 // The first half has no DOM (tests-js/web_codemap.mjs runs it under Node).
 
-import { h } from './render.js';
+import { h, sideTag } from './render.js';
 import { colorInstr } from './asm-hl.js';
 import { jumpToRow } from './rowjump.js';
 import { setCopy } from './copy-view.js';
@@ -153,7 +153,7 @@ export function createCodeMap(env = {}) {
       return b;
     };
     const c = m.counts;
-    const tools = h('div', { class: 'ly-tools' },
+    const tools = h('div', { class: 'ly-tools' }, sideTag(view), // (A–B: whose block)
       h('span', { class: 'ly-off' }, shift(-1), h('span', { class: 'ly-offv', title: 'alignment offset: the position of the first byte in its cache line', text: `offset ${m.offset}` }), shift(1)),
       h('span', { class: 'ly-legend' },
         h('span', { class: 'ly-k b16', title: 'instructions that cross a 16-byte boundary (predecoder blocks)', text: `16B ${c.cross16}` }),
@@ -176,9 +176,9 @@ export function createCodeMap(env = {}) {
     const n = model.lines.length;
     hint.textContent = ` · ${model.bytes} B, ${n} line${n === 1 ? '' : 's'}`;
     if (!open) { body.replaceChildren(); body.dataset.state = 'closed'; return; }
-    const k = `${view.hex}|${model.offset}|${r.rows.map((x) => x.notes).join('')}|${model.instrs.map((x) => x.label).join('\n')}`;
+    const k = `${view.side ?? ''}|${view.hex}|${model.offset}|${r.rows.map((x) => x.notes).join('')}|${model.instrs.map((x) => x.label).join('\n')}`;
     if (k === key && body.firstChild) return;
-    if (k.split('|')[0] !== key.split('|')[0]) sel = 0;
+    if (k.split('|')[1] !== key.split('|')[1]) sel = 0;
     sel = Math.min(sel, model.instrs.length - 1);
     key = k;
     draw();

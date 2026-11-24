@@ -532,7 +532,10 @@ try {
         await tab('bound'); const cap = document.querySelector('#bound .bd-cap')?.textContent ?? '';
         await tab('try'); await until(() => document.querySelector('#whatif .wi-table'), 30000);
         const head = [...document.querySelector('#whatif .wi-table thead tr').cells].map((c) => c.textContent);
-        return { cap, head };
+        // the other views of one side: bytes, deps, mca
+        const tagOf = async (t, sel) => { await tab(t); await until(() => document.querySelector(sel), 60000).catch(() => {}); return document.querySelector(sel)?.textContent ?? null; };
+        const tags = [await tagOf('bytes', '#codemap .ly-tools .ab-tag'), await tagOf('deps', '#deps .dp-legend .ab-tag'), await tagOf('mca', '#mca .mca-tools .ab-tag')];
+        return { cap, head, tags };
       };
       const out = { unit: document.querySelector('#result-body .ab-tp')?.closest('.row')?.innerText.includes('cycles/element') };
       out.a = await seen();
@@ -541,6 +544,7 @@ try {
       return out;`);
     check(r.unit, 'units: the headline is per element (both sides: 2 elements per iteration)', JSON.stringify(r));
     check(/^A ?2\.00 cycles\/iteration$/.test(r.a.cap) && /^B ?1\.00 cycles\/iteration$/.test(r.b.cap), 'units: the bound view says whose block and its cycles per iteration', JSON.stringify([r.a.cap, r.b.cap]));
+    check(r.a.tags.join() === 'A,A,A' && r.b.tags.join() === 'B,B,B', 'units: the bytes, deps and mca views say whose block', JSON.stringify([r.a.tags, r.b.tags]));
     check(/^A ?variant$/.test(r.a.head[0]) && /^B ?variant$/.test(r.b.head[0]) && r.a.head[1] === 'cycles/iteration' && r.b.head[1] === 'cycles/iteration', 'units: the try view says whose block and its unit', JSON.stringify([r.a.head, r.b.head]));
     check(r.limits === 'cycles/element', 'units: the table of the limits of A and B says they are per element (the captions of the uop tables say cycles/iteration)', r.limits);
     check(page.take().length === 0, 'units: no console errors');

@@ -7,7 +7,7 @@
 //
 // The first half has no DOM (tests-js/web_deps.mjs runs it under Node).
 
-import { h } from './render.js';
+import { h, sideTag } from './render.js';
 import { jumpToRow } from './rowjump.js';
 import { annotateLatencies, slackOfAsync, fmtSlack } from './deps-slack.js'; // latency per arc, slack per instruction
 import { setCopy } from './copy-view.js';
@@ -133,7 +133,7 @@ export function createDeps(env) {
     return row;
   }
 
-  const keyOf = (v) => JSON.stringify([v.hex, v.archKey, v.request]);
+  const keyOf = (v) => JSON.stringify([v.hex, v.archKey, v.request, v.side ?? null]); // (A–B: the side, for its tag)
 
   async function load(v, key) {
     if (pending === key) return;
@@ -280,7 +280,7 @@ export function createDeps(env) {
     });
     describe(sel);
     const c = g.edges.filter((e) => e.dist).length;
-    const legend = h('p', { class: 'dp-legend hint' },
+    const legend = h('p', { class: 'dp-legend hint' }, sideTag(view), // (A–B: whose block)
       h('span', { class: 'dp-k same', title: 'arcs of a value produced and used in the same iteration', text: `→ ${g.edges.length - c} same iteration` }),
       h('span', { class: 'dp-k carried', title: 'arcs of a value carried into a later iteration', text: `↻ ${c} carried` }),
       g.edges.some((e) => e.critical) ? h('span', { class: 'dp-k crit', title: 'the critical loop-carried chain, its latency per iteration; the numbers on the arcs are latencies in cycles', text: g.slack ? `chain ${+Number(g.slack.period).toFixed(2)}` : 'chain' }) : null,
