@@ -230,6 +230,23 @@ try {
     await page.close();
   }
 
+  // ---- the loop picker: label · function · size (· depth), the loop picked by default unchanged --------------------------
+  {
+    const page = await fresh();
+    const r = await page.eval(`${W}
+      const opts = () => [...$('loop-chip').options].map((o) => ({ label: o.label, text: o.text, value: o.value, on: o.selected }));
+      pasteInto($('code'), ${js(fx('multi.s'))}); await settle();
+      const multi = opts();
+      pasteInto($('code'), ${js(fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/cli/count_u8.hsw.s'), 'utf8'))}); await settle();
+      return { multi, nested: opts(), width: $('loop-chip').getBoundingClientRect().width };`);
+    const m = r.multi;
+    check(m.length === 10 && m[0].label === '.LBB0_9 · sum · 11 instr' && m[5].label === '.LBB2_8 · popc · 43 instr' && m[9].label === 'whole', 'picker: label, function and size of each loop (4 functions)', js(m.map((o) => o.label)));
+    check(m[0].on && m[0].value === '0' && m[0].text === 'loop .LBB0_9' && m.every((o, k) => o.value === (k < 9 ? String(k) : 'whole')), 'picker: the order, the values and the default as before', js(m.map((o) => [o.value, o.on])));
+    check(r.nested[0].label === '.LBB0_12 · 11 instr · depth 2' && r.nested[3].label === '.LBB0_4 · 79 instr' && r.nested[0].on, 'picker: one function: no name; nested loops: their depth', js(r.nested.map((o) => o.label)));
+    check(r.width < 200, 'picker: the closed menu stays narrow (the toolbar keeps its height)', String(r.width));
+    await page.close();
+  }
+
   // ---- B6: an assembler error of the old code goes when a Compiler Explorer link replaces it (A, and B) ----------------
   {
     const page = await fresh();

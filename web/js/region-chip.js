@@ -61,7 +61,15 @@ export function createLoopChip(after, pick, id = 'loop-chip', places = null) {
       after.after(sel);
     }
     const { loop, loops, body } = info;
-    const opts = loops.map((l, k) => h('option', { value: String(k), text: `loop ${l.label}` }));
+    // each loop as the menu shows it: its label, its function (when the text has loops in several), its size, its depth
+    // (when the loops nest); in the label attribute, so that its text stays its name ("loop .L3"). The order and the
+    // values are the loop finder's (state.loop, lp= in links: an index), not changed here.
+    const fns = new Set(loops.map((l) => l.function ?? '')).size > 1;
+    const deep = new Set(loops.map((l) => l.depth ?? 1)).size > 1;
+    const shown = (l) => [l.label, fns && l.function ? l.function : null, Number.isInteger(l.instructions) ? `${l.instructions} instr` : null,
+      deep && l.depth > 1 ? `depth ${l.depth}` : null].filter(Boolean).join(' · ');
+    const opts = loops.map((l, k) => h('option', { value: String(k), text: `loop ${l.label}`, label: shown(l),
+      title: `${l.inner ? 'innermost loop' : 'loop'} ${l.label}${l.function ? ` in ${l.function}` : ''}: ${l.instructions ?? '?'} instructions, lines ${l.begin}–${l.end}` }));
     if (body) opts.push(h('option', { value: 'body', text: 'body' }));
     opts.push(h('option', { value: 'whole', text: 'whole' }));
     sel.replaceChildren(...opts);
