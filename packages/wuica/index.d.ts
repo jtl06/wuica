@@ -62,6 +62,8 @@ export interface LoopInfo {
   /** Its first and last line in the source (null: the whole text). */
   line: number | null;
   endLine: number | null;
+  /** The source line of each of its instructions, in order (a picked loop or body): row k of the analysis is line lines[k]. */
+  lines?: number[];
   /** The function it is in, its nesting depth and its instruction count (for a loop). */
   function?: string | null;
   depth?: number;
@@ -208,8 +210,8 @@ export interface Insights {
   chain?: { index: number; instr: string; operand: string; latency: number; carried: boolean }[];
   /** The instructions with the largest share of the binding resource, or of the largest limit (top 5). */
   hot?: { resource: string; ports?: string[]; instructions: { index: number; instr: string; share: number }[] };
-  /** Known blind spots of the model the block meets (absent if none): rmw-index, exit, split; instructions: indexes. */
-  caveats?: { id: 'rmw-index' | 'exit' | 'split'; text: string; title: string; instructions: number[] }[];
+  /** Known blind spots of the model the block meets (absent if none): rmw-index, paths, exit, split. */
+  caveats?: Caveat[];
   /** With options.details: the ports behind the Ports limit (cycles = uops / ports) and the instructions that load them. */
   portSet?: { ports: string[]; uops: number; cycles: number; instructions: { index: number; instr: string; uops: number }[] };
   /** With options.details: issue slots per iteration, used and lost by cause. */
@@ -321,6 +323,20 @@ export const ARCH_INFO: Record<string, { name: string; year: number }>;
  * without it, as on a CPU without a split-load cost. The instance's insights() passes it. */
 export function insights(result: AnalyzeResult, config?: { splitLoadCycles?: number } | null): Insights | null;
 
+/** A known blind spot of the model that the block meets (Insights.caveats; the CLI's -json, one CPU or several). */
+export interface Caveat {
+  /** rmw-index: a read-modify-write to an indexed address (store forwarding depends on the data); paths: a conditional
+   * branch inside the block (an if/else, a second back edge): both sides are simulated, a real iteration takes one;
+   * exit: an exit before the loop's branch (its mispredict); split: loads that may cross a cache line. */
+  id: 'rmw-index' | 'paths' | 'exit' | 'split';
+  /** The short form ("both paths"). */
+  text: string;
+  /** The explanation (paths: the branch's source line when the result has loop.lines, else its instruction number). */
+  title: string;
+  /** Indexes into the instructions (rows). */
+  instructions: number[];
+}
+
 export type WhatIfVariant = 'unroll2' | 'unroll4' | 'unroll8' | 'acc2' | 'acc3' | 'acc4' | 'acc8' | 'simpleFrontEnd' | 'noMacroFusion' | 'noMicroFusion' | 'nochain';
 export const WHAT_IF_VARIANTS: readonly WhatIfVariant[];
 export interface WhatIfResult {
@@ -337,6 +353,19 @@ export interface WhatIfResult {
   /** With accumulator variants: the best N (the smallest within 1% of the fastest; 1 = as it is) and its tp. */
   accumulators?: { best: number; tp: number };
 }
+
+/** The CLI's `-json -whatif`: one WhatIfResult per CPU, keyed by its id, with one CPU as with several. With `-per N`,
+ * each has elementsPerIteration (N) and perElement (tp / N), and each variant with a tp its perElement. */
+export type CliWhatIf = Record<string, (WhatIfResult & { elementsPerIteration?: number; perElement?: number; variants: (WhatIfResult['variants'][number] & { perElement?: number })[] }) | Failure>;
+/** The CLI's `-json` with one CPU: the analyze result with insights (caveats in insights.caveats), perElement (-per)
+ * and whatIf (-whatif). */
+export type CliAnalyzeJson = AnalyzeResult & { insights?: Insights; perElement?: number; whatIf?: CliWhatIf };
+/** The CLI's `-json` with several CPUs: the compare result; each result with perElement (-per) and caveats (the same
+ * objects as insights.caveats with one CPU); whatIf (-whatif) as with one CPU. */
+export type CliCompareJson = CompareResult & { results: (CompareResult['results'][number] & { perElement?: number; caveats?: Caveat[] })[]; whatIf?: CliWhatIf };
+/** The CLI's `--version -json`: the package's version and the uiCA reference whose data and model it has (from the
+ * repository's ci/data-asset.txt at build time; null if the package was not built). */
+export interface CliVersionJson { wuica: string; uiCA: { repository: string; commit: string; branch?: string } | null; node: string }
 /** The what-if experiments of the web page (the MCP tool `what_if`), with `analyze` (e.g. a Wuica's analyze, bound) and,
  * for the accumulator variants, `assemble` (e.g. a Wuica's assemble, bound). */
 export function whatIf(analyze: (arch: string, request: AnalyzeRequest) => Promise<AnalyzeResult | Failure>, arch: string, request: AnalyzeRequest, variants?: readonly WhatIfVariant[],

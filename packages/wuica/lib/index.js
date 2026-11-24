@@ -21,7 +21,7 @@ import { ThreadPool, threadLimit, threadOption, threadsFor } from './threads.js'
 // the web page's reading of pasted assembly (copies of web/js in lib/web: tests-js/web_pkg_copies.mjs): the loop of a whole function, objdump lines,
 // exits as not taken, ';' comments, region markers
 import { assembleMarked, commentFixes, separatorNotes } from './web/asm-regions.js';
-import { normalizeText, detectSyntax, preparePaste } from './web/loop-find.js';
+import { normalizeText, detectSyntax, preparePaste, syntaxSigns } from './web/loop-find.js';
 export { detectSyntax };
 
 // The loops of assembly text, as `loop` and `func` choose among them: [{index, label, function, line, endLine,
@@ -73,6 +73,28 @@ function syntaxOf(syntax, text) {
   return { code: d === 'att' ? 1 : 0, name: d, detected: true };
 }
 const SYNTAX_ERROR = (syntax) => `unknown syntax "${syntax}" (use "auto", "intel" or "att")`;
+
+// After an assembler error: a line with the other syntax's operands (AT&T's %registers or $immediates in text read as
+// Intel, Intel's [registers] or "ptr [" in text read as AT&T: mixed lines, a directive that does not match the code,
+// "mov rdx, $8"), as a one-line hint, or null. name: the syntax the text was read as.
+export function syntaxHint(text, name) {
+  const lines = String(text).split('\n');
+  let att = 0, intel = 0, dollar = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const code = lines[i].replace(/(?:#|\/\/).*$/, '');
+    if (/^\s*\./.test(code)) continue;
+    const n = syntaxSigns(code);
+    // "mov rdx, $8": an Intel line with an AT&T immediate
+    if (n.att && n.intel && !/%/.test(code)) { dollar ||= i + 1; continue; }
+    if (n.att && !att) att = i + 1;
+    else if (n.intel && !n.att && !intel) intel = i + 1;
+  }
+  if (dollar && name === 'intel' && !att) return `hint: line ${dollar} has an AT&T immediate ($) in Intel code: in Intel syntax an immediate has no $ (if the text is AT&T, -att, syntax "att", reads it so)`;
+  if (att && intel) return `hint: the text mixes AT&T (line ${att}) and Intel (line ${intel}) operands; the assembler reads one syntax per text: -att or -intel (syntax "att" or "intel")`;
+  if (name === 'intel' && att) return `hint: line ${att} has AT&T operands (%register or $immediate) but the text is read as Intel; if it is AT&T, -att (syntax "att") reads it so`;
+  if (name === 'att' && intel) return `hint: line ${intel} has Intel operands but the text is read as AT&T; if it is Intel, -intel (syntax "intel") reads it so`;
+  return null;
+}
 
 // AArch64 assembly (a common mistake on an Arm Mac): its registers and mnemonics on several lines
 export function looksAArch64(text) {
@@ -274,12 +296,13 @@ class Wuica {
       // llvm-mc's own lines (with the source line and the caret) when the text alone fails on the same line
       const plain = asm.assemble(text, s);
       const same = !plain.ok && first && parseDiagnostics(plain.message).find((d) => d.severity === 'error')?.line === first.line;
-      return failure(CODES.ASSEMBLER, error, same ? stderrLines(plain.message) : diagnosticLines(r.diagnostics));
+      const hint = syntaxHint(text, syn.name);
+      return failure(CODES.ASSEMBLER, error, [...(same ? stderrLines(plain.message) : diagnosticLines(r.diagnostics)), ...(hint ? [{ text: hint }] : [])]);
     }
     // what was analyzed, if not the whole text as it is: the loop (or body) picked, or the alignment from addresses
     const picked = r.loop ?? (r.alignment !== null ? { index: null, count: r.loops.length, name: 'whole', line: null, endLine: null, address: null, alignment: r.alignment } : null);
     const info = picked && Number.isInteger(picked.index) ? r.loops[picked.index] : null;
-    const loopInfo = picked && { index: picked.index, count: picked.count, name: picked.name, line: picked.line, endLine: picked.endLine,
+    const loopInfo = picked && { index: picked.index, count: picked.count, name: picked.name, line: picked.line, endLine: picked.endLine, ...(picked.lines ? { lines: picked.lines } : {}),
       ...(info ? { function: info.function, depth: info.depth, instructions: info.instructions } : {}),
       ...(picked.address !== null && picked.address !== undefined ? { address: picked.address } : {}), ...(r.alignment !== null ? { alignmentOffset: r.alignment } : {}) };
     return { code: CODES.OK, hex: Buffer.from(r.bytes).toString('hex'), bytes: r.bytes, stderr: diagnosticLines(r.diagnostics), loop: loopInfo, syntax: { name: syn.name, detected: syn.detected } };

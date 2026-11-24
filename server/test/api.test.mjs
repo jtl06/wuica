@@ -48,7 +48,7 @@ test('GET /api/version: JSON and text', async () => {
   assert.equal(v.status, 200);
   assert.equal(v.json.llvm, '22.1.2');
   assert.equal(v.json.xed, 'v10.0-1167-gc71679ee');
-  assert.equal(v.json.uiCA.commit, '8f24bd3');
+  assert.equal(v.json.uiCA.commit, /^uica_commit=([0-9a-f]+)/m.exec(fs.readFileSync(path.join(ROOT, 'ci/data-asset.txt'), 'utf8'))[1]); // the data asset's
   assert.match(v.json.wuica, /^\d+\.\d+\.\d+/);
   assert.match(v.json.data.uarchSha256, /^[0-9a-f]{64}$/);
   const t = await get(s.base, '/api/version', { Accept: 'text/plain' });

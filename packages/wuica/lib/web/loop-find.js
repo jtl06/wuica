@@ -70,12 +70,20 @@ export function detectSyntax(text) {
     const code = l.replace(/(?:#|\/\/).*$/, '');
     const d = /^\s*\.(att|intel)_syntax\b/i.exec(code);
     if (d && att + intel === 0) return d[1].toLowerCase();
-    att += (code.match(/%(?:[re]?(?:[abcd]x|[sd]i|[sb]p|ip)|[abcd][lh]|(?:[sd]i|[sb]p)l|r(?:[89]|1[0-5])[dwb]?|[xyz]mm\d+|k[0-7]|[cdefgs]s)\b/gi) ?? []).length;
-    att += (code.match(/(?:^|[\s,])\$-?(?:0x[0-9a-f]+|\d+)\b/gi) ?? []).length;
-    intel += (code.match(/\bptr\s*\[|\[\s*(?:[re]?(?:[abcd]x|[sd]i|[sb]p|ip)|r(?:[89]|1[0-5]))\b/gi) ?? []).length;
-    if (!/%/.test(code)) intel += (code.match(/^\s*(?:\w+:\s*)*[a-z]\w*\s+(?:[re]?(?:[abcd]x|[sd]i|[sb]p)|r(?:[89]|1[0-5])[dwb]?|[xyz]mm\d+)\s*,/gi) ?? []).length;
+    const n = syntaxSigns(code);
+    att += n.att;
+    intel += n.intel;
   }
   return att > intel ? 'att' : intel > att ? 'intel' : null;
+}
+
+// The signs of each syntax in one line of code (comments left out): {att, intel} counts.
+export function syntaxSigns(code) {
+  let att = (code.match(/%(?:[re]?(?:[abcd]x|[sd]i|[sb]p|ip)|[abcd][lh]|(?:[sd]i|[sb]p)l|r(?:[89]|1[0-5])[dwb]?|[xyz]mm\d+|k[0-7]|[cdefgs]s)\b/gi) ?? []).length;
+  att += (code.match(/(?:^|[\s,])\$-?(?:0x[0-9a-f]+|\d+)\b/gi) ?? []).length;
+  let intel = (code.match(/\bptr\s*\[|\[\s*(?:[re]?(?:[abcd]x|[sd]i|[sb]p|ip)|r(?:[89]|1[0-5]))\b/gi) ?? []).length;
+  if (!/%/.test(code)) intel += (code.match(/^\s*(?:\w+:\s*)*[a-z]\w*\s+(?:[re]?(?:[abcd]x|[sd]i|[sb]p)|r(?:[89]|1[0-5])[dwb]?|[xyz]mm\d+)\s*,/gi) ?? []).length;
+  return { att, intel };
 }
 
 // CRLF and a lone CR as LF (lines stay).
@@ -365,7 +373,7 @@ export function functionBody(s) {
 
 // What to analyze: see the top. text: the pasted assembly; loop: 'auto' (default), 'whole', or the index of a loop.
 // Returns {text, objdump, loops: [{begin, end, label}], choice: index | 'body' | null, choosable (there is code around the
-//   loop or the body: a choice matters), pick: {begin, end} | null,
+//   loop or the body: a choice matters), pick: {begin, end, lines: [the line of each instruction]} | null,
 //   body: {begin, end} | null, alignment: number | null, address: number | null, stubs: [names],
 //   notes: [{line, column, severity, message}], fallback: Map line -> text, error?}
 export function preparePaste(text, { loop = 'auto', func = null } = {}) {
@@ -388,7 +396,10 @@ export function preparePaste(text, { loop = 'auto', func = null } = {}) {
   const named = (l) => (l.label.startsWith('.Lwuica_a') ? `0x${l.label.slice(9)}` : l.label);
   // a loop by its label ("-loop .LBB0_12", "-loop 0x10"): as its index
   if (typeof loop === 'string' && loop !== 'auto' && loop !== 'whole') {
-    const k = loops.findIndex((l) => named(l) === loop || l.label === loop || named(l) === `.${loop}` || (/^0x/i.test(loop) && named(l).toLowerCase() === loop.toLowerCase()));
+    const hits = loops.flatMap((l, i) => (named(l) === loop || l.label === loop || named(l) === `.${loop}` || (/^0x/i.test(loop) && named(l).toLowerCase() === loop.toLowerCase()) ? [i] : []));
+    const k = hits.length ? hits[0] : -1;
+    // the same label in several functions (numeric labels: "1:" ... "jnz 1b"): not a guess
+    if (hits.length > 1) return { error: `loop: ${JSON.stringify(loop)} names ${hits.length} loops (${hits.map((i) => `${i} in ${loops[i].function ?? 'no function'}`).join(', ')}): -func NAME or -loop N (0-based) picks one`, loops: [] };
     if (k < 0) return { error: `loop: ${JSON.stringify(loop)} is not the label of a loop${func ? ` in ${func}` : ''} (${loops.length ? `the loops: ${loops.map(named).join(', ')}` : 'the text has none'})`, loops: [] };
     loop = k;
   }
@@ -430,6 +441,8 @@ export function preparePaste(text, { loop = 'auto', func = null } = {}) {
         out.choice = 'body';
         out.pick = out.body;
       }
+      // the source line of each instruction of the pick (caveats.js names lines with them)
+      out.pick = { ...out.pick, lines: code.filter((x) => x.line >= out.pick.begin && x.line <= out.pick.end).map((x) => x.line) };
     }
   }
   // the exits: conditional branches (and jumps to .L labels) whose target the text does not define

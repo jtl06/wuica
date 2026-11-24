@@ -22,7 +22,7 @@ test('loop: a whole function (gcc -S) is analyzed at its loop; "whole" and an in
   assert.equal(fn.code, 0);
   assert.equal(fn.hex, loop.hex);
   assert.equal(fn.tp, loop.tp);
-  assert.deepEqual(fn.loop, { index: 0, count: 1, name: 'loop .L3', line: 23, endLine: 28, function: 'crc_a', depth: 1, instructions: 5 });
+  assert.deepEqual(fn.loop, { index: 0, count: 1, name: 'loop .L3', line: 23, endLine: 28, lines: [24, 25, 26, 27, 28], function: 'crc_a', depth: 1, instructions: 5 });
   const whole = await w.analyze('ZEN3', { source: fx('crc_a.s'), loop: 'whole' });
   assert.equal(whole.code, 0);
   assert.ok(whole.hex.length > fn.hex.length);
@@ -47,7 +47,7 @@ test('objdump lines: the loop at its address, and the alignment offset from it u
   const r = await w.analyze('SKL', { source: fx('psum.noraw'), options: { details: true } });
   assert.equal(r.code, 0);
   assert.equal(r.hex, '0314878914864' + '8ffc04839c175f2');
-  assert.deepEqual(r.loop, { index: 0, count: 1, name: 'loop 0x10', line: 14, endLine: 18, function: 'psum', depth: 1, instructions: 5, address: 16, alignmentOffset: 16 });
+  assert.deepEqual(r.loop, { index: 0, count: 1, name: 'loop 0x10', line: 14, endLine: 18, lines: [14, 15, 16, 17, 18], function: 'psum', depth: 1, instructions: 5, address: 16, alignmentOffset: 16 });
   assert.equal(w.summarize(r).instructions[0].frontEnd.offset, 16);
   const given = await w.analyze('SKL', { source: fx('psum.noraw'), options: { details: true, alignmentOffset: 0 } });
   assert.equal(w.summarize(given).instructions[0].frontEnd.offset, 0);

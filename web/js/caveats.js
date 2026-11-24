@@ -11,6 +11,12 @@
 //   exit       a loop with an exit before its branch (a search; a forward branch within the loop, an if, is not an
 //              exit): the exit's mispredict, once per call, is not modelled;
 //              with short trip counts it can cost more than the loop.
+//   paths      a conditional branch before the last instruction whose target is inside the block (an if/else, or a
+//              second back edge: clang's remainder loop of sum_mod, `jne .LBB0_9` back to the top and the latch to the
+//              middle): uiCA runs the block straight through, so both sides of the branch are simulated one after the
+//              other, while a real iteration takes one. Named by source line when the response has the lines of the
+//              picked span (response.loop.lines, the package's analyze), else by instruction. Region markers around one
+//              side analyze that side.
 //   split      loads at an offset that is not a multiple of their width (ymmword ptr [rdi+rax*4+0x4]): with a base
 //              aligned to the width, some of them cross a 64-byte line (split loads cost extra). Per CPU (`config`, its
 //              configuration in uarch.json): where splitLoadCycles is 0 (the stock Intel models) no crossing is charged,
@@ -101,7 +107,7 @@ export function memOperand(label) {
   return { mnemonic, first: ops.indexOf('[') <= (ops.indexOf(',') < 0 ? ops.length : ops.indexOf(',')), size: SIZE[String(m[1] ?? '').toLowerCase()] ?? null, base, index, disp, text: m[0].replace(/^\w+ ptr /, '') };
 }
 
-// [{id, text, title, rows}] (rows: indices into response.rows), in the order rmw-index, exit, split; [] if none.
+// [{id, text, title, rows}] (rows: indices into response.rows), in the order rmw-index, paths, exit, split; [] if none.
 // config: the CPU's configuration in uarch.json (configs[response.arch]); only splitLoadCycles is read. Without it, as on
 // a CPU without a split-load cost. Kept per response and split-load cost (the result view is drawn again on every
 // change of its own controls).
@@ -113,7 +119,7 @@ export function caveats(response, config = null) {
   if (kept?.has(splitCost)) return kept.get(splitCost);
   const rows = Array.isArray(response?.rows) ? response.rows : [];
   const out = [];
-  const rmw = [], split = [], early = [];
+  const rmw = [], split = [], early = [], inside = [];
   const loads = new Map(), stores = new Map();
   let last = -1, total = 0;
   const offset = new Map();
@@ -127,6 +133,7 @@ export function caveats(response, config = null) {
       const v = /^0x[0-9a-f]+$/i.test(op ?? '') ? Number(BigInt.asIntN(64, BigInt(op))) : null;
       const to = v === null ? null : offset.get(row) + v;
       if (to === null || to < 0 || to >= total) early.push(row);
+      else inside.push(row);
     }
     const m = memOperand(x.label);
     if (!m) return;
@@ -148,6 +155,16 @@ export function caveats(response, config = null) {
     const r = [...new Set(hit)].sort((a, b) => a - b);
     out.push({ id: 'rmw-index', text: 'store forwarding', rows: r,
       title: `a read-modify-write to an indexed address (${some(rows, r)}): when iterations hit the same address (repeated data), each waits for the previous store; not modelled` });
+  }
+  // a branch within the block: both sides are simulated
+  if (inside.length) {
+    const instrRows = rows.flatMap((x, row) => (x?.kind === 'instr' ? [row] : []));
+    const lines = Array.isArray(response?.loop?.lines) && response.loop.lines.length === instrRows.length ? response.loop.lines : null;
+    const where = inside.map((row) => { const k = instrRows.indexOf(row); return lines ? lines[k] : k + 1; });
+    const at = `${lines ? 'line' : 'instruction'}${where.length > 1 ? 's' : ''} ${where.join(', ')}`;
+    const one = inside.length === 1;
+    out.push({ id: 'paths', text: 'both paths', rows: inside,
+      title: `both sides of the branch${one ? '' : 'es'} at ${at} (${[...new Set(inside.map((row) => String(rows[row].label).trim().split(/\s+/)[0]))].join(', ')}) are simulated, one after the other; a real iteration takes one, so the cycles per iteration (and the step) count both. To analyze one side, put # wuica-begin and # wuica-end around it` });
   }
   // an exit before the loop's branch
   if (response?.mode === 'loop' && early.length) {

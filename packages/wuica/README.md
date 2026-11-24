@@ -36,12 +36,20 @@ objdump -d dot.o | npx wuica                   # objdump output: the loop's real
   force one.
 - **Per iteration.** `tp` is cycles per iteration of the loop as the compiler wrote it. Compilers unroll and vectorize
   (×8, ×16, ×32 elements per iteration), so compare per element: `-per N` prints `Per element: … cycles` (JSON
-  `perElement`); without it, stderr shows the loop's step when it can (`step: rcx += 8 per iteration`).
+  `perElement`; under 0.1 with 3 significant digits, `0.0625`); without it, stderr shows the loop's step when it can,
+  in the register's units: `rcx += 8 per iteration (index; ×4 bytes in [rdi+rcx*4])` is 8 elements of 4 bytes,
+  `r13 += 64 per iteration (bytes; the base of [r13+0x20])` is 64 bytes (16 floats: `-per 16`), `(register step)` a
+  counter no address uses.
 - **Which loop.** A whole function or file is analyzed at one loop: the deepest one (clang's
   `# =>This Inner Loop Header` notes count), among equals the first in the code. That can be a remainder loop: clang
   often emits it before the main loop, gcc after it. Stderr says what was picked and how many others there are;
   `-loops` lists them (index, label, function, lines, instructions, depth, auto), `-loop N` (0-based) or
-  `-loop LABEL` picks one, `-func NAME` keeps one function's loops, `-loop whole` analyzes the whole text.
+  `-loop LABEL` picks one, `-func NAME` keeps one function's loops, `-loop whole` analyzes the whole text. A label
+  that names loops in several functions (`1:` … `jnz 1b`) is an error that lists them; `-func` or the index picks one.
+- **Branches inside the loop.** uiCA runs the analyzed code straight through: in a loop with an if/else (or two back
+  edges, as clang's remainder loops often have), both sides of the branch are simulated, one after the other, while a
+  real iteration takes one. A `Not modelled: both paths: both sides of the branch at line N …` line (table note
+  `both paths`; JSON caveat `paths`) says so. To analyze one side, put `# wuica-begin` and `# wuica-end` around it.
 - **One input per run**: a file, `-` or nothing for stdin, a hex argument, `-hex` or `-raw FILE` (bare machine code:
   for an object file, `objdump -d file.o | wuica`).
 - **Tables.** `-arch A,B,C` prints one row per CPU; `-` means unknown (uiCA names no single bottleneck; the notes
@@ -51,9 +59,18 @@ objdump -d dot.o | npx wuica                   # objdump output: the loop's real
   limit, and `Not modelled:` lines.
 - **Exit status**: 0 ok, 1 bad request or usage, 2 assembler error, 3 the analysis failed; with several CPUs, the
   largest of their codes, which is also the JSON's `code`. A reader that closes the pipe (`| head`) does not change it.
+- **What if** (`-whatif`): a table per CPU, in cycles per original iteration, or per element with `-per N`. With
+  `-TPonly`, one `variant cycles` line per variant after the throughput (`acc2 16.00`; with `-per`, `acc2 16.00
+  2.00`; with several CPUs, each line starts with the CPU). Estimates (`>=` in the table) are printed as plain numbers.
 - **JSON** (`-json`): one CPU gives the analyze response (`tp`, `bottlenecks`, `limits`, `rows`, `criticalPath`,
   `insights`, `loop`, `syntax`, and `perElement` / `whatIf` when asked); several give `{code, hex, loop, stderr,
-  results: [{arch, tp, bottlenecks, limits, decodeErrors, perElement?, caveats?}]}` and `whatIf: {ARCH: …}`.
+  results: [{arch, tp, bottlenecks, limits, decodeErrors, perElement?, caveats?}]}`. The shapes are the same for one
+  CPU and several: `whatIf` is keyed by CPU (`{SKL: {tp, variants: [{id, tp, …, perElement?}], perElement?}}`), and a
+  caveat is `{id, text, title, instructions}` (in `insights.caveats` with one CPU, `results[].caveats` with several).
+  Types: `CliAnalyzeJson`, `CliCompareJson`, `CliWhatIf` in index.d.ts. `--version -json` gives `{wuica, uiCA:
+  {repository, commit, branch}, node}`: the uiCA commit whose data and model the package has.
+- **Syntax mistakes.** When the assembler fails, a `hint:` line names a line with the other syntax's operands (mixed
+  AT&T and Intel lines, a `.intel_syntax` directive over AT&T code, `mov rdx, $8` in Intel code) and the flag to try.
 - No colours and no links, on a terminal or not.
 
 ## What the numbers mean
@@ -246,8 +263,8 @@ Request:
   `stderr`. An undefined target of a `jmp` gives a warning (it is encoded as a 32-bit jump to an external symbol).
   objdump lines with their bytes are assembled as those bytes. With addresses, the alignment offset is the analyzed
   code's address modulo 64, unless `options.alignmentOffset` is given. When something other than the whole text was
-  analyzed, the response has `loop`: `{index, count, name, line, endLine, address?, alignmentOffset?}` (`name`:
-  `"loop .L3"`, `"loop 0x10"`, `"body"`).
+  analyzed, the response has `loop`: `{index, count, name, line, endLine, lines?, address?, alignmentOffset?}` (`name`:
+  `"loop .L3"`, `"loop 0x10"`, `"body"`; `lines`: the source line of each instruction).
   Region markers (`# LLVM-MCA-BEGIN` … `# LLVM-MCA-END`, `# wuica-begin` … `# wuica-end`, IACA's byte markers) select
   the first marked region. A `;` that starts a line is a comment. After a statement, LLVM reads `;` as a separator. If
   what follows assembles, it is assembled, with a note in `stderr` naming it (`';' separates statements: 'call helper'
@@ -326,7 +343,9 @@ limit explains),
 instructions: [{index, instr, share}]}`: the largest shares of the binding resource, or of the largest limit), and
 `caveats` (only if any: `[{id, text, title, instructions}]`, known blind spots of the model that the block meets:
 `rmw-index` a read-modify-write to an indexed address, whose store forwarding between iterations depends on the data;
-`exit` an exit before the loop's branch, whose mispredict is not modelled; `split` loads at an offset that is not a
+`paths` a conditional branch inside the block (an if/else, a second back edge), both of whose sides are simulated one
+after the other while a real iteration takes one (named by its source line); `exit` an exit before the loop's branch,
+whose mispredict is not modelled; `split` loads at an offset that is not a
 multiple of their width, which may cross a cache line: on the CPUs whose model charges line crossings (ZEN3, ADL-P,
 ICX: `splitLoadCycles` in uarch.json) only the loads whose address the model cannot follow (an address register written
 other than by adding an immediate); the web page shows them in one line under the throughput). With `options.details` (MCP:

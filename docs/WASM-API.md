@@ -239,7 +239,7 @@ gcc's `view` operand of `.loc`, which LLVM rejects, is dropped.
 For an analysis, pasted assembly goes through `web/js/loop-find.js` before the regions above (the npm package has a copy
 in `packages/wuica/lib/web`). The option is `loop`: `"auto"` (the default), `"whole"` (never a pick), the index of a
 loop (0-based: the deepest first, then in code order) or its label; `func` keeps one function's loops. The page shows the choice as a select under the input when it matters; the API
-returns `loop: {index, count, name, line, endLine, address?, alignmentOffset?}` when something other than the whole text
+returns `loop: {index, count, name, line, endLine, lines?, address?, alignmentOffset?}` (`lines`: the source line of each instruction) when something other than the whole text
 was analyzed. In `"auto"`:
 
 - **Loops**: backward branches to a label or an address; several branches back to one label are one loop. A span with a
@@ -271,7 +271,7 @@ Only the package's CLI takes `-loop`; the native CLI (`crates/wuica-cli`) reads 
 
 Not in this module's response; the package computes them (`packages/wuica/README.md`, "Compact form"):
 `insights.binding` (exactly `bottlenecks`, `Divider` included), `insights.largest` (when `bottlenecks` is empty: the
-largest limit, the nearest bound), `insights.caveats` (known blind spots the block meets: `rmw-index`, `exit`, `split`;
+largest limit, the nearest bound), `insights.caveats` (known blind spots the block meets: `rmw-index`, `paths` (a branch inside the block: both sides simulated), `exit`, `split`;
 `split` depends on the CPU's `splitLoadCycles`), and `what_if`'s `acc2`/`acc3`/`acc4`/`acc8` variants (N
 accumulators: the chain's register renamed in each unrolled copy; refused, with a reason, for a chain through memory,
 flags, an implicit operand, the induction variable, or a register also used off the chain) with `accumulators.best`.

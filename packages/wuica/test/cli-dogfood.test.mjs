@@ -152,7 +152,7 @@ test('9. -whatif: the variants per CPU; accumulators on clang\'s dot (the chain 
   assert.match(p.out, /What if \(SKL\)[\s\S]*What if \(ZEN3\)/);
   assert.match(p.out, /2 accumulators +- +rcx's running value is also read off the chain \(mov qword ptr \[rdi\+rdx\*8\], rcx\): it cannot be split/);
   const j = JSON.parse(run([fx('dot.hsw.s'), '-whatif', '-json']).out);
-  assert.equal(j.whatIf.variants.find((v) => v.id === 'acc2').tp, 16);
+  assert.equal(j.whatIf.SKL.variants.find((v) => v.id === 'acc2').tp, 16);
 });
 
 test('10. -per N: cycles per element in text and JSON; the induction step as a hint', () => {
@@ -162,6 +162,6 @@ test('10. -per N: cycles per element in text and JSON; the induction step as a h
   assert.equal(JSON.parse(run([fx('dot.hsw.s'), '-per', '8', '-json']).out).perElement, 4);
   const t = run([fx('dot.hsw.s'), '-per', '8', '-arch', 'SKL,ZEN3', '-json']);
   assert.deepEqual(JSON.parse(t.out).results.map((x) => x.perElement), [4, 4]);
-  assert.match(run([fx('dot.hsw.s')]).err, /^step: rcx \+= 8 per iteration \(-per N: cycles per element\)$/m);
-  assert.deepEqual(inductionSteps({ mode: 'loop', rows: [{ kind: 'instr', label: 'add rax, qword ptr [rdi+rcx*8]' }, { kind: 'instr', label: 'add rcx, 0x4' }, { kind: 'instr', label: 'cmp rcx, rdx' }] }), ['rcx += 4']);
+  assert.match(run([fx('dot.hsw.s')]).err, /^step: rcx \+= 8 per iteration \(index; ×4 bytes in \[rdi\+rcx\*4\]\); -per N \(N elements per iteration\): cycles per element$/m);
+  assert.deepEqual(inductionSteps({ mode: 'loop', rows: [{ kind: 'instr', label: 'add rax, qword ptr [rdi+rcx*8]' }, { kind: 'instr', label: 'add rcx, 0x4' }, { kind: 'instr', label: 'cmp rcx, rdx' }] }), ['rcx += 4 per iteration (index; ×8 bytes in [rdi+rcx*8])']);
 });

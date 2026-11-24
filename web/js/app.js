@@ -883,7 +883,8 @@ async function run({ auto = false } = {}) {
     const prevArch = lastView?.archKey;
     const tell = !auto || (prevArch !== undefined && prevArch !== archKey);
     lastView = {
-      response, request, elapsedMs, hex, byteCount: bytes.length, inputMode: state.mode,
+      // the source lines of the picked code, for the caveats that name a line (caveats.js)
+      response: response && !response.error && srcA?.lines && !response.loop ? { ...response, loop: { lines: srcA.lines } } : response, request, elapsedMs, hex, byteCount: bytes.length, inputMode: state.mode,
       archKey, archTitle: archTitle(archKey, item.experimental), experimental: item.experimental,
       shown: response && !response.error && Array.isArray(response.rows) ? branchLabels(response.rows, srcA) : null,
     };

@@ -376,7 +376,7 @@ export async function assembleMarked(assemble, text, opts = {}) {
   if (!prep) return r;
   const loop = prep.choice === null ? null : {
     index: prep.choice === 'body' ? null : prep.choice, count: prep.loops.length, name: loopName(prep),
-    line: prep.pick.begin, endLine: prep.pick.end, address: prep.address, alignment: prep.alignment,
+    line: prep.pick.begin, endLine: prep.pick.end, lines: prep.pick.lines, address: prep.address, alignment: prep.alignment,
   };
   const out = { ...r, loop, loops: prep.loops, body: prep.body, choosable: prep.choosable, alignment: prep.alignment };
   if (r.ok && prep.notes.length) out.diagnostics = [...r.diagnostics, ...prep.notes];
