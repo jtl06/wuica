@@ -1480,9 +1480,10 @@ async function start() {
 }
 
 // cb, once the first result is on the page (then the assembler loads without delaying it)
+// (it marks the moment as 'wuica-first-result' in the performance timeline: tests-js/web_host_browser.mjs)
 function whenShown(cb) {
   if (el.results.dataset.run) { cb(); return; }
-  const o = new MutationObserver(() => { if (el.results.dataset.run) { o.disconnect(); requestAnimationFrame(() => setTimeout(cb, 0)); } });
+  const o = new MutationObserver(() => { if (el.results.dataset.run) { o.disconnect(); performance.mark?.('wuica-first-result'); requestAnimationFrame(() => setTimeout(cb, 0)); } });
   o.observe(el.results, { attributes: true, attributeFilter: ['data-run'] });
 }
 

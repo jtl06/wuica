@@ -48,7 +48,8 @@ function build(tag) {
 const sockets = new Set();
 let root = dist;
 const requests = []; // the paths the page requested, in order
-const server = http.createServer(hostHandler(() => root, { onRequest: (p) => requests.push(p.replace(/\?.*$/, '')) }));
+const requestTimes = []; // when (Date.now())
+const server = http.createServer(hostHandler(() => root, { onRequest: (p) => { requests.push(p.replace(/\?.*$/, '')); requestTimes.push(Date.now()); } }));
 server.on('connection', (s) => { sockets.add(s); s.on('close', () => sockets.delete(s)); });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const origin = `http://127.0.0.1:${server.address().port}`;
@@ -97,12 +98,13 @@ const PRECOMPRESSED = /\.(?:gz|br|woff2|png)$/;
   check(bad.length === 0, 'host: every file above 50 kB is of a type the host compresses, or compressed already', bad.join(', '));
 }
 // the budgets: what a first visit and the idle prefetch of the tables transfer (the numbers of this build; a growth of
-// more than 10% fails). First visit: the files requested until the first result (the page, its modules, the analyzer, the
-// assembler, uarch.json, the tables of the CPUs shown; the service worker's precache runs meanwhile). Tables: all 15,
-// which the idle prefetch fetches (those of the first visit included). Measured on the build of 0.1.9's hotfix with
-// tables made by zlib at level 9 (web/build.sh without zopfli: first visit 2,383,630 bytes at most, the tables 939 kB;
-// with zopfli 797 kB).
-const BUDGET = { firstVisit: 2_400_000, tables: 940_000 };
+// more than 10% fails). First visit: the files requested until the first result (the page, its modules, the analyzer,
+// uarch.json, the tables of the CPUs shown; the service worker's precache runs meanwhile; not the assembler, which the
+// default example does not wait for: app.js loads it after the first result). Tables: all 15, which the idle prefetch
+// fetches (those of the first visit included). Measured on the build of 0.1.9's hotfix with tables made by zlib at
+// level 9 (web/build.sh without zopfli: first visit 2,383,630 bytes at most with the assembler, the tables 939 kB; with
+// zopfli 797 kB); without the assembler (0.1.10): 1,195,335 bytes at most in three runs.
+const BUDGET = { firstVisit: 1_200_000, tables: 940_000 };
 const sizeOf = (p) => { const f = path.join(dist, p.replace(/^\//, '')); try { return fs.statSync(f).isFile() ? transferSize(f) : 0; } catch { return 0; } };
 
 // ---- 2. the page in Chrome
@@ -174,9 +176,13 @@ try {
 
   // first visit (no worker yet) at the address that the host redirects
   await goto(`${origin}/index.html`);
+  // (the requests until the default example's result is on the page: the moment it appeared, from the page's clock)
+  await waitFor(`document.querySelector('#result-body .tp .value')`, 60000);
+  const shownAt = await evaluate(`return performance.timeOrigin + (performance.getEntriesByName('wuica-first-result')[0]?.startTime ?? performance.now());`);
+  const firstRequests = new Set(requests.filter((p, i) => p !== '/index.html' && requestTimes[i] <= shownAt));
+  check(!firstRequests.has('/wuica_asm.wasm'), 'first visit: the default example\'s result does not wait for the assembler', [...firstRequests].filter((p) => /wasm/.test(p)).join());
   const first = await works('first visit, at /index.html');
   check(first.path === '/', 'first visit: /index.html is redirected to /', first.path);
-  const firstRequests = new Set(requests.filter((p) => p !== '/index.html'));
   // the worker has installed (everything cached) and controls the page
   const installed = await waitFor(`/works offline/.test(document.getElementById('status').textContent)`, 60000);
   if (!(await evaluate('return !!navigator.serviceWorker.controller'))) await reload();
