@@ -194,10 +194,9 @@ export function codeModeError(text) {
   return null;
 }
 
-// GNU as's {load}/{store} pseudo-prefixes at the start of a line, which LLVM's assembler rejects.
-export function stripHints(text) {
-  return text.replace(/^([ \t]*)\{(?:load|store)\}[ \t]*/gm, '$1');
-}
+// GNU as's {load}/{store} pseudo-prefixes, clang 23's .prefalign: web/js/assembler.js (shared with the page)
+export { stripHints } from './web/assembler.js';
+import { stripHints } from './web/assembler.js';
 
 const OUT_CAP = 1 << 20;
 const ERR_CAP = 1 << 16;

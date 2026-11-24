@@ -183,6 +183,19 @@ test('profiles: objdump -dS keeps the source lines, perf annotate --stdio the sa
   assert.equal(p.tp, (await w.analyze('SKL', { hex: '0fb6140fc1ea074801d048ffc14839ce75ee', options: { alignmentOffset: 32 } })).tp);
 });
 
+test('clang 23 -S output as is: .prefalign is read as the .p2align clang 22 wrote', async () => {
+  // real output of Homebrew clang 23.1.6: clang --target=x86_64-linux-gnu -O2 -S tests-js/fixtures/profiles/sum.c
+  const s = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/profiles/clang23-sum.s'), 'utf8');
+  assert.match(s, /^\t\.prefalign\t4, \.Lfunc_end0, nop$/m);
+  const r = await w.analyze('SKL', { source: s });
+  assert.equal(r.code, 0, r.error);
+  assert.equal(r.loop.function, 'dot');
+  const p2 = await w.analyze('SKL', { source: s.replace(/\.prefalign\t(\d+).*$/gm, '.p2align $1') });
+  assert.equal(r.tp, p2.tp);
+  assert.equal(r.hex, p2.hex);
+  assert.equal((await w.assemble(s)).code, 0);
+});
+
 test('SKL result in detail', async () => {
   const r = await w.analyze('SKL', { hex: HEX });
   assert.equal(r.tp, 2);
