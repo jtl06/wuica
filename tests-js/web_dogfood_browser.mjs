@@ -167,6 +167,8 @@ try {
       $('cmp-ab').click(); await settle();
       // B, another text first (so that A → B replaces it), then A → B
       pasteInto($('code-b'), ${js(fx('fnv.s'))}); await settle();
+      // other code of another size, at the same elems: ordinary A–B, no tag
+      set($('b-work'), '32'); await settle(); out.otherCode = odd();
       $('ab-copy').click(); await settle(); pick('b-arch', 'ICL'); await settle();
       out.copy = { bLoop: $('loop-chip-b')?.selectedOptions[0]?.textContent, bWork: $('b-work').value, speed: speed(), odd: odd() };
       // B's loop picked other than A's: said in the headline (the same text)
@@ -195,6 +197,7 @@ try {
     check(r.narrow.second && !r.narrow.first, 'B7: at 1200 × 700 the tag is on the second line (the verdict keeps its room on the first)', js(r.narrow));
     check(r.hex.bHex && r.hex.odd === '', 'B7: both sides machine code of one text: no "other loops"', js(r.hex));
     check(r.copy.speed === '1.50 faster' && r.copy.odd === '', 'B7: B on ICL: 1.50× faster (not 4.51×), nothing odd', js(r.copy));
+    check(r.otherCode === '', 'B7: other code of another size at the same elems: no tag (ordinary A–B)', js(r.otherCode));
     check(/\.LBB0_8\b/.test(r.edited), 'B7: an edit of B keeps its loop', r.edited);
     check(/[&#]blp=\d/.test(r.hash), 'B7: the link has B\'s loop (blp)', r.hash);
     check(r.other.odd === 'other loops' && /A \.LBB0_8, B \.LBB0_16/.test(r.other.title), 'B7: other loops of the same text: said in the headline', js(r.other));

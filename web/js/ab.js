@@ -474,18 +474,14 @@ export function createAB(api) {
         sides.length === 1 ? [' ', tag(sides[0])] : null]));
   }
 
-  // {text, title} when A and B analyze loops with other labels of one text, or other instruction counts with the same
-  // elements per iteration; else null
+  // {text, title} when A and B analyze loops with other labels of one text (A → B of a file, then another loop picked on
+  // one side); else null. (Other code of other sizes is ordinary A–B: not said.)
   function mismatch(view) {
-    const { a, b, cmp } = view;
+    const { a, b } = view;
     if (!ok(a?.response) || !ok(b?.response)) return null;
     const label = (s) => String(s.loop ?? 'all of it').replace(/^loop /, '');
     if (a.text === b.text && a.loop !== b.loop) {
       return { text: 'other loops', title: `A and B are the same text but analyze other loops: A ${label(a)}, B ${label(b)} (each side's loop menu picks one)` };
-    }
-    const n = (s) => s.response.rows.filter((x) => x.kind === 'instr').length;
-    if (cmp.workA === cmp.workB && n(a) !== n(b)) {
-      return { text: `${n(a)} vs ${n(b)} instr`, title: `A has ${n(a)} instructions, B ${n(b)}, with the same elements per iteration (${cmp.workA}): if an iteration of one does more work, set each side's elems` };
     }
     return null;
   }
