@@ -128,6 +128,20 @@ test('server: a client out of tokens is refused before its body is read; an abor
     assert.ok(logs.slice(0, 6).every((l) => l.aborted === undefined));
     await new Promise((r) => setTimeout(r, 100));
     assert.equal(logs.length, 7, 'one line per request');
+    // a what-if aborted while it runs (64 offsets of ~20 ms each): logged once its work has stopped, with the jobs it ran
+    const body = JSON.stringify({ hex: '48f7f1'.repeat(20), options: { minIterations: 200 }, variants: ['align'] });
+    await new Promise((resolve) => {
+      const req = http.request({ host: '127.0.0.1', port, path: '/api/what-if/SKL', method: 'POST', headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.42' } });
+      req.on('error', () => resolve(null));
+      req.end(body);
+      setTimeout(() => { req.destroy(); resolve(null); }, 150);
+    });
+    await wait(() => logs.length >= 8);
+    const ab = logs[7];
+    assert.equal(ab.status, 499);
+    assert.equal(ab.aborted, true);
+    assert.equal(ab.gone, true);
+    assert.ok(ab.jobs >= 1 && ab.jobs < 65, JSON.stringify(ab));
   } finally { await s.close(); }
 });
 

@@ -136,6 +136,8 @@ export async function createApp(options = {}) {
       });
       req.on('end', () => { if (!done) { done = true; resolve(Buffer.concat(chunks).toString('utf8')); } });
       req.on('error', (e) => { if (!done) { done = true; reject(e); } });
+      // (a connection closed before the end of the body: no body will come)
+      req.on('close', () => { if (!done) { done = true; reject(new HttpError(400, 'the client closed the connection before the end of the body')); } });
     });
   }
 
@@ -383,23 +385,31 @@ export async function createApp(options = {}) {
       url = new URL('http://localhost/');
     }
     // one log line per request: when the response has been sent, or when the connection closed before that (aborted;
-    // status 499 if no status was sent)
+    // status 499 if no status was sent), then once the request's work has ended (with its jobs, times and gone)
     let logged = false;
+    /** @type {Promise<void> | null} */
+    let routed = null;
     const logRequest = () => {
       if (logged) return;
       logged = true;
       const aborted = !res.writableFinished;
-      const entry = { method: req.method, path: url.pathname.slice(0, 200), status: aborted && !res.headersSent ? 499 : res.statusCode, ms: Math.round((performance.now() - t0) * 10) / 10, ...(aborted ? { aborted: true } : {}) };
-      for (const k of ['arch', 'instructions', 'bytes', 'code', 'tool', 'rpc', 'queueMs', 'runMs', 'jobs', 'parts', 'timedOut', 'gone', 'rateLimited', 'busy', 'error']) {
-        if (ctx[k] !== undefined) entry[k] = typeof ctx[k] === 'number' && k.endsWith('Ms') ? Math.round(ctx[k] * 10) / 10 : ctx[k];
-      }
-      log(entry);
+      const status = aborted && !res.headersSent ? 499 : res.statusCode;
+      const write = () => {
+        const entry = { method: req.method, path: url.pathname.slice(0, 200), status, ms: Math.round((performance.now() - t0) * 10) / 10, ...(aborted ? { aborted: true } : {}) };
+        for (const k of ['arch', 'instructions', 'bytes', 'code', 'tool', 'rpc', 'queueMs', 'runMs', 'jobs', 'parts', 'timedOut', 'gone', 'rateLimited', 'busy', 'error']) {
+          if (ctx[k] !== undefined) entry[k] = typeof ctx[k] === 'number' && k.endsWith('Ms') ? Math.round(ctx[k] * 10) / 10 : ctx[k];
+        }
+        log(entry);
+      };
+      if (aborted && routed) routed.then(write); else write();
     };
     res.on('finish', logRequest);
     res.on('close', logRequest);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     try {
-      await route(req, res, url, ctx);
+      const p = route(req, res, url, ctx);
+      routed = p.then(() => {}, () => {});
+      await p;
     } catch (e) {
       const status = e instanceof HttpError ? e.status : 500;
       if (status === 500) ctx.error = String(e?.message ?? e).slice(0, 200);

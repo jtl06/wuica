@@ -155,8 +155,8 @@ export class Facade {
 
   // A request that runs several analysis jobs (what-if, diff): the library's interface for them with one deadline for
   // all (the budget of one job, as a compare's parts share it); nothing more is started once it has passed, a job
-  // refused (busy) or the client has gone (ctx.gone): every later job gets that failure, with notRun ("deadline",
-  // "the server is busy", ...: what-if marks the variants without a result with it). ctx gets the totals: queueMs,
+  // refused (busy) or the client has gone (ctx.gone): every later job gets that failure (the deadline's with notRun
+  // "deadline": what-if marks the variants without a result with it). ctx gets the totals: queueMs,
   // runMs, jobs, and the instructions and bytes of the first job. stopped(): that failure or null; done(): the jobs
   // that finished.
   #session(ctx, what) {
@@ -171,7 +171,7 @@ export class Facade {
     ctx.queueMs = 0; ctx.runMs = 0; ctx.jobs = 0;
     const job = async (check, op, args) => {
       if (stop) return stop;
-      if (ctx.gone) return (stop = refuse(499, 'the client closed the connection', { notRun: 'the client closed the connection' }));
+      if (ctx.gone) return (stop = refuse(499, 'the client closed the connection'));
       const bad = check();
       if (bad) return bad;
       const left = deadline - performance.now();
@@ -184,7 +184,7 @@ export class Facade {
       ctx.runMs += c.runMs ?? 0;
       for (const k of ['instructions', 'bytes']) if (ctx[k] === undefined && c[k] !== undefined) ctx[k] = c[k];
       if (c.timedOut) return (stop = timeUp());
-      if (c.busy) { ctx.busy = true; return (stop = Object.assign(r, { notRun: 'the server is busy' })); }
+      if (c.busy) { ctx.busy = true; return (stop = r); }
       done++;
       return r;
     };
@@ -197,11 +197,13 @@ export class Facade {
   }
 
   // The what-if experiments (the package's whatIfRequest, as the MCP tool what_if): each variant one analysis job, all
-  // within one deadline (#session). A deadline (or a busy server) after the base: what finished, the other variants
-  // "not run: deadline" (notRun on the result); before it: the failure.
+  // within one deadline (#session). The deadline after the base: what finished, the other variants "not run: deadline"
+  // (notRun on the result); before it: the failure. A busy server or a client that has gone: that failure.
   async whatIf(arch, request, ctx = {}) {
-    const { w } = this.#session(ctx, 'what-if');
+    const { w, stopped } = this.#session(ctx, 'what-if');
     const r = /** @type {any} */ (await whatIfRequest(w, arch, request));
+    const stop = stopped();
+    if (stop && !stop.notRun) return stop;
     if (r.code && r.notRun) delete r.notRun;
     return r;
   }
