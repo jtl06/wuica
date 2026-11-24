@@ -274,6 +274,26 @@ try {
     await page.close();
   }
 
+  // ---- a what-if number under its limit is shown at the limit everywhere on the page (whatif-core.js shownOutcome) -------
+  {
+    const page = await fresh();
+    const r = await page.eval(`${W}
+      const s = $('examples'); s.value = 'dot1'; s.dispatchEvent(new Event('change', { bubbles: true })); await settle();
+      document.querySelector('.view-tab[data-tab="try"]').click();
+      await until(() => /★/.test($('whatif')?.innerText ?? ''), 60000); await wait(300);
+      const sim = /simulated ([\\d.]+)/.exec(document.querySelector('#whatif tr[data-id="acc8"] .wi-tp').title)?.[1];
+      const copied = []; navigator.clipboard.writeText = async (t) => { copied.push(t); };
+      document.querySelector('#result-body .view-tabs .ws-copy').click(); await wait(200);
+      document.dispatchEvent(new CustomEvent('wuica:copy', { detail: { tab: 'all', format: 'md' } })); await wait(200);
+      const texts = [document.body.innerText, ...copied];
+      for (const t of ['bound', 'table']) { document.querySelector('.view-tab[data-tab="' + t + '"]').click(); await wait(600); texts.push(document.body.innerText); }
+      const raw = texts.flatMap((t) => t.split('\\n')).filter((l) => sim && l.includes(sim) && !l.includes('(simulated ' + sim + ')'));
+      return { sim, shown: document.querySelector('#whatif tr[data-id="acc8"] .wi-tp')?.textContent, raw, copies: copied.length };`, { timeout: 120000 });
+    check(r.sim === '3.98' && r.copies === 2, 'what-if: dot1\'s 8 accumulators simulate 3.98 (under the Ports limit)', js(r));
+    check(r.raw.length === 0, 'what-if: the page, the try Markdown and "copy all" show 3.98 only as "(simulated 3.98)"', js(r.raw));
+    await page.close();
+  }
+
   // ---- B6: an assembler error of the old code goes when a Compiler Explorer link replaces it (A, and B) ----------------
   {
     const page = await fresh();
