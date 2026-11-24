@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { hostHandler } from './static-host.mjs';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { CLASSIC_EXAMPLES } from '../web/js/examples.js';
-import { stopChrome } from './cdp.mjs';
+import { stopChrome, scrollbarFlags, testConditions } from './cdp.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(here, '..', 'web', 'dist');
@@ -82,7 +82,7 @@ const server = http.createServer(hostHandler(dist));
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const origin = `http://127.0.0.1:${server.address().port}`;
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-link-test-'));
-const proc = spawn(chrome, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${path.join(tmp, 'profile')}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--hide-scrollbars', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+const proc = spawn(chrome, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${path.join(tmp, 'profile')}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', ...scrollbarFlags(), 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
 const wsUrl = await new Promise((resolve, reject) => {
   let err = '';
   proc.stderr.on('data', (d) => { err += d; const m = /DevTools listening on (ws:\/\/\S+)/.exec(err); if (m) resolve(m[1]); });
@@ -139,6 +139,7 @@ async function openPage({ width = 1440, height = 900, mobile = false } = {}) {
   };
   page.theme = (t) => page.eval(`document.documentElement.dataset.theme = ${JSON.stringify(t)}; await new Promise((r) => setTimeout(r, 120)); return 1;`);
   for (const d of ['Runtime', 'Log', 'Page']) await page.cmd(`${d}.enable`);
+  await testConditions((m, a) => page.cmd(m, a)); // (cdp.mjs: scratch runs under another font, real scroll bars, a slower CPU)
   await page.cmd('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile });
   return page;
 }

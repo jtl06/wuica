@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import { findChrome, launch, Page, checker, ROOT, sleep } from './cdp.mjs';
+import { findChrome, launch, Page, checker, ROOT, sleep, testConditions } from './cdp.mjs';
 import { hostHandler } from './static-host.mjs';
 
 const chrome = findChrome();
@@ -39,6 +39,7 @@ async function open(ctx) {
   p.browser = browser; p.targetId = targetId;
   p.sessionId = (await browser.send('Target.attachToTarget', { targetId, flatten: true })).sessionId;
   for (const d of ['Runtime', 'Page']) await p.cmd(`${d}.enable`);
+  await testConditions((m, a) => p.cmd(m, a)); // (cdp.mjs: scratch runs under another font, real scroll bars, a slower CPU)
   return p;
 }
 try {

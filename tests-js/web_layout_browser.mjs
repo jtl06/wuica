@@ -5,7 +5,7 @@
 //    node tests-js/web_layout_browser.mjs [--chrome PATH]
 //
 // Skips (exit 0) if Chrome is not found.
-import { testConditions, stopChrome } from './cdp.mjs';
+import { testConditions, stopChrome, scrollbarFlags } from './cdp.mjs';
 import { LONG_TASK_MS } from './cdp.mjs'; // (the bound of the long-task checks)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -122,7 +122,7 @@ const HELPERS = `
 `;
 
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-layout-'));
-const proc = spawn(chrome, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--hide-scrollbars', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+const proc = spawn(chrome, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', ...scrollbarFlags(), 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
 const wsUrl = await new Promise((resolve, reject) => {
   let err = '';
   proc.stderr.on('data', (d) => { err += d; const m = /DevTools listening on (ws:\/\/\S+)/.exec(err); if (m) resolve(m[1]); });

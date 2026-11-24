@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { findChrome } from './chrome.mjs';
 import { hostHandler, compressedByHost, transferSize } from './static-host.mjs';
 import { BUDGET, SLACK } from './budgets.mjs';
-import { stopChrome, readSettled } from './cdp.mjs';
+import { stopChrome, readSettled, testConditions } from './cdp.mjs';
 import { DEFAULT_STATE, encodeState, decodeState } from '../web/js/url-state.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -136,6 +136,7 @@ try {
   sessionId = (await send('Target.attachToTarget', { targetId, flatten: true })).sessionId;
   const cmd = (method, params) => send(method, params, sessionId);
   for (const d of ['Runtime', 'Log', 'Page', 'Network']) await cmd(`${d}.enable`);
+  await testConditions(cmd); // (cdp.mjs: scratch runs under another font, real scroll bars, a slower CPU)
   const evaluate = async (expression) => {
     const r = await cmd('Runtime.evaluate', { expression: `(async () => { ${expression} })()`, awaitPromise: true, returnByValue: true });
     if (r.exceptionDetails) throw new Error('page: ' + (r.exceptionDetails.exception?.description ?? r.exceptionDetails.text));

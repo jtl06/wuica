@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { findChrome } from './chrome.mjs';
 import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
 import { DEFAULT_STATE, encodeState } from '../web/js/url-state.js';
-import { stopChrome } from './cdp.mjs';
+import { stopChrome, testConditions } from './cdp.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -101,6 +101,7 @@ async function openPage() {
     throw new Error('page did not load');
   };
   for (const d of ['Runtime', 'Page']) await page.cmd(`${d}.enable`);
+  await testConditions((m, a) => page.cmd(m, a)); // (cdp.mjs: scratch runs under another font, real scroll bars, a slower CPU)
   await page.cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
   page.close = () => page.cmd('Page.close').catch(() => {});
   return page;
