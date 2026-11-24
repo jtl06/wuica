@@ -94,7 +94,8 @@ export function createMca(env = {}) {
     const v = view, r = v?.response;
     const ok = r && !r.error && Array.isArray(r.rows) && !r.mock && v.hex;
     row.hidden = !ok;
-    if (!ok) { setCopy('mca', null); return; }
+    // (the copy cleared: the key too, so the text is made again when this code is shown again: its copy with it)
+    if (!ok) { setCopy('mca', null); key = ''; return; }
     const arch = v.archKey;
     const cpu = MCPU[arch];
     const instrs = r.rows.filter((x) => x.kind === 'instr').length;
@@ -102,7 +103,7 @@ export function createMca(env = {}) {
     const k = [v.hex, cpu, iterations, timeline, bottleneck].join('|');
     if (k === key) return;
     // (another result or other options: the text shown before is not copied for it)
-    if (!open) { setCopy('mca', null); return; }
+    if (!open) { setCopy('mca', null); key = ''; seq++; return; } // (a run still going gives no copy now)
     key = k;
     waitCopy('mca', "llvm-mca's text");
     const mine = ++seq;

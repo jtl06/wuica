@@ -109,6 +109,16 @@ try {
     check(/^j/.test(l.label) && !/0x[0-9a-f]{9,}/.test(l.label), 'SHA-256: the table shows its last branch with a label', l.label);
     for (const name of ['bytes', 'bound', 'deps']) check(l[name].n > 0 && !l[name].raw, `${name}: the copy has no 64-bit branch targets`, JSON.stringify(l[name]));
     check(l.bytes.has && l.deps.has, 'bytes, deps: the last branch is copied as the table shows it', JSON.stringify(l));
+    // the bound view where its top rows have a branch (SHA-256's have none; a branch not fused with the instruction before
+    // it has a uop of its own): the copy and the view show its label, not its 64-bit target
+    const b = await p.eval(`${PRE}
+      $('mode-asm').click(); await settle(); set($('code'), 'loop:\\n  add rax, 1\\n  nop\\n  jnz loop'); await done(() => $('run').click()); await settle();
+      tab('bound'); await settle(200);
+      const c = await copyBy(tabCopy());
+      return { text: c.text ?? '', rows: [...document.querySelectorAll('#bound-row .bd-ins')].map((e) => e.textContent), table: [...document.querySelectorAll('#result-body table.uops tbody th.first')].map((e) => e.textContent) };`, { timeout: 300000 });
+    const topRows = (b.text.split('top of')[1] ?? '').split('\n').filter((x) => x.startsWith('| \x60'));
+    check(topRows.some((x) => x.includes('\x60jnz loop\x60')) && !/0x[0-9a-f]{9,}/.test(b.text), 'bound: a branch in the top rows is copied with its label (jnz loop), not its 64-bit target', JSON.stringify({ topRows, text: b.text.slice(0, 300) }));
+    check(b.rows.includes('jnz loop') && !b.rows.some((x) => /0x[0-9a-f]{9,}/.test(x)), 'bound: the view shows the branch as the table and the copy do', JSON.stringify(b.rows));
 
     // jumps: the row drawn, in view and focused (after the layout has settled)
     const j = await p.eval(`${PRE}
