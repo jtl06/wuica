@@ -147,6 +147,15 @@ test('POST /api/what-if/<arch> with the variant align (64 analyses)', async () =
   assert.equal(m.text, markdown.whatIfAlignment(r.json));
 });
 
+test('clang -g -S output (NULs in its comments) through the server: analyze as the library', async () => {
+  const text = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/asm/dot-clang-O2-g.s'), 'utf8');
+  const r = await post(s.base, '/api/analyze/SKL', { source: text });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.code, 0, r.json.error);
+  assert.equal(r.json.tp, (await w.analyze('SKL', { source: text })).tp);
+  assert.ok(r.json.rows.filter((x) => x.kind === 'instr').every((x) => /^dot\.c:[34]$/.test(x.loc)));
+});
+
 test('POST /api/compare with per: cycles per element (one job or split into parts)', async () => {
   for (const archs of [['SKL', 'ZEN3'], undefined]) {
     const body = { hex: HEX, per: 4, ...(archs ? { archs } : {}) };

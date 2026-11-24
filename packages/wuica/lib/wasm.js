@@ -194,9 +194,10 @@ export function codeModeError(text) {
   return null;
 }
 
-// GNU as's {load}/{store} pseudo-prefixes, clang 23's .prefalign: web/js/assembler.js (shared with the page)
-export { stripHints } from './web/assembler.js';
-import { stripHints } from './web/assembler.js';
+// The text as the assembler module gets it (a NUL as a space, {load}/{store}, clang 23's .prefalign, ...): one
+// preparation, web/js/assembler.js prepareSource, shared with the page
+export { stripHints, prepareSource } from './web/assembler.js';
+import { prepareSource } from './web/assembler.js';
 
 const OUT_CAP = 1 << 20;
 const ERR_CAP = 1 << 16;
@@ -226,7 +227,7 @@ export class Assembler {
   assemble(text, syntax) {
     this.#live();
     const x = this.#x;
-    const src = enc.encode(stripHints(text) + '\0');
+    const src = enc.encode(prepareSource(text) + '\0');
     let textPtr = 0, outPtr = 0, errPtr = 0;
     try {
       textPtr = x.malloc(src.length); outPtr = x.malloc(OUT_CAP); errPtr = x.malloc(ERR_CAP);

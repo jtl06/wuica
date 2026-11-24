@@ -206,6 +206,28 @@ test('what-if carries the base\'s decode errors and warnings (also with align)',
   assert.equal(x.variants.find((v) => v.id === 'align').alignment.min, 4, 'written out: 4 cycles at the best offset');
 });
 
+test('clang -g -S output (NULs in the .debug_str comments): the library, the CLI and the MCP tool, with lines and .loc', async () => {
+  const { mcpTools, callTool } = await import('../lib/mcp.js');
+  const { execFileSync } = await import('node:child_process');
+  // real clang -O2 -g -S output: clang 22 (dot.c) and clang 23.1.6 (sum.c, -fdebug-prefix-map to /src)
+  for (const [file, src] of [['tests-js/fixtures/asm/dot-clang-O2-g.s', 'dot.c'], ['tests-js/fixtures/profiles/clang23-sum-g.s', 'sum.c']]) {
+    const text = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    assert.ok(text.includes('\0'), `${file} has NUL characters`);
+    assert.equal((await w.assemble(text)).code, 0, file);
+    const r = await w.analyze('SKL', { source: text });
+    assert.equal(r.code, 0, `${file}: ${r.error}`);
+    assert.equal(r.loop.function, 'dot');
+    const instr = r.rows.filter((x) => x.kind === 'instr');
+    assert.ok(instr.every((x) => Number.isInteger(x.line) && /^(dot|sum)\.c:[34]$/.test(x.loc)), file);
+    assert.deepEqual([...new Set(instr.map((x) => x.loc))], [`${src}:4`, `${src}:3`], 'written out: the loop body, then the loop control');
+    const cli = JSON.parse(execFileSync(process.execPath, [path.join(DIR, 'bin/wuica.js'), path.join(ROOT, file), '-json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
+    assert.equal(cli.tp, r.tp, `${file}: the CLI`);
+    const m = await callTool(mcpTools(w), 'analyze', { source: text, format: 'json' });
+    assert.ok(!m.isError, `${file}: the MCP tool`);
+    assert.deepEqual(JSON.parse(m.content[0].text).instructions.map((x) => x.loc), instr.map((x) => x.loc));
+  }
+});
+
 test('SKL result in detail', async () => {
   const r = await w.analyze('SKL', { hex: HEX });
   assert.equal(r.tp, 2);

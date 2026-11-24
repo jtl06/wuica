@@ -38,6 +38,14 @@ export function parseDiagnostics(text) {
   return out;
 }
 
+// The text as the module gets it, the one preparation for the page and the npm package (lib/wasm.js): no byte order
+// mark at the start (not code: LLVM would reject it), a NUL character as a space (the module reads a C string, which
+// ends at the first NUL: clang -g -S writes NULs into the comments of its .debug_str bytes, and the text after one,
+// with the labels it defines, would be lost), and stripHints. Lines and columns stay where they are.
+export function prepareSource(text) {
+  return stripHints(String(text).replace(/^\uFEFF/, '').replace(/\0/g, ' '));
+}
+
 // Removes GNU as's {load} / {store} pseudo-prefixes at the start of a line (LLVM 22 says "unknown prefix"), and reads
 // directives of newer compilers that the bundled LLVM 22 does not know: clang 23's `.prefalign LOG2, END, FILL` (a
 // function's preferred alignment) as `.p2align LOG2`, the alignment clang 22 wrote there. Lines stay where they are.
@@ -160,7 +168,7 @@ export class WasmAssembler {
     if (!(syntax in SYNTAX)) throw new TypeError(`unknown syntax: ${syntax}`);
     if (!this.#x) await this.#instantiate();
     // (a byte order mark at the start is not code: LLVM would reject it)
-    const plain = stripHints(String(text).replace(/^\uFEFF/, '').replace(/\0/g, ' '));
+    const plain = prepareSource(text);
     const mode = codeModeError(plain);
     if (mode) return { ok: false, diagnostics: [{ severity: 'error', ...mode }] };
     const source = new TextEncoder().encode(plain + '\0');
