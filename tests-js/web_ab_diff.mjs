@@ -7,6 +7,9 @@ import {
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { DEFAULT_STATE, encodeState, decodeState } from '../web/js/url-state.js';
 import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
+import { MINOR } from '../web/js/ab-diff.js';
+import { compare as compareMarkdown } from '../web/js/markdown.js';
+import { diffResult, diffText } from '../web/js/block-diff.js';
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -27,6 +30,25 @@ check(j(lcsPairs(['p', 'a', 'b', 's'], ['p', 'b', 'a', 's'], 1)) === j([[0, 0], 
 const COLS = ['MITE', 'MS', 'DSB', 'LSD', 'Issued', 'Exec.', 'Port 0', 'Port 1', 'Port 5', 'Port 6'];
 const instr = (label, ports, extra = {}) => ({ kind: 'instr', label, notes: extra.notes ?? '', values: [0, 0, 1, 0, extra.uops ?? 1, extra.uops ?? 1, ...ports] });
 const resp = (rows, extra = {}) => ({ arch: 'SKL', tp: 1, mode: 'loop', decodeErrors: 0, bottlenecks: ['Ports'], limits: [{ name: 'Ports', tp: 1 }], columns: COLS, rows, text: '', ...extra });
+// --- minor changes of uops (MINOR): left out of the Markdown and the text, kept by the JSON ---------------------------
+// (a user test's A–B Markdown listed "• same instruction, other uops" rows for port shifts of ±0.03)
+{
+  const A = resp([instr('add rax, 0x20', [0.25, 0.25, 0.25, 0.25]), instr('imul rbx, rax', [0, 1, 0, 0]), instr('xor ecx, edx', [0.5, 0, 0.5, 0]), instr('dec r15', [0, 0, 0, 1])]);
+  const B = resp([instr('add rax, 0x20', [0.22, 0.28, 0.25, 0.25]), instr('imul rbx, rax', [0, 1, 0, 0]), instr('xor ecx, edx', [0, 0, 1, 0]), instr('dec r15', [0, 0, 0, 1])]);
+  B.rows[3].values[0] = 1; B.rows[3].values[2] = 0; // dec: from the DSB to MITE (no port changes; not minor)
+  const d = diffTables(A, B);
+  check(MINOR === 0.05 && d.rows.map((x) => `${x.status}${x.minor ? '/minor' : ''}`).join() === 'changed/minor,same,changed,changed', 'diffTables: ±0.03 on ports is a minor change; 0.5 and a change of the decoder are not', j(d.rows.map((x) => [x.status, x.minor])));
+  const md = compareMarkdown(A, B);
+  const line = (t) => md.split('\n').find((l) => l.includes(t)) ?? '';
+  check(!/•|[+−]0\.03/.test(line('add rax, 0x20')) && /•/.test(line('xor ecx, edx')) && /•/.test(line('dec r15')), 'Markdown: the minor change is shown as the same instruction, the others marked', md);
+  check(/changes under 0\.05 uops not shown \(1 instruction\)/.test(md), 'Markdown: says how many were left out', md);
+  const r = diffResult(A, B);
+  const add = r.instructions.changes.find((x) => x.a === 'add rax, 0x20');
+  check(add?.minor === true && add.uops['Port 0'] === -0.03 && r.instructions.changes.length === 3 && r.instructions.counts.changed === 3, 'JSON: every change, the minor one flagged', j(r.instructions));
+  const t = diffText(r);
+  check(!/add rax, 0x20/.test(t) && /\* xor ecx, edx/.test(t) && /instructions: 2 with other uops \(changes under 0\.05 uops not listed: 1\)/.test(t), 'text: the minor change is not listed', t);
+}
+
 {
   const A = resp([
     instr('mov rax, qword ptr [rdi]', [0, 0, 0, 0]),

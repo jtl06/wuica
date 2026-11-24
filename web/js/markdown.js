@@ -14,7 +14,7 @@
 // code(text), text(s), fence(text, lang), cycles(v), signedCycles(v), uopValue(v).
 
 import { insights, boundModel, blame, topRows } from './bound-core.js';
-import { compareResponses, cycles, signed, signedCycles } from './ab-diff.js';
+import { compareResponses, cycles, signed, signedCycles, MINOR } from './ab-diff.js';
 import { branchLabels, analyzedLines } from './branch-label.js';
 
 export { cycles, signedCycles };
@@ -241,11 +241,14 @@ export function compare(a, b, meta = {}) {
     const shown = new Map();
     for (const [r, sh, src] of [[a, meta.shownA, meta.srcA], [b, meta.shownB, meta.srcB]]) shownLabels(r, { shown: sh, src }).forEach((l, i) => shown.set(r.rows[i], l));
     const label = (u) => (u ? cell(u.row, shown.get(u.row) ?? u.label) : '');
-    const rows = d.rows.map((x) => [MARK[x.status], label(x.a), label(x.b), ...x.deltas.map((v) => signed(v))]);
+    // (a minor change of uops, ab-diff.js MINOR: as the same instruction; the totals stay the sums of every row)
+    const rows = d.rows.map((x) => (x.minor ? ['', label(x.a), label(x.b), ...x.deltas.map(() => '')] : [MARK[x.status], label(x.a), label(x.b), ...x.deltas.map((v) => signed(v))]));
     rows.push(['', '**Total**', '', ...d.totals.map((v) => signed(v))]);
     blocks.push(table(['', 'A', 'B', ...d.columns.map((c) => (c.name === 'Issued' ? 'Δ uops' : `Δ ${text(c.name)}`))], rows, ['c', 'l', 'l', ...d.columns.map(() => 'r')]));
-    const used = Object.keys(MARK_TEXT).filter((k) => d.counts[k] > 0);
+    const minor = d.rows.filter((x) => x.minor).length;
+    const used = Object.keys(MARK_TEXT).filter((k) => d.counts[k] - (k === 'changed' ? minor : 0) > 0);
     const legend = [used.length ? used.map((k) => `${MARK[k]} ${MARK_TEXT[k]}`).join(' · ') : 'no change', 'Δ: B − A, uops per iteration'];
+    if (minor) legend.push(`changes under ${MINOR} uops not shown (${minor} instruction${minor === 1 ? '' : 's'})`);
     if (!d.portsComparable) legend.push('the two sides have different execution ports: uop counts only');
     blocks.push(legend.join('; '));
   }

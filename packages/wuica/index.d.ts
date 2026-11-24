@@ -459,8 +459,9 @@ export interface DiffResult {
   /** uops per iteration of each execution port (both sides' ports; [] if they differ). */
   ports: { port: string; a: number; b: number; delta: number }[];
   /** The instructions aligned as a diff: changed (same instruction, other uops), modified (other operands), added (only
-   * in B), removed (only in A); `uops`: the change of the issued uops and of each port's, where not 0. */
-  instructions: { counts: Record<'same' | 'changed' | 'modified' | 'added' | 'removed', number>; changes: { status: 'changed' | 'modified' | 'added' | 'removed'; a: string | null; b: string | null; uops: Record<string, number> }[] };
+   * in B), removed (only in A); `uops`: the change of the issued uops and of each port's, where not 0; `minor`: a change
+   * of uops under 0.05 per iteration in every column (left out of the Markdown and the text). */
+  instructions: { counts: Record<'same' | 'changed' | 'modified' | 'added' | 'removed', number>; changes: { status: 'changed' | 'modified' | 'added' | 'removed'; a: string | null; b: string | null; uops: Record<string, number>; minor?: true }[] };
 }
 /** Wuica.diff with any w that has analyze. */
 export function diffRequest(w: Pick<Wuica, 'analyze'>, arch: string, request: DiffRequest): Promise<DiffResult | Failure>;

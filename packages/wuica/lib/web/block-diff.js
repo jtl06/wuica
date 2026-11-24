@@ -8,7 +8,7 @@
 // speedup rounded to two decimals, perElement tp / per unrounded (as compare's and what-if's perElement), the uop changes
 // rounded to two decimals as the uop table shows them.
 
-import { compareResponses } from './ab-diff.js';
+import { compareResponses, MINOR } from './ab-diff.js';
 import { compare as compareMarkdown, shownLabels, text as mdText } from './markdown.js';
 
 const r2 = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
@@ -54,6 +54,7 @@ export function diffResult(ra, rb, { per = null, sourceA = null, sourceB = null 
     changes: d.rows.filter((x) => x.status !== 'same').map((x) => ({
       status: x.status, a: label(x.a), b: label(x.b),
       uops: Object.fromEntries(d.columns.map((c, k) => [c.name === 'Issued' ? 'issued' : c.name, r2(x.deltas[k])]).filter(([, v]) => v !== 0)),
+      ...(x.minor ? { minor: true } : {}), // (ab-diff.js MINOR: left out of the Markdown and the text)
     })),
   };
   // the warnings of each side (decode errors, assembler warnings, the exits taken as not taken), named
@@ -141,11 +142,13 @@ export function diffText(r) {
   for (const l of r.limits) lines.push(`  ${l.name.padEnd(w)}  ${f2(l.a).padStart(7)}  ${f2(l.b).padStart(7)}  ${(l.delta ? sg(l.delta) : '').padStart(7)}`.trimEnd());
   const moved = r.ports.filter((p) => p.delta);
   lines.push('', `ports (uops per iteration): ${moved.length ? moved.map((p) => `${p.port} ${f2(p.a)} -> ${f2(p.b)}`).join(', ') : 'no change'}`);
-  const c = r.instructions.counts;
+  // (minor changes of uops, ab-diff.js MINOR, are counted as the same and not listed)
+  const minor = r.instructions.changes.filter((x) => x.minor).length;
+  const c = { ...r.instructions.counts, changed: r.instructions.counts.changed - minor };
   const said = [['modified', 'with other operands'], ['changed', 'with other uops'], ['added', 'only in B'], ['removed', 'only in A']].filter(([k]) => c[k]).map(([k, t]) => `${c[k]} ${t}`);
-  lines.push(`instructions: ${said.length ? said.join('; ') : 'the same'}`);
+  lines.push(`instructions: ${said.length ? said.join('; ') : 'the same'}${minor ? ` (changes under ${MINOR} uops not listed: ${minor})` : ''}`);
   const MARK = { changed: '*', modified: '~', added: '+', removed: '-' };
-  for (const x of r.instructions.changes) {
+  for (const x of r.instructions.changes.filter((y) => !y.minor)) {
     const what = x.status === 'added' ? x.b : x.status === 'removed' ? x.a : x.status === 'modified' ? `${x.a} -> ${x.b}` : x.a;
     const uops = Object.entries(x.uops).map(([k, v]) => `${k} ${sg(v)}`).join(', ');
     lines.push(`  ${MARK[x.status]} ${what}${uops ? `  (${uops})` : ''}`);

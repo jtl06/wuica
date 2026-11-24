@@ -5,6 +5,11 @@
 import { columnKind } from './bound-core.js';
 
 export const EPS = 0.005; // values are shown with two decimals: smaller differences are "the same"
+// A change of one instruction's uops that is under this in every column (uops per iteration), with the same notes, is
+// "minor": uiCA's port assignment moves a few hundredths of a uop between ports when the code around an instruction
+// changes (±0.03 seen). The Markdown and text forms of A–B leave minor changes out; the page's Δ table (which frames
+// every cell that differs at its two decimals) and the JSON keep them.
+export const MINOR = 0.05;
 
 // Prefixes that come before the mnemonic in a disassembly ("lock add", "rep movsb", "notrack jmp").
 const PREFIXES = new Set(['lock', 'rep', 'repe', 'repz', 'repne', 'repnz', 'bnd', 'notrack', 'xacquire', 'xrelease',
@@ -171,6 +176,7 @@ export function compareResponses(ra, rb, { workA = 1, workB = null, scale = 1 } 
 // The instruction-by-instruction difference of two uop tables.
 //   rows:     [{status, a: unit|null, b: unit|null, deltas: [per shown column, B − A]}]
 //             status: 'same' | 'changed' (same instruction, other uops) | 'modified' | 'added' | 'removed'
+//             minor: a 'changed' row whose every shared column differs by less than MINOR (and the notes are the same)
 //   columns:  the shared columns that are shown: the issued uops and every execution port either side uses
 //   totals:   the sum of the deltas per shown column
 //   portsComparable: false if the two sides have different execution ports (e.g. Skylake and Zen 3)
@@ -191,13 +197,14 @@ export function diffTables(ra, rb) {
       totals[k] += d;
       return round(d);
     });
-    let status = op;
+    let status = op, minor = false;
     if (op === 'same') {
       const allShared = shared.every((c) => Math.abs(y.values[c.ib] - x.values[c.ia]) < EPS);
       status = allShared && x.notes === y.notes && (portsComparable || deltas.every((d) => d === 0)) ? 'same' : 'changed';
+      minor = status === 'changed' && x.notes === y.notes && shared.every((c) => Math.abs(y.values[c.ib] - x.values[c.ia]) < MINOR);
     }
     counts[status]++;
-    return { status, a: x, b: y, deltas };
+    return { status, a: x, b: y, deltas, ...(minor ? { minor } : {}) };
   });
   return { rows, columns, totals: totals.map(round), portsComparable, counts };
 }
