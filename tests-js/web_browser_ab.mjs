@@ -537,12 +537,12 @@ try {
       const out = { unit: document.querySelector('#result-body .ab-tp')?.closest('.row')?.innerText.includes('cycles/element') };
       out.a = await seen();
       await side('b'); out.b = await seen();
-      await tab('diff'); out.limits = [...document.querySelectorAll('#result-body summary')].map((s) => s.textContent).find((t) => /A vs B/.test(t)) ?? '';
+      await tab('diff'); out.limits = document.querySelector('.ab-limits thead th')?.textContent ?? '';
       return out;`);
     check(r.unit, 'units: the headline is per element (both sides: 2 elements per iteration)', JSON.stringify(r));
     check(/^A ?2\.00 cycles\/iteration$/.test(r.a.cap) && /^B ?1\.00 cycles\/iteration$/.test(r.b.cap), 'units: the bound view says whose block and its cycles per iteration', JSON.stringify([r.a.cap, r.b.cap]));
     check(/^A ?variant$/.test(r.a.head[0]) && /^B ?variant$/.test(r.b.head[0]) && r.a.head[1] === 'cycles/iteration' && r.b.head[1] === 'cycles/iteration', 'units: the try view says whose block and its unit', JSON.stringify([r.a.head, r.b.head]));
-    check(/A vs B, cycles\/element/.test(r.limits), 'units: the limits of A and B say their unit (per element here)', r.limits);
+    check(r.limits === 'cycles/element', 'units: the table of the limits of A and B says they are per element (the captions of the uop tables say cycles/iteration)', r.limits);
     check(page.take().length === 0, 'units: no console errors');
     await page.cmd('Page.close');
   }

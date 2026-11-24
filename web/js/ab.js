@@ -502,9 +502,9 @@ export function createAB(api) {
         l.delta === null ? h('td', { class: 'ab-d' }) : deltaCell(l.delta, { cycles: true })));
     }
     const table = h('table', { class: 'grid ab-limits' },
-      h('thead', null, h('tr', null, h('th', { scope: 'col', class: 'first', text: 'limit' }), h('th', { scope: 'col', text: 'A' }), h('th', { scope: 'col' }),
+      h('thead', null, h('tr', null, h('th', { scope: 'col', class: 'first', text: view.cmp.perElement ? 'cycles/element' : 'limit' }), h('th', { scope: 'col', text: 'A' }), h('th', { scope: 'col' }),
         h('th', { scope: 'col', text: 'B' }), h('th', { scope: 'col' }), h('th', { scope: 'col', text: 'Δ' }))), body);
-    return fold('limits', 'limits', h('span', { title: `${unitOf(view)} if each were the only bottleneck`, text: `A vs B, ${unitOf(view)}` }),
+    return fold('limits', 'limits', h('span', { title: `${unitOf(view)} if each were the only bottleneck`, text: 'A vs B' }),
       h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Limits of A and B' }, table));
   }
 
