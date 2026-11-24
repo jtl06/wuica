@@ -14,9 +14,10 @@
 //   paths      a conditional branch before the last instruction whose target is inside the block (an if/else, or a
 //              second back edge: clang's remainder loop of sum_mod, `jne .LBB0_9` back to the top and the latch to the
 //              middle): uiCA runs the block straight through, so both sides of the branch are simulated one after the
-//              other, while a real iteration takes one. Named by source line when the response has the lines of the
-//              picked span (response.loop.lines, the package's analyze), else by instruction. Region markers around one
-//              side analyze that side.
+//              other, while a real iteration takes one. Not an inner loop's back edge (backward, to after the target
+//              of the block's own branch: the outer loop of count_u8). Named by source line when the response has the
+//              lines of the picked span (response.loop.lines, the package's analyze; alignment padding, nops the
+//              source does not have, left out), else by instruction. Region markers around one side analyze that side.
 //   split      loads at an offset that is not a multiple of their width (ymmword ptr [rdi+rax*4+0x4]): with a base
 //              aligned to the width, some of them cross a 64-byte line (split loads cost extra). Per CPU (`config`, its
 //              configuration in uarch.json): where splitLoadCycles is 0 (the stock Intel models) no crossing is charged,
@@ -120,20 +121,29 @@ export function caveats(response, config = null) {
   const rows = Array.isArray(response?.rows) ? response.rows : [];
   const out = [];
   const rmw = [], split = [], early = [], inside = [];
+  const target = (row, op) => {
+    const v = /^0x[0-9a-f]+$/i.test(op ?? '') ? Number(BigInt.asIntN(64, BigInt(op))) : null;
+    return v === null ? null : offset.get(row) + v;
+  };
   const loads = new Map(), stores = new Map();
   let last = -1, total = 0;
   const offset = new Map();
   rows.forEach((x, row) => { if (x?.kind === 'instr') { last = row; offset.set(row, total); total += String(x.opcode ?? '').length / 2; } });
+  // where the block's own branch goes (the loop's header; not always the top: a rotated loop)
+  const [lastMn, lastOp] = last >= 0 ? String(rows[last].label).trim().split(/\s+/) : [];
+  const latch = last >= 0 && /^(?:j[a-z]+|loop\w*)$/.test(String(lastMn).toLowerCase()) ? target(last, lastOp) : null;
+  const head = latch !== null && latch >= 0 && latch < total ? latch : 0;
   rows.forEach((x, row) => {
     if (x?.kind !== 'instr') return;
     const [mn, op] = String(x.label).trim().split(/\s+/);
     if (row !== last && COND_BRANCH.test(mn.toLowerCase())) {
       // the label's target is relative to the branch (XED, as if it were at address 0): inside the loop's code (an
       // if) it is not an exit
-      const v = /^0x[0-9a-f]+$/i.test(op ?? '') ? Number(BigInt.asIntN(64, BigInt(op))) : null;
-      const to = v === null ? null : offset.get(row) + v;
+      const to = target(row, op);
       if (to === null || to < 0 || to >= total) early.push(row);
-      else inside.push(row);
+      // forward (an if/else), or back to the header or before it (a second back edge, a rotated if/else); backward to
+      // after the header is an inner loop's back edge
+      else if (to > offset.get(row) || to <= head) inside.push(row);
     }
     const m = memOperand(x.label);
     if (!m) return;
@@ -159,8 +169,13 @@ export function caveats(response, config = null) {
   // a branch within the block: both sides are simulated
   if (inside.length) {
     const instrRows = rows.flatMap((x, row) => (x?.kind === 'instr' ? [row] : []));
-    const lines = Array.isArray(response?.loop?.lines) && response.loop.lines.length === instrRows.length ? response.loop.lines : null;
-    const where = inside.map((row) => { const k = instrRows.indexOf(row); return lines ? lines[k] : k + 1; });
+    // the source line of each row: as many lines as instructions, or as many once the padding (nops of .p2align) is out
+    const given = Array.isArray(response?.loop?.lines) ? response.loop.lines : null;
+    const real = instrRows.filter((row) => !/^(?:nop|data16|cs nop|xchg ax, ax)\b/i.test(String(rows[row].label).trim()));
+    const mapped = given?.length === instrRows.length ? instrRows : given?.length === real.length ? real : null;
+    const where = inside.map((row) => (mapped && mapped.includes(row) ? given[mapped.indexOf(row)] : null));
+    const lines = where.every((x) => x !== null) ? where : null;
+    if (!lines) where.splice(0, where.length, ...inside.map((row) => instrRows.indexOf(row) + 1));
     const at = `${lines ? 'line' : 'instruction'}${where.length > 1 ? 's' : ''} ${where.join(', ')}`;
     const one = inside.length === 1;
     out.push({ id: 'paths', text: 'both paths', rows: inside,

@@ -50,6 +50,11 @@ const loop = (...labels) => ({ mode: 'loop', rows: labels.map(instr) });
   check(/^both sides of the branch at line 12 \(jz\)/.test(pl[0]?.title), 'paths: by source line when the response has the lines of the span (the package\'s loop.lines)', j(pl));
   check(ids(loop('xor edx, edx', 'div rcx', 'add r8, rdx', 'jnz 0xfffffffffffffffd', 'add rdi, 0x1', 'jnz 0x0')) === 'paths', 'paths: a second back edge to the top of the span');
   check(ids(loop('add rdx, 0x20', 'cmp rdx, rsi', 'jnb 0x20', 'jz 0x1', 'nop', 'test ecx, ecx', 'jz 0x0')) === 'paths,exit', 'paths and exit together: an exit and a branch inside');
+  // an outer loop: its inner loop's back edge (backward, to after the header the last branch goes to) is not a path
+  check(ids(loop('mov rax, 0x0', 'add rax, rbx', 'dec rcx', 'jnz 0xfffffffffffffffe', 'dec rdx', 'jnz 0xfffffffffffffffb')) === '', 'no paths: an inner loop\'s back edge');
+  // the lines once the alignment padding (nops the source does not have) is out
+  const padded = { mode: 'loop', rows: ['nop word ptr [rax+rax*1]', ...ifelse].map(instr), loop: { lines: [10, 11, 12, 13, 14, 15, 16] } };
+  check(/^both sides of the branch at line 12 \(jz\)/.test(caveats(padded)[0]?.title), 'paths: by line with .p2align padding in the span', j(caveats(padded)));
   // split loads
   const fir = caveats(loop('vmovups ymm1, ymmword ptr [rdi+rax*4]', 'vfmadd231ps ymm0, ymm15, ymmword ptr [rdi+rax*4+0x4]', 'vfmadd231ps ymm0, ymm14, ymmword ptr [rdi+rax*4+0x20]', 'vmovups ymmword ptr [rdx+rax*4+0x4], ymm0', 'jnz 0x0'));
   check(fir.length === 1 && fir[0].id === 'split' && j(fir[0].rows) === '[1]' && fir[0].text === 'split loads? (1)', 'split: a ymm load at +4; not at +0 or +32, not a store', j(fir));

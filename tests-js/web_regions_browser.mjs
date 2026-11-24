@@ -282,6 +282,23 @@ try {
     check(got.SKL.caveats.join() === 'split loads? (7)' && got.ZEN3.arch === 'ZEN3' && got.ZEN3.caveats.length === 0, 'split loads: SKL warns, ZEN3 (splitLoadCycles 2) does not', JSON.stringify(got));
   }
 
+  // --- a branch inside the picked loop (clang's sum_mod remainder loop): "both paths", its title naming the source line
+  // (the picked loop's lines from the assembler result, app.js) ----------------------------------------------------------
+  {
+    const DIVMOD = fs.readFileSync(path.join(here, 'fixtures/cli/divmod.hsw.s'), 'utf8');
+    const page = await openPage();
+    await page.goto(`${origin}/?nosw=1#v=1&m=asm`);
+    const p = await page.eval(`${HELPERS}
+      await until(() => !$('run').disabled);
+      setCode(${JSON.stringify(DIVMOD)});
+      await done(() => $('run').click());
+      const cv = document.querySelector('.cv-line .cv[data-cv="paths"]');
+      return { text: cv?.textContent, title: cv?.title, all: [...document.querySelectorAll('.cv-line .cv')].map((x) => x.textContent) };`);
+    check(p.text === 'both paths' && /^both sides of the branch at line 46 \(jnz\) are simulated/.test(p.title) && p.all.join() === 'both paths,exit mispredict', 'a branch inside the loop: both paths, at its source line', JSON.stringify(p));
+    check(page.problems.length === 0, 'no console errors (both paths)', page.problems.join('\n'));
+    await page.cmd('Page.close');
+  }
+
   // --- links: lp=whole analyzes the whole text; an alignment offset in the link stays (not the address's) ------------------
   {
     const OBJDUMP = fs.readFileSync(path.join(here, 'fixtures/loop-find/psum.noraw'), 'utf8');

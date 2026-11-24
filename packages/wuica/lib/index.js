@@ -81,7 +81,7 @@ export function syntaxHint(text, name) {
   const lines = String(text).split('\n');
   let att = 0, intel = 0, dollar = 0;
   for (let i = 0; i < lines.length; i++) {
-    const code = lines[i].replace(/(?:#|\/\/).*$/, '');
+    const code = lines[i].replace(/(?:#|\/\/|;).*$/, '');
     if (/^\s*\./.test(code)) continue;
     const n = syntaxSigns(code);
     // "mov rdx, $8": an Intel line with an AT&T immediate
