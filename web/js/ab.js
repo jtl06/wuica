@@ -707,6 +707,7 @@ export function createAB(api) {
     sideRoot: (s) => api.el.body.querySelector(`#ab-main .ab-col[data-side="${s}"]`),
     getB: () => ({ mode: state.bMode, syntax: state.bSyntax, text: bCode.value }),
     hasMessages: () => state.ab && !!bMessages.firstChild,
+    clearMessages: () => clearB(),
     textareaB: bCode,
   };
 }

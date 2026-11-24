@@ -1269,6 +1269,7 @@ function setupFeatures() {
     textB = bCode.value;
     bCode.addEventListener('input', () => {
       if (replacesText(textB, bCode.value)) newTextB(); else textB = bCode.value;
+      if (ce.isLink(bCode.value.trim())) ab.clearMessages(); // (as for A)
       bLoopChip.sync(state.bMode === 'asm' ? bCode.value : null);
     });
   }
@@ -1412,6 +1413,9 @@ function bind() {
       const syn = detectSyntax(el.code.value);
       if (syn && syn !== state.syntax && !syntaxChosen) { state.syntax = syn; el.syntax.value = syn; }
     } else textA = el.code.value;
+    // a Compiler Explorer link in place of the code: the messages of the code it replaced go (godbolt-ui.js says what
+    // the import does)
+    if (ce?.isLink(el.code.value.trim())) { clearMessages(); inputError(false); }
     changed({ now: replaced(e) });
   });
   el.align.addEventListener('change', () => { alignBy = 'manual'; });

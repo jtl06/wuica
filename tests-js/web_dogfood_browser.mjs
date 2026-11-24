@@ -72,6 +72,33 @@ try {
     check(page.take().length === 0, 'B3: no errors', '');
     await page.close();
   }
+
+  // ---- B6: an assembler error of the old code goes when a Compiler Explorer link replaces it (A, and B) ----------------
+  {
+    const page = await fresh();
+    const r = await page.eval(`${W}
+      const clip = (el, text) => { const dt = new DataTransfer(); dt.setData('text/plain', text); el.focus(); el.select(); el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); };
+      const line = (id) => document.querySelector('.ce-line[data-for="' + id + '"]')?.textContent ?? '';
+      const out = {};
+      for (const [code, box] of [['code', 'input-messages'], ['code-b', 'b-messages']]) {
+        // (A's box holds the link: code again, or nothing is analyzed; B's syntax does not follow a paste)
+        if (code === 'code-b') { pasteInto($('code'), ${js(fx('fnv.s'))}); await settle(); $('cmp-ab').click(); await settle(); pick('b-syntax', 'att'); }
+        pasteInto($(code), ${js(fx('tricky.s'))});
+        await until(() => /LCPI0_0/.test($(box).textContent));
+        const before = [$(box).textContent, $(code).getAttribute('aria-invalid')];
+        clip($(code), 'https://godbolt.org/z/notareallink1');
+        await until(() => /not found/i.test(line(code)));
+        await wait(500);
+        out[code] = { before, after: $(box).textContent, invalid: $(code).getAttribute('aria-invalid'), ce: line(code), stale: $('input-stale')?.textContent ?? '' };
+      }
+      return out;`);
+    for (const [side, x] of [['A', r.code], ['B', r['code-b']]]) {
+      check(/LCPI0_0/.test(x.before[0]) && x.before[1] === 'true', `B6 ${side}: tricky.s gives its assembler error`, js(x));
+      check(/not found/i.test(x.ce) && x.after === '' && x.invalid !== 'true', `B6 ${side}: after the link, only Compiler Explorer's message (the old error is gone)`, js(x));
+    }
+    check(r.code.stale === '', 'B6: no "stale: the input has an error" for a link', js(r.code));
+    await page.close();
+  }
 } finally {
   await close();
   await srv.stop();
