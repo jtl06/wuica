@@ -1,0 +1,293 @@
+
+kernels.macho.o:	file format mach-o 64-bit x86-64
+
+Disassembly of section __TEXT,__text:
+
+0000000000000000 <_dot>:
+       0: 55                           	pushq	%rbp
+       1: 48 89 e5                     	movq	%rsp, %rbp
+       4: 48 85 d2                     	testq	%rdx, %rdx
+       7: 74 16                        	je	0x1f <_dot+0x1f>
+       9: 89 d0                        	movl	%edx, %eax
+       b: 83 e0 07                     	andl	$0x7, %eax
+       e: 48 83 fa 08                  	cmpq	$0x8, %rdx
+      12: 73 11                        	jae	0x25 <_dot+0x25>
+      14: c5 f8 57 c0                  	vxorps	%xmm0, %xmm0, %xmm0
+      18: 31 c9                        	xorl	%ecx, %ecx
+      1a: e9 80 00 00 00               	jmp	0x9f <_dot+0x9f>
+      1f: c5 f8 57 c0                  	vxorps	%xmm0, %xmm0, %xmm0
+      23: 5d                           	popq	%rbp
+      24: c3                           	retq
+      25: 48 83 e2 f8                  	andq	$-0x8, %rdx
+      29: c5 f8 57 c0                  	vxorps	%xmm0, %xmm0, %xmm0
+      2d: 31 c9                        	xorl	%ecx, %ecx
+      2f: 90                           	nop
+      30: c5 fa 10 0c 8f               	vmovss	(%rdi,%rcx,4), %xmm1
+      35: c5 fa 10 54 8f 04            	vmovss	0x4(%rdi,%rcx,4), %xmm2
+      3b: c4 e2 79 99 0c 8e            	vfmadd132ss	(%rsi,%rcx,4), %xmm0, %xmm1 ## xmm1 = (xmm1 * mem) + xmm0
+      41: c4 e2 69 b9 4c 8e 04         	vfmadd231ss	0x4(%rsi,%rcx,4), %xmm2, %xmm1 ## xmm1 = (xmm2 * mem) + xmm1
+      48: c5 fa 10 44 8f 08            	vmovss	0x8(%rdi,%rcx,4), %xmm0
+      4e: c4 e2 71 99 44 8e 08         	vfmadd132ss	0x8(%rsi,%rcx,4), %xmm1, %xmm0 ## xmm0 = (xmm0 * mem) + xmm1
+      55: c5 fa 10 4c 8f 0c            	vmovss	0xc(%rdi,%rcx,4), %xmm1
+      5b: c4 e2 79 99 4c 8e 0c         	vfmadd132ss	0xc(%rsi,%rcx,4), %xmm0, %xmm1 ## xmm1 = (xmm1 * mem) + xmm0
+      62: c5 fa 10 44 8f 10            	vmovss	0x10(%rdi,%rcx,4), %xmm0
+      68: c4 e2 71 99 44 8e 10         	vfmadd132ss	0x10(%rsi,%rcx,4), %xmm1, %xmm0 ## xmm0 = (xmm0 * mem) + xmm1
+      6f: c5 fa 10 4c 8f 14            	vmovss	0x14(%rdi,%rcx,4), %xmm1
+      75: c4 e2 79 99 4c 8e 14         	vfmadd132ss	0x14(%rsi,%rcx,4), %xmm0, %xmm1 ## xmm1 = (xmm1 * mem) + xmm0
+      7c: c5 fa 10 54 8f 18            	vmovss	0x18(%rdi,%rcx,4), %xmm2
+      82: c4 e2 71 99 54 8e 18         	vfmadd132ss	0x18(%rsi,%rcx,4), %xmm1, %xmm2 ## xmm2 = (xmm2 * mem) + xmm1
+      89: c5 fa 10 44 8f 1c            	vmovss	0x1c(%rdi,%rcx,4), %xmm0
+      8f: c4 e2 69 99 44 8e 1c         	vfmadd132ss	0x1c(%rsi,%rcx,4), %xmm2, %xmm0 ## xmm0 = (xmm0 * mem) + xmm2
+      96: 48 83 c1 08                  	addq	$0x8, %rcx
+      9a: 48 39 ca                     	cmpq	%rcx, %rdx
+      9d: 75 91                        	jne	0x30 <_dot+0x30>
+      9f: 48 85 c0                     	testq	%rax, %rax
+      a2: 74 1f                        	je	0xc3 <_dot+0xc3>
+      a4: 48 8d 14 8e                  	leaq	(%rsi,%rcx,4), %rdx
+      a8: 48 8d 0c 8f                  	leaq	(%rdi,%rcx,4), %rcx
+      ac: 31 f6                        	xorl	%esi, %esi
+      ae: 66 90                        	nop
+      b0: c5 fa 10 0c b1               	vmovss	(%rcx,%rsi,4), %xmm1
+      b5: c4 e2 71 b9 04 b2            	vfmadd231ss	(%rdx,%rsi,4), %xmm1, %xmm0 ## xmm0 = (xmm1 * mem) + xmm0
+      bb: 48 ff c6                     	incq	%rsi
+      be: 48 39 f0                     	cmpq	%rsi, %rax
+      c1: 75 ed                        	jne	0xb0 <_dot+0xb0>
+      c3: 5d                           	popq	%rbp
+      c4: c3                           	retq
+      c5: 66 66 2e 0f 1f 84 00 00 00 00 00     	nopw	%cs:(%rax,%rax)
+
+00000000000000d0 <_psum>:
+      d0: 55                           	pushq	%rbp
+      d1: 48 89 e5                     	movq	%rsp, %rbp
+      d4: 48 85 f6                     	testq	%rsi, %rsi
+      d7: 0f 84 a3 00 00 00            	je	0x180 <_psum+0xb0>
+      dd: 89 f0                        	movl	%esi, %eax
+      df: 83 e0 07                     	andl	$0x7, %eax
+      e2: 48 83 fe 08                  	cmpq	$0x8, %rsi
+      e6: 73 06                        	jae	0xee <_psum+0x1e>
+      e8: 31 d2                        	xorl	%edx, %edx
+      ea: 31 c9                        	xorl	%ecx, %ecx
+      ec: eb 69                        	jmp	0x157 <_psum+0x87>
+      ee: 48 83 e6 f8                  	andq	$-0x8, %rsi
+      f2: 31 d2                        	xorl	%edx, %edx
+      f4: 31 c9                        	xorl	%ecx, %ecx
+      f6: 66 2e 0f 1f 84 00 00 00 00 00	nopw	%cs:(%rax,%rax)
+     100: 48 03 0c d7                  	addq	(%rdi,%rdx,8), %rcx
+     104: 48 89 0c d7                  	movq	%rcx, (%rdi,%rdx,8)
+     108: 48 03 4c d7 08               	addq	0x8(%rdi,%rdx,8), %rcx
+     10d: 48 89 4c d7 08               	movq	%rcx, 0x8(%rdi,%rdx,8)
+     112: 48 03 4c d7 10               	addq	0x10(%rdi,%rdx,8), %rcx
+     117: 48 89 4c d7 10               	movq	%rcx, 0x10(%rdi,%rdx,8)
+     11c: 48 03 4c d7 18               	addq	0x18(%rdi,%rdx,8), %rcx
+     121: 48 89 4c d7 18               	movq	%rcx, 0x18(%rdi,%rdx,8)
+     126: 48 03 4c d7 20               	addq	0x20(%rdi,%rdx,8), %rcx
+     12b: 48 89 4c d7 20               	movq	%rcx, 0x20(%rdi,%rdx,8)
+     130: 48 03 4c d7 28               	addq	0x28(%rdi,%rdx,8), %rcx
+     135: 48 89 4c d7 28               	movq	%rcx, 0x28(%rdi,%rdx,8)
+     13a: 48 03 4c d7 30               	addq	0x30(%rdi,%rdx,8), %rcx
+     13f: 48 89 4c d7 30               	movq	%rcx, 0x30(%rdi,%rdx,8)
+     144: 48 03 4c d7 38               	addq	0x38(%rdi,%rdx,8), %rcx
+     149: 48 89 4c d7 38               	movq	%rcx, 0x38(%rdi,%rdx,8)
+     14e: 48 83 c2 08                  	addq	$0x8, %rdx
+     152: 48 39 d6                     	cmpq	%rdx, %rsi
+     155: 75 a9                        	jne	0x100 <_psum+0x30>
+     157: 48 85 c0                     	testq	%rax, %rax
+     15a: 74 24                        	je	0x180 <_psum+0xb0>
+     15c: 48 8d 14 d7                  	leaq	(%rdi,%rdx,8), %rdx
+     160: 31 f6                        	xorl	%esi, %esi
+     162: 66 66 66 66 66 2e 0f 1f 84 00 00 00 00 00    	nopw	%cs:(%rax,%rax)
+     170: 48 03 0c f2                  	addq	(%rdx,%rsi,8), %rcx
+     174: 48 89 0c f2                  	movq	%rcx, (%rdx,%rsi,8)
+     178: 48 ff c6                     	incq	%rsi
+     17b: 48 39 f0                     	cmpq	%rsi, %rax
+     17e: 75 f0                        	jne	0x170 <_psum+0xa0>
+     180: 5d                           	popq	%rbp
+     181: c3                           	retq
+     182: 66 66 66 66 66 2e 0f 1f 84 00 00 00 00 00    	nopw	%cs:(%rax,%rax)
+
+0000000000000190 <_hist>:
+     190: 55                           	pushq	%rbp
+     191: 48 89 e5                     	movq	%rsp, %rbp
+     194: 48 85 f6                     	testq	%rsi, %rsi
+     197: 0f 84 a2 00 00 00            	je	0x23f <_hist+0xaf>
+     19d: 89 f0                        	movl	%esi, %eax
+     19f: 83 e0 07                     	andl	$0x7, %eax
+     1a2: 48 83 fe 08                  	cmpq	$0x8, %rsi
+     1a6: 73 04                        	jae	0x1ac <_hist+0x1c>
+     1a8: 31 c9                        	xorl	%ecx, %ecx
+     1aa: eb 6c                        	jmp	0x218 <_hist+0x88>
+     1ac: 48 83 e6 f8                  	andq	$-0x8, %rsi
+     1b0: 31 c9                        	xorl	%ecx, %ecx
+     1b2: 66 66 66 66 66 2e 0f 1f 84 00 00 00 00 00    	nopw	%cs:(%rax,%rax)
+     1c0: 44 0f b6 04 0f               	movzbl	(%rdi,%rcx), %r8d
+     1c5: 42 ff 04 82                  	incl	(%rdx,%r8,4)
+     1c9: 44 0f b6 44 0f 01            	movzbl	0x1(%rdi,%rcx), %r8d
+     1cf: 42 ff 04 82                  	incl	(%rdx,%r8,4)
+     1d3: 44 0f b6 44 0f 02            	movzbl	0x2(%rdi,%rcx), %r8d
+     1d9: 42 ff 04 82                  	incl	(%rdx,%r8,4)
+     1dd: 44 0f b6 44 0f 03            	movzbl	0x3(%rdi,%rcx), %r8d
+     1e3: 42 ff 04 82                  	incl	(%rdx,%r8,4)
+     1e7: 44 0f b6 44 0f 04            	movzbl	0x4(%rdi,%rcx), %r8d
+     1ed: 42 ff 04 82                  	incl	(%rdx,%r8,4)
+     1f1: 44 0f b6 44 0f 05            	movzbl	0x5(%rdi,%rcx), %r8d
+     1f7: 42 ff 04 82                  	incl	(%rdx,%r8,4)
+     1fb: 44 0f b6 44 0f 06            	movzbl	0x6(%rdi,%rcx), %r8d
+     201: 42 ff 04 82                  	incl	(%rdx,%r8,4)
+     205: 44 0f b6 44 0f 07            	movzbl	0x7(%rdi,%rcx), %r8d
+     20b: 42 ff 04 82                  	incl	(%rdx,%r8,4)
+     20f: 48 83 c1 08                  	addq	$0x8, %rcx
+     213: 48 39 ce                     	cmpq	%rcx, %rsi
+     216: 75 a8                        	jne	0x1c0 <_hist+0x30>
+     218: 48 85 c0                     	testq	%rax, %rax
+     21b: 74 22                        	je	0x23f <_hist+0xaf>
+     21d: 48 01 cf                     	addq	%rcx, %rdi
+     220: 31 c9                        	xorl	%ecx, %ecx
+     222: 66 66 66 66 66 2e 0f 1f 84 00 00 00 00 00    	nopw	%cs:(%rax,%rax)
+     230: 0f b6 34 0f                  	movzbl	(%rdi,%rcx), %esi
+     234: ff 04 b2                     	incl	(%rdx,%rsi,4)
+     237: 48 ff c1                     	incq	%rcx
+     23a: 48 39 c8                     	cmpq	%rcx, %rax
+     23d: 75 f1                        	jne	0x230 <_hist+0xa0>
+     23f: 5d                           	popq	%rbp
+     240: c3                           	retq
+     241: 66 66 66 66 66 66 2e 0f 1f 84 00 00 00 00 00 	nopw	%cs:(%rax,%rax)
+
+0000000000000250 <_sum_mod>:
+     250: 48 85 f6                     	testq	%rsi, %rsi
+     253: 74 62                        	je	0x2b7 <_sum_mod+0x67>
+     255: 55                           	pushq	%rbp
+     256: 48 89 e5                     	movq	%rsp, %rbp
+     259: 41 56                        	pushq	%r14
+     25b: 53                           	pushq	%rbx
+     25c: 48 89 d1                     	movq	%rdx, %rcx
+     25f: 41 89 f3                     	movl	%esi, %r11d
+     262: 41 83 e3 03                  	andl	$0x3, %r11d
+     266: 48 83 fe 04                  	cmpq	$0x4, %rsi
+     26a: 73 52                        	jae	0x2be <_sum_mod+0x6e>
+     26c: 31 db                        	xorl	%ebx, %ebx
+     26e: 45 31 c0                     	xorl	%r8d, %r8d
+     271: 4d 85 db                     	testq	%r11, %r11
+     274: 74 39                        	je	0x2af <_sum_mod+0x5f>
+     276: 48 8d 34 df                  	leaq	(%rdi,%rbx,8), %rsi
+     27a: 31 ff                        	xorl	%edi, %edi
+     27c: eb 12                        	jmp	0x290 <_sum_mod+0x40>
+     27e: 66 90                        	nop
+     280: 31 d2                        	xorl	%edx, %edx
+     282: 48 f7 f1                     	divq	%rcx
+     285: 49 01 d0                     	addq	%rdx, %r8
+     288: 48 ff c7                     	incq	%rdi
+     28b: 49 39 fb                     	cmpq	%rdi, %r11
+     28e: 74 1f                        	je	0x2af <_sum_mod+0x5f>
+     290: 48 8b 04 fe                  	movq	(%rsi,%rdi,8), %rax
+     294: 48 89 c2                     	movq	%rax, %rdx
+     297: 48 09 ca                     	orq	%rcx, %rdx
+     29a: 48 c1 ea 20                  	shrq	$0x20, %rdx
+     29e: 75 e0                        	jne	0x280 <_sum_mod+0x30>
+     2a0: 31 d2                        	xorl	%edx, %edx
+     2a2: f7 f1                        	divl	%ecx
+     2a4: 49 01 d0                     	addq	%rdx, %r8
+     2a7: 48 ff c7                     	incq	%rdi
+     2aa: 49 39 fb                     	cmpq	%rdi, %r11
+     2ad: 75 e1                        	jne	0x290 <_sum_mod+0x40>
+     2af: 5b                           	popq	%rbx
+     2b0: 41 5e                        	popq	%r14
+     2b2: 5d                           	popq	%rbp
+     2b3: 4c 89 c0                     	movq	%r8, %rax
+     2b6: c3                           	retq
+     2b7: 45 31 c0                     	xorl	%r8d, %r8d
+     2ba: 4c 89 c0                     	movq	%r8, %rax
+     2bd: c3                           	retq
+     2be: 48 83 e6 fc                  	andq	$-0x4, %rsi
+     2c2: 31 db                        	xorl	%ebx, %ebx
+     2c4: 45 31 f6                     	xorl	%r14d, %r14d
+     2c7: eb 24                        	jmp	0x2ed <_sum_mod+0x9d>
+     2c9: 0f 1f 80 00 00 00 00         	nopl	(%rax)
+     2d0: 31 d2                        	xorl	%edx, %edx
+     2d2: 48 f7 f1                     	divq	%rcx
+     2d5: 4d 01 f1                     	addq	%r14, %r9
+     2d8: 4d 01 ca                     	addq	%r9, %r10
+     2db: 4d 01 d0                     	addq	%r10, %r8
+     2de: 49 01 d0                     	addq	%rdx, %r8
+     2e1: 48 83 c3 04                  	addq	$0x4, %rbx
+     2e5: 4d 89 c6                     	movq	%r8, %r14
+     2e8: 48 39 de                     	cmpq	%rbx, %rsi
+     2eb: 74 84                        	je	0x271 <_sum_mod+0x21>
+     2ed: 48 8b 04 df                  	movq	(%rdi,%rbx,8), %rax
+     2f1: 48 89 c2                     	movq	%rax, %rdx
+     2f4: 48 09 ca                     	orq	%rcx, %rdx
+     2f7: 48 c1 ea 20                  	shrq	$0x20, %rdx
+     2fb: 74 13                        	je	0x310 <_sum_mod+0xc0>
+     2fd: 31 d2                        	xorl	%edx, %edx
+     2ff: 48 f7 f1                     	divq	%rcx
+     302: 49 89 d1                     	movq	%rdx, %r9
+     305: eb 10                        	jmp	0x317 <_sum_mod+0xc7>
+     307: 66 0f 1f 84 00 00 00 00 00   	nopw	(%rax,%rax)
+     310: 31 d2                        	xorl	%edx, %edx
+     312: f7 f1                        	divl	%ecx
+     314: 41 89 d1                     	movl	%edx, %r9d
+     317: 48 8b 44 df 08               	movq	0x8(%rdi,%rbx,8), %rax
+     31c: 48 89 c2                     	movq	%rax, %rdx
+     31f: 48 09 ca                     	orq	%rcx, %rdx
+     322: 48 c1 ea 20                  	shrq	$0x20, %rdx
+     326: 74 18                        	je	0x340 <_sum_mod+0xf0>
+     328: 31 d2                        	xorl	%edx, %edx
+     32a: 48 f7 f1                     	divq	%rcx
+     32d: 49 89 d2                     	movq	%rdx, %r10
+     330: eb 15                        	jmp	0x347 <_sum_mod+0xf7>
+     332: 66 66 66 66 66 2e 0f 1f 84 00 00 00 00 00    	nopw	%cs:(%rax,%rax)
+     340: 31 d2                        	xorl	%edx, %edx
+     342: f7 f1                        	divl	%ecx
+     344: 41 89 d2                     	movl	%edx, %r10d
+     347: 48 8b 44 df 10               	movq	0x10(%rdi,%rbx,8), %rax
+     34c: 48 89 c2                     	movq	%rax, %rdx
+     34f: 48 09 ca                     	orq	%rcx, %rdx
+     352: 48 c1 ea 20                  	shrq	$0x20, %rdx
+     356: 74 18                        	je	0x370 <_sum_mod+0x120>
+     358: 31 d2                        	xorl	%edx, %edx
+     35a: 48 f7 f1                     	divq	%rcx
+     35d: 49 89 d0                     	movq	%rdx, %r8
+     360: eb 15                        	jmp	0x377 <_sum_mod+0x127>
+     362: 66 66 66 66 66 2e 0f 1f 84 00 00 00 00 00    	nopw	%cs:(%rax,%rax)
+     370: 31 d2                        	xorl	%edx, %edx
+     372: f7 f1                        	divl	%ecx
+     374: 41 89 d0                     	movl	%edx, %r8d
+     377: 48 8b 44 df 18               	movq	0x18(%rdi,%rbx,8), %rax
+     37c: 48 89 c2                     	movq	%rax, %rdx
+     37f: 48 09 ca                     	orq	%rcx, %rdx
+     382: 48 c1 ea 20                  	shrq	$0x20, %rdx
+     386: 0f 85 44 ff ff ff            	jne	0x2d0 <_sum_mod+0x80>
+     38c: 31 d2                        	xorl	%edx, %edx
+     38e: f7 f1                        	divl	%ecx
+     390: e9 40 ff ff ff               	jmp	0x2d5 <_sum_mod+0x85>
+     395: 66 66 2e 0f 1f 84 00 00 00 00 00     	nopw	%cs:(%rax,%rax)
+
+00000000000003a0 <_walk>:
+     3a0: 48 85 f6                     	testq	%rsi, %rsi
+     3a3: 74 47                        	je	0x3ec <_walk+0x4c>
+     3a5: 55                           	pushq	%rbp
+     3a6: 48 89 e5                     	movq	%rsp, %rbp
+     3a9: 41 57                        	pushq	%r15
+     3ab: 41 56                        	pushq	%r14
+     3ad: 53                           	pushq	%rbx
+     3ae: 50                           	pushq	%rax
+     3af: 48 89 f3                     	movq	%rsi, %rbx
+     3b2: 41 be 01 00 00 00            	movl	$0x1, %r14d
+     3b8: 45 31 ff                     	xorl	%r15d, %r15d
+     3bb: 0f 1f 44 00 00               	nopl	(%rax,%rax)
+     3c0: e8 00 00 00 00               	callq	0x3c5 <_walk+0x25>
+     3c5: 4a 8d 3c 38                  	leaq	(%rax,%r15), %rdi
+     3c9: 49 ff c7                     	incq	%r15
+     3cc: 4a 8d 0c 33                  	leaq	(%rbx,%r14), %rcx
+     3d0: 48 ff c9                     	decq	%rcx
+     3d3: 49 ff ce                     	decq	%r14
+     3d6: 48 83 f9 01                  	cmpq	$0x1, %rcx
+     3da: 75 e4                        	jne	0x3c0 <_walk+0x20>
+     3dc: 4c 29 f0                     	subq	%r14, %rax
+     3df: 48 89 c7                     	movq	%rax, %rdi
+     3e2: 48 83 c4 08                  	addq	$0x8, %rsp
+     3e6: 5b                           	popq	%rbx
+     3e7: 41 5e                        	popq	%r14
+     3e9: 41 5f                        	popq	%r15
+     3eb: 5d                           	popq	%rbp
+     3ec: 48 89 f8                     	movq	%rdi, %rax
+     3ef: c3                           	retq

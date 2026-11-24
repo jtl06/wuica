@@ -15,9 +15,10 @@ import { archList, DEFAULT_ARCH, ARCH_INFO, ARCH_ORDER } from './archs.js';
 import { insights } from './insights.js';
 import { instrDetails, detailInsights } from './details.js';
 export { detailInsights };
-import { readMaybeCompressed } from './files.js';
+import { readMaybeCompressed, readMaybeCompressedSync, tableFile } from './files.js';
+import { readObject, objdumpText, resolveFunction, objectKind } from './objfile.js';
 import { CODES, WARM_HEX, failure, tableFailure, analysisResult, compareFields } from './core.js';
-import { ThreadPool, threadLimit, threadOption, threadsFor } from './threads.js';
+import { ThreadPool, threadLimit, threadOption, threadsForWork } from './threads.js';
 // the web page's reading of pasted assembly (copies of web/js in lib/web: tests-js/web_pkg_copies.mjs): the loop of a whole function, objdump lines,
 // exits as not taken, ';' comments, region markers
 import { assembleMarked, commentFixes, separatorNotes } from './web/asm-regions.js';
@@ -35,6 +36,7 @@ export function listLoops(source, { func = null } = {}) {
 export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, CODES, WARM_HEX, parseDiagnostics, insights };
 export { whatIf, VARIANTS as WHAT_IF_VARIANTS } from './whatif.js';
 export { examples, findExample } from './examples.js';
+export { objectKind } from './objfile.js';
 
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
 
@@ -217,8 +219,9 @@ class Wuica {
     let p = this.#loading.get(name);
     if (!p) {
       p = (async () => {
-        const bytes = await readMaybeCompressed(path.join(this.#dataDir, 'arch', `${name}.json`));
-        if (!this.#analyzer.hasArch(name)) this.#analyzer.loadArch(name, bytes);
+        const file = tableFile(this.#dataDir, name);
+        const bytes = await readMaybeCompressed(file);
+        if (!this.#analyzer.hasArch(name)) this.#analyzer.loadArch(name, bytes, () => readMaybeCompressedSync(file));
       })();
       this.#loading.set(name, p);
       p.finally(() => this.#loading.delete(name)).catch(() => {});
@@ -359,11 +362,108 @@ class Wuica {
     if (opts.error) return failure(CODES.REQUEST, opts.error);
     const code = await this.#code(req);
     if (code.code !== undefined) return code;
-    const r = await this.#run(code.hex, arch, Wuica.#withAlignment(req, opts.options, code));
+    return Wuica.#analyzeResult(code, await this.#run(code.hex, arch, Wuica.#withAlignment(req, opts.options, code)));
+  }
+
+  // analyze()'s result from the code (#code) and the analysis (#run)
+  static #analyzeResult(code, r) {
     if (r.code !== undefined) return r;
     const stderr = [...code.stderr];
     if (r.decodeErrors > 0) stderr.push({ text: `Warning: ${r.decodeErrors} position(s) could not be decoded` });
     return { code: CODES.OK, ...r, ...(code.assembled ? { hex: code.hex, syntax: code.syntax } : {}), ...(code.loop ? { loop: code.loop } : {}), stderr };
+  }
+
+  // Several blocks on one microarchitecture: [request] -> [analyze() result] in the same order (each exactly what
+  // analyze(arch, request) returns). The code is assembled here; the analyses run on the threads when the work is worth
+  // it (threads.js, threadsForWork).
+  async analyzeMany(arch, requests) {
+    if (!Array.isArray(requests)) return failure(CODES.REQUEST, '`requests` must be an array');
+    const prepared = await this.#prepare(requests, ['arch']);
+    const jobs = prepared.flatMap((p, i) => (p.failure ? [] : [{ i, hex: p.code.hex, arch, options: Wuica.#withAlignment(p.request, p.options, p.code), full: true }]));
+    const done = await this.#runJobs(jobs);
+    const out = prepared.map((p) => p.failure);
+    jobs.forEach((j, k) => { out[j.i] = Wuica.#analyzeResult(prepared[j.i].code, done[k]); });
+    return out;
+  }
+
+  // Several blocks on several microarchitectures: [request] -> [compare() result] in the same order (each exactly what
+  // compare(request) returns; `archs` is that of each request, else of the call, else all). Every block x CPU is one
+  // job for the threads.
+  async compareMany(requests, { archs } = {}) {
+    if (!Array.isArray(requests)) return failure(CODES.REQUEST, '`requests` must be an array');
+    const prepared = await this.#prepare(requests, ['archs']);
+    const jobs = [], rows = [];
+    prepared.forEach((p, i) => {
+      if (p.failure) return;
+      const list = p.request.archs ?? archs;
+      if (list !== undefined && !Array.isArray(list)) { p.failure = failure(CODES.REQUEST, '`archs` must be an array of ids'); return; }
+      const ids = list?.length ? uniqueArchs(list, (a) => this.resolveArch(a)) : this.#archs.map((a) => a.id);
+      const options = { ...Wuica.#withAlignment(p.request, p.options, p.code), includeTrace: false, details: false };
+      rows[i] = ids.map((a) => { jobs.push({ i, hex: p.code.hex, arch: a, options }); return a; });
+    });
+    const done = await this.#runJobs(jobs);
+    let k = 0;
+    return prepared.map((p, i) => {
+      if (p.failure) return p.failure;
+      const fields = rows[i].map(() => done[k++]);
+      return this.#compareResult(p.code, rows[i], fields);
+    });
+  }
+
+  // The requests checked and their code assembled, one after another: [{request, options, code} | {failure}]
+  async #prepare(requests, extra) {
+    const out = [];
+    for (const req of requests) {
+      if (typeof req !== 'object' || req === null) { out.push({ failure: failure(CODES.REQUEST, 'the request must be an object') }); continue; }
+      const opts = pickOptions(req, extra);
+      if (opts.error) { out.push({ failure: failure(CODES.REQUEST, opts.error) }); continue; }
+      const code = await this.#code(req);
+      if (code.code !== undefined) { out.push({ failure: code }); continue; }
+      out.push({ request: req, options: opts.options, code });
+    }
+    return out;
+  }
+
+  // [{hex, arch, options, full}] -> the analyses in the same order: analyze results (full) or compare() row fields. On
+  // the threads when the work is worth it (threadsForWork) or -threads asks; what they do not do (an unknown arch, a
+  // thread that failed) is done here, one after another.
+  async #runJobs(list) {
+    const out = new Array(list.length).fill(null);
+    const known = list.flatMap((j, i) => {
+      const id = this.resolveArch(j.arch);
+      return id ? [{ i, table: this.#configs[id].name, request: { hex: j.hex, arch: id, ...j.options }, full: !!j.full }] : [];
+    });
+    const threads = this.#threadsAuto ? threadsForWork(known, this.#threads) : Math.min(this.#threads, known.length);
+    if (threads > 1) {
+      if (!this.#pool) {
+        // the pool compiles the module for its threads once; its bytes are dropped after that
+        this.#pool = new ThreadPool({ wasm: this.#wasm, uarch: this.#uarch, dataDir: this.#dataDir, limit: this.#threads });
+        this.#wasm = null;
+      }
+      if (!this.#pool.broken) {
+        const done = await this.#pool.run(known, threads);
+        known.forEach((j, k) => { out[j.i] = done[k]; });
+      }
+    }
+    for (const [i, j] of list.entries()) {
+      if (out[i] !== null) continue;
+      const r = await this.#run(j.hex, j.arch, j.options);
+      out[i] = j.full ? r : compareFields(r);
+    }
+    return out;
+  }
+
+  // compare()'s result from the code, the microarchitectures asked for and their fields (#runJobs)
+  #compareResult(code, ids, fields) {
+    const results = ids.map((arch, i) => {
+      const id = this.resolveArch(arch);
+      const { name, year, prototype } = id ? this.#info(id) : { name: String(arch), year: null, prototype: false };
+      return { arch: id ?? String(arch), name, year, prototype, ...fields[i] };
+    });
+    // a CPU that could not decode some instructions (FMA on SNB): its throughput leaves them out
+    const decode = results.filter((r) => r.code === CODES.OK && r.decodeErrors > 0)
+      .map((r) => ({ text: `Warning: ${r.arch}: ${r.decodeErrors} position(s) could not be decoded (instructions it does not have): its throughput leaves them out` }));
+    return { code: CODES.OK, ...(code.assembled ? { hex: code.hex, syntax: code.syntax } : {}), ...(code.loop ? { loop: code.loop } : {}), stderr: [...code.stderr, ...decode], results };
   }
 
   // POST /api/compare {source | hex, syntax, archs?, options}: one block on several microarchitectures (default: all).
@@ -375,30 +475,9 @@ class Wuica {
     if (request.archs !== undefined && !Array.isArray(request.archs)) return failure(CODES.REQUEST, '`archs` must be an array of ids');
     const ids = request.archs?.length ? uniqueArchs(request.archs, (a) => this.resolveArch(a)) : this.#archs.map((a) => a.id);
     const options = { ...Wuica.#withAlignment(request, opts.options, code), includeTrace: false, details: false };
-    const resolved = ids.map((arch) => this.resolveArch(arch));
-    // the microarchitectures in threads (if that means at least two threads), each as #run() would on this thread;
-    // whatever the threads do not do (unknown ids, a thread that failed) is done here, one after another
-    const fields = new Array(ids.length).fill(null);
-    const known = resolved.flatMap((id, i) => (id ? [{ i, table: this.#configs[id].name, request: { hex: code.hex, arch: id, ...options } }] : []));
-    const threads = threadsFor(new Set(known.map((j) => j.table)).size, this.#threads, this.#threadsAuto);
-    if (threads > 1) {
-      this.#pool ??= new ThreadPool({ wasm: this.#wasm, uarch: this.#uarch, dataDir: this.#dataDir, limit: this.#threads });
-      if (!this.#pool.broken) {
-        const done = await this.#pool.run(known, threads);
-        known.forEach((j, k) => { fields[j.i] = done[k]; });
-      }
-    }
-    const results = [];
-    for (const [i, arch] of ids.entries()) {
-      const id = resolved[i];
-      const { name, year, prototype } = id ? this.#info(id) : { name: String(arch), year: null, prototype: false };
-      const row = { arch: id ?? String(arch), name, year, prototype };
-      results.push({ ...row, ...(fields[i] ?? compareFields(await this.#run(code.hex, arch, options))) });
-    }
-    // a CPU that could not decode some instructions (FMA on SNB): its throughput leaves them out
-    const decode = results.filter((r) => r.code === CODES.OK && r.decodeErrors > 0)
-      .map((r) => ({ text: `Warning: ${r.arch}: ${r.decodeErrors} position(s) could not be decoded (instructions it does not have): its throughput leaves them out` }));
-    return { code: CODES.OK, ...(code.assembled ? { hex: code.hex, syntax: code.syntax } : {}), ...(code.loop ? { loop: code.loop } : {}), stderr: [...code.stderr, ...decode], results };
+    // each microarchitecture as #run() would do it here, on the threads when the work is worth it (#runJobs)
+    const fields = await this.#runJobs(ids.map((arch) => ({ hex: code.hex, arch, options })));
+    return this.#compareResult(code, ids, fields);
   }
 
   // Stops compare()'s threads, if any (they also stop by themselves when idle, and never keep the process alive while
@@ -451,6 +530,29 @@ class Wuica {
       bottlenecks: r.bottlenecks, limits: r.limits, decodeErrors: r.decodeErrors, ...(r.hex ? { hex: r.hex } : {}), ...(r.loop ? { loop: r.loop } : {}),
       stderr: r.stderr, instructions, ...(ins ? { insights: ins } : {}),
     };
+  }
+
+  // An object file (ELF or Mach-O, x86-64; objfile.js) as llvm-objdump -d's text of its code, which analyze() and
+  // compare() read as `source` (the objdump path: the loop at its address, exits stubbed, the alignment from it).
+  // -> {code: 0, text, format, functions: [{name, section, address, size}]} or a failure (another architecture says how
+  // to compile for x86-64). `func`: also resolves a -func name (exact, without Mach-O's "_", or a unique part): `func`.
+  disassemble(bytes, { name = 'input', func = null } = {}) {
+    const obj = readObject(bytes);
+    if (obj.error) return failure(CODES.REQUEST, obj.error);
+    if (!obj.functions.length) return failure(CODES.REQUEST, 'no functions in the code sections');
+    let resolved = null;
+    if (func !== null && func !== undefined) {
+      const r = resolveFunction(obj.functions, func);
+      if (r.error) return failure(CODES.REQUEST, r.error);
+      resolved = r.name;
+    }
+    let text;
+    try {
+      text = objdumpText(obj, (b) => this.#analyzer.decode(b, 'ALL'), name);
+    } catch (e) {
+      return failure(CODES.ANALYSIS, `the decoder failed (${e.message})`);
+    }
+    return { code: CODES.OK, text, format: obj.format, functions: obj.functions.map(({ name: n, section, address, size }) => ({ name: n, section, address, size })), ...(resolved !== null ? { func: resolved } : {}) };
   }
 
   get restarts() { return this.#analyzer.restarts; }

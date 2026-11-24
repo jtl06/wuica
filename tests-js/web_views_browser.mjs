@@ -40,7 +40,7 @@ const b64 = (s) => Buffer.from(s).toString('base64').replace(/=+$/, '').replace(
 const engine = await WasmEngine.create(fs.readFileSync(path.join(dist, 'wuica_wasm.wasm')));
 const uarch = JSON.parse(fs.readFileSync(path.join(dist, 'data', 'uarch.json')));
 await engine.loadUarch(fs.readFileSync(path.join(dist, 'data', 'uarch.json')));
-for (const t of ['SKL', 'ZEN3']) await engine.loadArch(t, fs.readFileSync(path.join(dist, 'data', 'arch', `${t}.json`)));
+for (const t of ['SKL', 'ZEN3']) await engine.loadArch(t, fs.readFileSync(path.join(dist, 'data', 'arch', `${t}.bin`)));
 const analyze = (hex, arch = 'SKL', options = {}) => engine.analyze(makeRequest(hex, arch, options));
 const ex = (id) => [...EXAMPLES, ...CLASSIC_EXAMPLES].find((e) => e.id === id);
 

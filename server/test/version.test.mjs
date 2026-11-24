@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import { COMPONENTS, versionInfo } from '../lib/version.js';
 import { capMemory } from '../lib/wasm-limits.js';
 import { ROOT } from './helpers.mjs';
@@ -25,6 +26,16 @@ test('the uiCA commit is the data asset\'s (ci/data-asset.txt, through the packa
   assert.deepEqual(versionInfo().uiCA, want);
   const cli = JSON.parse(execFileSync(process.execPath, [path.join(ROOT, 'packages/wuica/bin/wuica.js'), '--version', '-json'], { encoding: 'utf8' }));
   assert.deepEqual(cli.uiCA, want);
+});
+
+test('the data hash names the JSON tables the shipped binary ones were made from', () => {
+  const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
+  const names = fs.readdirSync(path.join(ROOT, 'data/arch')).filter((f) => f.endsWith('.json')).sort();
+  const want = sha(names.map((f) => `${f} ${sha(fs.readFileSync(path.join(ROOT, 'data/arch', f)))}\n`).join(''));
+  const v = versionInfo();
+  assert.equal(v.data.tablesSha256, want);
+  assert.equal(v.data.tablesFormat, 'WUICATBL 1');
+  assert.match(v.data.uarchSha256, /^[0-9a-f]{64}$/);
 });
 
 test('the server and the library have the site\'s version (web/js/app.js; tests-js/web_version.mjs)', () => {

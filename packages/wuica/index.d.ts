@@ -61,6 +61,8 @@ export interface Example {
   intel?: string;
   att?: string;
 }
+/** What a file is from its first bytes ('elf', 'macho', 'fat', 'macho32', 'coff', 'pe', 'archive'), or null. */
+export function objectKind(bytes: Uint8Array): { kind: string } | null;
 /** The built-in examples: basics, classic loops, the SHA-256 showcase. */
 export function examples(): readonly Example[];
 /** The example called `name` (case-insensitive), or null. */
@@ -285,6 +287,17 @@ export interface Wuica {
   /** POST /api/compare: one block on several microarchitectures (default: all of archs()); assembled once. The
    * microarchitectures are analyzed on worker threads (CreateOptions.threads); the response is the same either way. */
   compare(request: CompareRequest): Promise<CompareResult | Failure>;
+  /** Several blocks on one microarchitecture: each result exactly what analyze(arch, request) returns, in the same
+   * order. The code is assembled on the calling thread; the analyses run on worker threads when the work is worth it. */
+  analyzeMany(arch: string, requests: AnalyzeRequest[]): Promise<(AnalyzeResult | Failure)[]>;
+  /** Several blocks on several microarchitectures: each result exactly what compare() returns for that request (its
+   * `archs`, else options.archs, else all); every block x microarchitecture is one job for the threads. */
+  compareMany(requests: CompareRequest[], options?: { archs?: string[] }): Promise<(CompareResult | Failure)[]>;
+  /** An object file or executable (ELF or Mach-O, x86-64; a universal file's x86-64 slice) as llvm-objdump -d's text
+   * of its code sections, which analyze() and compare() read as `source` (the loop at its address, the alignment from
+   * it). Another architecture or format is a Failure that says what it is and how to get x86-64. `func` is resolved
+   * (exact, without Mach-O's "_", or a unique part of a name) and returned as `func`. */
+  disassemble(bytes: Uint8Array, options?: { name?: string; func?: string | null }): { code: 0; text: string; format: string; functions: { name: string; section: string; address: number; size: number }[]; func?: string } | Failure;
   /** GET /api/archs: in order of release (uiCA's ablation variants, ids with "_", are left out). */
   archs(): ArchInfo[];
   archs(fields: ArchField[] | string): Partial<ArchInfo>[];
@@ -313,9 +326,11 @@ export interface CreateOptions {
   analyzerWasm?: string;
   /** Path of wuica_asm.wasm (plain or .br). */
   assemblerWasm?: string;
-  /** The most worker threads compare() uses, one per microarchitecture. 1: none (one after another on the calling
-   * thread). Default: the environment variable WUICA_THREADS, else "auto": one thread per two microarchitectures, at
-   * most os.availableParallelism() (none inside a worker thread). */
+  /** The most worker threads compare(), analyzeMany() and compareMany() use. A number: up to that many (one per job at
+   * most); 1: none (one after another on the calling thread). Default: the environment variable WUICA_THREADS, else
+   * "auto": by the amount of work (blocks x microarchitectures, their instructions, the tables to load): none when it
+   * would take less than about 0.3 s on one thread, else 2 to 8, at most the cores but one (none inside a worker
+   * thread). */
   threads?: number | 'auto';
 }
 
@@ -384,6 +399,10 @@ export type CliAnalyzeJson = AnalyzeResult & { insights?: Insights; perElement?:
 export type CliCompareJson = CompareResult & { results: (CompareResult['results'][number] & { perElement?: number; caveats?: Caveat[] })[]; whatIf?: CliWhatIf };
 /** The CLI's `--version -json`: the package's version and the uiCA reference whose data and model it has (from the
  * repository's ci/data-asset.txt at build time; null if the package was not built). */
+/** The CLI's `-json` with several inputs (wuica a.s b.s ..., -files LIST): `code` is the largest of the files' codes
+ * (the exit status); each entry is what a single run prints for that file (CliAnalyzeJson, CliCompareJson, a Failure,
+ * or with -loops {code, loops}), with the file's name as given. */
+export interface CliBatchJson { code: number; files: ({ file: string } & (CliAnalyzeJson | CliCompareJson | Failure | { code: 0; loops: LoopListing[] }))[] }
 export interface CliVersionJson { wuica: string; uiCA: { repository: string; commit: string; branch?: string } | null; node: string }
 /** The what-if experiments of the web page (the MCP tool `what_if`), with `analyze` (e.g. a Wuica's analyze, bound) and,
  * for the accumulator variants, `assemble` (e.g. a Wuica's assemble, bound). */

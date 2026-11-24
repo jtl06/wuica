@@ -32,7 +32,9 @@ export function versionInfo() {
     uiCA: manifest?.uiCA ?? { repository: 'https://github.com/jtl06/uiCA', commit: null },
     llvm: COMPONENTS.llvm,
     xed: COMPONENTS.xed,
-    data: { source: 'https://www.uops.info (via uiCA)', uarchSha256: sha('data/uarch.json') },
+    // tablesSha256: of the JSON tables the shipped ones were made from (the manifest's tables.sha256), the same whichever
+    // form is shipped; tablesFormat: the form shipped (the binary form's magic and version)
+    data: { source: 'https://www.uops.info (via uiCA)', uarchSha256: sha('data/uarch.json'), tablesSha256: manifest?.tables?.sha256 ?? null, tablesFormat: manifest?.tables?.format ?? null },
     wasm: { analyzerSha256: sha('wuica_wasm.wasm'), assemblerSha256: sha('wuica_asm.wasm') },
   };
 }
