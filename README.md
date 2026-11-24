@@ -14,6 +14,8 @@ Alder Lake P-cores and Ice Lake server to the original Intel models.
 all 15,259 test cases (both fixture sets, all options), natively and as WebAssembly, at about 1 ms per analysis (the Python
 reference needs 40–55 ms plus startup). See [docs/DESIGN.md](docs/DESIGN.md) for the structure and the rules of the port.
 
+For reviewers: [docs/SPEC.md](docs/SPEC.md) states the rules, architecture, measurements, rejected ideas and known weaknesses.
+
 | Part | Where | State |
 |---|---|---|
 | Decoding (Intel XED, the version uiCA pins) | `crates/wuica-xed` | identical to Python on 3948 file × chip cases |
