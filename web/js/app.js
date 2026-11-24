@@ -917,7 +917,11 @@ async function run({ auto = false } = {}) {
   if (!auto) clearMessages();
   const ctrl = new AbortController();
   assembling = ctrl;
-  if (ab?.active()) { await runCompare(id, key, { auto, ctrl, snap: () => snapshotOf(input, inputB) }); return; } // awaited: live mode runs one comparison at a time
+  // (the assembly can set a side's loop back to auto, a link's pick that its text does not have: the key of the input
+  // the run assembled, with those, as for single mode below)
+  const abKey = ab?.active() ? ab.key() : '';
+  const rekey = () => runKey({ ...input, ab: `${abKey}|${state.ab ? state.bLoop : ''}` });
+  if (ab?.active()) { await runCompare(id, key, { auto, ctrl, snap: () => snapshotOf(input, inputB), rekey }); return; } // awaited: live mode runs one comparison at a time
   const archKey = state.arch;
   let opts = options();
   const item = archItems.get(archKey);
@@ -1007,7 +1011,7 @@ function analyze() {
 }
 
 // A–B mode: both sides, one after the other (ab.js gets the machine code and draws the comparison). auto: as in run().
-async function runCompare(id, key, { auto = false, ctrl = null, snap = () => null } = {}) {
+async function runCompare(id, key, { auto = false, ctrl = null, snap = () => null, rekey = null } = {}) {
   const current = () => id === runSeq;
   const opts = options();
   let input;
@@ -1031,6 +1035,7 @@ async function runCompare(id, key, { auto = false, ctrl = null, snap = () => nul
     return;
   }
   inputError(false); // (a side with an error is drawn as such)
+  if (rekey && rekey() !== key) { key = rekey(); syncUrl(); } // (a loop set back to auto by the assembly)
   setBusy(true, { defer: auto });
   inflight = { id, key };
   try {

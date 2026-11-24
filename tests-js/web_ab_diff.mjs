@@ -126,6 +126,9 @@ const resp = (rows, extra = {}) => ({ arch: 'SKL', tp: 1, mode: 'loop', decodeEr
   const single = { ...DEFAULT_STATE, mode: 'hex', text: '48 01 d8', arch: 'ZEN3', bText: 'ignored', bMode: 'asm' };
   check(encodeState(single) === 'v=1&a=ZEN3&c=NDggMDEgZDg', 'url: a single-mode link is as before (B is left out)', encodeState(single));
   check(j(decodeState('v=1&a=ZEN3&c=NDggMDEgZDg')) === j({ ...DEFAULT_STATE, mode: 'hex', text: '48 01 d8', arch: 'ZEN3' }), 'url: old links decode as before (hex)');
+  // B's loop pick: in the link for B's assembly only (machine code has no loops)
+  check(/(^|&)blp=2(&|$)/.test(encodeState({ ...DEFAULT_STATE, ab: true, bMode: 'asm', bLoop: 2, bText: 'x' })) && !/blp=/.test(encodeState({ ...DEFAULT_STATE, ab: true, bMode: 'hex', bLoop: 2, bText: '48 01 d8' }))
+    && decodeState(encodeState({ ...DEFAULT_STATE, ab: true, bMode: 'asm', bLoop: 'whole', bText: 'x' })).bLoop === 'whole', 'url: blp= only for B\'s assembly');
   const s = { ...DEFAULT_STATE, ab: true, text: 'add rax, 1\n', mode: 'asm', bMode: 'asm', bSyntax: 'att', bArch: 'ADL-P', bText: 'loop:\n  addq $2, %rax ✓\n', aWork: 8, bWork: 32, abSide: 'b' };
   const f = encodeState(s);
   check(/^[A-Za-z0-9=&_-]+$/.test(f) && f.includes('&aw=8&c=') && f.includes('&ab=1&bm=asm&bs=att&ba=ADL-P&bw=32&sd=b&bc=') && encodeState({ ...DEFAULT_STATE, mode: 'hex', text: '90', aWork: 4 }) === 'v=1&aw=4&c=OTA', 'url: side B in the fragment', f);

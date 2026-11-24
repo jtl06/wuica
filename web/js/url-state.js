@@ -119,7 +119,7 @@ export function encodeState(state) {
     if (s.bMode === 'asm' && s.bSyntax === 'att') p.push('bs=att');
     if (s.bArch) p.push(`ba=${encodeURIComponent(s.bArch)}`);
     if (s.bWork !== DEFAULT_STATE.bWork) p.push(`bw=${s.bWork}`);
-    if (s.bLoop === 'whole' || Number.isInteger(s.bLoop)) p.push(`blp=${s.bLoop}`);
+    if (s.bMode === 'asm' && (s.bLoop === 'whole' || Number.isInteger(s.bLoop))) p.push(`blp=${s.bLoop}`); // (machine code has no loops to pick)
     if (s.abSide === 'b') p.push('sd=b');
     if (s.bText !== '') p.push(`bc=${toBase64Url(s.bText)}`);
   }

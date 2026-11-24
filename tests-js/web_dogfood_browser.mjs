@@ -209,6 +209,20 @@ try {
     await page.close();
   }
 
+  // ---- a link whose loop picks (lp=, blp=) its texts do not have: the first loop, and the result is current -----------
+  {
+    const { encodeState } = await import(new URL('../web/js/url-state.js', import.meta.url).href);
+    const frag = encodeState({ mode: 'asm', syntax: 'att', text: fx('saxpy.s'), loop: 9, ab: true, bMode: 'asm', bSyntax: 'att', bText: fx('saxpy.s'), bLoop: 9 });
+    const page = await Page.open(browser, { width: 1440, height: 900 });
+    await page.goto(`${srv.origin}/?nosw=1#${frag}`);
+    await page.waitFor(`document.getElementById('results').dataset.run && document.querySelector('#result-body .ab-tp')`, 'the A–B result', 60000);
+    const r = await page.eval(`${W} await wait(1500); await until(() => !$('results').hasAttribute('aria-busy'));
+      return { stale: $('result-body').classList.contains('stale'), a: $('loop-chip')?.selectedOptions[0]?.value, b: $('loop-chip-b')?.selectedOptions[0]?.value, hash: location.hash };`);
+    check(!r.stale && r.a === '0' && r.b === '0' && !/[&#]b?lp=9/.test(r.hash), 'a link with lp=9, blp=9 (4 loops): the first loops, the result current (not stale), the link updated', js({ ...r, hash: r.hash.slice(0, 80) }));
+    check(page.take().length === 0, 'stale picks: no errors', '');
+    await page.close();
+  }
+
   // ---- B8: a try variant opened with ↗ keeps its unit: elems = the original's × the unroll -----------------------------
   {
     const page = await fresh();
