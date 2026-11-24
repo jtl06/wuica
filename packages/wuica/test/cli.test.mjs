@@ -177,7 +177,7 @@ test('-h', () => {
 
 test('-h names every input: objdump -dS, perf annotate --stdio, several files', () => {
   const r = run(['-h']);
-  assert.match(r.out, /objdump -d or -dS output, perf annotate --stdio\s+output/);
+  assert.match(r.out, /objdump -d or -dS, perf annotate --stdio, a hand-written/);
   assert.match(r.out, /several FILEs: one table/);
   assert.doesNotMatch(r.out, /One input per run/);
 });

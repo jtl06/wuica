@@ -17,9 +17,8 @@ export const USAGE = `Usage: wuica [options] [FILE | - | HEX]
        wuica mcp                start the MCP server (stdio)
 
 Predicts the throughput of an x86-64 basic block with uiCA's pipeline model (this is wuica ${VERSION}, a WebAssembly
-port of uiCA). The input: assembly from FILE (gcc -S, clang -S, objdump -d or -dS output, perf annotate --stdio
-output, or a hand-written loop), or from stdin if FILE is - or missing (several FILEs: one table, as above).
-A HEX argument that is not a file (e.g. 4801d84801c349ffcf75f5) is machine code.
+port of uiCA). Input: assembly from FILE (gcc -S, clang -S, objdump -d or -dS, perf annotate --stdio, a hand-written
+loop), or stdin if FILE is - or missing; several FILEs: one table. A HEX argument that is not a file is machine code.
 Built-in examples (no file needed): -examples lists them, -example saxpy analyzes one (every option applies),
 -example saxpy -show prints its assembly to save and edit.
 
