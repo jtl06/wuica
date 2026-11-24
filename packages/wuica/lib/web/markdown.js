@@ -245,9 +245,9 @@ export function compare(a, b, meta = {}) {
     const shown = new Map();
     for (const [r, sh, src] of [[a, meta.shownA, meta.srcA], [b, meta.shownB, meta.srcB]]) shownLabels(r, { shown: sh, src }).forEach((l, i) => shown.set(r.rows[i], l));
     const label = (u) => (u ? cell(u.row, shown.get(u.row) ?? u.label) : '');
-    // (a minor change of uops, ab-diff.js MINOR: as the same instruction; the totals stay the sums of every row)
+    // (a minor change of uops, ab-diff.js MINOR: as the same instruction; a total that changes by less: no change)
     const rows = d.rows.map((x) => (x.minor ? ['', label(x.a), label(x.b), ...x.deltas.map(() => '')] : [MARK[x.status], label(x.a), label(x.b), ...x.deltas.map((v) => signed(v))]));
-    rows.push(['', '**Total**', '', ...d.totals.map((v) => signed(v))]);
+    rows.push(['', '**Total**', '', ...d.totals.map((v) => (Math.abs(v) < MINOR ? '' : signed(v)))]);
     blocks.push(table(['', 'A', 'B', ...d.columns.map((c) => (c.name === 'Issued' ? 'Δ uops' : `Δ ${text(c.name)}`))], rows, ['c', 'l', 'l', ...d.columns.map(() => 'r')]));
     const minor = d.rows.filter((x) => x.minor).length;
     const used = Object.keys(MARK_TEXT).filter((k) => d.counts[k] - (k === 'changed' ? minor : 0) > 0);

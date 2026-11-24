@@ -140,7 +140,7 @@ export function diffText(r) {
   const w = Math.max(5, ...r.limits.map((l) => l.name.length));
   lines.push('', `  ${'limit'.padEnd(w)}  ${'A'.padStart(7)}  ${'B'.padStart(7)}  ${'delta'.padStart(7)}`);
   for (const l of r.limits) lines.push(`  ${l.name.padEnd(w)}  ${f2(l.a).padStart(7)}  ${f2(l.b).padStart(7)}  ${(l.delta ? sg(l.delta) : '').padStart(7)}`.trimEnd());
-  const moved = r.ports.filter((p) => p.delta);
+  const moved = r.ports.filter((p) => Math.abs(p.delta) >= MINOR); // (a change under MINOR, as the instructions': not listed)
   lines.push('', `ports (uops per iteration): ${moved.length ? moved.map((p) => `${p.port} ${f2(p.a)} -> ${f2(p.b)}`).join(', ') : 'no change'}`);
   // (minor changes of uops, ab-diff.js MINOR, are counted as the same and not listed)
   const minor = r.instructions.changes.filter((x) => x.minor).length;

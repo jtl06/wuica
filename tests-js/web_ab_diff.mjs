@@ -42,10 +42,15 @@ const resp = (rows, extra = {}) => ({ arch: 'SKL', tp: 1, mode: 'loop', decodeEr
   const line = (t) => md.split('\n').find((l) => l.includes(t)) ?? '';
   check(!/•|[+−]0\.03/.test(line('add rax, 0x20')) && /•/.test(line('xor ecx, edx')) && /•/.test(line('dec r15')), 'Markdown: the minor change is shown as the same instruction, the others marked', md);
   check(/changes under 0\.05 uops not shown \(1 instruction\)/.test(md), 'Markdown: says how many were left out', md);
+  // the summary as the rows: a total (a port's) that changes by less than MINOR is no change (Port 1: +0.03 from the add)
+  const total = line('**Total**');
+  check(/−0\.53/.test(total) && !/0\.03/.test(total), 'Markdown: the Total row without the minor change of Port 1', total);
   const r = diffResult(A, B);
   const add = r.instructions.changes.find((x) => x.a === 'add rax, 0x20');
   check(add?.minor === true && add.uops['Port 0'] === -0.03 && r.instructions.changes.length === 3 && r.instructions.counts.changed === 3, 'JSON: every change, the minor one flagged', j(r.instructions));
   const t = diffText(r);
+  const ports = t.split('\n').find((l) => l.startsWith('ports')) ?? '';
+  check(/Port 0 0\.75 -> 0\.22/.test(ports) && !/Port 1/.test(ports) && r.ports.find((x) => x.port === 'Port 1')?.delta === 0.03, 'text: the ports line without a change under 0.05 (the JSON keeps it)', `${ports} | ${JSON.stringify(r.ports)}`);
   check(!/add rax, 0x20/.test(t) && /\* xor ecx, edx/.test(t) && /instructions: 2 with other uops \(changes under 0\.05 uops not listed: 1\)/.test(t), 'text: the minor change is not listed', t);
 }
 
