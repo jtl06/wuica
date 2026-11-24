@@ -144,6 +144,9 @@ export interface Row {
   notes: string;
   /** values[i] belongs to columns[i]; averages per iteration. */
   values: number[];
+  /** Assembly input: the instruction's 1-based line in the text, and its `.loc` source line ("file.c:12") when the text has .file/.loc directives. Absent for machine code. */
+  line?: number;
+  loc?: string;
 }
 
 /** A successful analysis: the response of docs/WASM-API.md plus code, hex and stderr. */
@@ -202,6 +205,8 @@ export interface AnalyzeSummary {
   stderr: StderrLine[];
   instructions: Array<{
     instr: string;
+    line?: number;
+    loc?: string;
     bytes?: string;
     kind?: 'regMerge' | 'stackSync';
     issued?: number;
@@ -235,9 +240,9 @@ export interface Insights {
   /** Cycles per iteration that no single limit explains. */
   unexplained?: number;
   /** The critical loop-carried dependency chain (index: into `instructions`). */
-  chain?: { index: number; instr: string; operand: string; latency: number; carried: boolean }[];
+  chain?: { index: number; instr: string; line?: number; loc?: string; operand: string; latency: number; carried: boolean }[];
   /** The instructions with the largest share of the binding resource, or of the largest limit (top 5). */
-  hot?: { resource: string; ports?: string[]; instructions: { index: number; instr: string; share: number }[] };
+  hot?: { resource: string; ports?: string[]; instructions: { index: number; instr: string; line?: number; loc?: string; share: number }[] };
   /** Known blind spots of the model the block meets (absent if none): rmw-index, paths, exit, split. */
   caveats?: Caveat[];
   /** With options.details: the ports behind the Ports limit (cycles = uops / ports) and the instructions that load them. */

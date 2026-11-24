@@ -377,7 +377,8 @@ export function functionBody(s) {
 // What to analyze: see the top. text: the pasted assembly; loop: 'auto' (default), 'whole', or the index of a loop.
 // Returns {text, objdump, loops: [{begin, end, label}], choice: index | 'body' | null, choosable (there is code around the
 //   loop or the body: a choice matters), pick: {begin, end, lines: [the line of each instruction]} | null,
-//   body: {begin, end} | null, alignment: number | null, address: number | null, stubs: [names],
+//   body: {begin, end} | null, alignment: number | null, address: number | null, stubs: [names], lines: [the line of each
+//   instruction of the text],
 //   notes: [{line, column, severity, message}], fallback: Map line -> text, error?}
 /**
  * @param {string} text
@@ -427,6 +428,7 @@ export function preparePaste(text, { loop = 'auto', func = null } = {}) {
     return out;
   }
   const code = s.instrs;
+  out.lines = code.map((x) => x.line); // the source line of each instruction of the text (pick.lines: of the pick)
   if (Number.isInteger(loop) && Number(loop) >= loops.length) {
     out.error = `loop: ${loop} is not the index of a loop (0-based; the text has ${loops.length === 0 ? 'none' : `${loops.length}: 0 to ${loops.length - 1}`})`;
     return out;

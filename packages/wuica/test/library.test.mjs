@@ -116,6 +116,31 @@ test('compare with per: cycles per element on each row (as the CLI\'s -arch with
   for (const per of [0, -1, '4']) assert.equal((await w.compare({ hex: HEX, per })).code, 1, String(per));
 });
 
+test('source lines: line (and loc from .loc) on each instruction row, instructions[], chain[] and hot.instructions[]', async () => {
+  const src = 'f:\n.L1:\n add rax, 1\n dec rcx\n jnz .L1\n ret\n';
+  const r = await w.analyze('SKL', { source: src });
+  assert.deepEqual(r.rows.map((x) => x.line), [3, 4, 5]);
+  const s = w.summarize(r);
+  assert.deepEqual(s.instructions.map((x) => x.line), [3, 4, 5]);
+  assert.deepEqual(s.insights.chain.map((x) => x.line), [3]);
+  assert.ok(s.insights.hot.instructions.every((x) => x.line === r.rows[x.index].line));
+  // the whole text, a picked loop of several, .loc directives
+  // (a stack-synchronization uop before the ret is not an instruction: no line)
+  assert.deepEqual((await w.analyze('SKL', { source: src, loop: 'whole' })).rows.map((x) => x.line), [3, 4, 5, undefined, 6]);
+  const two = 'f:\n.L1:\n add rax, 1\n dec rcx\n jnz .L1\n.L2:\n add rbx, 1\n dec rdx\n jnz .L2\n ret\n';
+  assert.deepEqual((await w.analyze('SKL', { source: two, loop: 1 })).rows.map((x) => x.line), [7, 8, 9]);
+  const loc = '\t.file 1 "sum.c"\nloop:\n\t.loc 1 4 7\n\taddss xmm0, xmm1\n\t.loc 1 3 3\n\tdec rcx\n\tjnz loop\n';
+  const l = await w.analyze('SKL', { source: loc });
+  assert.deepEqual(l.rows.map((x) => [x.line, x.loc]), [[4, 'sum.c:4'], [6, 'sum.c:3'], [7, 'sum.c:3']]);
+  assert.deepEqual(w.summarize(l).instructions.map((x) => x.loc), ['sum.c:4', 'sum.c:3', 'sum.c:3']);
+  // objdump lines: the line of the text
+  const od = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/profiles/objdump-dS.txt'), 'utf8');
+  assert.deepEqual((await w.analyze('SKL', { source: od })).rows.map((x) => x.line), [15, 16, 17, 19, 20, 21]);
+  // machine code: none
+  const h = await w.analyze('SKL', { hex: HEX });
+  assert.ok(h.rows.every((x) => x.line === undefined && x.loc === undefined));
+});
+
 test('SKL result in detail', async () => {
   const r = await w.analyze('SKL', { hex: HEX });
   assert.equal(r.tp, 2);

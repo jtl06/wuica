@@ -21,7 +21,7 @@ import { CODES, WARM_HEX, failure, tableFailure, analysisResult, compareFields }
 import { ThreadPool, threadLimit, threadOption, threadsForWork } from './threads.js';
 // the web page's reading of pasted assembly (copies of web/js in lib/web: tests-js/web_pkg_copies.mjs): the loop of a whole function, objdump lines,
 // exits as not taken, ';' comments, region markers
-import { assembleMarked, commentFixes, separatorNotes } from './web/asm-regions.js';
+import { assembleMarked, commentFixes, separatorNotes, spanLines } from './web/asm-regions.js';
 import { normalizeText, detectSyntax, preparePaste, syntaxSigns } from './web/loop-find.js';
 export { detectSyntax };
 
@@ -174,6 +174,25 @@ function pickOptions(req, extraKeys) {
 export function comparePerElement(c, per) {
   if (!per || c.code) return c;
   return { ...c, elementsPerIteration: per, results: c.results.map((r) => (r.code === CODES.OK ? { ...r, perElement: r.tp / per } : r)) };
+}
+
+// The rows of an analysis with where each instruction came from (assembly input): `line` (1-based, of the text as given)
+// and `loc` ("file.c:12", from .loc/.file directives). Only when the counts fit the instruction rows exactly (from the
+// loop finder and the assembler, never by matching text); unchanged otherwise.
+function withSourceLines(r, src) {
+  if (!src || !Array.isArray(r.rows)) return r;
+  const instr = r.rows.filter((x) => x.kind === 'instr');
+  const lines = Array.isArray(src.lines) && src.lines.length === instr.length ? src.lines : null;
+  const locs = src.loc?.spans?.length ? spanLines(r.rows, src.loc.spans) : null;
+  const file = src.loc?.file ?? null;
+  if (!lines && !(locs && file)) return r;
+  let k = 0;
+  const rows = r.rows.map((x) => {
+    if (x.kind !== 'instr') return x;
+    const i = k++;
+    return { ...x, ...(lines ? { line: lines[i] } : {}), ...(locs && file && locs[i] ? { loc: `${file}:${locs[i]}` } : {}) };
+  });
+  return { ...r, rows };
 }
 
 // A list of arch names without repeats (the same id, or the same unknown name), in the order of their first appearance.
@@ -334,7 +353,9 @@ class Wuica {
       ...(picked.address !== null && picked.address !== undefined ? { address: picked.address } : {}), ...(r.alignment !== null ? { alignmentOffset: r.alignment } : {}) };
     // the other loops of the text, when it has more than one (what -loop N or LABEL can pick instead)
     const otherLoops = r.loops.length > 1 ? loopListing(r.loops, null).filter((l) => l.index !== picked?.index).map(({ auto, ...l }) => l) : null;
-    return { code: CODES.OK, hex: Buffer.from(r.bytes).toString('hex'), bytes: r.bytes, stderr: diagnosticLines(r.diagnostics), loop: loopInfo, syntax: { name: syn.name, detected: syn.detected }, ...(otherLoops ? { otherLoops } : {}) };
+    // where each instruction came from: its line of the text (the loop finder's), and its .loc line (the assembler's)
+    const sourceLines = { lines: r.lines ?? null, loc: r.source ?? null };
+    return { code: CODES.OK, hex: Buffer.from(r.bytes).toString('hex'), bytes: r.bytes, stderr: diagnosticLines(r.diagnostics), loop: loopInfo, syntax: { name: syn.name, detected: syn.detected }, ...(otherLoops ? { otherLoops } : {}), sourceLines };
   }
 
   // {source | asm | hex, syntax, loop} -> {hex, assembled, stderr, loop} or a failure.
@@ -357,7 +378,7 @@ class Wuica {
     const a = await this.machineCode(source, req.syntax ?? 'auto', loopChoice(req.loop), req.func ?? null);
     if (a.code !== CODES.OK) return a;
     if (a.bytes.length === 0) return failure(CODES.REQUEST, 'the source contains no instructions');
-    return { hex: a.hex, assembled: true, stderr: a.stderr, loop: a.loop, syntax: a.syntax.name, ...(a.otherLoops ? { otherLoops: a.otherLoops } : {}) };
+    return { hex: a.hex, assembled: true, stderr: a.stderr, loop: a.loop, syntax: a.syntax.name, ...(a.otherLoops ? { otherLoops: a.otherLoops } : {}), sourceLines: a.sourceLines };
   }
 
   // The options of a request with the alignment offset of the code's addresses (objdump input), unless it was given.
@@ -393,6 +414,7 @@ class Wuica {
   // analyze()'s result from the code (#code) and the analysis (#run)
   static #analyzeResult(code, r) {
     if (r.code !== undefined) return r;
+    r = withSourceLines(r, code.sourceLines);
     const stderr = [...code.stderr];
     if (r.decodeErrors > 0) stderr.push({ text: `Warning: ${r.decodeErrors} position(s) could not be decoded` });
     return { code: CODES.OK, ...r, ...(code.assembled ? { hex: code.hex, syntax: code.syntax } : {}), ...(code.loop ? { loop: code.loop } : {}), ...(code.otherLoops ? { otherLoops: code.otherLoops } : {}), stderr };
@@ -546,7 +568,8 @@ class Wuica {
     const round = (x) => Math.round(x * 100) / 100;
     const sources = new Set(['MITE', 'MS', 'DSB', 'LSD']);
     const instructions = r.rows.map((row, k) => {
-      const e = { instr: row.label };
+      /** @type {Record<string, any>} */
+      const e = { instr: row.label, ...(row.line ? { line: row.line } : {}), ...(row.loc ? { loc: row.loc } : {}) };
       if (row.opcode) e.bytes = row.opcode.toLowerCase();
       if (row.kind !== 'instr') e.kind = row.kind;
       const uopSource = {}, ports = {};

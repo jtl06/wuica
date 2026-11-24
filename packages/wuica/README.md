@@ -409,6 +409,9 @@ Request:
   `compare_archs`, and the package's CLI (`wuica -loop auto|whole|N`). The reference/test binary (`crates/wuica-cli`) reads
   machine code only (hex or `-raw`), so it has no `-loop`. When the text has more than one loop, `otherLoops` lists the others (as `listLoops`
   and `-loops` give them, without `auto`), in the analyze, summary and compare results.
+- Assembly input: each instruction row (and `instructions[]`, `insights.chain[]`, `insights.hot.instructions[]`) has
+  `line`, its 1-based line in the text, and `loc` ("file.c:12") when the text has `.file`/`.loc` directives: what the
+  loop finder and the assembler record, not a match of the text. Machine code has neither.
 
 ### Option ranges per interface
 
