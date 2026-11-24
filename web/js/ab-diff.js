@@ -2,7 +2,7 @@
 // instruction-by-instruction alignment of the two uop tables with the change of every shared column.
 // Pure: no DOM, runs under Node (tests-js/web_ab_diff.mjs).
 
-import { columnKind } from './render.js';
+import { columnKind } from './bound-core.js';
 
 export const EPS = 0.005; // values are shown with two decimals: smaller differences are "the same"
 

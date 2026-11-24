@@ -1,4 +1,4 @@
-// Tests of the export formats (web/js/export.js): Markdown, CSV and JSON of a response; with the real analyzer (if built),
+// Tests of the export formats (web/js/export.js, its text from web/js/markdown.js): Markdown, CSV and JSON of a response; with the real analyzer (if built),
 // every example's CSV read back (with a CSV parser written here) equals the response's table.
 // Usage: node tests-js/web_export.mjs
 import fs from 'node:fs';
@@ -25,13 +25,14 @@ const R = {
 {
   const md = toMarkdown(R, { archTitle: 'SKL · Skylake (2015)', link: 'https://example.invalid/#v=1' });
   const lines = md.trimEnd().split('\n');
-  check(lines[0] === '**2.00 cycles/iteration** · SKL · Skylake (2015) · loop · bottleneck: Dependencies', 'markdown: the head line', lines[0]);
-  check(lines[1] === 'limits: Issue 0.75 · Dependencies 2.00' && lines[2] === '', 'markdown: the limits', lines[1]);
-  check(lines[3] === '| Instruction | Notes | DSB | Issued | Port 0 | Port 1 |' && lines[4] === '|---|:-:|--:|--:|--:|--:|', 'markdown: only used columns, numbers right-aligned', lines.slice(3, 5).join('\n'));
-  check(lines[5] === '| <Register Merge Uop> |  |  | 1 | 0.5 | 0.5 |' && lines[6] === '| `add rax, 0x1` |  | 1 | 1 | 0.33 | 0.67 |' && lines[7] === '| `jnz 0x0` | M |  |  |  |  |', 'markdown: the rows, two decimals, zeros blank', lines.slice(5, 8).join('\n'));
-  check(lines[8] === '| **Total** | | 1 | 2 | 0.83 | 1.17 |' && lines.at(-1) === '[wuica](https://example.invalid/#v=1)', 'markdown: totals and the link', lines.slice(8).join('\n'));
-  check(!/\n\n\n/.test(toMarkdown({ ...R, limits: [] })) && toMarkdown({ ...R, bottlenecks: [] }).includes('bottleneck: unknown'), 'markdown: no limits, no bottleneck');
-  check(toMarkdown({ ...R, rows: [{ ...R.rows[1], label: 'a|b`c' }] }).includes('| `a|b\'c` |'), 'markdown: a backtick in a label does not end the code span');
+  check(lines[0] === '**2.00 cycles/iteration** · SKL · Skylake (2015) · loop · bottleneck: Dependencies\\', 'markdown: the head line (a hard break, no trailing spaces)', lines[0]);
+  check(lines[1] === 'limits: Issue 0.75 · Dependencies 2.00\\' && lines[2] === 'next limit: Issue 0.75 (at most 2.67x faster without Dependencies)' && lines[3] === '', 'markdown: the limits, the next limit', lines.slice(1, 3).join('\n'));
+  check(lines[4] === '| Instruction          | Notes | DSB | Issued | Port 0 | Port 1 |' && lines[5] === '|----------------------|:-----:|----:|-------:|-------:|-------:|', 'markdown: only used columns, padded, numbers right-aligned', lines.slice(4, 6).join('\n'));
+  check(lines[6] === '| <Register Merge Uop> |       |     |      1 |    0.5 |    0.5 |' && lines[7] === '| `add rax, 0x1`       |       |   1 |      1 |   0.33 |   0.67 |' && lines[8] === '| `jnz 0x0`            |   M   |     |        |        |        |', 'markdown: the rows, two decimals, zeros blank', lines.slice(6, 9).join('\n'));
+  check(lines[9] === '| **Total**            |       |   1 |      2 |   0.83 |   1.17 |' && lines.at(-1) === '[open in wuica](https://example.invalid/#v=1)', 'markdown: totals and the link', lines.slice(9).join('\n'));
+  check(md.split('\n').every((l) => !/\s$/.test(l)), 'markdown: no trailing whitespace');
+  check(!/\n\n\n/.test(toMarkdown({ ...R, limits: [] })) && toMarkdown({ ...R, bottlenecks: [] }).includes('bottleneck: unknown · nearest Dependencies 2.00'), 'markdown: no limits, no bottleneck');
+  check(toMarkdown({ ...R, rows: [{ ...R.rows[1], label: 'a|b`c' }] }).includes('| `` a\\|b`c `` |'), 'markdown: a pipe escaped, a backtick inside a longer code span');
 
   const csv = toCSV({ ...R, rows: [...R.rows, { kind: 'instr', label: 'mov eax, "x", y', opcode: 'B8', notes: '', values: [1, 0, 1, 0, 0] }] });
   const c = csv.split('\r\n');
