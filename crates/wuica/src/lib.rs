@@ -3,14 +3,13 @@
 use std::collections::HashMap;
 pub use wuica_core::analyze::{Request, Response};
 pub use wuica_core::config::UArch;
-pub use wuica_core::data::{ArchData, Tables};
-pub use wuica_core::table_bin::LazyTable;
+pub use wuica_core::data::ArchData;
 
 /// The loaded configurations and instruction tables.
 #[derive(Default)]
 pub struct Engine {
     uarch: Option<UArch>,
-    tables: HashMap<String, Box<dyn Tables + Send + Sync>>,
+    tables: HashMap<String, ArchData>,
 }
 
 impl Engine {
@@ -28,14 +27,13 @@ impl Engine {
     /// tests; the WebAssembly module that ships reads only the binary form, [`Engine::load_arch_bin`]).
     #[cfg(feature = "json-tables")]
     pub fn load_arch(&mut self, name: &str, json: &str) -> Result<(), String> {
-        self.tables.insert(name.to_string(), Box::new(ArchData::from_json(json).map_err(|e| format!("{name}.json: {e}"))?));
+        self.tables.insert(name.to_string(), ArchData::from_json(json).map_err(|e| format!("{name}.json: {e}"))?);
         Ok(())
     }
 
-    /// Loads the binary form of an instruction table (`wuica_core::table_bin`, what `encode_tables` writes): it is read in
-    /// place, each form decoded when an analysis first needs it (`LazyTable`).
+    /// Loads the binary form of an instruction table (`wuica_core::table_bin`, what `encode_tables` writes).
     pub fn load_arch_bin(&mut self, name: &str, bytes: &[u8]) -> Result<(), String> {
-        self.tables.insert(name.to_string(), Box::new(LazyTable::new(bytes.to_vec()).map_err(|e| format!("{name}: {e}"))?));
+        self.tables.insert(name.to_string(), ArchData::from_bin(bytes).map_err(|e| format!("{name}: {e}"))?);
         Ok(())
     }
 
@@ -56,7 +54,7 @@ impl Engine {
         let hex: String = request.hex.chars().filter(|c| !c.is_whitespace()).collect();
         let code = wuica_xed::parse_hex(&hex).ok_or("the machine code is not a sequence of hex bytes")?;
         let decoded = wuica_xed::decode(&code, &config.xed_name).map_err(|e| e.to_string())?;
-        wuica_core::analyze::analyze(&decoded.instrs, decoded.errors, request, uarch, data.as_ref())
+        wuica_core::analyze::analyze(&decoded.instrs, decoded.errors, request, uarch, data)
     }
 
     /// As [`Engine::analyze`], with the request and the response as JSON (docs/WASM-API.md); errors are `{"error": ...}`.

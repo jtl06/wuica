@@ -6,10 +6,8 @@
 //   tableCap(n, size)    the most tables a worker keeps, for n tables and `size` workers
 //   createPool(options)  the pool; its workers are started when the first jobs come in, and only as many as useful
 //
-// Scheduling. Every worker holds the instruction tables it has loaded (a table is 0.2–0.8 MB in its binary form and is
-// read in place, each instruction form decoded when an analysis first needs it: opening one takes about 1 ms; in the
-// WebAssembly memory: 2.5 MB with no table, 3.0 with one, 3.9 with five, 13.8 with all 15, before analyses; decoded
-// all at once, as until 0.1.9: 4.4, 9.8 and 38.9).
+// Scheduling. Every worker holds the instruction tables it has loaded (a table is 0.5–1.8 MB of JSON and takes 10–40 ms
+// to load; in the WebAssembly memory it takes 1–6 MB: 2.5 MB with no table, ~10 with one, ~20 with five, ~54 with all 15).
 // A worker that becomes free takes, in this order:
 //   1. the first waiting job whose table it has (or is loading);
 //   2. the first job whose table no worker has: it loads that table (so a batch with one job per CPU spreads the 15
