@@ -5,7 +5,7 @@
 //
 // The model (no DOM) is bound-core.js, which the npm package shares; this file renders it.
 
-import { h } from './render.js';
+import { h, sideTag } from './render.js';
 import { colorInstr } from './asm-hl.js';
 import { jumpToRow, finishJump } from './rowjump.js';
 import { portSetBlame, setLine, markPorts } from './portset.js';
@@ -106,7 +106,8 @@ export function createBound(env = {}) {
     const m = r && !r.error ? boundModel(r) : null;
     row.hidden = !m;
     const shown = view?.shown ?? null;
-    setCopy('bound', m ? { what: 'the bound view', md: () => boundText(r, selected, { shown }) } : null);
+    const side = view?.side ? view.side.toUpperCase() : null;
+    setCopy('bound', m ? { what: 'the bound view', md: () => boundText(r, selected, { shown, side }) } : null);
     if (!m) { clean(); return; }
     hint.textContent = m.next ? ` · next ${m.next.name} ≤×${m.next.speedup.toFixed(1)}` : '';
     hint.title = m.next ? `without the bottleneck, at best ${f2(m.next.tp)} cycles/iteration (the next limit): up to ${m.next.speedup.toFixed(2)}× faster` : '';
@@ -141,7 +142,9 @@ export function createBound(env = {}) {
       btn.addEventListener('click', () => jumpToRow(root, k));
       return h('li', null, btn);
     });
-    body.replaceChildren(...[h('div', { class: 'bd-groups' }, groups, ps ? setLine(ps) : null, d?.issue ? slotsLine(d.issue) : null),
+    // what the shares are of (the headline can be per element), and in A–B whose block it is
+    const cap = h('p', { class: 'ab-cap bd-cap' }, ...[sideTag(view), `${view?.side ? ' ' : ''}${f2(Number(r.tp))} cycles/iteration`].filter(Boolean));
+    body.replaceChildren(...[cap, h('div', { class: 'bd-groups' }, groups, ps ? setLine(ps) : null, d?.issue ? slotsLine(d.issue) : null),
       top.length ? h('div', { class: 'bd-top' }, h('span', { class: 'bd-g', text: 'top', title: `the instructions with the largest share of ${name}; the uop table is shaded by the share` }), h('ol', { class: 'bd-list' }, list)) : null].filter(Boolean));
     shade(b, name);
     if (ps) markPorts(root, d.ports.ports);

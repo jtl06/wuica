@@ -270,7 +270,7 @@ const pct = (u) => `${Math.round(u * 100)}%`;
 
 // The bound view (bound-core.js): how busy each resource is, the binding one, the next limit; the instructions with the
 // largest share of the selected resource (an item's id, as the view's; default: the binding one). meta: the branch
-// labels as the page shows them (shownLabels: {shown | src | source}).
+// labels as the page shows them (shownLabels: {shown | src | source}); side: 'A' or 'B' in A–B (whose block it is).
 /** @param {any} r a response (as analyze returns it) @param {string | null} [selected] @param {any} [meta] */
 export function bound(r, selected = null, meta = {}) {
   const m = boundModel(r);
@@ -278,7 +278,7 @@ export function bound(r, selected = null, meta = {}) {
   const sel = selected ?? m.binding[0] ?? null;
   const it = m.items.find((x) => x.id === sel);
   const name = (id) => m.items.find((x) => x.id === id)?.name ?? id;
-  const head = `**bound** · ${f2(m.tp)} cycles/iteration · binding ${m.binding.length ? m.binding.map(name).join(', ') : 'none'}`
+  const head = `**bound**${meta.side ? ` (${text(meta.side)})` : ''} · ${f2(m.tp)} cycles/iteration · binding ${m.binding.length ? m.binding.map(name).join(', ') : 'none'}`
     + (m.next ? ` · next ${m.next.name} ${f2(m.next.tp)} (at most ${f2(m.next.speedup)}x faster)` : '');
   const rows = m.items.map((x) => [text(x.name), x.group, f2(x.cycles), pct(x.util), m.binding.includes(x.id) ? 'yes' : '']);
   const b = sel ? blame(r, sel) : null;
@@ -349,7 +349,7 @@ export function offsetRanges(list) {
 export function sweep(d, arch = '') {
   if (!d) return '';
   // (as the page says it: one value at every offset, else the minimum and the maximum with their offsets as ranges)
-  const spread = d.min === null ? '' : d.flat && d.complete ? ` · ${f2(d.min)} at every offset`
+  const spread = d.min === null ? '' : d.flat && d.complete ? ` · ${f2(d.min)} cycles/iteration at every offset`
     : ` · min ${f2(d.min)} at ${offsetRanges(d.minAt)} · max ${f2(d.max)} at ${offsetRanges(d.maxAt)}`;
   const head = `**sweep** · alignment 0–${d.n - 1}${arch ? ` · ${text(arch)}` : ''}${spread}${d.complete ? '' : ` · ${d.pending} pending`}`;
   return join([head, table(['Offset', 'Cycles/iteration'], d.values.map((v, i) => [String(i), v === null ? (d.failed.includes(i) ? 'failed' : '') : f2(v)]), ['r', 'r'])]);

@@ -350,7 +350,7 @@ try {
       // the sweep: 64 points; a click sets the offset
       await settled('cmp-sweep', () => document.querySelector('#cmp-sweep summary').click());
       out.sweep = { ms: $('cmp-sweep').dataset.ms, hits: document.querySelectorAll('.sweep-chart rect.hit').length, pts: document.querySelectorAll('.sweep-chart circle.pt').length,
-        now: document.querySelector('.sweep-chart').getAttribute('aria-valuenow'), hash: location.hash.replace(/&c=.*/, '') };
+        now: document.querySelector('.sweep-chart').getAttribute('aria-valuenow'), hash: location.hash.replace(/&c=.*/, ''), head: document.querySelector('#cmp-sweep-body .sweep-head')?.textContent ?? '' };
       const t5 = document.querySelector('.sweep-chart rect.hit[data-offset="5"] title').textContent;
       const sweepRuns = runs('cmp-sweep');
       await done(() => document.querySelector('.sweep-chart rect.hit[data-offset="5"]').dispatchEvent(new MouseEvent('click', { bubbles: true })));
@@ -399,6 +399,7 @@ try {
     check(c.byTp.every((v, i) => i === 0 || Number(v) >= Number(c.byTp[i - 1])) && c.sortAria === 'ascending' && c.sortFocus === 'sort-tp', 'compare: sortable by throughput (focus stays on the button)', JSON.stringify([c.byTp, c.sortAria, c.sortFocus]));
     check(c.picked.length === 2 && c.picked.every((p) => p[0] === p[3] && p[1] === p[4] && p[2] === p[5] && p[6] === p[0]) && c.notRerun, 'compare: a row selects that CPU; its single analysis gives the same throughput and bottleneck', JSON.stringify(c.picked));
     check(c.sweep.hits === 64 && c.sweep.pts === 64 && c.sweep.now === '0' && /as=all&cmpsweep=1/.test(c.sweep.hash) && !/cmpcpu/.test(c.sweep.hash), 'sweep: 64 points; the checked CPUs and the open sweep are in the fragment', JSON.stringify(c.sweep));
+    check(/ cycles\/iteration( at every offset)?$/.test(c.sweep.head), 'sweep: its head says the unit (the headline can be per element)', c.sweep.head);
     check(c.click[1] === '5' && c.click[3] === '5' && c.click[4] && c.click[0] === `offset 5: ${c.click[2]} cycles/iteration`, 'sweep: a click sets the alignment offset; the main result equals the point', JSON.stringify(c.click));
     check(c.key[0] === '6' && c.key[1] === '6' && c.key[2] && c.sweepNotRerun, 'sweep: arrow keys move the offset; focus stays; the sweep is not recomputed', JSON.stringify([c.key, c.sweepNotRerun]));
     check(c.live[0] === 1 && c.live[1] && !c.live[3] && c.live[4] && c.live[5] && c.live[6] >= 1 && c.live[7] >= 1, 'live: typing analyzes once, for the latest text; the panels follow', JSON.stringify(c.live));

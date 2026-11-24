@@ -8,7 +8,7 @@
 // The experiments and their results (no DOM) are whatif-core.js, which the npm package shares; this file runs them on
 // the page's engines and renders them.
 
-import { h } from './render.js';
+import { h, sideTag } from './render.js';
 import { makeRequest } from './engine.js';
 import { summarize, resultKey, ResultCache, latestWins } from './compare.js';
 import { encodeState } from './url-state.js';
@@ -187,7 +187,7 @@ export function createWhatIf(env) {
         h('td', { class: 'wi-link' }, x.estimate === undefined && x.hex ? variantLink(x) : null));
     });
     const table = h('table', { class: 'grid wi-table' },
-      h('thead', null, h('tr', null, h('th', { scope: 'col', text: 'variant' }), h('th', { scope: 'col', title: 'cycles per original iteration', text: 'cycles' }),
+      h('thead', null, h('tr', null, h('th', { scope: 'col' }, ...[sideTag(view), view?.side ? ' ' : null, 'variant'].filter(Boolean)), h('th', { scope: 'col', title: 'cycles per original iteration', text: 'cycles/iteration' }),
         h('th', { scope: 'col', title: `change from ${f2(base.tp)}`, text: 'Δ' }), h('th', { scope: 'col', title: 'speedup', text: '×' }), h('th', null, h('span', { class: 'vh', text: 'open' })))),
       h('tbody', null, lines));
     const waiting = body.dataset.state === 'waiting';
@@ -198,11 +198,12 @@ export function createWhatIf(env) {
     }
     body.replaceChildren(...(go ? [h('p', { class: 'wi-wait' }, go)] : []), h('div', { class: 'table-wrap' }, table), ...(waiting ? [] : [bestLine()].filter(Boolean)));
     const j = job;
-    setCopy('try', { what: 'the what-if variants', md: () => whatIfText(textOf(j)) });
+    const side = view?.side ? view.side.toUpperCase() : null;
+    setCopy('try', { what: 'the what-if variants', md: () => whatIfText(textOf(j, side)) });
   }
 
   // the table as markdown.js whatIf takes it (the library's whatIf result): per original iteration, as shown
-  function textOf({ base, exps, results, arch }) {
+  function textOf({ base, exps, results, arch }, side = null) {
     const variants = exps.map((x) => {
       const o = outcome(base, x, results.get(x.id));
       if (!o) return { id: x.id, label: x.label, error: 'not computed yet' };
@@ -211,7 +212,7 @@ export function createWhatIf(env) {
     });
     const done = exps.filter((x) => /^acc\d+$/.test(x.id) && !x.error).every((x) => results.has(x.id));
     const best = done && exps.some((x) => /^acc\d+$/.test(x.id)) ? bestOf(base.tp, exps, results) : null;
-    return { arch, tp: base.tp, variants, ...(best ? { accumulators: { best: best.n } } : {}) };
+    return { arch: side ? `${arch}, ${side}` : arch, tp: base.tp, variants, ...(best ? { accumulators: { best: best.n } } : {}) };
   }
 
   function update() {

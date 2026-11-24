@@ -1,4 +1,4 @@
-**sweep** · alignment 0–63 · SKL · 2.00 at every offset
+**sweep** · alignment 0–63 · SKL · 2.00 cycles/iteration at every offset
 
 | Offset | Cycles/iteration |
 |-------:|-----------------:|

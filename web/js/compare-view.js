@@ -374,7 +374,7 @@ export function createComparePanels(env) {
 
     let head;
     if (d.min === null) head = h('span', { class: 'hint', text: d.failed.length === SWEEP_OFFSETS ? 'failed' : '…' });
-    else if (d.flat && d.complete) head = h('span', null, h('span', { class: 'v', text: fmtTp(d.min) }), ' at every offset');
+    else if (d.flat && d.complete) head = h('span', null, h('span', { class: 'v', text: fmtTp(d.min) }), ' cycles/iteration at every offset');
     else {
       head = [
         h('span', { class: 'min', title: `offsets ${offsetRanges(d.minAt)}` }, 'min ', h('span', { class: 'v', text: fmtTp(d.min) })),
@@ -384,7 +384,7 @@ export function createComparePanels(env) {
     }
     const parts = [
       h('p', { class: 'sweep-head' }, head, d.flat && d.complete ? null : [h('span', { class: 'sep', text: ' · ' }),
-        h('span', { class: 'at' }, `offset ${cur}: `, h('span', { class: 'v', text: d.values[cur] === null ? '…' : fmtTp(d.values[cur]) }))]),
+        h('span', { class: 'at' }, `offset ${cur}: `, h('span', { class: 'v', text: d.values[cur] === null ? '…' : fmtTp(d.values[cur]) }), ' cycles/iteration')]),
       h('div', { class: 'sweep-wrap', title: 'cycles/iteration at each alignment offset (0–63) of the first byte' }, g),
     ];
     if (p.waitingForClick) parts.unshift(runButton(p));

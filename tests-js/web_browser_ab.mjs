@@ -515,6 +515,37 @@ try {
     check(problems.length === 0, 'switch: no console errors', problems.join('\n'));
     await page.cmd('Page.close');
   }
+
+  // --- units and sides of the views ------------------------------------------------------------------------------------------
+  // (a user test: with elements per iteration the headline is per element, the views per iteration without saying so, and
+  // in A–B the try and bound views showed A's block without saying whose)
+  {
+    const page = await Page.open(browser);
+    const b64 = (s) => Buffer.from(s).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+    await page.goto(`${origin}/?nosw=1#v=1&ab=1&aw=2&bw=2&c=${b64(CHAIN)}&bc=${b64(BETTER)}`);
+    await page.ready();
+    const r = await page.eval(`${HELPERS}
+      await until(() => vals().length === 2 && !$('results').hasAttribute('aria-busy'), 60000); await wait(300);
+      const tab = async (n) => { [...document.querySelectorAll('.view-tab')].find((b) => b.dataset.tab === n).click(); await wait(300); };
+      const side = async (s) => { document.querySelector('.ws-side-btn[data-tab="side-' + s + '"]').click(); await until(() => document.body.dataset.abSide === s, 10000); await wait(400); };
+      const seen = async () => {
+        await tab('bound'); const cap = document.querySelector('#bound .bd-cap')?.textContent ?? '';
+        await tab('try'); await until(() => document.querySelector('#whatif .wi-table'), 30000);
+        const head = [...document.querySelector('#whatif .wi-table thead tr').cells].map((c) => c.textContent);
+        return { cap, head };
+      };
+      const out = { unit: document.querySelector('#result-body .ab-tp')?.closest('.row')?.innerText.includes('cycles/element') };
+      out.a = await seen();
+      await side('b'); out.b = await seen();
+      await tab('diff'); out.limits = [...document.querySelectorAll('#result-body summary')].map((s) => s.textContent).find((t) => /A vs B/.test(t)) ?? '';
+      return out;`);
+    check(r.unit, 'units: the headline is per element (both sides: 2 elements per iteration)', JSON.stringify(r));
+    check(/^A ?2\.00 cycles\/iteration$/.test(r.a.cap) && /^B ?1\.00 cycles\/iteration$/.test(r.b.cap), 'units: the bound view says whose block and its cycles per iteration', JSON.stringify([r.a.cap, r.b.cap]));
+    check(/^A ?variant$/.test(r.a.head[0]) && /^B ?variant$/.test(r.b.head[0]) && r.a.head[1] === 'cycles/iteration' && r.b.head[1] === 'cycles/iteration', 'units: the try view says whose block and its unit', JSON.stringify([r.a.head, r.b.head]));
+    check(/A vs B, cycles\/element/.test(r.limits), 'units: the limits of A and B say their unit (per element here)', r.limits);
+    check(page.take().length === 0, 'units: no console errors');
+    await page.cmd('Page.close');
+  }
 } catch (e) {
   check(false, 'the test ran to the end', e?.stack ?? String(e));
 } finally {

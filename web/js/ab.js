@@ -504,7 +504,7 @@ export function createAB(api) {
     const table = h('table', { class: 'grid ab-limits' },
       h('thead', null, h('tr', null, h('th', { scope: 'col', class: 'first', text: 'limit' }), h('th', { scope: 'col', text: 'A' }), h('th', { scope: 'col' }),
         h('th', { scope: 'col', text: 'B' }), h('th', { scope: 'col' }), h('th', { scope: 'col', text: 'Δ' }))), body);
-    return fold('limits', 'limits', h('span', { title: `${unitOf(view)} if each were the only bottleneck`, text: 'A vs B' }),
+    return fold('limits', 'limits', h('span', { title: `${unitOf(view)} if each were the only bottleneck`, text: `A vs B, ${unitOf(view)}` }),
       h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Limits of A and B' }, table));
   }
 

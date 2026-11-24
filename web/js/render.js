@@ -100,6 +100,8 @@ function textBlock(cls, summary, text, open, onToggle) {
 const spacedHex = (hex, max = 48) => (hex.slice(0, 2 * max).match(/../g) ?? []).join(' ') + (hex.length > 2 * max ? ' …' : '');
 
 // A cycle count: two decimals, three significant digits below 0.1 (per element; as ab-diff.js cycles)
+// A–B: the tag of the side a view shows ("A", "B"; ab.css .ab-tag), or null outside A–B (view.side: 'a' | 'b')
+export const sideTag = (view) => (view?.side === 'a' || view?.side === 'b' ? h('span', { class: `ab-tag${view.side === 'b' ? ' b' : ''}`, text: view.side.toUpperCase() }) : null);
 export const cyc = (v) => { const a = Math.abs(v); return a !== 0 && a < 0.1 ? v.toPrecision(3) : v.toFixed(2); };
 
 // one compact item per limit: name, value and a small bar (relative to the largest); w: elements per iteration

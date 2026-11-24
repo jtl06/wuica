@@ -25,7 +25,7 @@ const GOLD = new URL('tests-js/fixtures/md-views/', root);
 {
   const at = (f) => Array.from({ length: 64 }, (_, k) => ({ tp: f(k) }));
   const flat = sweep(sweepData(at(() => 16)), 'ZEN3').split('\n')[0];
-  check(flat === '**sweep** · alignment 0–63 · ZEN3 · 16.00 at every offset', 'a flat sweep: one value at every offset', flat);
+  check(flat === '**sweep** · alignment 0–63 · ZEN3 · 16.00 cycles/iteration at every offset', 'a flat sweep: one value at every offset', flat);
   const steps = sweep(sweepData(at((k) => (k % 32 < 8 ? 2 : k === 20 || k === 21 ? 3 : 2.5))), 'SKL').split('\n')[0];
   check(steps === '**sweep** · alignment 0–63 · SKL · min 2.00 at 0–7, 32–39 · max 3.00 at 20, 21', 'min and max offsets as ranges', steps);
   check(offsetRanges([]) === '' && offsetRanges([5]) === '5' && offsetRanges([1, 2, 3, 5, 7, 8]) === '1–3, 5, 7, 8', 'offsetRanges: runs of three or more', offsetRanges([1, 2, 3, 5, 7, 8]));
@@ -65,6 +65,8 @@ if (!fs.existsSync(wasm)) {
   for (const [k, t] of Object.entries({ bytes: bytes(codeMapModel(r, ex.hex, 0), { shown }), deps: deps(g, { shown, slack: g.nodes.map((_, i) => fmtSlack(g.slack?.slack?.[i] ?? 0)) }), bound: bound(r, 'Dependencies', { shown }) })) {
     check(!/jnz 0x/.test(t) && (k === 'bound' || t.includes('`jnz loop`')), `${k}: the branch copied as the page shows it (jnz loop, not its offset)`, t);
   }
+  // A–B: whose block the bound view's copy is
+  check(bound(r, null, { shown, side: 'B' }).startsWith(`**bound** (B) · ${Number(r.tp).toFixed(2)} cycles/iteration · `), 'bound: in A–B, the side', bound(r, null, { side: 'B' }).split('\n')[0]);
   if (process.env.WUICA_UPDATE_GOLDEN) {
     fs.mkdirSync(GOLD, { recursive: true });
     for (const [k, t] of Object.entries(texts)) fs.writeFileSync(new URL(`${k}.md`, GOLD), t);
