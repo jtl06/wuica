@@ -314,7 +314,7 @@ export function renderResult(root, view) {
 
     const listingOpen = view.ui.listingOpen?.[view.inputMode] ?? false; // collapsed until opened
     out.push(h('div', { class: 'row text-row' }, h('div', { class: 'label', text: 'text' }), h('div', { class: 'field' },
-      textBlock('listing', 'objdump', r.rows.length > ALL_UP_TO ? () => formatListing(r.rows).text : formatListing(r.rows).text, listingOpen, (open) => view.onUi('listingOpen', { ...view.ui.listingOpen, [view.inputMode]: open })),
+      textBlock('listing', 'objdump', r.rows.length > ALL_UP_TO ? () => formatListing(r.rows, view.shown).text : formatListing(r.rows, view.shown).text, listingOpen, (open) => view.onUi('listingOpen', { ...view.ui.listingOpen, [view.inputMode]: open })),
       textBlock('report', 'uiCA report', typeof r.text !== 'string' ? '' : r.rows.length > ALL_UP_TO ? () => r.text : r.text, view.ui.reportOpen, (open) => view.onUi('reportOpen', open)))));
   }
 

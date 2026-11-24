@@ -281,10 +281,29 @@ export function portGroups(model, ports) {
   });
 }
 
+// The labels of the instructions as the uop table shows them (branch targets as labels: branch-label.js; the analyzer
+// writes a branch's target as if it were at address 0). rows: the response's rows; shown: the label shown for each row
+// or null (the view's `shown`). The analyzer's own labels stay in model.asmLabels. Does nothing if the rows do not
+// match the trace's instructions one to one.
+export function applyShownLabels(model, rows, shown) {
+  if (!model || !Array.isArray(rows) || !Array.isArray(shown)) return;
+  const names = rows.flatMap((r, i) => (r?.kind === 'instr' ? [shown[i] ?? null] : []));
+  const ins = model.instructions;
+  if (names.length !== ins.length || names.every((x) => x === null)) return;
+  model.asmLabels ??= model.labels;
+  model.labels = ins.map((x, i) => {
+    let s = names[i] ?? String(x.asm ?? `instruction ${i}`);
+    if (x.macroFusedWithNextInstr && ins[i + 1]) s += ` + ${names[i + 1] ?? ins[i + 1].asm}`;
+    return s;
+  });
+}
+
 // Two traces in their windows are the same: the same uops with the same events, relative to each window's origin
+// (the instructions compared as the analyzer wrote them: the two sides' texts can name their labels differently)
 export function sameTrace(ma, wa, mb, wb) {
   const ra = selectRows(ma, wa.from, wa.to), rb = selectRows(mb, wb.from, wb.to);
-  if (ra.length !== rb.length || ma.labels.length !== mb.labels.length || ma.labels.some((l, k) => l !== mb.labels[k])) return false;
+  const la = ma.asmLabels ?? ma.labels, lb = mb.asmLabels ?? mb.labels;
+  if (ra.length !== rb.length || la.length !== lb.length || la.some((l, k) => l !== lb[k])) return false;
   for (let k = 0; k < ra.length; k++) {
     const a = ma.uops[ra[k]], b = mb.uops[rb[k]];
     if (a.instrID !== b.instrID || a.n !== b.n || a.kind !== b.kind || a.port !== b.port) return false;
@@ -1547,6 +1566,7 @@ export async function loadTrace(side, { analyze, config = (_side) => null, trace
     if (!res || res.error) throw new Error(`The trace could not be made: ${res?.error ?? 'no response'}`);
     if (!made.model) throw new Error('The analyzer returned no trace.');
     made.model.issue = issueLog(res.details ?? null);
+    applyShownLabels(made.model, r?.rows, side.shown);
     return { model: made.model, buildMs: made.model.buildMs ?? 0 };
   }
   if (!trace) {
@@ -1561,6 +1581,7 @@ export async function loadTrace(side, { analyze, config = (_side) => null, trace
   let model;
   try { model = buildModel(trace, { portNames: cfg?.portNames ?? null, retireWidth: cfg?.retireWidth ?? null, issueDispatchDelay: cfg?.issueDispatchDelay ?? null }); } catch (e) { throw new Error(`The trace could not be read: ${e?.message ?? e}`); }
   model.issue = issueLog(details);
+  applyShownLabels(model, r?.rows, side.shown);
   return { model, buildMs: performance.now() - t0 };
 }
 

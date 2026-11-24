@@ -190,7 +190,10 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
   await m.loadArch('SKL', '{}');
   const chain = await m.analyze(makeRequest(EXAMPLES[0].hex, 'SKL'));
   const l = formatListing(chain.rows);
-  check(l.text === '   0:  48 83 c0 01    add rax, 0x1\n   4:  48 83 c0 01    add rax, 0x1\n   8:  49 ff cf       dec r15\n   b:  75 f3          jnz 0xfffffffffffffff5\n', 'listing: the first example, objdump style', JSON.stringify(l.text));
+  // (a branch shows its real target in the block, as objdump: the analyzer's 0xfffffffffffffff5 is relative to the
+  // instruction; with the uop table's labels, the label too)
+  check(l.text === '   0:  48 83 c0 01    add rax, 0x1\n   4:  48 83 c0 01    add rax, 0x1\n   8:  49 ff cf       dec r15\n   b:  75 f3          jnz 0x0\n', 'listing: the first example, objdump style', JSON.stringify(l.text));
+  check(formatListing(chain.rows, [null, null, null, 'jnz loop']).lines[3].text === 'jnz 0x0 <loop>', 'listing: the label the uop table shows, as objdump shows a symbol', formatListing(chain.rows, [null, null, null, 'jnz loop']).lines[3].text);
   check(l.lines.map((x) => x.offset).join() === '0,4,8,11' && l.lines[3].bytes === '75 f3', 'listing: offsets and bytes (the macro-fused branch is its own line)', JSON.stringify(l.lines));
   check(parseHexInput(l.text).hex === EXAMPLES[0].hex, 'listing: pasted into the hex input it gives the same machine code');
   for (const c of recordedCases()) {
@@ -198,13 +201,16 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
     const r = await m.analyze(makeRequest(c.hex, c.arch));
     const t = formatListing(r.rows);
     const instrs = r.rows.filter((x) => x.kind === 'instr');
-    check(t.lines.length === instrs.length && t.lines.every((x, i) => x.text === instrs[i].label), `listing ${c.source}/${c.arch}: one line per instruction`);
+    // (each instruction's text; a direct branch with its target in the block, or relative to it: never an address of
+    // the branch disassembled at 0)
+    const branch = (x) => /^(?:j[a-z]{1,4}|loop[a-z]{0,2}|jrcxz|jecxz|xbegin|call) 0x[0-9a-f]+$/i.test(x.label);
+    check(t.lines.length === instrs.length && t.lines.every((x, i) => (branch(instrs[i]) ? x.text.startsWith(instrs[i].label.split(' ')[0] + ' ') && !/0x[0-9a-f]{9,}/.test(x.text) : x.text === instrs[i].label)), `listing ${c.source}/${c.arch}: one line per instruction`, t.text);
     check(parseHexInput(t.text).hex === instrs.map((x) => x.opcode).join('').toLowerCase(), `listing ${c.source}/${c.arch}: round trip through the hex input`);
   }
   const syn = await m.analyze(makeRequest(SYNTHETIC_HEX, 'SKL'));
   const st = formatListing(syn.rows);
   check(syn.rows.some((x) => x.kind !== 'instr') && st.lines.length === syn.rows.filter((x) => x.kind === 'instr').length && !/Uop/.test(st.text), 'listing: regMerge/stackSync rows are not instructions', st.text);
-  check(syn.rows.some((x) => x.notes === 'M') && st.lines.some((x) => x.text === syn.rows.find((y) => y.notes === 'M').label), 'listing: the macro-fused row is listed');
+  check(syn.rows.some((x) => x.notes === 'M') && st.lines.some((x) => x.text.split(' ')[0] === syn.rows.find((y) => y.notes === 'M').label.split(' ')[0]), 'listing: the macro-fused row is listed');
   // offsets grow past four digits; a 15-byte instruction; no rows
   const many = Array.from({ length: 5000 }, () => ({ kind: 'instr', opcode: '4883C001', label: 'add rax, 0x1' }));
   many.push({ kind: 'instr', opcode: '26663E2E6567F0F2F348C7841100000000FF', label: 'long' }, { kind: 'stackSync', label: '<Stack Sync Uop>' });
@@ -212,6 +218,16 @@ if (exists('target/wasm32-unknown-unknown/release/wuica_wasm.wasm')) {
   const last = big.text.trimEnd().split('\n').at(-1);
   check(big.lines.length === 5001 && last.startsWith('4e20:  26 66 3e') && big.text.startsWith('   0:  48 83 c0 01') && big.lines[5000].bytes.split(' ').length === 18, 'listing: wide offsets, long instructions', last);
   check(formatListing([]).text === '' && formatListing(null).lines.length === 0, 'listing: nothing to list');
+  // the user test's listing: "a: 77 17  jnbe 0x19" (real target 0x23), "21: 74 dd  jz 0xffffffffffffffdf" (real 0x0), a
+  // call of another function ("call 0x5": a placeholder), an exit out of the block
+  const I = (label, opcode) => ({ kind: 'instr', label, opcode });
+  const kern = [I('cmp r10, rdx', '4C39D2'), I('nop', '90'), I('nop', '90'), I('nop', '90'), I('nop', '90'), I('nop', '90'), I('nop', '90'), I('nop', '90'),
+    I('jnbe 0x19', '7717'), ...Array.from({ length: 21 }, () => I('nop', '90')), I('jz 0xffffffffffffffdf', '74DD'), I('call 0x5', 'E800000000'), I('jnz 0x40', '7540')];
+  const at = (L, off) => L.lines.find((x) => x.offset === off)?.text;
+  const k0 = formatListing(kern);
+  check(at(k0, 0xa) === 'jnbe 0x23' && at(k0, 0x21) === 'jz 0x0' && at(k0, 0x23) === 'call .+0x5' && at(k0, 0x28) === 'jnz .+0x40', 'listing: real targets in the block; a call with a placeholder and an exit relative to the instruction', JSON.stringify(k0.lines.filter((x) => !/nop|cmp/.test(x.text))));
+  const k1 = formatListing(kern, kern.map((x, i) => (i === 8 ? 'jnbe .LBB0_3' : i === 30 ? 'jz .LBB0_2' : i === 31 ? 'call sink@PLT' : i === 32 ? 'jnz .LBB0_9' : null)));
+  check(at(k1, 0xa) === 'jnbe 0x23 <.LBB0_3>' && at(k1, 0x21) === 'jz 0x0 <.LBB0_2>' && at(k1, 0x23) === 'call sink@PLT' && at(k1, 0x28) === 'jnz .LBB0_9', 'listing: with the uop table\'s labels', JSON.stringify(k1.lines.filter((x) => !/nop|cmp/.test(x.text))));
 }
 
 // --- URL state ------------------------------------------------------------------------------------------------------

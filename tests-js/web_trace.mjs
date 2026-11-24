@@ -9,7 +9,8 @@ import fs from 'node:fs';
 import zlib from 'node:zlib';
 import readline from 'node:readline';
 import { buildModel, relevantRounds, rangeChoices, aboutText, steadyText, selectRows, cycleSpan, uopDetails, tableRows, toTSV, TABLE_HEAD, STAGES, uopKey, traceEstimate, TRACE_LIMIT,
-  rowGroups, rowOfGroup, groupKey, waitBreakdown, uopWaits, waitText, abWindow, roundStart, roundEnds, shownSpan, STUB_C, portGroupName, portGroups, sameTrace } from '../web/js/trace.js';
+  rowGroups, rowOfGroup, groupKey, waitBreakdown, uopWaits, waitText, abWindow, roundStart, roundEnds, shownSpan, STUB_C, portGroupName, portGroups, sameTrace, applyShownLabels } from '../web/js/trace.js';
+import { branchLabels } from '../web/js/branch-label.js';
 import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
@@ -224,6 +225,16 @@ if (fs.existsSync(wasmPath) && fs.existsSync(new URL('data/uarch.json', root))) 
     const all = selectRows(m, 0, m.nRounds - 1);
     check(all.length > 500 && m.labels[48].startsWith('dec r15 + jnz 0x'), `${arch}: rows and labels`, `${all.length} ${m.labels[48]}`);
     if (arch === 'ZEN3') check(m.ports.some((p) => p.name === 'ALU0') && m.ports.every((p) => !p.name.startsWith('Port ')), 'ZEN3: port names from uarch.json');
+    // the rows say the branch as the uop table does (a user test saw "cmp rsi, r8 + jnz 0xfffffffffffff…"), the trace's
+    // comparison of two sides still reads the analyzer's text
+    {
+      const shown = buildModel(r.trace, { portNames: configs[arch].portNames ?? null, retireWidth: configs[arch].retireWidth });
+      applyShownLabels(shown, r.rows, branchLabels(r.rows));
+      const w = { from: shown.relevant.first, to: shown.relevant.first + 2, origin: 0 };
+      check(shown.labels[48] === 'dec r15 + jnz 0x0' && shown.labels[0] === m.labels[0] && shown.asmLabels[48] === m.labels[48] && sameTrace(shown, w, m, w),
+        `${arch}: the trace's rows with the uop table's labels`, `${shown.labels[48]} | ${shown.asmLabels?.[48]}`);
+      check(tableRows(shown, selectRows(shown, w.from, w.from)).some((row) => row.includes('dec r15 + jnz 0x0')), `${arch}: the trace's table (and its copy) with them`);
+    }
     // the rows of the response are the trace's instructions (same text), and every uop has its row
     const groups = rowGroups(r.rows);
     const labelOk = r.rows.every((x, i) => x.kind !== 'instr' || groups[i].fused || m.instructions[groups[i].instrID].asm === x.label);

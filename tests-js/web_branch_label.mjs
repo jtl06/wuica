@@ -25,11 +25,22 @@ check(j(branchLabels(nest, src(nestText))) === j([null, null, 'jnz inner', null,
 // GNU numeric labels, as written
 const num = [instr('dec rcx', '48FFC9'), instr(`jnz ${rel(-3)}`, '75FB')];
 check(branchLabels(num, src('1:\n  dec rcx\n  jnz 1b\n'))[1] === 'jnz 1b', 'GNU numeric label: as written');
-// no symbol written: the label at the target, else the nearest one before it plus the offset; outside: unchanged
+// no symbol written: the label at the target, else the nearest one before it plus the offset; outside: the symbol as written
 const rows = [{ kind: 'regMerge', label: '<Register Merge Uop>' }, instr('add rax, 0x1', '4883C001'), instr('jz 0x2', '7402'), instr('add rax, 0x1', '4883C001'),
   instr('jmp 0x40', 'EB40'), instr(`jb ${rel(-12)}`, '72F2')];
 const t1 = 'top:\n  add rax, 1\n  jz .+4\n  add rax, 1\n  jmp far\n  jb .-12\n';
-check(j(branchLabels(rows, src(t1))) === j([null, null, 'jz top+0x6', null, null, 'jb top']), 'the nearest label before plus the offset; a label exactly at the target; outside unchanged', j(branchLabels(rows, src(t1))));
+check(j(branchLabels(rows, src(t1))) === j([null, null, 'jz top+0x6', null, 'jmp far', 'jb top']), 'the nearest label before plus the offset; a label exactly at the target; outside: the symbol as written', j(branchLabels(rows, src(t1))));
+// a target outside the block is never shown as an address: XED's number is relative to the instruction (the user test's
+// "jz 0xc" next to "jnz .LBB0_4", "call 0x5" for call sink@PLT)
+check(j(branchLabels(rows)) === j([null, null, 'jz 0x6', null, 'jmp .+0x40', 'jb 0x0']), 'machine code, outside the block: relative to the instruction', j(branchLabels(rows)));
+const memchr = [instr('cmp byte ptr [rax], sil', '403830'), instr('jz 0xc', '740A'), instr('inc rax', '48FFC0'), instr('dec rdx', '48FFCA'), instr(`jnz ${rel(-11)}`, '75F3')];
+const memchrText = '.LBB0_4:\n  cmpb %sil, (%rax)\n  je .LBB0_2\n  incq %rax\n  decq %rdx\n  jne .LBB0_4\n';
+check(j(branchLabels(memchr, src(memchrText))) === j([null, 'jz .LBB0_2', null, null, 'jnz .LBB0_4']), 'an exit to a label outside the picked loop: that label', j(branchLabels(memchr, src(memchrText))));
+check(j(branchLabels(memchr)) === j([null, 'jz .+0xc', null, null, 'jnz 0x0']), 'machine code: the exit relative to the branch, the loop branch at its offset', j(branchLabels(memchr)));
+// a call of another function: its displacement is a relocation's placeholder (0), its target "the next instruction"
+const calls = [instr('push rbx', '53'), instr('call 0x5', 'E800000000'), instr('pop rbx', '5B')];
+check(j(branchLabels(calls, src('  push rbx\n  call sink@PLT\n  pop rbx\n'))) === j([null, 'call sink@PLT', null]), 'a call: the symbol as written', j(branchLabels(calls, src('  push rbx\n  call sink@PLT\n  pop rbx\n'))));
+check(j(branchLabels(calls)) === j([null, 'call .+0x5', null]), 'a call with a placeholder, machine code: relative, not "the next row"', j(branchLabels(calls)));
 // before the first label: the offset, not a name
 check(branchLabels(mid, src('  add rax, 1\nx:\n  dec rcx\n  jnz .-7\n'))[2] === 'jnz x', 'at a label (written as an expression): the label');
 const before = [instr('add rax, 0x1', '4883C001'), instr('dec rcx', '48FFC9'), instr(`jnz ${rel(-7)}`, '75F7')];
@@ -42,7 +53,7 @@ check(branchLabels(exit, src('loop:\n  dec rcx\n  jz .+4\n  jmp loop\n'))[1] ===
 // statements that do not match the rows one to one: offsets only
 check(branchLabels(mid, src('  add rax, 1\n  .p2align 4\nloop:\n  dec rcx\n  jnz loop\n'))[2] === 'jnz 0x4', 'an alignment directive in the code: offsets only');
 check(branchLabels(mid, src('loop:\n  dec rcx\n  jnz loop\n'))[2] === 'jnz 0x4', 'more rows than statements: offsets only');
-check(j(branchLabels([instr('call 0x10', 'E80B000000')])) === j([null]), 'calls unchanged');
+check(j(branchLabels([instr('call 0x10', 'E80B000000')])) === j(['call .+0x10']), 'a call out of the block: relative to it');
 check(j(branchLabels(null)) === '[]', 'no rows');
 // the statements of the text: comments, ';' lines, labels on an instruction's line, directives without code
 check(j(codeStatements('# c\n; d\nx: y: add rax, 1 # e\n  .loc 1 2 3\n  lock add [rax], 1\n')) === j([{ kind: 'label', name: 'x' }, { kind: 'label', name: 'y' }, { kind: 'instr', operand: 'rax, 1' }, { kind: 'instr', operand: '[rax], 1' }]),

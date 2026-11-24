@@ -131,8 +131,10 @@ const HELPERS = `
   const cpus = (...keys) => { const boxes = [...document.querySelectorAll('#cpu-grid input')]; for (const b of boxes) b.checked = keys.includes(b.value); boxes[0].dispatchEvent(new Event('change', { bubbles: true })); };
 `;
 
-// the objdump listing of the first example
-const CHAIN = '   0:  48 83 c0 01    add rax, 0x1\n   4:  48 83 c0 01    add rax, 0x1\n   8:  49 ff cf       dec r15\n   b:  75 f3          jnz 0xfffffffffffffff5\n';
+// the objdump listing of the first example: the branch's real target (not the analyzer's 0xfffffffffffffff5, its
+// target as if it were at address 0), and from assembly the label the uop table shows for it
+const CHAIN = '   0:  48 83 c0 01    add rax, 0x1\n   4:  48 83 c0 01    add rax, 0x1\n   8:  49 ff cf       dec r15\n   b:  75 f3          jnz 0x0\n';
+const CHAIN_AT = (label) => CHAIN.replace('jnz 0x0\n', `jnz 0x0 <${label}>\n`);
 
 // ---- the test ---------------------------------------------------------------------------------------------------------------
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-web-test-'));
@@ -259,7 +261,7 @@ try {
     check(s.objdump[0] === '' && s.objdump[1] && s.objdump[2] === null, 'mock: pasted objdump output is analyzed', JSON.stringify(s.objdump));
     check(s.asm[0] === '  add rax, 1' && s.asm[1] && !s.asm[2] && s.att === '  addq $1, %rax', 'mock: assembly mode and syntax switch', JSON.stringify([s.asm, s.att]));
     // with wuica_asm.wasm in the build, mock mode uses the real assembler (only the analyzer is mocked)
-    check(s.assembled[0] === (manifest.assembler ? '' : 'mock assembler') && s.assembled[1] === CHAIN && !s.assembled[2], 'mock: assembly is assembled; the listing shows it (collapsed by default)', JSON.stringify(s.assembled));
+    check(s.assembled[0] === (manifest.assembler ? '' : 'mock assembler') && s.assembled[1] === CHAIN_AT('loop') && !s.assembled[2], 'mock: assembly is assembled; the listing shows it (collapsed by default)', JSON.stringify(s.assembled));
     check(s.stale && /line 2:3: .*\n.*line 4:5: /.test(s.diag) && s.selected === '    bogus', 'mock: assembler diagnostics with lines; a click selects the line', JSON.stringify([s.stale, s.diag, s.selected]));
     check(s.hexKept, 'mock: each input mode keeps its text');
     check(s.options[0] === '63' && s.options[1] === ' · 4 changed' && s.options[2] === '#v=1&al=63&mc=1234&ip=stack&nma=1', 'mock: options are clamped and go into the fragment', JSON.stringify(s.options));
@@ -404,7 +406,7 @@ try {
     if (manifest.assembler) {
       check(/^\d\.\d\d$/.test(c.asm1[0] ?? '') && c.asm1[1] === '' && /add rax, 0x1\n.*dec r15\n.*jnz /s.test(c.asm1[2] ?? ''), 'live: assembly is analyzed while typing', JSON.stringify(c.asm1));
       check(c.asm2[0] && /line 3:3: /.test(c.asm2[1]) && c.asm2[2] && c.asm2[3], 'live: text that does not assemble is not analyzed; the error shows; the result stays', JSON.stringify(c.asm2));
-      check(c.asm3[0] === '' && !c.asm3[1] && c.asm3[2] === '2.00' && c.asm3[3] === CHAIN, 'live: fixed, it is analyzed and the error goes away', JSON.stringify(c.asm3));
+      check(c.asm3[0] === '' && !c.asm3[1] && c.asm3[2] === '2.00' && c.asm3[3] === CHAIN_AT('x'), 'live: fixed, it is analyzed and the error goes away', JSON.stringify(c.asm3));
     }
     check(c.off[0] && c.off[1] && c.off[2] === 'off' && c.manual, 'live: switched off, typing does not analyze (Analyze does); remembered', JSON.stringify([c.off, c.manual]));
     await page.reload();
@@ -545,8 +547,8 @@ try {
       check(!requests.some((x) => x.includes('wuica_asm')), 'real: the missing assembler is not requested');
     } else {
       check(!/not available/.test(r.asm[0]) && !r.asm[1] && requests.some((x) => x.includes('wuica_asm.wasm')), 'real: the assembler is loaded when assembly mode is chosen', JSON.stringify([r.asm, requests.filter((x) => x.includes('asm'))]));
-      check(r.asmChain[0] === '2.00' && r.asmChain[1] === '' && r.asmChain[2] === CHAIN && !r.asmChain[3], 'real: the chain example assembled (Intel) gives the hex result; the (collapsed) listing shows the bytes', JSON.stringify(r.asmChain));
-      check(r.asmAtt[0] === '2.00' && r.asmAtt[1] === '  addq $1, %rax' && r.asmAtt[2] === CHAIN, 'real: AT&T syntax', JSON.stringify(r.asmAtt));
+      check(r.asmChain[0] === '2.00' && r.asmChain[1] === '' && r.asmChain[2] === CHAIN_AT('loop') && !r.asmChain[3], 'real: the chain example assembled (Intel) gives the hex result; the (collapsed) listing shows the bytes', JSON.stringify(r.asmChain));
+      check(r.asmAtt[0] === '2.00' && r.asmAtt[1] === '  addq $1, %rax' && r.asmAtt[2] === CHAIN_AT('loop'), 'real: AT&T syntax', JSON.stringify(r.asmAtt));
       check(/^line 3:3: .*frobnicate|^line 3:3: invalid instruction/m.test(r.asmErr[0]) && r.asmErr[1] === 'true', 'real: assembler diagnostics with line and column', JSON.stringify(r.asmErr));
       check(/^\d\.\d\d$/.test(r.asmAvx[0] ?? '') && r.asmAvx[1] === '' && /^ {3}0:  c5 fc 58 c1    vaddps ymm0, ymm0, ymm1\n {3}4:  49 ff cf       dec r15\n {3}7:  75 f7          jnz /.test(r.asmAvx[2]), 'real: an AVX block typed in assembly is analyzed', JSON.stringify(r.asmAvx));
       check(/no machine code/i.test(r.asmEmpty), 'real: assembly without code in .text is reported', r.asmEmpty);
@@ -583,7 +585,7 @@ try {
       return out;`);
     check(off.tp === '4.00' && off.arch === 'ADL-P' && off.build === manifest.version && off.real, 'offline: a shared link loads and is analyzed with the server stopped (also with a query string)', JSON.stringify(off));
     check(off.switched && (off.font || !!process.env.WUICA_TEST_FONT), 'offline: another microarchitecture (its table) and the font come from the cache', JSON.stringify(off));
-    if (manifest.assembler) check(off.asm?.[0] === '2.00' && off.asm?.[1] === CHAIN, 'offline: assembly mode works (the assembler comes from the cache)', JSON.stringify(off.asm));
+    if (manifest.assembler) check(off.asm?.[0] === '2.00' && off.asm?.[1] === CHAIN_AT('loop'), 'offline: assembly mode works (the assembler comes from the cache)', JSON.stringify(off.asm));
     const offProblems = page.take();
     check(offProblems.length === 0, 'offline: no console errors', offProblems.join('\n'));
     if (manifest.assembler) {

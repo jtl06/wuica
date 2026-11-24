@@ -314,7 +314,7 @@ try {
       await until(() => $('results').dataset.run !== run);
       await until(() => viewer() && viewer() !== v);
       return { rows: viewer().rows.length, tp: document.querySelector('.tp .value').textContent, labels: viewer().model.labels };`);
-    check(n.tp === '2.00' && n.rows === 9 && n.labels[2] === 'dec r15 + jnz 0xfffffffffffffff5', 'a new analysis brings its own trace into the open panel', JSON.stringify(n));
+    check(n.tp === '2.00' && n.rows === 9 && n.labels[2] === 'dec r15 + jnz 0x0' /* the target as the uop table shows it */, 'a new analysis brings its own trace into the open panel', JSON.stringify(n));
     // Zen 3 names its ports (uarch.json portNames); the trace has letters
     const zen = await page.eval(`${HELPERS}
       const v = viewer(); const run = $('results').dataset.run;
@@ -346,6 +346,29 @@ try {
     check(m.overflow <= 0 && m.inner === 375 && m.canvas <= 375 && !m.tip, 'at 375px: the page does not scroll sideways; the trace scrolls in its box', JSON.stringify(m));
     await page.shot('trace-phone.png');
     check(page.problems.length === 0, 'no console errors (phone)', page.problems.join('\n'));
+    await page.cmd('Page.close');
+  }
+
+  // --- branch targets: the trace's rows and the objdump listing say them as the uop table does ------------------------------
+  // (a user test saw "cmp rsi, r8 + jnz 0xfffffffffffff…" in the trace, "jz 0xc" next to "jnz .LBB0_4" in the table,
+  // "a: 77 17  jnbe 0x19" for a target at 0x23 in the listing, and "call 0x5" for call sink@PLT)
+  {
+    const page = await openPage();
+    const asm = '.LBB0_4:\n  cmpb %sil, (%rax)\n  je .LBB0_2\n  callq sink@PLT\n  incq %rax\n  decq %rdx\n  jne .LBB0_4\n.LBB0_1:\n  xorl %eax, %eax\n.LBB0_2:\n  retq\n';
+    await page.goto(`${origin}/?nosw=1#v=1&a=${ARCH}&m=asm&s=att&c=${b64(asm)}`);
+    const k = await page.eval(`${HELPERS}
+      await until(() => document.querySelector('.tp .value'), 60000);
+      const table = [...document.querySelectorAll('table.uops tbody tr:not(.extra)')].map((tr) => tr.cells[0]?.textContent.trim());
+      document.querySelector('details.listing-wrap summary').click(); await wait(100);
+      const listing = document.querySelector('pre.listing')?.textContent ?? '';
+      panel().querySelector('summary').click();
+      await until(() => document.querySelector('.trace-viewer'), 60000); await wait(100);
+      return { table, listing, labels: viewer().model.labels };`);
+    const want = ['jz .LBB0_2', 'call sink@PLT', 'jnz .LBB0_4'];
+    check(want.every((x) => k.table.includes(x)), 'branch targets: the uop table names the exit and the call as written', JSON.stringify(k.table));
+    check(/ 74 0[0-9a-f] +jz \.LBB0_2\n/.test(k.listing) && /e8 00 00 00 00 +call sink@PLT\n/.test(k.listing) && /jnz 0x0 <\.LBB0_4>\n/.test(k.listing) && !/0x[0-9a-f]{9,}/.test(k.listing), 'branch targets: the listing (the loop branch at its real target and label)', k.listing);
+    check(want.every((x) => k.labels.includes(x)) && !k.labels.some((l) => /0x[0-9a-f]{9,}|call 0x/.test(l)), 'branch targets: the rows of the trace as in the uop table', JSON.stringify(k.labels));
+    check(page.problems.length === 0, 'no console errors (branch targets)', page.problems.join('\n'));
     await page.cmd('Page.close');
   }
 
