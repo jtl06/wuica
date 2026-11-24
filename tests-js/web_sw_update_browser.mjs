@@ -27,6 +27,10 @@ fs.cpSync(dist, B, { recursive: true });
 const vA = JSON.parse(fs.readFileSync(path.join(A, 'manifest.json'), 'utf8')).version, vB = 'feedfacecafe';
 // the second deploy: the same files with another version, where build.sh writes it (the manifest, the worker, the page)
 for (const f of ['manifest.json', 'sw.js', 'index.html']) fs.writeFileSync(path.join(B, f), fs.readFileSync(path.join(B, f), 'utf8').replaceAll(vA, vB));
+// B with A's page: a cache on the way (a CDN, the HTTP cache) still serving the last deploy's index.html
+const M = path.join(tmp, 'm');
+fs.cpSync(B, M, { recursive: true });
+fs.copyFileSync(path.join(A, 'index.html'), path.join(M, 'index.html'));
 let root = A;
 const server = http.createServer(hostHandler(() => root));
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -99,6 +103,32 @@ try {
       try { s1 = await f.read(`return { html: document.querySelector('meta[name="wuica-build"]').content, note: !document.getElementById('update-note').hidden };`, { ready: `document.getElementById('run')?.disabled === false && document.getElementById('update-note')`, ms: 5000 }); } catch { /* reloading */ }
     }
     check(s1?.html === vB, 'a page of a first visit: a later deploy takes it into the new build', JSON.stringify({ ...s1, html: name(s1?.html) }));
+    await browser.send('Target.disposeBrowserContext', { browserContextId: ctx });
+  }
+
+  // ---- a deploy whose page is still the old one (M): its worker must not install (no build of A's page with B's files,
+  // whose note a reload could never clear); once the host serves B's page, B installs and the page reloads into it
+  {
+    root = A;
+    const { browserContextId: ctx } = await browser.send('Target.createBrowserContext');
+    const z = await open(ctx);
+    await z.goto(`${origin}/`);
+    await z.ready();
+    await z.waitFor(`navigator.serviceWorker.controller && (await caches.keys()).length === 1`, 'the worker of A in control', 60000);
+    root = M;
+    const t = await z.eval(`try { await (await navigator.serviceWorker.getRegistration()).update(); return 'installed'; } catch (e) { return 'refused: ' + e.message; }`);
+    await sleep(4000);
+    const READY = `document.getElementById('run')?.disabled === false && document.getElementById('update-note') && document.getElementById('build-id')`;
+    const r = await z.read(`return { keys: (await caches.keys()).join(), note: !document.getElementById('update-note').hidden, build: document.getElementById('build-id').textContent, mark: sessionStorage.getItem('wuica-update-reload') };`, { ready: READY });
+    check(r.keys === `wuica-${vA}` && !r.note && r.build === vA && r.mark === null, 'a deploy served with the last deploy\'s page: its worker does not install (A stays, no note, no reload)', JSON.stringify({ update: t, ...r, keys: r.keys.replace(vA, 'A').replace(vB, 'B'), build: name(r.build) }));
+    root = B;
+    await z.eval(`await (await navigator.serviceWorker.getRegistration()).update().catch(() => {}); return 1;`);
+    let s2 = null;
+    for (let k = 0; k < 120 && !(s2 && s2.build === vB && s2.html === vB); k++) {
+      await sleep(250);
+      try { s2 = await z.read(`return { build: document.getElementById('build-id').textContent, html: document.querySelector('meta[name="wuica-build"]').content, keys: (await caches.keys()).join() };`, { ready: READY, ms: 5000 }); } catch { /* reloading */ }
+    }
+    check(s2?.build === vB && s2?.html === vB && s2?.keys === `wuica-${vB}`, 'then the host serves B\'s page: B installs and the page reloads into it', JSON.stringify(s2));
     await browser.send('Target.disposeBrowserContext', { browserContextId: ctx });
   }
 
