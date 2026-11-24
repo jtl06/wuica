@@ -31,7 +31,7 @@ await engine.loadUarch(uarchBytes);
 const configs = JSON.parse(uarchBytes).configs;
 const loadTable = async (arch) => {
   const table = configs[arch].name;
-  if (!engine.hasArch(table)) await engine.loadArch(table, fs.readFileSync(path.join(dist, 'data/arch', `${table}.json`)));
+  if (!engine.hasArch(table)) await engine.loadArch(table, fs.readFileSync(path.join(dist, 'data/arch', `${table}.bin`)));
 };
 if (fs.existsSync(path.join(dist, 'wuica_asm.wasm'))) {
   // the text gives the listed machine code, or an encoding of the same instructions with the same result (LLVM picks

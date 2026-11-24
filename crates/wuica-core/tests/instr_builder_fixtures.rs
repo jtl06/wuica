@@ -91,7 +91,9 @@ fn check(decode_fixtures: &str, instr_fixtures: &str) -> (usize, usize) {
         if !tables.contains_key(&config.name) {
             let path = format!("{}/data/arch/{}.json", root(), config.name);
             let json = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
-            tables.insert(config.name.clone(), ArchData::from_json(&json).unwrap_or_else(|e| panic!("{path}: {e}")));
+            // through the binary form, as the package and the site load it (src/table_bin.rs)
+            let data = ArchData::from_json(&json).unwrap_or_else(|e| panic!("{path}: {e}"));
+            tables.insert(config.name.clone(), ArchData::from_bin(&data.to_bin()).unwrap_or_else(|e| panic!("{path}: {e}")));
         }
     }
     let mut decoded: HashMap<(String, String), Vec<DecodedInstr>> = HashMap::new();

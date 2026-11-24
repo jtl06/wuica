@@ -31,7 +31,7 @@ await engine.loadUarch(uarchBytes);
 const uarch = JSON.parse(uarchBytes);
 async function reference(c) {
   const table = uarch.configs[c.arch].name;
-  if (!engine.hasArch(table)) await engine.loadArch(table, fs.readFileSync(path.join(dir, 'data/arch', `${table}.json`)));
+  if (!engine.hasArch(table)) await engine.loadArch(table, fs.readFileSync(path.join(dir, 'data/arch', `${table}.bin`)));
   return engine.analyze(makeRequest(c.hex, c.arch, c.options));
 }
 
@@ -57,7 +57,7 @@ try {
       const out = [];
       for (const c of cases) {
         const t = configs[c.arch].name;
-        if (!e.hasArch(t)) await e.loadArch(t, await bytes('/data/arch/' + t + '.json'));
+        if (!e.hasArch(t)) await e.loadArch(t, await bytes('/data/arch/' + t + '.bin'));
         out.push(await e.analyze(makeRequest(c.hex, c.arch, c.options)));
       }
       return out;

@@ -8,6 +8,12 @@
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
+// The binary form of an instruction table starts with the magic WUICATBL.
+const TABLE_MAGIC = [0x57, 0x55, 0x49, 0x43, 0x41, 0x54, 0x42, 0x4c];
+export function isBinaryTable(bytes) {
+  return bytes?.length >= 8 && TABLE_MAGIC.every((b, k) => bytes[k] === b);
+}
+
 function asBytes(x) {
   if (typeof x === 'string') return enc.encode(x);
   if (x instanceof Uint8Array) return x;
@@ -123,7 +129,7 @@ export class WasmEngine {
     this.#x = x;
     try {
       if (this.#uarch) this.#load('wuica_load_uarch', [this.#uarch], 'uarch.json');
-      for (const [name, bytes] of this.#tables) this.#load('wuica_load_arch', [enc.encode(name), bytes], `instruction table ${name}`);
+      for (const [name, bytes] of this.#tables) this.#loadTable(name, bytes);
     } catch (e) {
       this.#x = null;
       throw e;
@@ -143,13 +149,20 @@ export class WasmEngine {
     this.#uarch = bytes;
   }
 
-  // data/arch/<name>.json (text or bytes); `name` is configs[arch].name. The bytes are kept (not copied), to be
-  // loaded again if the module has to be restarted: do not modify them afterwards.
-  async loadArch(name, json) {
+  // data/arch/<name>.bin, the binary form of a table that the site ships (crates/wuica-core/src/table_bin.rs), or
+  // data/arch/<name>.json (text or bytes); `name` is configs[arch].name. The bytes are kept (not copied), to be loaded
+  // again if the module has to be restarted: do not modify them afterwards.
+  async loadArch(name, table) {
     await this.#live();
-    const bytes = asBytes(json);
-    this.#load('wuica_load_arch', [enc.encode(name), bytes], `instruction table ${name}`);
+    const bytes = asBytes(table);
+    this.#loadTable(name, bytes);
     this.#tables.set(name, bytes);
+  }
+
+  #loadTable(name, bytes) {
+    if (!isBinaryTable(bytes)) return this.#load('wuica_load_arch', [enc.encode(name), bytes], `instruction table ${name}`);
+    if (typeof this.#x.wuica_load_arch_bin !== 'function') throw new EngineError(`instruction table ${name}: a binary table, and this analyzer module reads only JSON tables`);
+    this.#load('wuica_load_arch_bin', [enc.encode(name), bytes], `instruction table ${name}`);
   }
 
   hasUarch() { return this.#uarch !== null; }

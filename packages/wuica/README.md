@@ -32,6 +32,8 @@ wuica dot.s -arch SKL,ZEN3,ADL-P               # one table for several CPUs ("al
 wuica dot.s -per 8                             # the loop does 8 elements per iteration: cycles per element too
 wuica dot.s -loops                             # the loops in the file; -loop N or -loop .LBB0_12 picks one
 wuica dot.s -whatif                            # unrolled, N accumulators, front end and fusion variants
+clang -O3 -c dot.c && wuica dot.o -func dot    # an object file (ELF or Mach-O, x86-64): no objdump needed
+wuica *.s -arch SKL,ZEN3                       # several files in one run: one table (-files LIST for long lists)
 objdump -d dot.o | wuica                       # objdump output: the loop's real alignment from its address
 ```
 
@@ -54,8 +56,20 @@ objdump -d dot.o | wuica                       # objdump output: the loop's real
   edges, as clang's remainder loops often have), both sides of the branch are simulated, one after the other, while a
   real iteration takes one. A `Not modelled: both paths: both sides of the branch at line N …` line (table note
   `both paths`; JSON caveat `paths`) says so. To analyze one side, put `# wuica-begin` and `# wuica-end` around it.
-- **One input per run**: a file, `-` or nothing for stdin, a hex argument, `-hex` or `-raw FILE` (bare machine code:
-  for an object file, `objdump -d file.o | wuica`).
+- **Inputs**: a file (assembly, objdump output, or an object file), `-` or nothing for stdin, a hex argument, `-hex` or
+  `-raw FILE` (bare machine code).
+- **Object files.** An ELF or Mach-O x86-64 object, executable or shared object is read directly: its code as
+  `llvm-objdump -d` prints it (decoded by the analyzer), so `wuica dot.o` and `objdump -d dot.o | wuica` pick the same
+  loop and give the same numbers. `-func NAME` takes the symbol, without Mach-O's `_`, or a unique part of it; `-funcs`
+  lists the functions; `-loops` gives the loops' addresses; `-ffunction-sections` objects work. An arm64 object (what a
+  Mac compiles by default) says so and how to compile for x86-64 (`clang -arch x86_64 -c`, or
+  `--target=x86_64-linux-gnu`); COFF is not supported yet (`llvm-objdump -d f.obj | wuica`).
+- **Several inputs** (`wuica a.s b.s c.o`, a glob, or `-files LIST` with one name per line, `-files -` from stdin):
+  one process for all of them, the analyses spread over the threads. One CPU: a row per file (file, loop, TP,
+  bottlenecks, notes); several: a row per file and CPU (grouped by file, a CPU column: any number of CPUs fits in 80
+  columns). `-TPonly`: `file<TAB>[CPU<TAB>]cycles` lines; `-report` adds uiCA's report of each file, `-whatif` the
+  what-if tables, after a `==> FILE <==` line. A file that fails does not stop the others: its row says why, and the
+  exit status is the largest of the files' statuses. One input prints exactly what it printed before.
 - **Tables.** `-arch A,B,C` prints one row per CPU; `-` means unknown (uiCA names no single bottleneck; the notes
   give the nearest limit), `5.00*` that the CPU could not decode some instructions (they are left out), and the notes
   column the caveats (what the model does not simulate, such as store forwarding through an indexed address).
@@ -71,7 +85,8 @@ objdump -d dot.o | wuica                       # objdump output: the loop's real
   results: [{arch, tp, bottlenecks, limits, decodeErrors, perElement?, caveats?}]}`. The shapes are the same for one
   CPU and several: `whatIf` is keyed by CPU (`{SKL: {tp, variants: [{id, tp, …, perElement?}], perElement?}}`), and a
   caveat is `{id, text, title, instructions}` (in `insights.caveats` with one CPU, `results[].caveats` with several).
-  Types: `CliAnalyzeJson`, `CliCompareJson`, `CliWhatIf` in index.d.ts. `--version -json` gives `{wuica, uiCA:
+  Types: `CliAnalyzeJson`, `CliCompareJson`, `CliWhatIf` in index.d.ts. Several inputs give `{code, files: [{file,
+  ...}]}`: each entry is what a single run prints for that file, with its name (`CliBatchJson`). `--version -json` gives `{wuica, uiCA:
   {repository, commit, branch}, node}`: the uiCA commit whose data and model the package has.
 - **Syntax mistakes.** When the assembler fails, a `hint:` line names a line with the other syntax's operands (mixed
   AT&T and Intel lines, a `.intel_syntax` directive over AT&T code, `mov rdx, $8` in Intel code) and the flag to try.
@@ -114,15 +129,18 @@ w.insights(r);                                            // the diagnosis alone
 ```
 
 Methods never throw for bad input: they resolve to a failure `{code, error, stderr}` (see the contract below).
-`createWuica({ dataDir })` reads the tables from another directory (`uarch.json` and `arch/<NAME>.json`, plain or
-`.br`). TypeScript declarations are included (`index.d.ts`).
+`createWuica({ dataDir })` reads the tables from another directory (`uarch.json` and `arch/<NAME>.json` or the binary
+`arch/<NAME>.bin`, plain or `.br`). `w.disassemble(bytes)` turns an object file into the text `analyze` reads. TypeScript declarations are included (`index.d.ts`).
 
-`compare` analyzes the microarchitectures in parallel on worker threads: by default one thread per two
-microarchitectures (a thread's start costs about one analysis), at most `os.availableParallelism()`.
-`createWuica({ threads: N })` or the environment variable `WUICA_THREADS=N` uses up to N threads, one per
-microarchitecture; 1 runs them one after another on the calling thread. The response is the same either way. Each thread loads only the
-tables of the microarchitectures it analyzes and keeps them for the next `compare`; idle threads do not keep the process
-alive and stop after 30 s (`w.close()` stops them at once). A thread's WebAssembly memory has a lower limit (a quarter
+`compare`, `analyzeMany(arch, requests)` and `compareMany(requests, {archs})` analyze on worker threads when the work
+is worth it: by default the number of threads comes from the work (the tables to load, the analyses and their
+instructions): none when it would take less than about 0.3 s on one thread (a thread's start, its table and its first,
+not yet optimized analysis cost more than they save; `-arch all` on a small block stays on one thread), else one per
+0.15 s of work, from 2 to 8, at most the cores but one. `createWuica({ threads: N })` or the environment variable
+`WUICA_THREADS=N` uses up to N threads (one per job at most); 1 runs everything on the calling thread. The response is
+the same either way. The threads share one compiled module and take jobs from one queue; each loads the tables of the
+jobs it takes and keeps them for the next call; idle threads do not keep the process alive and stop after 30 s
+(`w.close()` stops them at once). A thread's WebAssembly memory has a lower limit (a quarter
 of the RAM shared by the threads, 256 MB to 1 GB each); an analysis that exceeds it is done again on the calling thread.
 
 Inputs on which the original uiCA fails can make the WebAssembly module trap. In that case the call resolves to
@@ -145,6 +163,10 @@ wuica loop.s -json                   # the JSON result (the contract's analyze r
 wuica psum.s -loop whole             # the whole text, not the loop found in it (-loop auto, the default, or -loop N)
 wuica psum.s -loops                  # list the loops; -loop .LBB0_12 or -func psum to choose
 wuica psum.s -whatif -per 8          # what-if variants; cycles per element (8 elements per iteration)
+wuica dot.o -func dot                # an object file (ELF or Mach-O x86-64); -funcs lists its functions
+wuica a.s b.s c.o -arch SKL,ZEN3     # several inputs: one table, a row per file and CPU
+wuica -files list.txt -TPonly        # the names from a file (- for stdin): file<TAB>cycles lines
+wuica *.s -json                      # {code, files: [{file, ...}]}, each entry as a single run's JSON
 wuica -examples                      # the built-in examples (the web page's set)
 wuica -example dot1 -whatif          # one of them, as if it were the input file (every option applies)
 wuica -example dot1 -show > dot.s    # its assembly, to save and edit
@@ -153,8 +175,9 @@ wuica --version
 
 The simulation options are uiCA's: `-alignmentOffset N`, `-initPolicy diff|same|stack`, `-simpleFrontEnd`,
 `-noMicroFusion`, `-noMacroFusion`, `-minIterations N`, `-minCycles N`, and `-trace` (with `-json`). Every flag also
-takes `--flag` and `--flag=value`, in any case (`--tponly`, `--arch=zen3`). With several
-microarchitectures, `-threads N` analyzes them on at most N threads at a time (`-threads 1`: one after another).
+takes `--flag` and `--flag=value`, in any case (`--tponly`, `--arch=zen3`). With several microarchitectures or files,
+the threads are chosen by the amount of work (see Library); `-threads N` uses at most N threads (`-threads 1`: one
+after another).
 Diagnostics go to stderr. The exit status is the result code: 0 ok, 1 bad request or usage, 2 assembler error, 3 analysis failed.
 `wuica -h` lists everything.
 
@@ -499,7 +522,10 @@ npm pack                         # wuica-cli-<version>.tgz
 ```
 
 `build.sh` uses `target/wasm32-unknown-unknown/release/wuica_wasm.wasm` (it runs `./build-wasm.sh` if the file is
-missing), `assembler/dist/wuica_asm.wasm` and `data/`. `dist/manifest.json` records the size and SHA-256 of each
+missing), `assembler/dist/wuica_asm.wasm` and `data/`. The instruction tables are shipped in a binary form
+(`dist/data/arch/<NAME>.bin.br`, written from `data/arch/*.json` by `tools/encode-tables.sh`; 6.4 MB instead of
+14.6 MB, and loaded about 40% faster); `createWuica({ dataDir })` also reads JSON tables. `dist/manifest.json` records
+the size and SHA-256 of each
 uncompressed file.
 
 ## Licenses

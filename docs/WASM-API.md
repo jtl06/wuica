@@ -15,6 +15,7 @@ by the module. All text is UTF-8; structured values are JSON.
 | `wuica_decode(code, code_len, chip, chip_len) -> len` | decodes machine code for an XED chip name; result: JSON array of decoded instructions, or `{"error": ...}` |
 | `wuica_load_uarch(json, len) -> len` | loads `data/uarch.json` (once); result: `{"ok": true}` or `{"error": ...}` |
 | `wuica_load_arch(name, name_len, json, len) -> len` | loads the instruction table `data/arch/<name>.json`; result as above |
+| `wuica_load_arch_bin(name, name_len, bin, len) -> len` | loads the binary form of the table, `data/arch/<name>.bin`, into the same tables as the JSON (what the site, the npm package and the server ship; written at build time by `tools/encode-tables.sh`; layout in `crates/wuica-core/src/table_bin.rs`: the magic `WUICATBL`, a format version, five streams); a file of another format version is an error that says so; result as above |
 | `wuica_analyze(request, len) -> len` | runs an analysis; result: a response object (below) |
 
 Each function returns the length of its result; read it at `wuica_result_ptr()` *after* the call (the memory can have grown:

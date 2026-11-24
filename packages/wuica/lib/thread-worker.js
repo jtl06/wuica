@@ -4,8 +4,9 @@
 // on stdout).
 //
 // workerData: {module (WebAssembly.Module), uarch (bytes of uarch.json), dataDir, recycleBytes}
-// Messages in: {id, table, request}
+// Messages in: {id, table, request, full}
 // Messages out: {type: 'ready'} | {type: 'init-error', message} | {id, fields, recycle}
+//   fields: a compare() row's fields, or with `full` the whole analysis result (analyzeMany).
 //   fields null: the table could not be loaded, or the analysis trapped (it may only have hit this thread's memory
 //   limit): the main thread does it again, so that the row is the one it would have made itself.
 //   recycle: this thread should be stopped (its memory, which never shrinks, has grown beyond recycleBytes, or it trapped).
@@ -13,7 +14,7 @@
 import path from 'node:path';
 import { parentPort, workerData } from 'node:worker_threads';
 import { Analyzer } from './wasm.js';
-import { readMaybeCompressed } from './files.js';
+import { readMaybeCompressed, readMaybeCompressedSync, tableFile } from './files.js';
 import { analysisResult, compareFields } from './core.js';
 
 const { module, uarch, dataDir, recycleBytes } = workerData;
@@ -26,10 +27,11 @@ try {
 }
 
 if (analyzer) {
-  parentPort.on('message', async ({ id, table, request }) => {
+  parentPort.on('message', async ({ id, table, request, full }) => {
     if (!analyzer.hasArch(table)) {
       try {
-        analyzer.loadArch(table, await readMaybeCompressed(path.join(dataDir, 'arch', `${table}.json`)));
+        const file = tableFile(dataDir, table);
+        analyzer.loadArch(table, await readMaybeCompressed(file), () => readMaybeCompressedSync(file));
       } catch {
         parentPort.postMessage({ id, fields: null, recycle: analyzer.memoryBytes === 0 }); // 0: the module trapped
         return;
@@ -40,7 +42,8 @@ if (analyzer) {
       parentPort.postMessage({ id, fields: null, recycle: true });
       return;
     }
-    parentPort.postMessage({ id, fields: compareFields(analysisResult(response)), recycle: analyzer.memoryBytes > recycleBytes });
+    const result = analysisResult(response);
+    parentPort.postMessage({ id, fields: full ? result : compareFields(result), recycle: analyzer.memoryBytes > recycleBytes });
   });
   parentPort.postMessage({ type: 'ready' });
 }

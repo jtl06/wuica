@@ -388,7 +388,7 @@ try {
       await done(() => $('ce-import-b').click());
       out.two = [$('code-b').value, line('code-b')];
       return out;`);
-    check(r.csp === 'connect-src \'self\' https://cloudflareinsights.com https://godbolt.org', 'ce: the CSP allows godbolt.org (and the Cloudflare beacon)', r.csp);
+    check(r.csp === 'connect-src \'self\' https://godbolt.org', 'ce: the CSP allows godbolt.org and nothing else off the origin', r.csp);
     check(r.noButton, 'ce: no import button or dialog');
     check(r.busy[0] === 'importing from godbolt.org…' && r.busy[1], 'ce: a pasted link replaces the box\'s text and is imported at once (one status line)', JSON.stringify(r.busy));
     check(/^imported: loop in countSetBits\(unsigned int\) · undo$/.test(r.imported[0]) && r.imported[1] && r.imported[2] === 'loop:\n  inc eax\n  blsr edi, edi\n  jnz loop\n' && r.imported[6] === 'intel'

@@ -68,8 +68,10 @@ added to the list in `ci/make-data-asset.sh`.
 
 - `cargo run --release -p wuica --example phases -- ARCH N HEXFILE...`: the time and the allocations of each phase (native).
 - `cargo run --release -p wuica --example load -- [N] [TABLE...]`: the time of `load_uarch` and of `load_arch` for each table.
-- The WebAssembly module: `node --cpu-prof` on a script that calls `wuica_analyze` in a loop; the profile names the module's
-  functions (from its name section). A function that is inlined into its caller does not appear on its own.
+- The WebAssembly module: `node --cpu-prof` on a script that calls `wuica_analyze` in a loop, with
+  `target/wasm32-unknown-unknown/release/wuica_wasm.debug.wasm`: the profile names the module's functions from its name section,
+  which the shipped `wuica_wasm.wasm` does not have (`build-wasm.sh`; the same code, so a `wasm-function[N]` frame of the shipped
+  module is function N of the named one). A function that is inlined into its caller does not appear on its own.
 - Report numbers from aethia under an exclusive perfq lease; the Mac varies by a factor of two when other work runs there.
 - Before optimizing, check that every response stays the same, including the trace and the fields that
   `analyze_fixtures.mjs` does not compare: `examples/golden.rs` writes every fixture response; compare its output before and
@@ -97,13 +99,96 @@ added to the list in `ci/make-data-asset.sh`.
   15: 73 ms). So `-arch all` on the showcase takes 0.60 s with 4 or 8 threads, 0.67 s with 12 and 0.71 s with 15 (1.04 s
   without), and on a small block 8 threads are as fast as none and 15 are 12% slower; the default is one thread per two
   microarchitectures. `-arch all` minus `-arch SKL` is the cost of the other 14: 0.73 s before, 0.30 s on threads.
+- Threads by work (round 0.1.9; the measurement machine, node 22, 5 runs, medians; the Mac in parentheses). The default
+  is no longer one thread per two CPUs but comes from the work of a call (threads.js, `WORK`): each table loaded once
+  (8 ms), each analysis 1.2 ms plus 0.009 ms per instruction (SKL: saxpy 1.1 ms, the SHA-256 block 26 ms, Mac). Below
+  300 ms of estimated work no threads; above, one per 150 ms, from 2 to 8, at most the cores but one. A thread costs
+  about 50-60 MB (its isolate, its tables, its memory) and saves nothing on short work. `-arch all` on saxpy: 0.37 s
+  with no thread, 0.38-0.42 s with 2-8 (197 MB against 240-347 MB): none. The SHA-256 block on all 15 CPUs: 1.01 s with
+  none, 0.75 / 0.60 / 0.62 s with 2 / 4 / 8 (236 / 296 / 405 / 597 MB): the default picks 4 (0.61 s, 400 MB). 20
+  SHA-256 blocks on SKL: 1.18 / 0.94 / 0.79 / 0.78 s with 1 / 2 / 4 / 8: 4 (0.79 s). 50 small blocks on 3 CPUs:
+  0.44 s with none, 0.48-0.55 s with threads: none. The SHA-256 block on 3 CPUs (105 ms of estimated work): none, 0.42 s
+  against 0.39-0.42 s with threads, at 195 instead of 277-311 MB.
+- Batches (wuica a.s b.s ...): 50 small files in one process instead of 50: 0.39 s instead of 14.4 s on SKL, 0.43 s
+  instead of 18.2 s on 3 CPUs; 20 SHA-256 blocks: 0.79 s instead of 6.5 s (Mac: 0.21 / 0.24 / 0.41 s instead of 7.6 /
+  7.9 / 3.5 s).
+- Memory (0.1.8 -> 0.1.9, peak RSS, the measurement machine; Mac in parentheses): saxpy on 3 CPUs 233 -> 159 MB (186 ->
+  124), `-arch all` 396 -> 193 MB (347 -> 157), the SHA-256 block on all CPUs 676 -> 445 MB (673 -> 470), `-whatif` on 3
+  CPUs 252 -> 183 MB (214 -> 155): fewer threads, binary tables (SKL: 4 instead of 6 MB of WebAssembly memory), no copy
+  of decompressed bytes, table bytes not kept (read again after a trap). A small run on one CPU is 133-139 MB (100-111
+  on the Mac) against node's 56 (46): no single cause. On the Mac: the analyzer's module decompressed and compiled
+  +24 MB, the code V8 compiles for loading a table +8 MB and for the first analysis +15 MB, the assembler (assembly
+  input only) +17 MB with its decompression. Freeing the assembler before the analysis lowers the peak by 5 MB only
+  with a forced garbage collection: not done.
+- Binary tables: 14.6 MB of JSON -> 6.4 MB (brotli 681 -> 614 kB for the 15); loading a table (decompress and load,
+  warm) SKL 2.2 -> 1.4 ms, ADL-P 6.1 -> 3.7 ms, all 15 55 -> 33 ms (Mac); the analyzer module grows by 21 kB.
+
+## Size of the modules
+
+Measured on 0.1.8 (sizes in bytes; brotli with the command-line tool, window 24 unless said otherwise).
+
+- The analyzer, `wuica_wasm.wasm`: 4,307,652 with the name section, 3,093,000 without (shipped so after 0.1.8, `build-wasm.sh`):
+  code 1,898,829, data 1,125,476, function table (element section) 46,422, the rest under 22 kB. Brotli -q 11: 629,775 ->
+  569,418; -q 4: 841,200 -> 747,612; gzip -9: 924,647 -> 816,848. Code: Rust 814,584 (`wuica-core` ~455 k, `serde_json` ~173 k,
+  formatting and float parsing of `core`), XED 1,084,242 (the decoder's 19,719 small `xed3_phash_find_*` functions 727 k in
+  `xed3-phash-lu-vv*.c`, `xed3-dynamic-decode.c` 256 k, the shim's `decode` with the record writer 36 k, the Intel disassembler
+  `xed-disas.c` 12 k). Data: XED ~1.07 MB (the phash lookup tables 477 k, `xed_inst_table` 91 k, the decoder's function-pointer
+  tables 61 k, `xed_iform_db` 55 k, the iform names 222 k of strings plus 55 k of pointers, the iclass names 15 k + 14 k), Rust
+  ~60 kB plus its strings. Everything of XED that is linked is reached: the linker keeps only what is called (`wasm-ld`
+  collects unused functions and data, and clang puts each in its own section for wasm by default:
+  `-ffunction-sections -fdata-sections` gives the same bytes), and the shim uses the iclass, iform, category, extension,
+  isa-set, operand, register and operand-action names, `str2xed_chip_enum_t` and `xed_format_generic` (the `asm` field); the
+  enums it does not print (e.g. `xed-iformfl-enum.c`) are not in the module. Identical data symbols: 5 kB.
+- `panic = "abort"` is already the target's default for wasm32-unknown-unknown (setting it changes only the order of a few
+  functions and strings: 64 bytes). Brotli -q 11 moves by up to 6 kB with such reorderings (563,389 for that build), so
+  differences of a few kB at -q 11 are noise; -q 4 moved by 76 bytes.
+- `wasm-opt -Oz` (binaryen 123) on the stripped module: 2,714,295 raw but 578,742 with brotli -q 11, 771,552 with -q 4 and
+  818,200 with gzip: larger compressed than the module it started from. Not used.
+- The LLVM modules have no custom sections at all (no name section to strip): the assembler 3,802,001 (code 967,243, data
+  2,827,957; brotli -q 11 687,897), llvm-mca 4,376,885 (code 1,134,742, data 3,233,333; -q 11 801,898). Their data is 44% zero
+  bytes but in short runs (runs of 64 or more: 21 kB and 55 kB), so splitting the data segments would not help either.
+- One module for the assembler and llvm-mca: the two compressed in one brotli stream (-q 11) are 921,005 instead of 1,489,795
+  apart, so they share ~570 kB of compressed content (the x86 tables and MC); llvm-mca adds only ~233 kB to the assembler.
+  A merged module would therefore be ~233 kB (~34%) larger for a visitor who never opens the llvm-mca tab, and save ~570 kB
+  for one who does; it would also lose the assembler-only patch. Not done: the assembler is on the common path.
+- What the site sends: the host compresses on the fly at a low brotli level. Measured on the live site (0.1.8): the analyzer
+  866,526 (brotli -q 11: 629,775), the assembler 941,580 (687,897), llvm-mca 1,103,294 (801,898), the 15 tables 1,280,826
+  (680,863). The host has no setting for the level (Compression Rules choose only the algorithm), and its documentation of static
+  assets says nothing about precompressed files (a `Content-Encoding` set in `_headers` is reported not to work; not tried
+  here). A Worker in front of the `.wasm` paths (`run_worker_first`) can return a
+  precompressed `.br` file with `Content-Encoding: br` and `encodeBody: "manual"`, which the browser decodes itself.
+  Measured with the local host (`tests-js/static-host.mjs` serving brotli: -q 2 for everything, close to the site's sizes,
+  or the two modules precompressed at -q 11), time to the first result of a fresh visit in headless Chrome (median of 3):
+  unthrottled 232 / 217 / 224 ms (with names / stripped / stripped at -q 11), 10 Mbit/s with 40 ms latency 2,582 / 2,499 /
+  2,084 ms, 4 Mbit/s with 80 ms 5,690 / 5,567 / 4,548 ms; the two modules on the wire 1,848,252 / 1,757,297 / 1,257,315.
+  Decompressing in the page instead needs a brotli decoder in JavaScript or WebAssembly in Chrome: `DecompressionStream`
+  has no `brotli` in Chrome 157 (Node has it); `gzip` it has everywhere, but gzip -9 of the stripped analyzer (816,848) is
+  larger than the host's brotli of it. A proposal for the Worker: `docs/plans/precompressed-modules.md`.
+- XED's iform names in the analyzer: 219,323 bytes of strings and 54,944 of pointers; the module with them zeroed is 41 kB
+  smaller with brotli -q 11 and 60 kB with -q 4 (the iclass names: 12,566 + 13,968 bytes, 0.5 / 12 kB). Who reads them: the
+  shim writes the iform and iclass of every instruction into the decoded records, as uiCA's `xed` module does; `wuica-core`
+  looks the instruction up in the table by iform name (`instrData`), takes the iclass from the iform's first word (MOV
+  elimination, ADD/SUB/INC/DEC/LEA rules, `memRenamingExcluded`) and matches the serializing and fence iforms by name;
+  `wuica_decode` returns both names (docs/WASM-API.md; the server counts the instructions of its output by the `"iclass"` keys). The text output and the page do not show them. Dropping the strings
+  needs tables keyed by the numeric iform of this XED version, the iclass rules on numbers, and the names of
+  `wuica_decode` from elsewhere (or that export changed).
+- The page's modules: `js/app.js` imports 51 modules statically, in four levels, and the analyzer's download starts only
+  when app.js runs, after all of them. `web/build.sh` adds a `<link rel="modulepreload">` for each (found from the imports
+  at build time). First result of a fresh visit (everything at brotli -q 2, median of 10, the local host, which speaks
+  HTTP/1.1, so Chrome fetches six modules at a time either way; the site's HTTP/2 should gain about the three round trips
+  saved): 10 Mbit/s, 40 ms: 2,505 -> 2,444 ms; 4 Mbit/s, 80 ms: 5,561 -> 5,474 ms. A `<link rel="preload" as="fetch">` for
+  the two modules as well: 2,330 ms at 10 Mbit/s (median of 3; not done: the mock page and visits that never need the assembler would
+  download a module they do not use, and Chrome warns about an unused preload).
+- The default example without the assembler (a visit with the same example as machine code, the proxy for shipping the
+  example's bytes): 1,171,367 instead of 2,153,091 bytes before the first result, 10 Mbit/s: 2,553 -> 1,728 ms, 4 Mbit/s:
+  5,503 -> 3,685 ms.
 
 ## The reference
 
 The reference is [jtl06/uiCA](https://github.com/jtl06/uiCA), branch `improve-r10` (model at commit `7301b04`; not pushed yet,
 worktree `/data/projects/uica-r10` on the reference machine): the model change of round 10 (see `docs/ACCURACY.md`) on top of
-`improve-r9` (model `640e40e`: the changes of round 9) on top of `improve-r8` (model
-`c899be7`: the changes of round 8) on top of `improve-r7` (model `f4a7868`: the changes of round 7) on top of `improve-r6`
+`improve-r9` (model and data at `640e40e`, pushed; branch tip `5a07a40`) on top of `improve-r8` (model `c899be7`: the changes of
+round 8) on top of `improve-r7` (model `f4a7868`: the changes of round 7) on top of `improve-r6`
 (`21b0b17`: the model changes of round 6, `9bed908`, merged with branch
 `crash-fixes`, `f85fcbd`: branch `perf` (`adf62ae`, whose output is identical to that of `8f24bd3`) plus the fixes of the inputs on
 which uiCA raised an exception, `docs/DEVIATIONS.md`). All fixtures in `fixtures/generated` are exported from it
@@ -146,7 +231,8 @@ with `"error": "InputError: <message>"` must give an error with the text `<messa
 six more, `x_r9_*.s`, and since round 10 four more, `x_r10_*.s`) for paths that
 the main corpus does not reach (ZMM registers, stack operations, high-8 registers, LCP, lock, rep, fences, microcode, x87, ...,
 and four blocks for the crash fixes: `x_dsb_fused_mid*.s`, `x_push_mem_pair.s`, `x_stack_init.s`), each with all option variants
-and the `-json` output (6156 simulation cases, 3420 instruction-object cases). Every case was run in a new process (`FRESH=1`),
+and, for some cases, the `-json` output (7182 simulation cases, 798 of them with the `-json` output; 3990 instruction-object
+cases). Every case was run in a new process (`FRESH=1`),
 like a run of the command-line tool: the reference modifies its instruction tables in place for code that uses ZMM registers, so
 within one process earlier cases can change later ones (the main set has no ZMM code).
 

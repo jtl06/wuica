@@ -3,17 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex">
 <meta name="referrer" content="no-referrer">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#090a09" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#fbf6ea" media="(prefers-color-scheme: light)">
-<!-- The page loads only from its own origin, plus Cloudflare Web Analytics (injected by the host). The code
-     you analyze is never sent anywhere; the one fetch elsewhere: a Compiler Explorer link put into a code box is
-     imported from https://godbolt.org (js/godbolt-ui.js, js/godbolt.js). -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com https://godbolt.org; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<!-- The page loads only from its own origin and runs no third-party script. The code you analyze is never sent
+     anywhere; the one fetch elsewhere: a Compiler Explorer link put into a code box is imported from
+     https://godbolt.org (js/godbolt-ui.js, js/godbolt.js). The same policy is sent as a response header (_headers). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://godbolt.org; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="description" content="wuica: WebAssembly uiCA, an independent port of uiCA that runs in your browser. Predicts the throughput of x86-64 basic blocks.">
 <title>wuica: WebAssembly uiCA</title>
+<link rel="canonical" href="https://wuica.jacen.li/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://wuica.jacen.li/">
+<meta property="og:title" content="wuica: WebAssembly uiCA">
+<meta property="og:description" content="An independent port of uiCA that runs in your browser. Predicts the throughput of x86-64 basic blocks.">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="preload" href="fonts/IBMPlexMono-Regular-Latin1.woff2" as="font" type="font/woff2" crossorigin>
 <script src="js/theme.js"></script>
