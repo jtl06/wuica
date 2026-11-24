@@ -1,4 +1,5 @@
-# The full check (scripts/check.sh full, see docs/PORTING.md "Checks") on every push to main and every pull request.
+# The full check (scripts/check.sh full, see docs/PORTING.md "Checks") on every push to main and every pull request, and the
+# package on the oldest Node its engines field allows (node20).
 # The generated files the tests need (data/, fixtures/generated/, the assembler module) are not in git: they come from the
 # asset of a GitHub release, recorded in ci/data-asset.txt (made with ci/make-data-asset.sh; see docs/PORTING.md "CI").
 name: CI
@@ -63,23 +64,7 @@ jobs:
       - name: Data asset
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          get() { sed -n "s/^$1=//p" ci/data-asset.txt; }
-          tag="$(get tag)"; file="$(get file)"; sum="$(get sha256)"
-          dir="$RUNNER_TEMP/ci-data"
-          mkdir -p "$dir/unpacked"
-          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$file" --dir "$dir"
-          echo "$sum  $dir/$file" | sha256sum -c -
-          tar -C "$dir/unpacked" -xJf "$dir/$file"
-          (cd "$dir/unpacked" && sha256sum -c --quiet MANIFEST.txt)
-          mkdir -p fixtures assembler/dist mca/dist
-          mv "$dir/unpacked/data" data
-          mv "$dir/unpacked/fixtures/generated" fixtures/generated
-          mv "$dir/unpacked/assembler/dist/wuica_asm.wasm" assembler/dist/
-          # llvm-mca (from ci-data-v6 on)
-          if [ -f "$dir/unpacked/mca/dist/wuica_mca.wasm" ]; then mv "$dir/unpacked/mca/dist/wuica_mca.wasm" mca/dist/; fi
-          rm -rf "$dir"
-          echo "$tag: $(get files) files"
+        run: ci/fetch-data-asset.sh
 
       - name: npm ci (packages/wuica)
         working-directory: packages/wuica
@@ -107,3 +92,48 @@ jobs:
             target/check/output.txt
           if-no-files-found: ignore
           retention-days: 14
+
+  # The package on the oldest Node that packages/wuica/package.json's engines allows (>=20; the full check runs Node 22):
+  # the analyzer built from source, the package built from the data asset, its tests, and a fresh install of the packed
+  # tarball (the CLI with one and several CPUs, a batch of files, -md, -whatif; wuica-mcp over stdio). The server is not
+  # run here: its engines field says >=22, which the full check covers.
+  node20:
+    name: package on Node 20
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target wasm32-unknown-unknown
+          rustup default "$RUST_TOOLCHAIN"
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: packages/wuica/package-lock.json
+
+      - name: Data asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ci/fetch-data-asset.sh --data-only
+
+      - name: Build the analyzer and the package
+        run: |
+          node -v
+          ./build-wasm.sh
+          (cd packages/wuica && npm ci --no-audit --no-fund && ./build.sh)
+
+      - name: npm test (packages/wuica)
+        working-directory: packages/wuica
+        run: npm test
+
+      - name: Fresh install (CLI, MCP)
+        working-directory: packages/wuica
+        run: test/smoke.sh

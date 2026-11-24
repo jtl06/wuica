@@ -55,6 +55,11 @@ downloads them from the pre-release named in `ci/data-asset.txt` (`data/`, the f
 table, and `assembler/dist/wuica_asm.wasm` and `mca/dist/wuica_mca.wasm`, whose LLVM builds are too heavy for CI) and checks their
 sha256.
 
+A second job, `node20`, runs the package on the oldest Node its `engines` field allows (`>=20`): it builds the analyzer and the
+package from the asset's data (`ci/fetch-data-asset.sh --data-only`), runs `npm test` in `packages/wuica`, and installs the
+packed tarball into an empty directory (`packages/wuica/test/smoke.sh`: the CLI with one and several CPUs, a batch of files,
+`-md`, `-whatif`, and `wuica-mcp` over stdio). The server is not run there: its `engines` field says `>=22`.
+
 The accuracy table `fixtures/generated/accuracy.jsonl.gz` (read by `crates/wuica/tests/accuracy_gate.rs`; see `docs/ACCURACY.md`,
 "Policy and the accuracy gate") is made in the fork's tree on the reference machine from the measurement files of the sets and their
 prediction caches (`microbench/measurements/fuzz/`, the caches are not in git) and the dogfood loops:
