@@ -7,6 +7,7 @@ import { createWuica, normalizeHex, listLoops, whatIf, WHAT_IF_VARIANTS, CODES, 
 export const VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 export const USAGE = `Usage: wuica [options] [FILE | - | HEX]
+       wuica [options] FILE FILE...   several inputs in one run: one table (-files LIST reads the names from a file)
        wuica mcp                start the MCP server (stdio)
 
 Predicts the throughput of an x86-64 basic block with uiCA's pipeline model (this is wuica ${VERSION}, a WebAssembly
@@ -20,6 +21,10 @@ Input:
   -example NAME          analyze a built-in example as if its text were the input file (case-insensitive; with -att
                          its AT&T text)
   -show                  with -example: print its assembly (machine code for sha256) instead of analyzing it
+  -files LIST            also analyze the files named in LIST, one per line (- reads the names from stdin); with
+                         several inputs the output is one table (a row per file, or per file and CPU), -TPonly gives
+                         "file<TAB>[CPU<TAB>]cycles" lines, -json {code, files: [{file, ...as a single run}]}
+  -report                with several inputs: also uiCA's report of each file
   -att, -intel           the assembly's syntax (default: detected from the text: %registers mean AT&T)
   -hex                   the input is machine code as hex digits (spaces, commas, 0x prefixes allowed)
   -raw FILE              read the machine code from a binary file that contains only the code (not an object
@@ -84,13 +89,13 @@ Try: wuica -example saxpy -arch SKL,ZEN3,ADL-P
 
 // A bare run on a terminal: no input argument, no example or binary file, and stdin a terminal (piped stdin is read).
 export function bareTerminalRun(o, stdinIsTTY) {
-  return o.input === null && o.example === undefined && o.raw === undefined && !o.examples && !!stdinIsTTY;
+  return o.input === null && o.files === undefined && o.example === undefined && o.raw === undefined && !o.examples && !!stdinIsTTY;
 }
 
 // flag (lower case, without dashes) -> [canonical, takes a value]
 const FLAGS = {
   h: ['help'], help: ['help'], v: ['version'], version: ['version'],
-  examples: ['examples'], example: ['example', 1], show: ['show'],
+  examples: ['examples'], example: ['example', 1], show: ['show'], files: ['files', 1], report: ['report'],
   arch: ['arch', 1], list: ['list'], hex: ['hex'], att: ['att'], intel: ['intel'], raw: ['raw', 1], data: ['data', 1],
   loop: ['loop', 1], loops: ['loops'], func: ['func', 1], per: ['per', 1], whatif: ['whatif'], threads: ['threads', 1],
   tponly: ['tpOnly'], json: ['json'], trace: ['trace'], details: ['details'],
@@ -99,7 +104,7 @@ const FLAGS = {
 };
 
 export function parseArgs(argv) {
-  const o = { arch: 'SKL', options: {}, input: null, syntax: 'auto' };
+  const o = { arch: 'SKL', options: {}, input: null, inputs: [], syntax: 'auto' };
   const int = (s, name) => {
     if (!/^-?\d+$/.test(s)) throw new UsageError(`-${name}: not an integer: ${s}`);
     return Number(s);
@@ -107,8 +112,9 @@ export function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (!a.startsWith('-') || a === '-') {
-      if (o.input !== null) throw new UsageError(`more than one input: ${o.input}, ${a} (one input per run)`);
-      o.input = a;
+      // several inputs: a batch (batch(); o.input is the first)
+      o.inputs.push(a);
+      o.input ??= a;
       continue;
     }
     const m = /^--?([^=]+)(?:=(.*))?$/.exec(a);
@@ -206,6 +212,14 @@ async function readInput(o, io) {
   }
   if (o.hex) return { request: { hex: text }, name, notes };
   return { request: { source: text, syntax: o.syntax, ...(o.loop !== undefined ? { loop: o.loop } : {}), ...(o.func ? { func: o.func } : {}) }, name, notes };
+}
+
+// The -loops table
+function printLoops(ls, out) {
+  const lw = Math.max(5, ...ls.map((l) => l.label.length)), fw = Math.max(8, ...ls.map((l) => String(l.function ?? '-').length));
+  out.write(`${'#'.padStart(3)}  ${'label'.padEnd(lw)}  ${'function'.padEnd(fw)}  ${'lines'.padEnd(9)}  instrs  depth\n`);
+  for (const l of ls) out.write(`${String(l.index).padStart(3)}  ${l.label.padEnd(lw)}  ${String(l.function ?? '-').padEnd(fw)}  ${`${l.line}-${l.endLine}`.padEnd(9)}  ${String(l.instructions).padStart(6)}  ${String(l.depth).padStart(5)}${l.auto ? '  auto' : ''}\n`);
+  out.write('\n-loop N (0-based) or -loop LABEL analyzes one; "auto" is what runs without -loop.\n');
 }
 
 // The built-in example called name, or a UsageError that lists the names.
@@ -372,6 +386,11 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
     if (unknown.length) return fail(CODES.REQUEST, `unknown microarchitecture${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')} (known: ${w.archs('id').map((a) => a.id).join(', ')})`);
     if (o.options.details && (!o.json || o.archs)) err.write('-details: shown only with -json and one microarchitecture; ignored\n');
     if (o.options.includeTrace && (!o.json || o.archs)) { err.write('-trace: shown only with -json and one microarchitecture; ignored\n'); delete o.options.includeTrace; }
+    if (o.inputs.length > 1 || o.files !== undefined) {
+      if (o.raw !== undefined) throw new UsageError('-raw: one input per run (not with several inputs)');
+      return await batch(w, o, io);
+    }
+    if (o.report) err.write('-report: with several inputs (one input prints its report anyway); ignored\n');
     const input = await readInput(o, io);
     for (const n of input.notes) err.write(`${n}\n`);
     const req = { ...input.request, options: o.options };
@@ -382,10 +401,7 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
       if (ls.error) return fail(CODES.REQUEST, ls.error);
       if (o.json) { out.write(JSON.stringify({ code: 0, loops: ls }) + '\n'); return 0; }
       if (!ls.length) { out.write('no loops\n'); return 0; }
-      const lw = Math.max(5, ...ls.map((l) => l.label.length)), fw = Math.max(8, ...ls.map((l) => String(l.function ?? '-').length));
-      out.write(`${'#'.padStart(3)}  ${'label'.padEnd(lw)}  ${'function'.padEnd(fw)}  ${'lines'.padEnd(9)}  instrs  depth\n`);
-      for (const l of ls) out.write(`${String(l.index).padStart(3)}  ${l.label.padEnd(lw)}  ${String(l.function ?? '-').padEnd(fw)}  ${`${l.line}-${l.endLine}`.padEnd(9)}  ${String(l.instructions).padStart(6)}  ${String(l.depth).padStart(5)}${l.auto ? '  auto' : ''}\n`);
-      out.write('\n-loop N (0-based) or -loop LABEL analyzes one; "auto" is what runs without -loop.\n');
+      printLoops(ls, out);
       return 0;
     }
     const per = (tp) => (o.per ? tp / o.per : undefined);
@@ -477,4 +493,178 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
     }
     return fail(1, `wuica: ${e?.message ?? e}`);
   }
+}
+
+// ---- several inputs in one run ---------------------------------------------------------------------------------------
+// wuica a.s b.s ...  /  -files LIST (one path per line; - for stdin): each input as a single run would read it, the
+// analyses of all of them (x the CPUs) as one set of jobs for the threads, the output in input order:
+//   text      one table: a row per file (one CPU), or a row per file and CPU (several: grouped by file, a CPU column,
+//             so that any number of CPUs fits in 80 columns); -report adds uiCA's report per file, -whatif the what-if
+//             table per file, each after a "==> FILE <==" line
+//   -TPonly   tab-separated lines: file, [CPU,] [variant,] cycles [, cycles per element]
+//   -json     {code, files: [{file, ...}]}: each entry is what a single run prints for that file, with its name
+// The exit status (and the JSON's code) is the largest of the files' statuses.
+
+// The input names of a run: the arguments, then those of -files (blank lines and # comments left out).
+async function inputNames(o, io) {
+  const names = [...o.inputs];
+  if (o.files !== undefined) {
+    const text = o.files === '-' ? await readStdin(io.stdin) : readFile(o.files).toString('utf8');
+    const listed = text.split(/\r?\n/).map((s) => s.trim()).filter((s) => s && !s.startsWith('#'));
+    if (!listed.length) throw new UsageError(`-files ${o.files}: no file names in it`);
+    names.push(...listed);
+  }
+  if (names.filter((n) => n === '-').length + (o.files === '-' ? 1 : 0) > 1) throw new UsageError('stdin (-) can be read only once');
+  return names;
+}
+
+const STATUS = (r) => r.code || Math.max(0, ...(r.results ?? []).map((x) => x.code));
+
+async function batch(w, o, io) {
+  const { stdout: out, stderr: err } = io;
+  if (o.example !== undefined) throw new UsageError('-example: one input per run (not with several inputs)');
+  const names = await inputNames(o, io);
+  const items = [];
+  for (const name of names) {
+    try {
+      const input = await readInput({ ...o, input: name }, io);
+      for (const n of input.notes) err.write(`${name}: ${n}\n`);
+      items.push({ name, req: { ...input.request, options: o.options } });
+    } catch (e) {
+      if (!(e instanceof UsageError)) throw e;
+      items.push({ name, failure: { code: CODES.REQUEST, error: e.message, stderr: [{ text: e.message }] } });
+    }
+  }
+  const good = items.filter((x) => x.req);
+
+  if (o.loops) {
+    let worst = 0;
+    const docs = [];
+    for (const it of items) {
+      const ls = it.failure ? it.failure : !it.req.source ? { error: '-loops: needs assembly (not machine code)' } : listLoops(it.req.source, { func: o.func ?? null });
+      const code = ls.error ? CODES.REQUEST : 0;
+      worst = Math.max(worst, code);
+      if (o.json) { docs.push({ file: it.name, ...(ls.error ? { code, error: ls.error, stderr: [{ text: ls.error }] } : { code: 0, loops: ls }) }); continue; }
+      out.write(`==> ${it.name} <==\n`);
+      if (ls.error) err.write(`${it.name}: ${ls.error}\n`);
+      else if (!ls.length) out.write('no loops\n');
+      else printLoops(ls, out);
+    }
+    if (o.json) out.write(JSON.stringify({ code: worst, files: docs }) + '\n');
+    return worst;
+  }
+
+  const per = (tp) => (o.per ? tp / o.per : undefined);
+  const bound = { analyze: (a, r) => w.analyze(a, r), assemble: (t) => w.assemble(t, 'intel') };
+  const whatIfs = async (req, archs) => {
+    const res = {};
+    for (const a of archs) res[w.resolveArch(a)] = whatIfPer(await whatIf(bound.analyze, a, req, WHAT_IF_VARIANTS, { assemble: bound.assemble }), o.per);
+    return res;
+  };
+  const docs = new Map(); // item -> {doc (as a single run's JSON), status, rows: [{cpu, tp, pe, bn, notes, code}], report, wi}
+
+  if (!o.archs) {
+    const rs = await w.analyzeMany(o.arch, good.map((x) => x.req));
+    for (const [k, it] of good.entries()) {
+      const r = rs[k];
+      const ins = r.code === 0 ? w.insights(r) : null;
+      const wi = o.whatif && r.code === 0 ? await whatIfs(it.req, [o.arch]) : null;
+      const doc = r.code ? r : { ...r, ...(o.per ? { perElement: per(r.tp) } : {}), ...(ins ? { insights: ins } : {}), ...(wi ? { whatIf: wi } : {}) };
+      docs.set(it, { doc, status: r.code, r, ins, wi, rows: [rowOf(r, ins, per)] });
+    }
+  } else {
+    const cs = await w.compareMany(good.map((x) => x.req), o.archs.length ? { archs: o.archs } : {});
+    // the caveats per CPU: one analysis per file on its first CPU that worked (as a single run does), grouped by that CPU
+    const bases = new Array(good.length).fill(null);
+    if (!o.tpOnly) {
+      const byArch = new Map();
+      cs.forEach((c, k) => { const first = c.code ? null : c.results.find((r) => r.code === 0); if (first) (byArch.get(first.arch) ?? byArch.set(first.arch, []).get(first.arch)).push(k); });
+      for (const [arch, ks] of byArch) (await w.analyzeMany(arch, ks.map((k) => good[k].req))).forEach((b, j) => { bases[ks[j]] = b; });
+    }
+    for (const [k, it] of good.entries()) {
+      const c = cs[k];
+      const status = STATUS(c);
+      if (c.code) { docs.set(it, { doc: c, status, rows: [rowOf(c, null, per)] }); continue; }
+      const base = bases[k];
+      const insOf = (r) => (base?.code === 0 && r.code === 0 ? w.insights({ ...base, arch: r.arch, tp: r.tp, limits: r.limits, bottlenecks: r.bottlenecks }) : null);
+      const extra = c.results.map((r) => ({ ins: insOf(r), per: r.code === 0 ? per(r.tp) : undefined }));
+      const wi = o.whatif ? await whatIfs(it.req, c.results.filter((r) => r.code === 0).map((r) => r.arch)) : null;
+      const results = c.results.map((r, j) => ({ ...r, ...(extra[j].per !== undefined ? { perElement: extra[j].per } : {}), ...(extra[j].ins?.caveats ? { caveats: extra[j].ins.caveats } : {}) }));
+      const doc = { ...c, code: status, results, ...(wi ? { whatIf: wi } : {}) };
+      docs.set(it, { doc, status, c, wi, rows: c.results.map((r, j) => ({ ...rowOf(r, extra[j].ins, per), cpu: r.arch, prototype: r.prototype })) });
+    }
+  }
+  for (const it of items) if (it.failure) docs.set(it, { doc: it.failure, status: it.failure.code, rows: [rowOf(it.failure, null, per)] });
+  const worst = Math.max(0, ...items.map((it) => docs.get(it).status));
+
+  if (o.json) {
+    out.write(JSON.stringify({ code: worst, files: items.map((it) => ({ file: it.name, ...docs.get(it).doc })) }) + '\n');
+    return worst;
+  }
+  // diagnostics: each file's stderr lines, with its name
+  for (const it of items) printStderr(prefixed(docs.get(it).doc, it.name), err, it.name);
+
+  if (o.tpOnly) {
+    for (const it of items) {
+      const d = docs.get(it);
+      for (const row of d.rows) out.write(`${[it.name, ...(o.archs ? [row.cpu ?? '-'] : []), row.code ? 'error' : fmt(row.tp), ...(row.pe !== undefined ? [fmtEl(row.pe)] : [])].join('\t')}\n`);
+      for (const [cpu, x] of Object.entries(d.wi ?? {})) {
+        if (x.code) { out.write(`${[it.name, ...(o.archs ? [cpu] : []), 'what-if error'].join('\t')}\n`); continue; }
+        for (const v of x.variants) out.write(`${[it.name, ...(o.archs ? [cpu] : []), v.id, v.error ? 'error' : fmt(v.tp), ...(v.perElement !== undefined ? [fmtEl(v.perElement)] : [])].join('\t')}\n`);
+      }
+    }
+    return worst;
+  }
+
+  // the table
+  const loopOf = (it) => { const d = docs.get(it).doc; return d.code && !d.results ? '-' : d.loop ? (d.loop.name.replace(/^loop /, '') + (d.loop.function ? ` (${d.loop.function})` : '')) : 'as is'; };
+  const fw = Math.max(4, ...items.map((it) => it.name.length)), lw = Math.max(4, ...items.map((it) => loopOf(it).length));
+  const all = items.flatMap((it) => docs.get(it).rows);
+  const cw = o.archs ? Math.max(3, ...all.map((r) => String(r.cpu ?? '-').length)) : 0;
+  const bw = Math.max(11, ...all.filter((r) => !r.code).map((r) => r.bn.length));
+  out.write(`${'File'.padEnd(fw)}  ${'Loop'.padEnd(lw)}  ${o.archs ? `${'CPU'.padEnd(cw)}  ` : ''}${'TP'.padStart(6)}${o.per ? `  ${'per el'.padStart(6)}` : ''}  ${'Bottlenecks'.padEnd(bw)}  Notes`.trimEnd() + '\n');
+  for (const it of items) {
+    docs.get(it).rows.forEach((row, j) => {
+      const tp = (row.code ? '-' : `${fmt(row.tp)}${row.decodeErrors ? '*' : ''}`).padStart(6);
+      const notes = [...row.notes, row.prototype ? '[prototype]' : null].filter(Boolean).join('; ');
+      out.write(`${(j ? '' : it.name).padEnd(fw)}  ${(j ? '' : loopOf(it)).padEnd(lw)}  ${o.archs ? `${String(row.cpu ?? '-').padEnd(cw)}  ` : ''}${tp}${o.per ? `  ${(row.pe !== undefined ? fmtEl(row.pe) : '-').padStart(6)}` : ''}  ${row.bn.padEnd(bw)}${notes ? `  ${notes}` : ''}`.trimEnd() + '\n');
+    });
+  }
+  out.write(`\nTP: cycles per iteration${o.archs ? '' : ` on ${w.resolveArch(o.arch)}`}${o.per ? `; per el: per element (${o.per} per iteration)` : ''}. "-": unknown or failed.\n`
+    + 'Loop: what was analyzed ("as is": all of it). *: undecodable code left out.\n');
+  if (all.some((r) => r.prototype)) out.write('[prototype]: experimental model of the fork jtl06/uiCA.\n');
+  if (o.report) {
+    for (const it of items) {
+      const d = docs.get(it);
+      if (d.r?.code === 0) { out.write(`\n==> ${it.name} <==\n${d.r.text}`); continue; }
+      if (d.c) for (const r of d.c.results.filter((x) => x.code === 0)) {
+        const full = await w.analyze(r.arch, it.req);
+        if (full.code === 0) out.write(`\n==> ${it.name} (${r.arch}) <==\n${full.text}`);
+      }
+    }
+  }
+  for (const it of items) {
+    const wi = docs.get(it).wi;
+    if (!wi) continue;
+    out.write(`\n==> ${it.name} <==\n`);
+    Object.values(wi).forEach((x, k) => out.write((k ? '\n' : '') + (x.code ? `What if (${x.arch}): ${x.error}\n` : whatIfTable(x))));
+  }
+  return worst;
+}
+
+// A table row of a result (analyze, a compare() row, or a failure): tp, per element, bottlenecks, notes
+function rowOf(r, ins, per) {
+  if (r.code) return { code: r.code, bn: `error: ${String(r.error).split('\n')[0]}`, notes: [] };
+  return {
+    code: 0, tp: r.tp, pe: per(r.tp), decodeErrors: r.decodeErrors,
+    bn: r.bottlenecks.join(', ') || (ins?.largest ? `- (nearest ${ins.largest.join(', ')})` : '-'),
+    notes: [r.decodeErrors ? `${r.decodeErrors} undecodable (left out)` : null, ...(ins?.caveats ?? []).map((x) => x.text)].filter(Boolean),
+  };
+}
+
+// a result's stderr lines, those without the input's name (warnings of the whole input) with it in front
+function prefixed(doc, name) {
+  const lines = doc.stderr ?? [];
+  const alone = lines.length === 1 && !lines[0].tag; // a failure's one line (no such file, ...)
+  return { stderr: lines.map((l) => (alone || /^Warning\b/.test(l.text) ? { ...l, text: `${name}: ${l.text}` } : l)) };
 }

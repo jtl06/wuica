@@ -56,14 +56,21 @@ export function threadOption(option, env = process.env) {
   return raw === 0 || raw === '0' ? 'auto' : raw;
 }
 
-// The threads for a compare of jobs with `tables` different tables: one per table, at most `limit`; with "auto", at
-// most one per two tables. A thread's start costs about as much as an analysis (it starts, loads its table, and its first
-// analysis runs on code that is not optimized yet, which on aethia makes the SHA-256 showcase take ~100-230 instead of
-// ~45 ms), so a thread pays off from its second analysis on: on aethia (8 cores, 16 threads) -arch all takes 0.60 s
-// with 4 or 8 threads, 0.67 s with 12 and 0.71 s with 15 (1.05 s without threads), and for a small block 8 threads are
-// as fast as none and 15 are 12% slower.
-export function threadsFor(tables, limit, auto) {
-  return Math.min(limit, auto ? Math.ceil(tables / 2) : tables);
+// The default number of threads for a set of jobs ([{table, request: {hex}}]: blocks x microarchitectures), from the
+// work they are: the estimated time on this thread (each table loaded once, each analysis a fixed cost plus a cost per
+// instruction). Below WORK.minMs no threads (a thread's start, its table and its first, unoptimized analysis cost more
+// than they save); else one thread per WORK.perThreadMs, from 2 to WORK.max, at most the cores but one (and `limit`),
+// and at most one per job. Measurements: docs/PORTING.md, "Threads".
+export const WORK = Object.freeze({ tableMs: 8, jobMs: 1.2, instrMs: 0.009, minMs: 300, perThreadMs: 150, max: 8 });
+export function workMs(jobs) {
+  const tables = new Set(jobs.map((j) => j.table)).size;
+  // ~4 bytes (8 hex digits) per instruction
+  return tables * WORK.tableMs + jobs.reduce((s, j) => s + WORK.jobMs + (j.request.hex.length / 8) * WORK.instrMs, 0);
+}
+export function threadsForWork(jobs, limit, cores = os.availableParallelism()) {
+  const ms = workMs(jobs);
+  if (ms < WORK.minMs || jobs.length < 2) return 1;
+  return Math.max(1, Math.min(limit, cores - 1, jobs.length, Math.max(2, Math.min(WORK.max, Math.ceil(ms / WORK.perThreadMs)))));
 }
 
 export class ThreadPool {
@@ -88,8 +95,9 @@ export class ThreadPool {
 
   get threads() { return this.#slots.length; }
 
-  // jobs: [{table, request}] -> a promise of [fields | null] in the same order (null: not done, run it elsewhere).
-  // A thread is started for each table no thread has, while there are fewer than `threads` (and `limit`).
+  // jobs: [{table, request, full}] -> a promise of [fields | null] in the same order (null: not done, run it elsewhere;
+  // full: the whole analysis result instead of a compare() row's fields). Threads are started while there are fewer
+  // than `threads` (and `limit`) and jobs wait.
   async run(jobs, threads = this.#limit) {
     this.#want = Math.min(this.#limit, threads);
     clearTimeout(this.#idleTimer);
@@ -104,9 +112,9 @@ export class ThreadPool {
         this.broken = true;
       }
     }
-    const out = Promise.all(jobs.map(({ table, request }) => new Promise((resolve) => {
+    const out = Promise.all(jobs.map(({ table, request, full = false }) => new Promise((resolve) => {
       if (this.broken) { resolve(null); return; }
-      this.#queue.push({ id: this.#nextId++, table, request, resolve });
+      this.#queue.push({ id: this.#nextId++, table, request, full, resolve });
     })));
     // (not for a small block: its analyses are short, and the warm-up would compete with them for the CPU)
     if (this.#pump() && !this.#warmed && jobs[0]?.request.hex.length >= WARM_MIN_HEX) {
@@ -127,15 +135,17 @@ export class ThreadPool {
 
   #owner(table) { return this.#slots.find((s) => s.tables.has(table)); }
 
-  // The job for a free thread: one of its tables, else one of a table no thread has.
+  // The job for a free thread: one of its tables, else one of a table no thread has, else any (its table is loaded
+  // here too: many blocks on one microarchitecture).
   #pick(slot) {
     let i = this.#queue.findIndex((j) => slot.tables.has(j.table));
     if (i < 0) i = this.#queue.findIndex((j) => !this.#owner(j.table));
+    if (i < 0) i = this.#queue.length ? 0 : -1;
     return i < 0 ? null : this.#queue.splice(i, 1)[0];
   }
 
-  // Gives the waiting jobs to free threads, and starts a thread for each job of a table no thread has (up to the
-  // limit). Returns the number of threads started.
+  // Gives the waiting jobs to free threads, and starts threads for the jobs left (up to the threads wanted): first
+  // for tables no thread has. Returns the number of threads started.
   #pump() {
     for (const s of this.#slots) {
       if (s.job || !this.#queue.length) continue;
@@ -143,9 +153,8 @@ export class ThreadPool {
       if (j) this.#start(s, j);
     }
     let started = 0;
-    while (this.#slots.length < this.#want) {
-      const i = this.#queue.findIndex((j) => !this.#owner(j.table));
-      if (i < 0) break;
+    while (this.#slots.length < this.#want && this.#queue.length) {
+      const i = Math.max(0, this.#queue.findIndex((j) => !this.#owner(j.table)));
       this.#spawn(this.#queue.splice(i, 1)[0]);
       started++;
     }
@@ -157,7 +166,7 @@ export class ThreadPool {
     slot.job = job;
     slot.tables.add(job.table);
     slot.worker.ref();
-    slot.worker.postMessage({ id: job.id, table: job.table, request: job.request });
+    slot.worker.postMessage({ id: job.id, table: job.table, request: job.request, full: job.full });
   }
 
   #spawn(job) {

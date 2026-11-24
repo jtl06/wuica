@@ -12,7 +12,7 @@ export class Analyzer {
   #module;
   #x = null;
   #uarch = null;          // bytes of uarch.json, kept to reload after a trap
-  #tables = new Map();    // table name -> bytes of data/arch/<name>.json
+  #tables = new Map();    // table name -> its bytes, or a function that reads them again (for a reload after a trap)
   restarts = 0;
 
   constructor(module) {
@@ -50,7 +50,7 @@ export class Analyzer {
     if (this.#uarch) this.restarts++;
     this.#x = new WebAssembly.Instance(this.#module, {}).exports;
     if (this.#uarch) this.#load('wuica_load_uarch', [this.#uarch], 'uarch.json');
-    for (const [name, bytes] of this.#tables) this.#load('wuica_load_arch', [enc.encode(name), bytes], `instruction table ${name}`);
+    for (const [name, t] of this.#tables) this.#load('wuica_load_arch', [enc.encode(name), typeof t === 'function' ? t() : t], `instruction table ${name}`);
   }
 
   #load(fn, inputs, what) {
@@ -64,10 +64,11 @@ export class Analyzer {
     this.#uarch = bytes;
   }
 
-  loadArch(name, bytes) {
+  // reload: a function that returns the bytes again (then they are not kept: they are only needed after a trap)
+  loadArch(name, bytes, reload = null) {
     this.#live();
     this.#load('wuica_load_arch', [enc.encode(name), bytes], `instruction table ${name}`);
-    this.#tables.set(name, bytes);
+    this.#tables.set(name, reload ?? bytes);
   }
 
   hasArch(name) { return this.#tables.has(name); }
