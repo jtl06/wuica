@@ -190,7 +190,7 @@ export function mcpTools(w) {
         per: PER,
       }),
       annotations: readOnly, execution,
-      handler: async ({ arch, ...request }) => result(await whatIfRequest(w, arch ?? 'SKL', request)),
+      handler: async ({ arch, ...request }) => result(await (w.whatIf ? w.whatIf(arch ?? 'SKL', request) : whatIfRequest(w, arch ?? 'SKL', request))),
     },
     {
       name: 'diff_blocks',
@@ -215,7 +215,7 @@ export function mcpTools(w) {
         },
       }, ['a', 'b']),
       annotations: readOnly, execution,
-      handler: async ({ arch, ...request }) => result(await diffRequest(w, arch ?? 'SKL', request)),
+      handler: async ({ arch, ...request }) => result(await (w.diff ? w.diff(arch ?? 'SKL', request) : diffRequest(w, arch ?? 'SKL', request))),
     },
     {
       name: 'compare_archs',

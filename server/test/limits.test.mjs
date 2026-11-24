@@ -105,3 +105,31 @@ async function mcpCall(name, args) {
   assert.equal(r.status, 200);
   return r.json;
 }
+
+test('what-if and diff: the server\'s caps, one deadline for all their analyses, nothing started for a client that has gone', async () => {
+  // a block that takes ~10 ms per analysis on SKL: 64 alignment offsets would take far longer than 300 ms
+  const SLOW = { hex: '48f7f1'.repeat(200), options: { minIterations: 200 } };
+  const s = await start({ timeoutMs: 300, workers: 1 });
+  try {
+    // the caps apply to every analysis of what-if and to both blocks of a diff (checked before either is analyzed)
+    const capped = await post(s.base, '/api/what-if/SKL', { hex: HEX, options: { minCycles: 30000 } });
+    assert.equal(capped.status, 400);
+    const b = await post(s.base, '/api/diff/SKL', { a: { hex: 'zz' }, b: { hex: HEX, options: { minIterations: 5000 } } });
+    assert.equal(b.status, 400);
+    assert.match(b.json.error, /^B: `options.minIterations` is 5000/);
+    // one deadline: the request stops after about one job's budget, with the timeout failure
+    const t0 = performance.now();
+    const r = await post(s.base, '/api/what-if/SKL', { ...SLOW, variants: ['align'] });
+    const ms = performance.now() - t0;
+    assert.equal(r.json.code, 3);
+    assert.equal(r.json.timedOut, true);
+    assert.ok(ms < 1500, `${Math.round(ms)} ms for a budget of 300 ms`);
+    const d = await post(s.base, '/api/diff/SKL', { a: SLOW, b: { ...SLOW, options: { minIterations: 400 } } });
+    assert.equal(d.json.code, 3);
+    // a client that has gone: no job is started
+    const ctx = { gone: true };
+    const g = await s.app.facade.whatIf('SKL', { hex: HEX }, ctx);
+    assert.equal(g.code, 1);
+    assert.equal(ctx.jobs, 0);
+  } finally { await s.close(); }
+});

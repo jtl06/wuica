@@ -429,6 +429,7 @@ out of memory (code 3). The differences:
 | Interface | Limits |
 |---|---|
 | REST API and remote MCP (`server/`) | `minIterations` at most 1000, `minCycles` at most 20000; `source` at most 64 KB, `hex` at most 65536 characters, at most 10,000 instructions |
+| API server, its rate limit | per client, a token bucket (`rateBurst`, `ratePerMinute`); a request costs in proportion to the analyses it can start, a compare of every microarchitecture `compareCost` (3): analyze 1 token, compare of N CPUs `ceil(3N/15)`, what-if `ceil(3(1 + variants)/15)` (3 by default; `align` adds 64 analyses: 13 more), diff 1; at least 1 per request, at most the burst; the same in REST and `/mcp`. What-if and diff run all their analyses within one job's time limit and start none once the client has gone |
 | web page | clamps `alignmentOffset` to 0–63, `minIterations` to 1–10000, `minCycles` to 1–100000; at most 1 MiB of machine code |
 
 Microarchitecture ids are accepted the same way everywhere: exactly, or case-insensitively with `-` optional (`adlp`,
@@ -536,7 +537,7 @@ reported in its row.
 The request is analyze's plus `variants` (ids, default all: `unroll2`, `unroll4`, `unroll8`, `acc2`, `acc3`, `acc4`,
 `acc8`, `simpleFrontEnd`, `noMacroFusion`, `noMicroFusion`, `nochain`; also `align`, only when asked for: the block at
 each of the 64 alignment offsets, 64 analyses, `tp` the median and `alignment` {min, median, max, best, worst, spread,
-offset}; it costs six compares in the server's rate limit) and `per` (elements per iteration: also cycles per element). The response is the MCP tool's and `wuica -whatif -json`'s (`WhatIfResult`): the base `tp` and per variant
+offset}) and `per` (elements per iteration: also cycles per element). The response is the MCP tool's and `wuica -whatif -json`'s (`WhatIfResult`): the base `tp` and per variant
 `tp` per original iteration, `delta`, `speedup`, or `error`; `accumulators.best`. `text/plain` gives the CLI's table,
 `text/markdown` the Markdown one. Each variant is one analysis (rate-limited like compare).
 

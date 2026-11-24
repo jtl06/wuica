@@ -43,10 +43,34 @@ test('server: 429 with Retry-After per CF-Connecting-IP; /healthz, / and preflig
     assert.equal((await get(s.base, '/healthz', A)).status, 200);
     assert.equal((await get(s.base, '/', A)).status, 200);
     assert.equal((await fetch(s.base + '/api/archs', { method: 'OPTIONS', headers: A })).status, 204);
-    // another client: its own bucket; a compare costs 2 tokens
-    assert.equal((await post(s.base, '/api/compare', { hex: HEX, archs: ['SKL'] }, B)).status, 200);
-    assert.equal((await post(s.base, '/api/compare', { hex: HEX, archs: ['SKL'] }, B)).status, 429);
+    // another client: its own bucket; a compare of every microarchitecture costs compareCost (2) tokens
+    assert.equal((await post(s.base, '/api/compare', { hex: HEX }, B)).status, 200);
+    assert.equal((await post(s.base, '/api/compare', { hex: HEX }, B)).status, 429);
     assert.equal((await post(s.base, '/api/analyze/SKL', { hex: HEX }, B)).status, 200);
+  } finally { await s.close(); }
+});
+
+test('server: tokens in proportion to the analyses a request can start, the same in REST and /mcp', async () => {
+  // 15 microarchitectures, compareCost 3: 0.2 tokens per analysis, at least 1 per request, at most the burst (30)
+  const s = await start({ rateBurst: 30, ratePerMinute: 1, compareCost: 3 });
+  const left = async (headers) => { let n = 0; while ((await post(s.base, '/api/analyze/SKL', { hex: HEX }, headers)).status === 200) n++; return n; };
+  const mcp = (headers, name, args) => post(s.base, '/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, { ...headers, Accept: 'application/json, text/event-stream' });
+  try {
+    const ip = (k) => ({ 'CF-Connecting-IP': `203.0.113.${k}` });
+    // what-if, the default variants: 11 analyses -> 3 tokens; with align: 1 + 64 -> 13; diff: 2 -> 1; compare of 5 -> 1
+    assert.equal((await post(s.base, '/api/what-if/SKL', { hex: HEX }, ip(10))).status, 200);
+    assert.equal(await left(ip(10)), 27);
+    assert.equal((await post(s.base, '/api/what-if/SKL', { hex: HEX, variants: ['align'] }, ip(11))).status, 200);
+    assert.equal(await left(ip(11)), 17);
+    assert.equal((await post(s.base, '/api/diff/SKL', { a: { hex: HEX }, b: { hex: HEX } }, ip(12))).status, 200);
+    assert.equal(await left(ip(12)), 29);
+    assert.equal((await post(s.base, '/api/compare', { hex: HEX, archs: ['SKL', 'ZEN3', 'ICL', 'HSW', 'SNB'] }, ip(13))).status, 200);
+    assert.equal(await left(ip(13)), 29);
+    // /mcp: the same costs
+    assert.equal((await mcp(ip(20), 'what_if', { hex: HEX, variants: ['align'] })).status, 200);
+    assert.equal(await left(ip(20)), 17);
+    assert.equal((await mcp(ip(21), 'diff_blocks', { a: { hex: HEX }, b: { hex: HEX } })).status, 200);
+    assert.equal(await left(ip(21)), 29);
   } finally { await s.close(); }
 });
 

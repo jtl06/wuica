@@ -16,7 +16,7 @@
 // text/markdown` on analyze and compare gives the package's Markdown (markdown.report, markdown.cpuTable).
 
 import http from 'node:http';
-import { createWuica, ARCH_FIELDS, detailInsights, markdown, whatIfText, diffMarkdown, diffText } from 'wuica';
+import { createWuica, ARCH_FIELDS, detailInsights, markdown, whatIfText, diffMarkdown, diffText, WHAT_IF_VARIANTS } from 'wuica';
 import { createMcpServer } from './mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { resolveConfig } from './config.js';
@@ -204,8 +204,8 @@ export async function createApp(options = {}) {
     ctx.rpc = msgs.map((m) => (typeof m?.method === 'string' ? m.method.slice(0, 40) : 'response')).join(',').slice(0, 200);
     const call = msgs.find((m) => m?.method === 'tools/call');
     if (call && typeof call.params?.name === 'string') ctx.tool = call.params.name.slice(0, 40);
-    const cost = msgs.reduce((n, m) => n + (m?.method !== 'tools/call' ? 1 : m.params?.name === 'what_if' ? whatIfCost(m.params?.arguments?.variants) : m.params?.name === 'compare_archs' ? cfg.compareCost : m.params?.name === 'diff_blocks' ? 2 : 1), 0);
-    rateLimit(req, ctx, Math.max(1, cost));
+    rateLimit(req, ctx, Math.max(1, msgs.reduce((n, m) => n + toolCost(m), 0)));
+    watchGone(res, ctx);
     const server = createMcpServer(facade.forRequest(ctx));
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => { transport.close().catch(() => {}); server.close().catch(() => {}); });
@@ -213,12 +213,32 @@ export async function createApp(options = {}) {
     await transport.handleRequest(req, res, body);
   }
 
-  // A what-if costs as a compare (about 11 analyses); with the variant align (64 analyses more), six times that, at most
-  // the burst (a request that costs more than the burst could never run).
-  function whatIfCost(variants) {
-    const align = Array.isArray(variants) && variants.includes('align');
-    return Math.max(1, Math.min(cfg.rateBurst || Infinity, align ? 6 * cfg.compareCost : cfg.compareCost));
+  // Tokens: a request costs in proportion to the analyses it can start, a compare of every microarchitecture costing
+  // compareCost; at least 1 (any request), at most the burst (a request that costs more could never run). The same for
+  // REST and /mcp. Analyses: analyze 1; compare the microarchitectures asked for (default all); what-if the base and
+  // each variant that analyzes (not nochain), align 64; diff 2.
+  function cost(analyses) {
+    const n = Math.max(1, facade.archs().length);
+    return Math.max(1, Math.min(cfg.rateBurst || Infinity, Math.ceil((analyses * cfg.compareCost) / n)));
   }
+  const compareAnalyses = (archs) => (Array.isArray(archs) && archs.length ? archs.length : facade.archs().length);
+  function whatIfAnalyses(variants) {
+    const v = Array.isArray(variants) ? variants : WHAT_IF_VARIANTS;
+    return 1 + v.filter((x) => x !== 'nochain' && x !== 'align').length + (v.includes('align') ? 64 : 0);
+  }
+  function toolCost(m) {
+    if (m?.method !== 'tools/call') return 1;
+    const a = m.params?.arguments ?? {};
+    switch (m.params?.name) {
+      case 'analyze': return cost(1);
+      case 'compare_archs': return cost(compareAnalyses(a.archs));
+      case 'what_if': return cost(whatIfAnalyses(a.variants));
+      case 'diff_blocks': return cost(2);
+      default: return 1;
+    }
+  }
+  // a client that goes away before the response: the jobs not yet started are not started (Facade#session)
+  const watchGone = (res, ctx) => res.on('close', () => { if (!res.writableFinished) ctx.gone = true; });
 
   function rateLimit(req, ctx, cost = 1) {
     const r = limiter.take(clientIp(req), cost);
@@ -301,7 +321,8 @@ export async function createApp(options = {}) {
       try { arch = decodeURIComponent(p.slice('/api/what-if/'.length)).trim(); } catch { arch = ''; }
       if (!arch) throw new HttpError(404, 'give the microarchitecture in the path: POST /api/what-if/<arch> (see GET /api/archs)');
       const body = await readJson(req);
-      rateLimit(req, ctx, whatIfCost(body?.variants));
+      rateLimit(req, ctx, cost(whatIfAnalyses(body?.variants)));
+      watchGone(res, ctx);
       const r = await facade.whatIf(arch, body, ctx);
       ctx.code = r.code;
       const unknownArch = r.code === 1 && facade.resolveArch(arch) === null && /^unknown microarchitecture/.test(r.error ?? '');
@@ -313,8 +334,9 @@ export async function createApp(options = {}) {
       let arch;
       try { arch = decodeURIComponent(p.slice('/api/diff/'.length)).trim(); } catch { arch = ''; }
       if (!arch) throw new HttpError(404, 'give the microarchitecture in the path: POST /api/diff/<arch> (see GET /api/archs)');
-      rateLimit(req, ctx, 2);
       const body = await readJson(req);
+      rateLimit(req, ctx, cost(2));
+      watchGone(res, ctx);
       const x = /** @type {any} */ (await facade.diff(arch, body, ctx));
       const r = x.failure ?? x.result;
       ctx.code = r.code;
@@ -324,8 +346,8 @@ export async function createApp(options = {}) {
     }
     if (p === '/api/compare') {
       method(['POST']);
-      rateLimit(req, ctx, cfg.compareCost);
       const body = await readJson(req);
+      rateLimit(req, ctx, cost(compareAnalyses(body?.archs)));
       const r = await facade.compare(body, ctx);
       ctx.code = r.code;
       if (!wantText && wantsMarkdown(req)) return sendMarkdown(res, r, r.code ? markdown.report(r) : markdown.cpuTable(r));
@@ -354,7 +376,7 @@ export async function createApp(options = {}) {
     }
     res.on('finish', () => {
       const entry = { method: req.method, path: url.pathname.slice(0, 200), status: res.statusCode, ms: Math.round((performance.now() - t0) * 10) / 10 };
-      for (const k of ['arch', 'instructions', 'bytes', 'code', 'tool', 'rpc', 'queueMs', 'runMs', 'parts', 'timedOut', 'rateLimited', 'busy', 'error']) {
+      for (const k of ['arch', 'instructions', 'bytes', 'code', 'tool', 'rpc', 'queueMs', 'runMs', 'jobs', 'parts', 'timedOut', 'gone', 'rateLimited', 'busy', 'error']) {
         if (ctx[k] !== undefined) entry[k] = typeof ctx[k] === 'number' && k.endsWith('Ms') ? Math.round(ctx[k] * 10) / 10 : ctx[k];
       }
       log(entry);
