@@ -47,8 +47,19 @@ export const PATHS = Object.freeze({
   assembler: 'wuica_asm.wasm',
   mca: 'wuica_mca.wasm',
   uarch: 'data/uarch.json',
-  table: (name) => `data/arch/${encodeURIComponent(name)}.bin`, // the binary form (tools/encode-tables.sh)
+  // the binary form, gzip-compressed (web/build.sh): the host does not compress application/octet-stream; gunzip()
+  table: (name) => `data/arch/${encodeURIComponent(name)}.bin.gz`,
 });
+
+// The content of a gzip file (a table as the site ships it): the platform's DecompressionStream (Chrome 80, Firefox 113,
+// Safari 16.4), else inflate.js (Safari 15 to 16.3, which run the page's module workers but have no DecompressionStream).
+export async function gunzip(bytes) {
+  if (typeof DecompressionStream === 'function') {
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+  return (await import('./inflate.js')).gunzip(bytes);
+}
 
 export function formatSize(bytes) {
   return bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} kB`;

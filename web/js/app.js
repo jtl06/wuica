@@ -7,7 +7,7 @@ import { parseHexInput, toHex, hexToBytes } from './hex-input.js';
 import { archGroups, archTitle, DEFAULT_ARCH, ARCH_INFO, PROTOTYPE, accuracyNote } from './archs.js';
 import { DEFAULT_STATE, LIMITS, encodeState, decodeState, clampInt } from './url-state.js';
 import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES, MOCK_EXAMPLES } from './examples.js';
-import { fetchBytes, fetchManifest, PATHS, formatSize, whenIdle } from './loader.js';
+import { fetchBytes, fetchManifest, PATHS, formatSize, whenIdle, gunzip } from './loader.js';
 import { WasmAssembler, isWasm, MAX_CODE_BYTES, tooMuchCode } from './assembler.js';
 import { WorkerAssembler, PageAssembler } from './assembler-rpc.js'; // large sources in a worker of its own
 import { renderResult, renderEmpty, renderFailure, copyText, h, row } from './render.js';
@@ -625,11 +625,12 @@ function fillArchs() {
   paintCpus();
 }
 
-// The bytes of a table, downloaded once (they are kept: the engines load them again after a restart).
+// The bytes of a table, downloaded once (they are kept: the engines load them again after a restart). The site ships
+// them gzip-compressed (the service worker caches them so); decompressed here, once.
 function tableBytes(name) {
   let p = tableData.get(name);
   if (!p) {
-    p = download(`${name} table`, PATHS.table(name));
+    p = download(`${name} table`, PATHS.table(name)).then(gunzip);
     tableData.set(name, p);
     p.catch(() => tableData.delete(name)); // a later attempt may succeed (e.g. back online)
   }

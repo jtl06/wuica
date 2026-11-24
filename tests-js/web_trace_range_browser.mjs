@@ -9,6 +9,7 @@
 //
 // Skips (exit 0) if Chrome is not found.
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import path from 'node:path';
 import { findChrome, checker, copyDist, serve, launch, Page, HELPERS, DIST, LONG_TASK_MS } from './cdp.mjs';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
@@ -30,7 +31,7 @@ const ex = EXAMPLES.find((e) => e.id === 'loadstore') ?? EXAMPLES[0];
 const engine = await WasmEngine.create(fs.readFileSync(path.join(DIST, 'wuica_wasm.wasm')));
 const uarchBytes = fs.readFileSync(path.join(DIST, 'data', 'uarch.json'));
 await engine.loadUarch(uarchBytes);
-await engine.loadArch(ARCH, fs.readFileSync(path.join(DIST, 'data', 'arch', `${ARCH}.bin`)));
+await engine.loadArch(ARCH, zlib.gunzipSync(fs.readFileSync(path.join(DIST, 'data', 'arch', `${ARCH}.bin.gz`))));
 const request = makeRequest(ex.hex, ARCH);
 const response = await engine.analyze(request);
 const { model } = await loadTrace({ response, request }, { analyze: (q) => engine.analyze(q), config: () => JSON.parse(uarchBytes).configs[ARCH] });

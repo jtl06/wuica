@@ -5,6 +5,7 @@
 //
 //   node tests-js/web_ab_slots_browser.mjs [--chrome PATH]
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { findChrome, launch, serve, copyDist, Page, HELPERS, checker, ROOT } from './cdp.mjs';
@@ -33,8 +34,8 @@ const { slotParts } = await import(pathToFileURL(path.join(ROOT, 'web/js/slots.j
 const { encodeState } = await import(pathToFileURL(path.join(ROOT, 'web/js/url-state.js')).href);
 const engine = await WasmEngine.create(fs.readFileSync(path.join(dir, 'wuica_wasm.wasm')));
 await engine.loadUarch(fs.readFileSync(path.join(dir, 'data/uarch.json')));
-await engine.loadArch('SKL', fs.readFileSync(path.join(dir, 'data/arch/SKL.bin')));
-await engine.loadArch('ZEN3', fs.readFileSync(path.join(dir, 'data/arch/ZEN3.bin')));
+await engine.loadArch('SKL', zlib.gunzipSync(fs.readFileSync(path.join(dir, 'data/arch/SKL.bin.gz'))));
+await engine.loadArch('ZEN3', zlib.gunzipSync(fs.readFileSync(path.join(dir, 'data/arch/ZEN3.bin.gz'))));
 const [d1, d4] = ['dot1', 'dot4'].map((id) => CLASSIC_EXAMPLES.find((e) => e.id === id));
 const pctOf = async (ex) => slotParts((await engine.analyze({ ...makeRequest(ex.hex, 'SKL'), details: true })).details.issue).filter((p) => p.share >= 0.005).map((p) => `${p.name} ${Math.round(p.share * 100)}%`).join(',');
 const want = [await pctOf(d1), await pctOf(d4)];

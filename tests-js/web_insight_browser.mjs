@@ -8,6 +8,7 @@
 // blocks wait for a click; mock mode has no cost column. --shots DIR saves screenshots. Skips (exit 0) without Chrome.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -34,7 +35,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // ---- the expected values, under Node ---------------------------------------------------------------------------------
 const engine = await WasmEngine.create(fs.readFileSync(path.join(dist, 'wuica_wasm.wasm')));
 await engine.loadUarch(fs.readFileSync(path.join(dist, 'data', 'uarch.json')));
-for (const t of new Set(EXAMPLES.map((e) => e.arch))) await engine.loadArch(t, fs.readFileSync(path.join(dist, 'data', 'arch', `${t}.bin`)));
+for (const t of new Set(EXAMPLES.map((e) => e.arch))) await engine.loadArch(t, zlib.gunzipSync(fs.readFileSync(path.join(dist, 'data', 'arch', `${t}.bin.gz`))));
 const tpOf = async (hex, arch) => (await engine.analyze(makeRequest(hex, arch)));
 const fmt = (d) => (d === 0 ? '0.00' : `${d < 0 ? '−' : '+'}${Math.abs(d).toFixed(2)}`);
 const NOP = { 2: '6690', 3: '0f1f00', 4: '0f1f4000' };

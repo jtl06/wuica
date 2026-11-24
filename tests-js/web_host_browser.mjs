@@ -15,7 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findChrome } from './chrome.mjs';
-import { hostHandler } from './static-host.mjs';
+import { hostHandler, compressedByHost, transferSize } from './static-host.mjs';
 import { DEFAULT_STATE, encodeState, decodeState } from '../web/js/url-state.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -47,7 +47,8 @@ function build(tag) {
 // ---- the server (stoppable, for the offline part)
 const sockets = new Set();
 let root = dist;
-const server = http.createServer(hostHandler(() => root));
+const requests = []; // the paths the page requested, in order
+const server = http.createServer(hostHandler(() => root, { onRequest: (p) => requests.push(p.replace(/\?.*$/, '')) }));
 server.on('connection', (s) => { sockets.add(s); s.on('close', () => sockets.delete(s)); });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const origin = `http://127.0.0.1:${server.address().port}`;
@@ -84,6 +85,25 @@ const stop = () => new Promise((r) => { for (const s of sockets) s.destroy(); se
   check(r.status === 404, 'host: _headers is not served', r.status);
   await r.text();
 }
+
+// ---- the transfer sizes, with the host's compression rule (static-host.mjs: it compresses only the content types of
+// its list): every file above 50 kB is either of a type the host compresses or compressed already (0.1.9 shipped its
+// tables as .bin, application/octet-stream, which the host sends as they are: 6.4 MB instead of 0.8)
+const BIG = 50 * 1024;
+const PRECOMPRESSED = /\.(?:gz|br|woff2|png)$/;
+{
+  const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
+  const bad = walk(dist).filter((f) => fs.statSync(f).size > BIG && !compressedByHost(f) && !PRECOMPRESSED.test(f)).map((f) => path.relative(dist, f));
+  check(bad.length === 0, 'host: every file above 50 kB is of a type the host compresses, or compressed already', bad.join(', '));
+}
+// the budgets: what a first visit and the idle prefetch of the tables transfer (the numbers of this build; a growth of
+// more than 10% fails). First visit: the files requested until the first result (the page, its modules, the analyzer, the
+// assembler, uarch.json, the tables of the CPUs shown; the service worker's precache runs meanwhile). Tables: all 15,
+// which the idle prefetch fetches (those of the first visit included). Measured on the build of 0.1.9's hotfix with
+// tables made by zlib at level 9 (web/build.sh without zopfli: first visit 2,383,630 bytes at most, the tables 939 kB;
+// with zopfli 797 kB).
+const BUDGET = { firstVisit: 2_400_000, tables: 940_000 };
+const sizeOf = (p) => { const f = path.join(dist, p.replace(/^\//, '')); try { return fs.statSync(f).isFile() ? transferSize(f) : 0; } catch { return 0; } };
 
 // ---- 2. the page in Chrome
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-host-test-'));
@@ -156,11 +176,24 @@ try {
   await goto(`${origin}/index.html`);
   const first = await works('first visit, at /index.html');
   check(first.path === '/', 'first visit: /index.html is redirected to /', first.path);
+  const firstRequests = new Set(requests.filter((p) => p !== '/index.html'));
   // the worker has installed (everything cached) and controls the page
   const installed = await waitFor(`/works offline/.test(document.getElementById('status').textContent)`, 60000);
   if (!(await evaluate('return !!navigator.serviceWorker.controller'))) await reload();
   const controlled = await evaluate('return !!navigator.serviceWorker.controller');
   check(installed && controlled, 'the service worker installs and controls the page', JSON.stringify({ installed, controlled }));
+  {
+    // (which tables come with the first visit depends on timing: the prefetch is measured as all the tables, once each)
+    const tableCount = JSON.parse(fs.readFileSync(path.join(dist, 'manifest.json'), 'utf8')).tables.length;
+    const allTables = () => new Set(requests.filter((p) => p.startsWith('/data/arch/')));
+    for (let i = 0; i < 300 && allTables().size < tableCount; i++) await sleep(200);
+    const firstVisit = [...firstRequests].reduce((n, p) => n + sizeOf(p), 0);
+    const tables = allTables();
+    const prefetch = [...tables].reduce((n, p) => n + sizeOf(p), 0);
+    console.log(`transfer (host's rule): first visit ${firstVisit} bytes in ${firstRequests.size} files; the ${tables.size} tables ${prefetch} bytes`);
+    check(firstVisit <= BUDGET.firstVisit * 1.1, `first visit transfers at most ${BUDGET.firstVisit} bytes + 10%`, firstVisit);
+    check(tables.size === tableCount && prefetch <= BUDGET.tables * 1.1, `the tables (the idle prefetch fetches them all) transfer at most ${BUDGET.tables} bytes + 10%`, `${prefetch} in ${tables.size} of ${tableCount}`);
+  }
   for (const n of [1, 2]) {
     await reload();
     const r = await works(`reload ${n}`);
