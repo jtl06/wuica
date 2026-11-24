@@ -17,7 +17,7 @@ experimental models of the fork [jtl06/uiCA](https://github.com/jtl06/uiCA): **A
 Everything runs offline. The two WebAssembly modules (the analyzer, and LLVM's x86 assembler for assembly input) and the
 instruction tables are shipped brotli-compressed. A table is loaded the first time its microarchitecture is used.
 Requirements: Node.js 20 or later. **No dependencies**: `npm install wuica-cli` (or `npx wuica-cli`) adds this one
-package, 2.3 MB unpacked; the MCP server is part of it.
+package, 2.4 MB unpacked; the MCP server is part of it.
 
 The commands are `wuica` and `wuica-mcp`. Install them with `npm install -g wuica-cli`, or run without installing
 with `npx wuica-cli ...`. The examples below write `wuica`.
@@ -39,6 +39,9 @@ wuica *.s -arch SKL,ZEN3                       # several files in one run: one t
 objdump -d dot.o | wuica                       # objdump output: the loop's real alignment from its address
 perf annotate --stdio -s dot | wuica           # a profile: the hottest loop, samples and source lines per instruction
 ```
+
+On an Arm Mac, give clang `--target=x86_64-linux-gnu` (wuica analyzes x86-64 code; Apple's clang knows no
+`-march=haswell` for arm64).
 
 - **Syntax.** Intel (noprefix) or AT&T is detected from the text (`%rdx`, `$8`, `(%rdi,%rcx,4)` are AT&T);
   stderr says which (`analyzed: loop .LBB0_9 (lines 28-47, in dot), AT&T syntax (detected)`). `-att` or `-intel`
@@ -209,7 +212,7 @@ Schemas, handlers) is exported as `mcpTools(w)` from `wuica-cli/mcp`, with `call
 | Tool | What it does |
 |---|---|
 | `analyze` | one block on one microarchitecture: `tp`, bottlenecks, limits, a compact per-instruction table (ports, uop sources, fusion notes) and uiCA's text report (`format`: `json`, `text`, `both`) |
-| `what_if` | one block re-analyzed with one change each (the web page's "try" row): `unroll2`/`unroll4`/`unroll8` (per original iteration), `acc2`/`acc3`/`acc4`/`acc8` (N accumulators: unrolled ×N with the loop-carried register renamed in each copy; `renamed` lists the registers, `accumulators.best` is the best N, 1 = as it is), `simpleFrontEnd`, `noMacroFusion`, `noMicroFusion`, and `nochain` (an estimate without the loop-carried chain); per variant `tp`, `delta`, `speedup` |
+| `what_if` | one block re-analyzed with one change each (the web page's "try" row): `unroll2`/`unroll4`/`unroll8` (per original iteration), `acc2`/`acc3`/`acc4`/`acc8` (N accumulators: unrolled ×N with the loop-carried register renamed in each copy; `renamed` lists the registers, `accumulators.best` is the best N, 1 = as it is), `simpleFrontEnd`, `noMacroFusion`, `noMicroFusion`, `nochain` (an estimate without the loop-carried chain), and `align` when asked for (the 64 alignment offsets); per variant `tp`, `delta`, `speedup` |
 | `diff_blocks` | two blocks, A (before) and B (after), on one microarchitecture: `tp` of each, `delta`, `speedup`, per element with `per`, bottlenecks and limits before and after, each port's uops, the instructions changed, added or removed |
 | `compare_archs` | one block on several or all microarchitectures: `tp` and bottlenecks per microarchitecture |
 | `list_loops` | the loops of assembly text (what `loop` can pick): index, label, function, lines, instructions, depth, the one picked by default |
@@ -354,7 +357,6 @@ Request:
 ```json
 {
   "source": "loop: add rax, rbx\n dec rcx\n jnz loop",
-  "hex": "4801d8...",
   "syntax": "intel",
   "options": {
     "alignmentOffset": 0, "initPolicy": "diff", "simpleFrontEnd": false, "noMicroFusion": false,
@@ -363,8 +365,8 @@ Request:
 }
 ```
 
-- Give exactly one of `source` (assembly; the library also accepts `asm`) and `hex` (machine code; spaces, commas and
-  `0x` are allowed).
+- Give exactly one of `source` (assembly; the library also accepts `asm`) and `hex` (machine code, `"4801d8..."`;
+  spaces, commas and `0x` are allowed).
 - `source` is read as the web page reads pasted assembly. `loop` (optional) says what of it is analyzed:
   - `"auto"` (the default): a whole function (`gcc -S`, `clang -S`, `objdump -d` lines with addresses, with or
     without the bytes, Intel or AT&T) is analyzed at its deepest loop (clang's `Inner Loop Header` notes count;
@@ -428,7 +430,7 @@ Request:
 ### Option ranges per interface
 
 The numeric options have the same range in the library, the CLI, the MCP tools and the REST API: any integer up to
-2^53 - 1 in magnitude (`alignmentOffset`: negative values and values above 63 are simulated as given; the reference
+2^53 - 1 in magnitude (`alignmentOffset`: negative values and values above 63 are read modulo 64; the reference
 binary `crates/wuica-cli` refuses beyond ±2^62). Another value is refused (code 1, REST 400; the MCP tools' schema rejects
 it).
 Everywhere, a block of more than 250,000 uops per iteration is refused (a work budget, code 3), and very large values run
@@ -472,7 +474,7 @@ and `issueSlots` when `options.details` is true.
 
 **Plain text** (CE's `Accept: text/plain`): the response is `text` (uiCA's report), or the `stderr` lines on failure.
 
-**Markdown** (`Accept: text/markdown`, analyze and compare): what `wuica -md` prints (`markdown.report`, `markdown.cpuTable`), with the same status codes.
+**Markdown** (`Accept: text/markdown`, analyze, compare, what-if and diff): what `wuica -md` prints (`markdown.report`, `markdown.cpuTable`), with the same status codes.
 In the library this is `r.text`; the MCP tool takes `format: "text"`.
 
 **Compact form** (the MCP `analyze` JSON, `w.summarize(r)`): `{code, arch, name, year, prototype, tp, unit, mode,
@@ -557,7 +559,7 @@ in proportion (the rate limit above).
 (N for both, or [A, B]). The response (`DiffResult` in index.d.ts; `wuica diff -json`): `a` and `b` (`tp`,
 `bottlenecks`, `perElement`), `delta`, `speedup`, `verdict`, `perElement`, `bottlenecks` (`gone`, `new`), `limits`,
 `ports` (uops per iteration before and after) and `instructions` (`counts`; `changes`: `changed`, `modified`, `added`,
-`removed`, with the change of their uops). A failure's `error` starts with `A: ` or `B: `. `text/plain` gives the
+`removed`, with the change of their uops). A failure of one block has an `error` that starts with `A: ` or `B: `. `text/plain` gives the
 CLI's text, `text/markdown` the page's A–B tables.
 
 ### Assemble: `POST /api/assemble`
@@ -566,7 +568,8 @@ Request: `{"source": "...", "syntax": "intel"}`. The whole text is assembled as 
 markers; `;` comments as above). Response: `{"code": 0, "hex": "4801d8", "length": 3, "stderr": []}`;
 the library also returns `bytes` (a `Uint8Array`). On failure: `{code: 2, error, stderr}` as above. The assembler is
 LLVM 22.1.2's (the same bytes as `llvm-mc`). Only `.text` is returned. `.include`/`.incbin` always fail. GNU as's
-`{load}`/`{store}` hints, which LLVM rejects, are removed at the start of a line.
+`{load}`/`{store}` hints, which LLVM rejects, are removed at the start of a line, clang 23's `.prefalign` is read as
+`.p2align`, and the line table (`.loc`, numbered `.file`) is not assembled (gcc 11+ `-g` output assembles).
 
 ## Building from the repository
 
