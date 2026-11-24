@@ -540,7 +540,7 @@ function el(tag, attrs, ...children) {
     else if (k === 'text') e.textContent = v;
     else e.setAttribute(k, v === true ? '' : String(v));
   }
-  for (const c of children.flat()) {
+  for (const c of children.flat(Infinity)) { // (nested to any depth, as render.js h)
     if (c === null || c === undefined || c === false) continue;
     e.append(c instanceof Node ? c : document.createTextNode(String(c)));
   }

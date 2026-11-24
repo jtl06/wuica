@@ -15,6 +15,8 @@ export const NOTES = Object.freeze({
   X: 'instruction not supported (no data)',
 });
 
+// children: nodes, text, or arrays of them, nested to any depth (a list built with flatMap can hold a part that is a list
+// itself; String() of a node would put "[object HTMLSpanElement]" into the page)
 export function h(tag, attrs, ...children) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs ?? {})) {
@@ -23,7 +25,7 @@ export function h(tag, attrs, ...children) {
     else if (k === 'text') el.textContent = v;
     else el.setAttribute(k, v === true ? '' : String(v));
   }
-  for (const c of children.flat()) {
+  for (const c of children.flat(Infinity)) {
     if (c === null || c === undefined || c === false) continue;
     el.append(c instanceof Node ? c : document.createTextNode(String(c)));
   }
