@@ -35,7 +35,8 @@ export function listLoops(source, { func = null } = {}) {
 }
 
 export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, CODES, WARM_HEX, parseDiagnostics, insights };
-export { whatIf, VARIANTS as WHAT_IF_VARIANTS } from './web/whatif-core.js';
+export { whatIf, VARIANTS as WHAT_IF_VARIANTS, whatIfPerElement, whatIfText, whatIfRequest } from './web/whatif-core.js';
+import { whatIfRequest } from './web/whatif-core.js';
 export { examples, findExample } from './examples.js';
 export * as markdown from './web/markdown.js';
 export { objectKind } from './objfile.js';
@@ -499,6 +500,13 @@ class Wuica {
 
   // The derived diagnosis of an analyze() response (web/bound-core.js) with this CPU's configuration (the split-load caveat
   // depends on it); null for a failure.
+  // The what-if experiments of a block (web/js/whatif-core.js whatIfRequest): request as analyze's, with `variants` and
+  // `per`. The MCP tool what_if and POST /api/what-if/<arch> give the same.
+  /** @param {string} arch @param {any} [request] @returns {Promise<any>} */
+  async whatIf(arch, request = {}) {
+    return whatIfRequest(this, arch, request);
+  }
+
   insights(r) {
     return r?.code === CODES.OK ? insights(r, this.#configs[r.arch] ?? null) : null;
   }

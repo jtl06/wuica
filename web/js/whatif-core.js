@@ -194,3 +194,44 @@ export async function whatIf(analyze, arch, request, variants = VARIANTS, { asse
   return { code: 0, arch: base.arch, tp: base.tp, mode: base.mode, bottlenecks: base.bottlenecks, ...(base.loop ? { loop: base.loop } : {}), unit: 'cycles per original iteration', variants: out,
     ...(best ? { accumulators: { best: best.n, tp: round(best.tp) } } : {}) };
 }
+
+// ---- per element and as text (the CLI's -whatif, the REST API's text/plain) ------------------------------------------------
+
+// A what-if result with cycles per element (`per` elements per original iteration): elementsPerIteration and perElement on
+// it, perElement on each variant with a tp. Unchanged without `per` or for a failure.
+export function whatIfPerElement(x, per) {
+  if (!per || x.code) return x;
+  return { ...x, elementsPerIteration: per, perElement: x.tp / per, variants: x.variants.map((v) => (v.tp !== undefined ? { ...v, perElement: v.tp / per } : v)) };
+}
+
+const fmt2 = (x) => Number(x).toFixed(2);
+// cycles per element: 3 significant digits under 0.1 (0.0625, 0.0313), else two decimals
+const fmtEl = (x) => (x !== 0 && Math.abs(x) < 0.1 ? Number(x).toPrecision(3) : fmt2(x));
+const VARIANT_W = 18;
+
+// The what-if table as text (per element with elementsPerIteration); a failure as one line.
+export function whatIfText(x) {
+  if (x.code) return `What if (${x.arch ?? ''}): ${x.error}\n`;
+  const per = x.elementsPerIteration;
+  const f = per ? (v) => fmtEl(v / per) : fmt2;
+  const rows = x.variants.map((v) => (v.error ? `  ${v.label.padEnd(VARIANT_W)} ${'-'.padStart(8)}  ${v.error}`
+    : `  ${v.label.padEnd(VARIANT_W)} ${`${v.estimate ? '>=' : ''}${f(v.tp)}`.padStart(8)} ${`${v.delta > 0 ? '+' : ''}${f(v.delta)}`.padStart(8)} ${`${fmt2(v.speedup ?? 0)}x`.padStart(7)}`));
+  return [per ? `What if (${x.arch}), cycles per element (${per} per original iteration; base ${fmtEl(x.tp / per)}):` : `What if (${x.arch}), cycles per original iteration (base ${fmt2(x.tp)}):`,
+    `  ${'variant'.padEnd(VARIANT_W)} ${'cycles'.padStart(8)} ${'delta'.padStart(8)} ${'speedup'.padStart(7)}`, ...rows,
+    ...(x.accumulators ? [`  best number of accumulators: ${x.accumulators.best}${x.accumulators.best === 1 ? ' (as it is)' : ''}`] : [])].join('\n') + '\n';
+}
+
+// The what-if of a request as the interfaces take it (the library's whatIf method, the MCP tool what_if, the REST API's
+// POST /api/what-if/<arch>): w has analyze(arch, request) and assemble(text, syntax); request is analyze's ({source | hex,
+// syntax, loop, func, options}) with `variants` (ids of VARIANTS, default all) and `per` (elements per original
+// iteration: also cycles per element). Resolves to whatIf's result (whatIfPerElement with `per`) or a failure.
+/** @param {any} w @param {string} arch @param {any} [request] @returns {Promise<any>} */
+export async function whatIfRequest(w, arch, request = {}) {
+  const bad = (error) => ({ code: 1, error, stderr: [{ text: error }] });
+  if (request === null || typeof request !== 'object' || Array.isArray(request)) return bad('the request must be an object');
+  const { variants, per, ...rest } = request;
+  if (variants !== undefined && !Array.isArray(variants)) return bad('`variants` must be an array of variant ids');
+  if (per !== undefined && !(typeof per === 'number' && Number.isFinite(per) && per > 0)) return bad('`per` must be a positive number (elements per iteration)');
+  const x = await whatIf((a, r) => w.analyze(a, r), arch, rest, variants ?? VARIANTS, { assemble: (text) => w.assemble(text, 'intel') });
+  return whatIfPerElement(x, per);
+}

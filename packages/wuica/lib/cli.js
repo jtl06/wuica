@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createWuica, normalizeHex, listLoops, whatIf, WHAT_IF_VARIANTS, CODES, examples, findExample, objectKind, markdown } from './index.js';
 import { analyzedLines } from './web/branch-label.js';
+import { whatIfPerElement, whatIfText } from './web/whatif-core.js';
 
 export const VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
@@ -347,23 +348,9 @@ function diagnosis(ins, r) {
   return lines;
 }
 
-// A what-if result with cycles per element (-per N): elementsPerIteration and perElement on it, perElement on each
-// variant with a tp.
-function whatIfPer(x, per) {
-  if (!per || x.code) return x;
-  return { ...x, elementsPerIteration: per, perElement: x.tp / per, variants: x.variants.map((v) => (v.tp !== undefined ? { ...v, perElement: v.tp / per } : v)) };
-}
-
-const VARIANT_W = 18;
-function whatIfTable(x) {
-  const per = x.elementsPerIteration;
-  const f = per ? (v) => fmtEl(v / per) : fmt;
-  const rows = x.variants.map((v) => (v.error ? `  ${v.label.padEnd(VARIANT_W)} ${'-'.padStart(8)}  ${v.error}`
-    : `  ${v.label.padEnd(VARIANT_W)} ${`${v.estimate ? '>=' : ''}${f(v.tp)}`.padStart(8)} ${`${v.delta > 0 ? '+' : ''}${f(v.delta)}`.padStart(8)} ${`${fmt(v.speedup ?? 0)}x`.padStart(7)}`));
-  return [per ? `What if (${x.arch}), cycles per element (${per} per original iteration; base ${fmtEl(x.tp / per)}):` : `What if (${x.arch}), cycles per original iteration (base ${fmt(x.tp)}):`,
-    `  ${'variant'.padEnd(VARIANT_W)} ${'cycles'.padStart(8)} ${'delta'.padStart(8)} ${'speedup'.padStart(7)}`, ...rows,
-    ...(x.accumulators ? [`  best number of accumulators: ${x.accumulators.best}${x.accumulators.best === 1 ? ' (as it is)' : ''}`] : [])].join('\n') + '\n';
-}
+// what-if results per element and as text: web/js/whatif-core.js (shared with the REST API)
+const whatIfPer = whatIfPerElement;
+const whatIfTable = whatIfText;
 // -TPonly -whatif: one "variant cycles [per element]" line per variant (prefix: the CPU, with several)
 function whatIfTerse(x, prefix = '') {
   if (x.code) return `${prefix}what-if error: ${x.error}\n`;

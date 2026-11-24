@@ -35,8 +35,11 @@ test('the SDK client: initialize, ping, tools/list, every tool, errors', async (
   const bad = await client.callTool({ name: 'analyze', arguments: { hex: '4801d8', bogus: 1 } });
   assert.equal(bad.isError, true);
   assert.equal(bad.content[0].text, 'Invalid arguments for tool analyze: arguments: unknown key "bogus" (known: arch, source, hex, syntax, loop, func, options, format, details)');
-  const range = await client.callTool({ name: 'analyze', arguments: { hex: '4801d8', options: { alignmentOffset: 64 } } });
-  assert.equal(range.content[0].text, 'Invalid arguments for tool analyze: options.alignmentOffset: expected at most 63, got 64');
+  // the option ranges are the library's (README, "Option ranges per interface"): any integer, not a fraction
+  const range = await client.callTool({ name: 'analyze', arguments: { hex: '4801d8', options: { alignmentOffset: 1.5 } } });
+  assert.equal(range.content[0].text, 'Invalid arguments for tool analyze: options.alignmentOffset: expected an integer, got 1.5');
+  const far = await client.callTool({ name: 'analyze', arguments: { hex: '4801d8', format: 'json', options: { alignmentOffset: 64 } } });
+  assert.equal(JSON.parse(far.content[0].text).tp, 1);
   const miss = await client.callTool({ name: 'assemble', arguments: {} });
   assert.equal(miss.content[0].text, 'Invalid arguments for tool assemble: source: required');
   // an unknown tool and an unknown method: protocol errors

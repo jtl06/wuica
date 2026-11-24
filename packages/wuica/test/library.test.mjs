@@ -76,6 +76,21 @@ test('the work budget: wbinvd (about 10^6 uops) fails at once with code 3; an al
   assert.equal((await w.analyze('SKL', { hex: HEX, options: { alignmentOffset: 2 ** 40 } })).tp, (await w.analyze('SKL', { hex: HEX })).tp);
 });
 
+test('whatIf(arch, request): the what-if experiments with variants and per (the MCP tool and REST give the same)', async () => {
+  const { whatIf, WHAT_IF_VARIANTS, whatIfText } = await import('../lib/index.js');
+  const DOT = 'loop:\n vfmadd231ps ymm0, ymm1, [rdi+rax]\n add rax, 32\n cmp rax, rdx\n jb loop\n';
+  const x = await w.whatIf('SKL', { source: DOT });
+  assert.deepEqual(x, await whatIf((a, r) => w.analyze(a, r), 'SKL', { source: DOT }, WHAT_IF_VARIANTS, { assemble: (t) => w.assemble(t, 'intel') }));
+  const p = await w.whatIf('SKL', { source: DOT, variants: ['acc4'], per: 8 });
+  assert.equal(p.elementsPerIteration, 8);
+  assert.equal(p.perElement, p.tp / 8);
+  assert.equal(p.variants[0].perElement, p.variants[0].tp / 8);
+  assert.match(whatIfText(p), /^What if \(SKL\), cycles per element \(8 per original iteration; base /);
+  assert.equal((await w.whatIf('SKL', { source: DOT, per: -1 })).code, 1);
+  assert.equal((await w.whatIf('SKL', { source: DOT, variants: 'acc2' })).code, 1);
+  assert.equal((await w.whatIf('SKL', { source: DOT, variants: ['acc9'] })).code, 1);
+});
+
 test('SKL result in detail', async () => {
   const r = await w.analyze('SKL', { hex: HEX });
   assert.equal(r.tp, 2);

@@ -325,7 +325,7 @@ text, and errors with structured stderr.
 | `GET /api/archs[?fields=id,name]` | `w.archs(fields?)` | `list_archs {fields?}` |
 | `POST /api/analyze/<arch>` | `w.analyze(arch, request)` | `analyze {arch, ...request, format?}` |
 | `POST /api/compare` | `w.compare(request)` | `compare_archs {...request}` |
-| — | `whatIf((a, r) => w.analyze(a, r), arch, request, variants?, {assemble: (t) => w.assemble(t)})` | `what_if {arch, ...request, variants?}` |
+| `POST /api/what-if/<arch>` | `w.whatIf(arch, {...request, variants?, per?})` | `what_if {arch, ...request, variants?, per?}` |
 | `POST /api/assemble` | `w.assemble(source, syntax)` | `assemble {source, syntax?}` |
 
 ### Microarchitectures: `GET /api/archs`
@@ -405,17 +405,16 @@ Request:
 
 ### Option ranges per interface
 
-All interfaces run the same analyzer, but they accept different ranges for the numeric options. A value outside the
-range is refused (code 1, REST 400; the MCP tools' schema rejects it as invalid arguments), except in the web page,
-which clamps it into its range.
+The numeric options have the same range in the library, the CLI, the MCP tools and the REST API: any integer
+(`alignmentOffset`: negative values and values above 63 are simulated as given; the reference binary `crates/wuica-cli`
+refuses beyond ±2^62). A value that is not an integer is refused (code 1, REST 400; the MCP tools' schema rejects it).
+Everywhere, a block of more than 250,000 uops per iteration is refused (a work budget, code 3), and very large values run
+out of memory (code 3). The differences:
 
-| Interface | `alignmentOffset` | `minIterations` | `minCycles` | Other limits |
-|---|---|---|---|---|
-| library, `wuica` CLI, the reference/test binary (`crates/wuica-cli`) | any integer up to ±2^62 (negative values and values above 63 are simulated as given) | any integer | any integer | at most 250,000 uops per iteration (a work budget: code 3); very large values run out of memory (library: code 3) |
-| MCP tools of `wuica mcp` (stdio) | 0–63 | 1–100000 | 1–1000000 | |
-| REST API (`server/`) | any integer | at most 1000 | at most 20000 | `source` at most 64 KB, `hex` at most 65536 characters, at most 10,000 instructions |
-| remote MCP (`server/`, `/mcp`) | 0–63 | 1–1000 | 1–20000 | as REST |
-| web page | 0–63 | 1–10000 | 1–100000 | at most 1 MiB of machine code (assembled or as hex) |
+| Interface | Limits |
+|---|---|
+| REST API and remote MCP (`server/`) | `minIterations` at most 1000, `minCycles` at most 20000; `source` at most 64 KB, `hex` at most 65536 characters, at most 10,000 instructions |
+| web page | clamps `alignmentOffset` to 0–63, `minIterations` to 1–10000, `minCycles` to 1–100000; at most 1 MiB of machine code |
 
 Microarchitecture ids are accepted the same way everywhere: exactly, or case-insensitively with `-` optional (`adlp`,
 `adl-p` → `ADL-P`). Hex may contain spaces, commas and `0x` / `\x` prefixes everywhere.
@@ -516,6 +515,14 @@ The request is the same as for analyze, plus an optional `archs` (ids; missing o
 
 The top-level `code` is non-zero only if the request or the assembly fails. A failure on one microarchitecture is
 reported in its row.
+
+### What-if: `POST /api/what-if/<arch>`
+
+The request is analyze's plus `variants` (ids, default all: `unroll2`, `unroll4`, `unroll8`, `acc2`, `acc3`, `acc4`,
+`acc8`, `simpleFrontEnd`, `noMacroFusion`, `noMicroFusion`, `nochain`) and `per` (elements per iteration: also cycles
+per element). The response is the MCP tool's and `wuica -whatif -json`'s (`WhatIfResult`): the base `tp` and per variant
+`tp` per original iteration, `delta`, `speedup`, or `error`; `accumulators.best`. `text/plain` gives the CLI's table,
+`text/markdown` the Markdown one. Each variant is one analysis (rate-limited like compare).
 
 ### Assemble: `POST /api/assemble`
 

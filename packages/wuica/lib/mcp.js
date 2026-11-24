@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import readline from 'node:readline';
 import { createWuica } from './index.js';
-import { whatIf, VARIANTS } from './web/whatif-core.js';
+import { whatIfRequest, VARIANTS } from './web/whatif-core.js';
 
 const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
@@ -66,16 +66,18 @@ const optionsShape = {
   description: 'simulation options of uiCA; all optional',
   type: 'object',
   properties: {
-    alignmentOffset: int('offset of the block from a 64-byte boundary (default 0); affects the front end', 0, 63),
+    alignmentOffset: int('offset of the block from a 64-byte boundary (default 0; usually 0-63, other values are simulated as given); affects the front end', -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
     initPolicy: str('initial register values: "diff" (default: all registers differ), "same", "stack"', { enum: ['diff', 'same', 'stack'] }),
     simpleFrontEnd: bool('model a front end limited only by the issue width (default false)'),
     noMicroFusion: bool('disable micro-fusion (default false)'),
     noMacroFusion: bool('disable macro-fusion (default false)'),
-    minIterations: int('simulate at least this many iterations (default 10)', 1, 100000),
-    minCycles: int('simulate at least this many cycles (default 500)', 1, 1000000),
+    minIterations: int('simulate at least this many iterations (default 10; large values take long and much memory; the API server allows at most 1000)', -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
+    minCycles: int('simulate at least this many cycles (default 500; the API server allows at most 20000)', -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
   },
   additionalProperties: false,
 };
+
+const PER = { description: 'elements (bytes, floats, ...) one iteration of the loop processes: the result also gives cycles per element (`perElement`)', type: 'number', exclusiveMinimum: 0 };
 
 const json = (value) => ({ type: 'text', text: JSON.stringify(value, null, 1) });
 const omitBytes = ({ bytes, ...rest }) => rest;
@@ -181,9 +183,10 @@ export function mcpTools(w) {
         ...codeShape,
         options: optionsShape,
         variants: { description: `the experiments (default: all of ${VARIANTS.join(', ')})`, type: 'array', items: { type: 'string', enum: [...VARIANTS] } },
+        per: PER,
       }),
       annotations: readOnly, execution,
-      handler: async ({ arch, variants, ...request }) => result(await whatIf((a, req) => w.analyze(a, req), arch ?? 'SKL', request, variants ?? VARIANTS, { assemble: (text) => w.assemble(text, 'intel') })),
+      handler: async ({ arch, ...request }) => result(await whatIfRequest(w, arch ?? 'SKL', request)),
     },
     {
       name: 'compare_archs',
@@ -224,7 +227,7 @@ export const toolListing = ({ handler, ...t }) => t;
 
 // ---- a validator for the keywords these schemas use ------------------------------------------------------------------------
 // type (object, array, string, integer, number, boolean), properties, required, additionalProperties: false, enum, items,
-// minimum, maximum, minLength, anyOf. Returns the first problem as text ("options.minIterations: expected an integer,
+// minimum, maximum, exclusiveMinimum, minLength, anyOf. Returns the first problem as text ("options.minIterations: expected an integer,
 // got \"many\""), or null.
 const kind = (v) => (v === null ? 'null' : Array.isArray(v) ? 'an array' : typeof v === 'object' ? 'an object' : typeof v === 'string' ? 'a string' : typeof v === 'boolean' ? 'a boolean' : typeof v === 'number' ? (Number.isInteger(v) ? 'an integer' : 'a number') : typeof v);
 const show = (v) => JSON.stringify(v)?.slice(0, 60) ?? String(v);
@@ -276,6 +279,7 @@ export function validate(schema, value, at = '') {
   if (schema.enum && !schema.enum.includes(value)) return `${where}: expected one of ${schema.enum.map((x) => JSON.stringify(x)).join(', ')}, got ${show(value)}`;
   if (schema.minimum !== undefined && value < schema.minimum) return `${where}: expected at least ${schema.minimum}, got ${value}`;
   if (schema.maximum !== undefined && value > schema.maximum) return `${where}: expected at most ${schema.maximum}, got ${value}`;
+  if (schema.exclusiveMinimum !== undefined && !(value > schema.exclusiveMinimum)) return `${where}: expected more than ${schema.exclusiveMinimum}, got ${value}`;
   return null;
 }
 

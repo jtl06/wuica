@@ -6,6 +6,7 @@
 //   GET  /api/archs[?fields=]    microarchitectures
 //   POST /api/analyze/<arch>     analysis
 //   POST /api/compare            one block on several microarchitectures
+//   POST /api/what-if/<arch>     what-if experiments (unrolled, N accumulators, front end, fusion; the MCP tool what_if)
 //   POST /api/assemble           assembly -> hex
 //   GET  /api/version            versions
 //   POST /mcp                    MCP (tools list_archs, analyze, what_if, compare_archs, assemble)
@@ -14,7 +15,7 @@
 // text/markdown` on analyze and compare gives the package's Markdown (markdown.report, markdown.cpuTable).
 
 import http from 'node:http';
-import { createWuica, ARCH_FIELDS, detailInsights, markdown } from 'wuica';
+import { createWuica, ARCH_FIELDS, detailInsights, markdown, whatIfText } from 'wuica';
 import { createMcpServer } from './mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { resolveConfig } from './config.js';
@@ -73,6 +74,7 @@ function index() {
       'GET /api/archs[?fields=id,name]': 'microarchitectures',
       'POST /api/analyze/<arch>': 'analysis: {source | hex, syntax?, options?}',
       'POST /api/compare': 'one block on several microarchitectures: {source | hex, syntax?, archs?, options?}',
+      'POST /api/what-if/<arch>': 'what-if experiments: {source | hex, syntax?, options?, variants?, per?}',
       'POST /api/assemble': 'assembly to machine code: {source, syntax?}',
       'GET /api/version': 'versions',
       'POST /mcp': 'remote MCP server (Streamable HTTP): tools list_archs, analyze, what_if, compare_archs, assemble',
@@ -283,6 +285,19 @@ export async function createApp(options = {}) {
         return sendMarkdown(res, r, markdown.report(r, { arch: r.code ? arch : archTitle(r.arch), insights: r.insights ?? null, source: typeof body?.source === 'string' ? body.source : undefined }), unknownArch ? 404 : undefined);
       }
       return sendResult(res, r, wantText, (x) => x.text, unknownArch ? 404 : undefined);
+    }
+    if (p === '/api/what-if' || p.startsWith('/api/what-if/')) {
+      method(['POST']);
+      let arch;
+      try { arch = decodeURIComponent(p.slice('/api/what-if/'.length)).trim(); } catch { arch = ''; }
+      if (!arch) throw new HttpError(404, 'give the microarchitecture in the path: POST /api/what-if/<arch> (see GET /api/archs)');
+      rateLimit(req, ctx, cfg.compareCost);
+      const body = await readJson(req);
+      const r = await facade.whatIf(arch, body, ctx);
+      ctx.code = r.code;
+      const unknownArch = r.code === 1 && facade.resolveArch(arch) === null && /^unknown microarchitecture/.test(r.error ?? '');
+      if (!wantText && wantsMarkdown(req)) return sendMarkdown(res, r, r.code ? markdown.report(r) : markdown.whatIf(r), unknownArch ? 404 : undefined);
+      return sendResult(res, r, wantText, whatIfText, unknownArch ? 404 : undefined);
     }
     if (p === '/api/compare') {
       method(['POST']);

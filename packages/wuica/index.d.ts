@@ -309,6 +309,9 @@ export interface Wuica {
   /** The derived diagnosis of a successful analyze() result with its microarchitecture's configuration (as in the REST
    * response and summarize()); null for a failure. */
   insights(result: AnalyzeResult | Failure): Insights | null;
+  /** The what-if experiments (the MCP tool what_if, POST /api/what-if/<arch>): analyze's request with `variants`
+   * (default all) and `per` (elements per iteration: also cycles per element). */
+  whatIf(arch: string, request: WhatIfRequest): Promise<WhatIfPerElement | Failure>;
   /** The id for a user-supplied name (case-insensitive, "-" optional), DEFAULT_ARCH for empty input, or null. */
   resolveArch(arch?: string | null): string | null;
   /** How many times the analyzer was restarted after a trap. */
@@ -390,7 +393,17 @@ export interface WhatIfResult {
 
 /** The CLI's `-json -whatif`: one WhatIfResult per CPU, keyed by its id, with one CPU as with several. With `-per N`,
  * each has elementsPerIteration (N) and perElement (tp / N), and each variant with a tp its perElement. */
-export type CliWhatIf = Record<string, (WhatIfResult & { elementsPerIteration?: number; perElement?: number; variants: (WhatIfResult['variants'][number] & { perElement?: number })[] }) | Failure>;
+export type CliWhatIf = Record<string, WhatIfPerElement | Failure>;
+/** A what-if result; with `per`, elementsPerIteration and perElement (tp / per), and each variant with a tp its perElement. */
+export type WhatIfPerElement = WhatIfResult & { elementsPerIteration?: number; perElement?: number; variants: (WhatIfResult['variants'][number] & { perElement?: number })[] };
+/** The request of Wuica.whatIf, the MCP tool what_if and POST /api/what-if/<arch>. */
+export type WhatIfRequest = AnalyzeRequest & { variants?: readonly WhatIfVariant[]; per?: number };
+/** whatIf with a request as the interfaces take it (`variants`, `per`), with w's analyze and assemble. */
+export function whatIfRequest(w: Pick<Wuica, 'analyze' | 'assemble'>, arch: string, request: WhatIfRequest): Promise<WhatIfPerElement | Failure>;
+/** A what-if result per element (`per` elements per iteration); unchanged without `per` or for a failure. */
+export function whatIfPerElement(result: WhatIfResult | Failure, per?: number): WhatIfPerElement | Failure;
+/** The what-if table as the CLI prints it (-whatif; REST text/plain). */
+export function whatIfText(result: WhatIfPerElement | Failure): string;
 /** The CLI's `-json` with one CPU: the analyze result with insights (caveats in insights.caveats), perElement (-per)
  * and whatIf (-whatif). */
 export type CliAnalyzeJson = AnalyzeResult & { insights?: Insights; perElement?: number; whatIf?: CliWhatIf };

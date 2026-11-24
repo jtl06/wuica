@@ -48,6 +48,8 @@ async function readme(): Promise<void> {
   void many;
   const cm = await w.compareMany([{ hex: '4801d8' }], { archs: ['SKL', 'ZEN3'] });
   void cm;
+  const wi = await w.whatIf('SKL', { source: 'add rax, 1', variants: ['acc4'], per: 8 });
+  if (wi.code === 0) void wi.perElement;
   const x = await whatIf((arch, req) => w.analyze(arch, req), 'SKL', { source: 'add rax, 1' }, WHAT_IF_VARIANTS, { assemble: (t) => w.assemble(t) });
   if (x.code === 0) {
     const y: WhatIfResult = x;
