@@ -169,7 +169,7 @@ const regionChip = createRegionChip(el.messages, (line) => selectLine(line));
 // what of pasted assembly is analyzed (loop-find.js): the loop chip sets state.loop
 // (in A's row of controls, after the options: the editor keeps its height)
 // (single: else next to the single / A–B switch; at last under the editor, as before)
-const loopChip = createLoopChip(el.advanced, (v) => { if (state.loop === v) return; state.loop = v; changed({ rerun: true }); }, 'loop-chip',
+const loopChip = createLoopChip(el.advanced, (v) => { if (state.loop === v) return; state.loop = v; ab?.markWork('a'); changed({ rerun: true }); }, 'loop-chip',
   () => [...(document.body.classList.contains('ab-on') ? [] : [document.querySelector('.ab-switch')].filter(Boolean)), el.messages]);
 // Where the alignment offset came from: 'auto' (the analyzed code's address, objdump input: set again for each pick, and
 // back to the default for a text without addresses), 'manual' (by hand, a link, an import: kept until the text is
@@ -1309,10 +1309,10 @@ function setupFeatures() {
   // side B's loop chip, and its pick back to the first loop when B's text is replaced
   const bCode = /** @type {HTMLTextAreaElement | null} */ (document.getElementById('code-b'));
   if (bCode) {
-    bLoopChip = createLoopChip(document.getElementById('b-arch').closest('label'), (v) => { if (state.bLoop === v) return; state.bLoop = v; changed({ rerun: true }); }, 'loop-chip-b', () => [document.getElementById('b-messages')]); // (in B's row, else under its editor)
+    bLoopChip = createLoopChip(document.getElementById('b-arch').closest('label'), (v) => { if (state.bLoop === v) return; state.bLoop = v; ab.markWork('b'); changed({ rerun: true }); }, 'loop-chip-b', () => [document.getElementById('b-messages')]); // (in B's row, else under its editor)
     textB = bCode.value;
     bCode.addEventListener('input', () => {
-      if (textB.trim() === '' || replacesText(textB, bCode.value)) ab.replacedB(); // (as for A: other code, elems 1)
+      if (textB.trim() === '' || replacesText(textB, bCode.value)) ab.replacedB({ remember: true }); // (as for A)
       if (replacesText(textB, bCode.value)) newTextB(); else textB = bCode.value;
       if (ce.isLink(bCode.value.trim())) ab.clearMessages(); // (as for A)
       bLoopChip.sync(state.bMode === 'asm' ? bCode.value : null);
@@ -1454,7 +1454,7 @@ function bind() {
     buffers[state.mode] = el.code.value;
     // other code in place of the old (a paste or typing over most of it, either format): its elements per iteration start
     // again at 1 (an edit keeps them, marked: ab.js)
-    if (textA.trim() === '' || replacesText(textA, el.code.value)) ab?.replacedA();
+    if (textA.trim() === '' || replacesText(textA, el.code.value)) ab?.replacedA({ remember: true }); // (an undo: its count again)
     if (state.mode === 'asm' && (textA.trim() === '' || replacesText(textA, el.code.value))) {
       newTextA();
       // a pasted text in the other syntax (clang -S, objdump: AT&T) switches the select, unless the user chose it

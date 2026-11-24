@@ -162,7 +162,21 @@ export function createAB(api) {
     else if (!state.ab && (singleWork[0] !== state.aWork || singleWork[1] !== flagged('a'))) { singleWork = [state.aWork, flagged('a')]; api.redraw?.(); }
   }
   // a count is right for the code shown now (set, confirmed, or the code was replaced)
-  const settle = (s) => { sides[s].given = sides[s].code(); };
+  // (and remembered for that code, in this session: an undo that brings the code back brings its count back)
+  const known = { a: new Map(), b: new Map() };
+  const settle = (s) => {
+    const x = sides[s], code = x.code();
+    x.given = code;
+    known[s].delete(code); known[s].set(code, state[x.key]);
+    if (known[s].size > 64) known[s].delete(known[s].keys().next().value);
+  };
+  // the count of other code put in place of the old one: 1; typed or pasted (remember), the one that code had in this
+  // session (an undo of a paste), else 1
+  function replaced(s, remember) {
+    const x = sides[s], w = (remember ? known[s].get(x.code()) : undefined) ?? 1;
+    if (state[x.key] !== w) { state[x.key] = w; api.changed(); }
+    settle(s); paintWork();
+  }
 
   function paint() {
     document.body.classList.toggle('ab-on', state.ab);
@@ -211,12 +225,12 @@ export function createAB(api) {
     const n = Number(value);
     const valid = value !== '' && Number.isInteger(n) && n >= LIMITS[x.key][0] && n <= LIMITS[x.key][1];
     if (!valid) { if (final) x.work.input.value = state[x.key]; return; }
-    settle(s);
     if (n !== state[x.key]) {
       state[x.key] = n;
+      settle(s);
       paintWork();
       api.changed();
-    } else paintWork();
+    } else { settle(s); paintWork(); }
   }
   for (const s of ['a', 'b']) {
     const input = sides[s].work.input;
@@ -734,9 +748,11 @@ export function createAB(api) {
     paint, inputs, analyze, draw, summary, key, reweigh,
     setB(code) { setB(code); paint(); api.changed({ now: true }); },
     // side A's code was replaced (an example, an import): its count starts again at 1
-    replacedA() { if (state.aWork !== 1) { state.aWork = 1; api.changed(); } settle('a'); paintWork(); },
+    replacedA({ remember = false } = {}) { replaced('a', remember); },
     // B's code was replaced by other code (a paste over it): its count starts again at 1
-    replacedB() { if (state.bWork !== 1) { state.bWork = 1; api.changed(); } settle('b'); paintWork(); },
+    replacedB({ remember = false } = {}) { replaced('b', remember); },
+    // another loop of the same text picked: its count is marked as after an edit (another loop does other work)
+    markWork(s) { sides[s].given = '\u0000'; paintWork(); },
     // a side's code is the same machine code in another form (asm <-> hex), or came with its count (a link): its count
     // stays right
     settleCode(s) { settle(s); paintWork(); },

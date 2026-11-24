@@ -420,6 +420,26 @@ try {
     await page.close();
   }
 
+  // ---- elems: an undo of a paste brings the code's count back; another loop marks the count -----------------------------
+  {
+    const page = await fresh();
+    const r = await page.eval(`${W}
+      const field = () => [$('a-work').value, $('a-work').closest('label').classList.contains('flag'), document.querySelector('#result-body .tp .unit')?.textContent];
+      const out = {};
+      pasteInto($('code'), ${js(fx('saxpy.s'))}); await settle();
+      set($('a-work'), '32'); await settle();
+      pasteInto($('code'), ${js(fx('fnv.s'))}); await settle(); out.pasted = field();
+      // the undo (the browser's own: the input event of a history undo, with the old text back)
+      $('code').value = ${js(fx('saxpy.s'))}; $('code').dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'historyUndo' })); await settle();
+      out.undone = field();
+      pick('loop-chip', '1'); await settle(); out.loop = field();
+      $('a-work').value = '32'; $('a-work').dispatchEvent(new Event('input', { bubbles: true })); await wait(100); out.confirmed = field();
+      return out;`, { timeout: 200000 });
+    check(r.pasted[0] === '1' && r.undone[0] === '32' && !r.undone[1], 'elems: an undo of a paste brings its count back (unmarked)', js(r));
+    check(r.loop[0] === '32' && r.loop[1] && /\?$/.test(r.loop[2]) && !r.confirmed[1], 'elems: another loop picked marks the count (until confirmed)', js(r));
+    await page.close();
+  }
+
   // ---- B6: an assembler error of the old code goes when a Compiler Explorer link replaces it (A, and B) ----------------
   {
     const page = await fresh();
