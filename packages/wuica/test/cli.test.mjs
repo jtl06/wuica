@@ -174,3 +174,21 @@ test('-h', () => {
   assert.equal(r.code, 0);
   assert.match(r.out, /^Usage: wuica/);
 });
+
+test('-h names every input: objdump -dS, perf annotate --stdio, several files', () => {
+  const r = run(['-h']);
+  assert.match(r.out, /objdump -d or -dS output, perf annotate --stdio\s+output/);
+  assert.match(r.out, /several FILEs: one table/);
+  assert.doesNotMatch(r.out, /One input per run/);
+});
+
+test('-variants: an unknown or empty list is a usage error (exit 1), before any analysis', () => {
+  for (const [v, msg] of [['bogus', /^wuica: -variants: unknown variant\(s\): bogus \(known: unroll2, .*, nochain, align\)$/m],
+    ['unroll2,Unroll4', /unknown variant\(s\): Unroll4 /], ['', /^wuica: -variants: no variant in "" /m], [' , ', /no variant in " , "/]]) {
+    const r = run(['-variants', v, HEX]);
+    assert.equal(r.code, 1, v);
+    assert.match(r.err, msg, v);
+    assert.equal(r.out, '', `${v}: nothing analyzed`);
+  }
+  assert.equal(run(['-variants', 'unroll2,align', '-TPonly', HEX]).code, 0);
+});

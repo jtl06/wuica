@@ -3,7 +3,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { createWuica, normalizeHex, listLoops, whatIf, WHAT_IF_VARIANTS, CODES, examples, findExample, objectKind, markdown } from './index.js';
+import { createWuica, normalizeHex, listLoops, whatIf, WHAT_IF_VARIANTS, WHAT_IF_OPT_IN_VARIANTS, CODES, examples, findExample, objectKind, markdown } from './index.js';
 import { analyzedLines } from './web/branch-label.js';
 import { whatIfPerElement, whatIfText } from './web/whatif-core.js';
 import { diffAnalyses, diffMarkdown, diffText } from './web/block-diff.js';
@@ -17,8 +17,8 @@ export const USAGE = `Usage: wuica [options] [FILE | - | HEX]
        wuica mcp                start the MCP server (stdio)
 
 Predicts the throughput of an x86-64 basic block with uiCA's pipeline model (this is wuica ${VERSION}, a WebAssembly
-port of uiCA). One input per run: assembly from FILE (gcc -S, clang -S, objdump -d output, or a hand-written loop),
-or from stdin if FILE is - or missing. A HEX argument that is not a file (e.g. 4801d84801c349ffcf75f5) is machine code.
+port of uiCA). The input: assembly from FILE (gcc -S, clang -S, objdump -d or -dS output, perf annotate --stdio
+output, or a hand-written loop), or from stdin if FILE is - or missing (several FILEs: one table, as above). A HEX argument that is not a file (e.g. 4801d84801c349ffcf75f5) is machine code.
 Built-in examples (no file needed): -examples lists them, -example saxpy analyzes one (every option applies),
 -example saxpy -show prints its assembly to save and edit.
 
@@ -37,7 +37,8 @@ Input:
                          file: for those, objdump -d FILE | wuica)
   -loops                 list the loops of the assembly (index, label, function, lines, instructions, depth, auto)
   -loop L                what is analyzed: auto (default: the deepest loop, among equals the first; clang's
-                         "Inner Loop Header" notes count), whole (all the text), a loop's index (0-based, as
+                         "Inner Loop Header" notes count; perf annotate: the loop with the most samples of its
+                         own), whole (all the text), a loop's index (0-based, as
                          -loops lists them) or its label (-loop .LBB0_12)
   -func NAME             only the loops of function NAME (with -loop: its index or label among them); in an object
                          file its symbol, or a unique part of it
@@ -147,7 +148,15 @@ export function parseArgs(argv) {
     switch (name) {
       case 'att': case 'intel': o.syntax = name; break;
       case 'loop': o.loop = /^\d+$/.test(v) ? Number(v) : v; break;
-      case 'variants': o.variants = v.split(',').map((x) => x.trim()).filter(Boolean); o.whatif = true; break;
+      case 'variants': {
+        o.variants = v.split(',').map((x) => x.trim()).filter(Boolean);
+        const known = [...WHAT_IF_VARIANTS, ...WHAT_IF_OPT_IN_VARIANTS];
+        if (!o.variants.length) throw new UsageError(`-variants: no variant in "${v}" (known: ${known.join(', ')})`);
+        const unknown = o.variants.filter((x) => !known.includes(x));
+        if (unknown.length) throw new UsageError(`-variants: unknown variant(s): ${unknown.join(', ')} (known: ${known.join(', ')})`);
+        o.whatif = true;
+        break;
+      }
       case 'per': o.per = Number(v); if (!(o.per > 0)) throw new UsageError(`-per: a positive number of elements per iteration: ${v}`); break;
       case 'threads': o.threads = int(v, name); if (o.threads < 1) throw new UsageError('-threads: at least 1'); break;
       case 'trace': o.options.includeTrace = true; break;
