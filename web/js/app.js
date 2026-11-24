@@ -242,12 +242,22 @@ function setIdle(text) { idleStatus = text; paintStatus(); }
 createCopy({ copyText, flash: (t, o) => flash(t, o), current: () => /** @type {HTMLElement | null} */ (document.querySelector('#result-body .view-tab[aria-selected="true"]'))?.dataset.tab ?? null,
   stale: () => !!lastView && (runKey() !== lastRunKey || !!inputErrorNote) });
 
-function flash(text, { error = false, ms = 2500 } = {}) {
+// key: the input a result's text is for (runKey): it goes as soon as the input differs (changed), so the line (and its
+// aria-live region) never tells the result of code that is no longer there
+let flashKey = null;
+function flash(text, { error = false, ms = 2500, key = null } = {}) {
   clearTimeout(flashTimer);
+  flashKey = key;
   el.statusWrap.classList.remove('idle');
   el.status.textContent = text;
   el.statusWrap.classList.toggle('error', error);
-  flashTimer = setTimeout(() => { flashTimer = 0; paintStatus(); }, ms);
+  flashTimer = setTimeout(() => { flashTimer = 0; flashKey = null; paintStatus(); }, ms);
+}
+function endStaleFlash() {
+  if (!flashTimer || flashKey === null || flashKey === runKey()) return;
+  clearTimeout(flashTimer);
+  flashTimer = 0; flashKey = null;
+  paintStatus();
 }
 async function download(label, path) {
   const size = manifest.files[path] ?? 0;
@@ -362,6 +372,7 @@ function syncUrl(now = false) {
 function changed({ rerun = false, now = false } = {}) {
   keepFocusChecked();
   paintDerived();
+  endStaleFlash();
   if (now && el.body.classList.contains('stale')) el.body.classList.add('stale-now');
   syncUrl();
   if (!ready) touched = true;
@@ -947,7 +958,7 @@ async function run({ auto = false } = {}) {
       // the time is shown here (not in the result): how fast the analyzer is
       // with several CPUs checked, their number: the table has the others (the time is this CPU's)
       const n = checked.length > 1 && !state.ab ? ` · ${checked.length} CPUs` : '';
-      if (tell) flash(`${Number(response.tp).toFixed(2)} cycles/iteration · ${archKey}${n}${response.mock ? ' (mock data)' : ` · ${elapsedMs < 10 ? elapsedMs.toFixed(1) : Math.round(elapsedMs)} ms`}`, { ms: 6000 });
+      if (tell) flash(`${Number(response.tp).toFixed(2)} cycles/iteration · ${archKey}${n}${response.mock ? ' (mock data)' : ` · ${elapsedMs < 10 ? elapsedMs.toFixed(1) : Math.round(elapsedMs)} ms`}`, { ms: 6000, key });
       panels.update({ hex, arch: archKey, options: opts, elapsedMs, response }, { auto });
       if (!warmedUp && engine.warmUp) { warmedUp = true; setTimeout(() => engine.warmUp(archKey), 0); }
     } else if (tell) {

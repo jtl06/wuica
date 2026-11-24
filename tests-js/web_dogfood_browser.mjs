@@ -73,6 +73,29 @@ try {
     await page.close();
   }
 
+  // ---- B2: the status line (aria-live) never keeps the result of code that is no longer there ---------------------------
+  {
+    const page = await fresh();
+    const r = await page.eval(`${W}
+      const status = () => ($('status-wrap').classList.contains('idle') ? '' : $('status').textContent);
+      const ex = (id) => { const s = $('examples'); s.value = id; s.dispatchEvent(new Event('change', { bubbles: true })); };
+      const out = {};
+      // an example: its result is told (for a few seconds)
+      ex('dot1'); await settle(); out.example = [status(), tp()];
+      // then, within those seconds, a paste and a live result: not the example's number any more
+      pasteInto($('code'), ${js(fx('fnv.s'))}); out.atPaste = status(); await settle(); out.pasted = [status(), tp()];
+      // a CPU picked: told; then typing
+      ex('dot1'); await settle();
+      const box = [...document.querySelectorAll('#cpu-grid input')].find((b) => b.value === 'HSW'); box.click(); await settle(); out.cpu = [status(), tp()];
+      $('code').focus(); $('code').setSelectionRange(0, 0); document.execCommand('insertText', false, '  nop\\n'); out.atTyping = status(); await settle(); out.typed = [status(), tp()];
+      return out;`);
+    check(/cycles\/iteration · SKL/.test(r.example[0]) && r.example[0].startsWith(r.example[1]), 'B2: an example tells its result', js(r.example));
+    check(r.atPaste === '' && (r.pasted[0] === '' || r.pasted[0].startsWith(r.pasted[1])) && r.pasted[1] !== r.example[1], 'B2: after a paste, the status line has no old result', js(r));
+    check(/· HSW/.test(r.cpu[0]) && r.cpu[0].startsWith(r.cpu[1]), 'B2: a CPU picked tells its result', js(r.cpu));
+    check(r.atTyping === '' && (r.typed[0] === '' || r.typed[0].startsWith(r.typed[1])), 'B2: after typing, the status line has no old result', js(r));
+    await page.close();
+  }
+
   // ---- B6: an assembler error of the old code goes when a Compiler Explorer link replaces it (A, and B) ----------------
   {
     const page = await fresh();
