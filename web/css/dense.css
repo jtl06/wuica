@@ -172,3 +172,30 @@ html.dense { font-size: 13px; line-height: 1.4; }
   .dense #code { min-height: 7rem; height: 9.5rem; }
   .dense body.ab-on #code, .dense #code-b { min-height: 6rem; height: 7.5rem; }
 }
+
+/* ---- no scrolling (from 1200 × 700): the window is the page; the top bar, the panes and a one-line footer fill it
+   exactly, and only the inside of what is read scrolls (workspace.js fits the scrollers of the shown tab into the
+   result pane). The limitations open from the top bar as a popover. Shorter windows and phones scroll as before. ---- */
+@media (min-width: 1200px) and (min-height: 700px) {
+  .dense body { height: 100vh; min-height: 0; display: flex; flex-direction: column; }
+  .dense body > .top, .dense body > .bottom { flex: none; width: 100%; }
+  .dense body > main { flex: 1 1 0; min-height: 0; width: 100%; display: flex; flex-direction: column; padding-bottom: 0; }
+  .dense main > .notice { flex: none; }
+  .dense .panes { flex: 1 1 0; min-height: 0; height: auto; }
+  .dense .pane-input, .dense .pane-result { min-height: 0; }
+  .dense .bottom { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 1ch; padding-top: 0.2rem; padding-bottom: 0.25rem; font-size: 0.85rem; }
+  .dense .bottom p + p { margin-top: 0; }
+  .dense .bottom p + p::before { content: "· "; }
+  .dense #about {
+    position: fixed; z-index: 40; top: calc(var(--top-h, 2.4rem) + 0.25rem); right: var(--page-gutter); max-width: min(46rem, calc(100vw - 2 * var(--page-gutter)));
+    padding: 0.5rem 0.8rem; background: var(--background); border: 1px solid var(--control-border); border-top: 2px solid var(--accent);
+  }
+  .dense:not(.about-open) #about { display: none; }
+  .dense #about ul.terse, .dense #about ul.terse li { display: block; }
+  .dense #about ul.terse li + li::before { content: none; }
+  .dense #about > h2 { display: block; margin: 0 0 0.2rem; }
+}
+/* (shorter windows: the input pane scrolls, so Analyze and the CPUs stay reachable under the code boxes' floors) */
+@media (min-width: 1200px) and (max-height: 699px) {
+  .dense .pane-input { overflow-y: auto; }
+}

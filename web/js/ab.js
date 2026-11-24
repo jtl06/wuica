@@ -389,6 +389,15 @@ export function createAB(api) {
   const tag = (t) => h('span', { class: `ab-tag${t === 'B' ? ' b' : ''}`, text: t });
   const ms = (s) => `${s.elapsedMs < 10 ? s.elapsedMs.toFixed(1) : Math.round(s.elapsedMs)} ms`;
 
+  // where the page does not scroll (from 1200 × 700): a fold opened (its summary clicked, or Enter or Space on it) closes
+  // the others, so the tables keep room (workspace.js fits them into the pane)
+  const still = window.matchMedia?.('(min-width: 1200px) and (min-height: 700px)');
+  document.addEventListener('click', (e) => {
+    const d = e.target instanceof Element ? e.target.closest('#ab-main details.ab-fold > summary')?.parentElement : null;
+    if (!still?.matches || !d || d.open) return;
+    for (const o of document.querySelectorAll('#ab-main details.ab-fold[open]')) if (o !== d) o.open = false;
+  }, true);
+
   function fold(name, label, summary, ...content) {
     const d = h('details', { class: 'ab-fold', open: !!ui.open[name] }, h('summary', null, summary), ...content);
     d.addEventListener('toggle', () => { ui.open[name] = d.open; });
@@ -570,7 +579,41 @@ export function createAB(api) {
         r.notes.size ? h('p', { class: 'legend' }, [...r.notes].map((k) => h('span', { title: NOTES[k] }, h('b', { text: k }), ` ${LEGEND[k]}`))) : null].filter(Boolean));
       return col;
     };
-    return h('div', { class: 'ab-stack' }, side('A', view.a), side('B', view.b));
+    const stack = h('div', { class: 'ab-stack' }, side('A', view.a), side('B', view.b));
+    scrollTogether(stack, view);
+    return stack;
+  }
+
+  // The two tables' rows scroll together: the row at the top of one brings the row the diff aligns with it (ab-diff.js)
+  // to the top of the other; a row only one side has leaves the other where it is.
+  function scrollTogether(stack, view) {
+    const wraps = [...stack.querySelectorAll(':scope > .ab-col > .table-wrap')];
+    if (wraps.length !== 2) return;
+    const rowsOf = (s) => s?.response?.rows ?? [];
+    const map = [new Map(), new Map()]; // tr index of A -> of B, and back
+    const d = view.cmp?.diff;
+    if (d) for (const x of d.rows) {
+      if (!x.a || !x.b) continue;
+      const ia = rowsOf(view.a).indexOf(x.a.row), ib = rowsOf(view.b).indexOf(x.b.row);
+      if (ia >= 0 && ib >= 0) { map[0].set(ia, ib); map[1].set(ib, ia); }
+    } else for (let k = 0; k < Math.min(rowsOf(view.a).length, rowsOf(view.b).length); k++) { map[0].set(k, k); map[1].set(k, k); }
+    let following = false;
+    wraps.forEach((w, k) => w.addEventListener('scroll', () => {
+      if (following) return;
+      const other = wraps[1 - k];
+      const trs = w.querySelector('table')?.tBodies[0]?.rows, theirs = other.querySelector('table')?.tBodies[0]?.rows;
+      if (!trs?.length || !theirs?.length) return;
+      const head = w.querySelector('thead')?.offsetHeight ?? 0, y = w.scrollTop + head;
+      let lo = 0, hi = trs.length - 1; // the first row whose bottom is below the header
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (trs[mid].offsetTop + trs[mid].offsetHeight > y) hi = mid; else lo = mid + 1; }
+      const j = map[k].get(lo);
+      if (j === undefined || !theirs[j]) return;
+      const t = theirs[j].offsetTop - (other.querySelector('thead')?.offsetHeight ?? 0) + (y - trs[lo].offsetTop);
+      if (Math.abs(other.scrollTop - t) < 1) return;
+      following = true;
+      other.scrollTop = t;
+      requestAnimationFrame(() => { following = false; });
+    }, { passive: true }));
   }
 
   // What differs, in the tables themselves (the alignment of the Δ fold, ab-diff.js): a row of a changed instruction

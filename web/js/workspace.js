@@ -60,45 +60,101 @@
     return body && (body.querySelector(':scope > .ws-main') || body.querySelector(':scope > .row.lead:has(> .field > .table-wrap)'));
   }
 
-  // Wide screens: the panes are the window's height (dense.css); the scroller of the shown tab (the table, the
-  // trace, the dependency graph, the bytes) grows to the bottom of the result pane, so nothing below it is empty.
-  // (A–B's diff and its two traces: the pane scrolls.)
+  // Wide screens: the panes are the window's height (dense.css). The shown tab's scrollers (the uop tables, A–B's two
+  // tables and its open folds, the report under the table, the trace, the dependency graph, the bytes, mca's text)
+  // share what the result pane has left: each as tall as its content up to an equal share, scrollers side by side
+  // count once; so the pane itself does not scroll. From 1200 × 700 the page does not either (dense.css); in shorter
+  // windows the scrollers keep a floor and the pane scrolls.
   var wide = window.matchMedia ? window.matchMedia('(min-width: 1200px)') : null;
-  var SCROLLERS = '.trace-scroll, .dp-wrap, .ly-wrap, .mca-out';
+  var still = window.matchMedia ? window.matchMedia('(min-width: 1200px) and (min-height: 700px)') : null;
+  var SCROLLERS = '.trace-scroll, .dp-wrap, .ly-wrap, .mca-out, .table-wrap, details[open] > pre, .ab-pair pre';
+  var MIN_H = 120, MIN_STILL = 48; // (the floor of a scroller's height; where the page does not scroll, a lower one)
   var fitted = [], fitFrame = 0;
   function fitSoon() { if (!fitFrame) fitFrame = requestAnimationFrame(function () { fitFrame = 0; fit(); }); }
+  function shownParts() {
+    if (opened[0]) return [opened[0]];
+    var body = document.getElementById('result-body');
+    var tabs = body && body.querySelector(':scope > .view-tabs');
+    var out = [];
+    for (var e = tabs ? tabs.nextElementSibling : null; e; e = e.nextElementSibling) out.push(e);
+    return out;
+  }
+  function scrollers(parts) {
+    var all = [];
+    parts.forEach(function (p) { p.querySelectorAll(SCROLLERS).forEach(function (e) { if (e.getClientRects().length && !e.closest('details:not([open])')) all.push(e); }); });
+    // (not one inside another)
+    return all.filter(function (e) { return !all.some(function (o) { return o !== e && o.contains(e); }); });
+  }
+  // A–B's two tables side by side when each half has room for its columns and the instruction column at the narrowest
+  // the port fit cuts it to (render.js fitInstr: 120 px of text, and the cell's padding)
+  var MIN_INSTR = 140;
+  function sideBySide() {
+    var stack = document.querySelector('#ab-main .ab-stack');
+    if (!stack) return;
+    var need = 0;
+    stack.querySelectorAll(':scope > .ab-col table.uops').forEach(function (t) {
+      var first = t.querySelector('thead th.first');
+      if (!first) return;
+      // (the columns at their own width, not stretched to the table's)
+      var w0 = t.style.width;
+      t.style.width = 'max-content';
+      need = Math.max(need, t.getBoundingClientRect().width - first.getBoundingClientRect().width);
+      t.style.width = w0;
+    });
+    var gap = parseFloat(getComputedStyle(stack).columnGap) || 0;
+    var on = need > 0 && (stack.clientWidth - gap) / 2 >= need + MIN_INSTR;
+    stack.classList.toggle('ab-side', on);
+  }
   function fit() {
     var top = document.querySelector('.top');
     if (top) root.style.setProperty('--top-h', top.offsetHeight + 'px');
-    fitted.forEach(function (e) { e.style.removeProperty('max-height'); });
-    fitted = [];
     var pane = document.getElementById('results');
-    if (!pane || !wide || !wide.matches) return;
-    var view = opened[0] ? opened[0] : main();
-    if (!view) return;
-    if (!opened[0] && view.classList.contains('ws-main')) return;
-    var all = opened[0] ? view.querySelectorAll(SCROLLERS) : view.querySelectorAll('.table-wrap');
-    if (!all.length || (all.length > 2 && abOn())) return;
-    // A–B's two traces: they share what is left, half each (the rows are the content: they get the height)
-    if (all.length === 2 && abOn()) {
-      var pr = pane.getBoundingClientRect(), a = all[0].getBoundingClientRect(), b = all[1].getBoundingClientRect(), vv = view.getBoundingClientRect();
-      var padB = parseFloat(getComputedStyle(pane).paddingBottom) || 0;
-      var between = b.top - a.bottom, under = Math.max(0, vv.bottom - b.bottom);
-      var half = Math.floor((pane.clientHeight - (a.top - pr.top + pane.scrollTop) - between - under - padB - 4) / 2);
-      for (var k = 0; k < 2; k++) { all[k].style.maxHeight = Math.max(160, half) + 'px'; fitted.push(all[k]); }
-      return;
+    if (!pane || !wide || !wide.matches) { fitted.forEach(function (e) { e.style.removeProperty('max-height'); }); fitted = []; return; }
+    sideBySide();
+    var list = scrollers(shownParts());
+    fitted.forEach(function (e) { if (list.indexOf(e) < 0) e.style.removeProperty('max-height'); });
+    fitted = list;
+    if (!list.length) return;
+    var padB = parseFloat(getComputedStyle(pane).paddingBottom) || 0;
+    for (var pass = 0; pass < 3; pass++) {
+      // what the pane's content needs now, and what it has
+      var pr = pane.getBoundingClientRect(), bottom = pr.top;
+      for (var c = pane.firstElementChild; c; c = c.nextElementSibling) {
+        if (!c.getClientRects().length || getComputedStyle(c).position === 'absolute' || getComputedStyle(c).position === 'fixed') continue;
+        bottom = Math.max(bottom, c.getBoundingClientRect().bottom + (parseFloat(getComputedStyle(c).marginBottom) || 0));
+      }
+      var delta = pane.clientHeight - (bottom - pr.top + pane.scrollTop + padB) - 1;
+      // the scrollers in rows (side by side: one row), each row as tall as its tallest
+      var rows = [];
+      list.forEach(function (e) {
+        var r = e.getBoundingClientRect();
+        var nat = e.scrollHeight + (e.offsetHeight - e.clientHeight);
+        var row = rows.filter(function (x) { return Math.abs(x.top - r.top) < 4; })[0];
+        if (!row) { row = { top: r.top, h: 0, nat: 0, els: [] }; rows.push(row); }
+        row.h = Math.max(row.h, r.height); row.nat = Math.max(row.nat, nat); row.els.push([e, nat]);
+      });
+      var target = rows.reduce(function (a, x) { return a + x.h; }, 0) + delta;
+      // the share: rows shorter than it keep their content's height
+      var cap = Infinity, sumNat = rows.reduce(function (a, x) { return a + x.nat; }, 0);
+      if (sumNat > target) {
+        var sorted = rows.map(function (x) { return x.nat; }).sort(function (a, b) { return a - b; });
+        var rest = target, n = sorted.length;
+        cap = rest / n;
+        for (var k = 0; k < sorted.length; k++) {
+          if (sorted[k] > cap) break;
+          rest -= sorted[k]; n--; cap = n ? rest / n : Infinity;
+        }
+        cap = Math.max(still && still.matches ? MIN_STILL : MIN_H, Math.floor(cap));
+      }
+      var changed = false;
+      rows.forEach(function (x) {
+        x.els.forEach(function (en) {
+          var want = en[1] > cap ? cap + 'px' : '';
+          if (en[0].style.maxHeight !== want) { en[0].style.maxHeight = want; changed = true; }
+        });
+      });
+      if (!changed) break;
     }
-    var scroller = all[0];
-    var p = pane.getBoundingClientRect(), r = scroller.getBoundingClientRect(), v = view.getBoundingClientRect();
-    var below = Math.max(0, v.bottom - r.bottom);         // the view's own lines under its scroller (legends)
-    if (!opened[0]) {                                      // the table: the lines after it in the result too
-      var last = document.querySelector('#result-body > :last-child');
-      if (last) below = Math.max(below, last.getBoundingClientRect().bottom - r.bottom);
-    }
-    var pad = parseFloat(getComputedStyle(pane).paddingBottom) || 0;
-    var room = pane.clientHeight - (r.top - p.top + pane.scrollTop) - below - pad - 2;
-    scroller.style.maxHeight = Math.max(160, Math.floor(room)) + 'px';
-    fitted.push(scroller);
   }
   window.addEventListener('resize', fitSoon);
   function choose(name) {
@@ -212,6 +268,9 @@
       moreObs.observe(more, { childList: true, subtree: true, attributes: true, attributeFilter: ['open', 'hidden'] });
       bodyObs = new MutationObserver(function () { seat(); fitSoon(); });
       bodyObs.observe(body, { childList: true });
+      // (deeper: a fold or the report opened, a view's content drawn; and any change of size)
+      new MutationObserver(fitSoon).observe(results, { childList: true, subtree: true, attributes: true, attributeFilter: ['open', 'hidden'] });
+      if (window.ResizeObserver) { var ro = new ResizeObserver(fitSoon); ro.observe(results); ro.observe(body); ro.observe(more); }
       // single <-> A–B: the first tab's name, the side switch
       new MutationObserver(function () { paintStrip(false); }).observe(document.body, { attributes: true, attributeFilter: ['class', 'data-ab-side'] });
     }
@@ -262,9 +321,34 @@
     });
   }
 
+  // From 1200 × 700 the page does not scroll (dense.css): the limitations ("limitations" in the top bar) are a popover
+  function bindAbout() {
+    var about = document.getElementById('about');
+    var link = document.querySelector('.top nav a[href="#about"]');
+    if (!about || !link) return;
+    link.setAttribute('aria-controls', 'about');
+    link.setAttribute('aria-expanded', 'false');
+    var show = function (on) {
+      root.classList.toggle('about-open', on);
+      link.setAttribute('aria-expanded', on ? 'true' : 'false');
+    };
+    link.addEventListener('click', function (e) {
+      if (!still || !still.matches) return; // (the page scrolls: the link goes there)
+      e.preventDefault();
+      show(!root.classList.contains('about-open'));
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && root.classList.contains('about-open')) { show(false); link.focus(); }
+    });
+    document.addEventListener('pointerdown', function (e) {
+      if (root.classList.contains('about-open') && !about.contains(e.target) && e.target !== link) show(false);
+    }, true);
+  }
+
   function bind() {
     place();
     bindFold();
+    bindAbout();
     // a view points at a row of the table (rowjump.js): the table tab
     document.addEventListener('wuica:show-table', function () { if (opened[0]) choose(null); });
   }
