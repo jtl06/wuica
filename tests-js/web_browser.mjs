@@ -6,7 +6,7 @@
 // It copies web/dist to a temporary directory and serves the copy itself, because it also stops the server
 // (the page must keep working offline) and swaps in a second "deploy" (the service worker must take it over).
 // Skips (exit 0) if Chrome is not found. Uses a fresh browser profile in the temporary directory.
-import { testConditions } from './cdp.mjs';
+import { testConditions, readSettled } from './cdp.mjs';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -98,15 +98,18 @@ class Page {
   async reload() { await this.cmd('Page.reload'); await sleep(150); await this.waitFor(`document.readyState === 'complete'`, 'reload'); }
   async waitFor(cond, what, ms = 20000) {
     const t0 = Date.now();
+    let last = null;
     for (;;) {
       let v = false;
-      try { v = await this.eval(`return !!(${cond});`); } catch { /* navigating */ }
+      try { v = await this.eval(`return !!(${cond});`); } catch (e) { last = e; /* navigating (cdp.mjs readSettled) */ }
       if (v) return true;
-      if (Date.now() - t0 > ms) { check(false, `timeout waiting for ${what}`, cond); return false; }
+      if (Date.now() - t0 > ms) { check(false, `timeout waiting for ${what}`, `${cond}${last ? ` (last failure: ${last.message})` : ''}`); return false; }
       await sleep(100);
     }
   }
-  ready() { return this.waitFor(`!document.getElementById('run').disabled || document.querySelector('.error-box')`, 'the page to be ready'); }
+  // a read that survives the page reloading itself meanwhile (cdp.mjs readSettled)
+  read(expression, opts) { return readSettled((x) => this.eval(x), expression, opts); }
+  ready() { return this.waitFor(`document.getElementById('run')?.disabled === false || document.querySelector('.error-box')`, 'the page to be ready'); }
   take() { const p = this.problems; this.problems = []; return p; }
 }
 
@@ -602,19 +605,21 @@ try {
     await page.ready();
     // (the page's own build, app.js PAGE_BUILD; B already only if B's worker took over while it started and it reloaded
     // itself, marked: web_sw_update_browser.mjs)
-    const first = await page.eval(`${HELPERS} return $('build-id').textContent;`);
-    const firstMark = await page.eval(`return sessionStorage.getItem('wuica-update-reload');`);
+    // (each read in a loaded document that has the elements, again if the page replaced it meanwhile: it reloads itself)
+    const UPD = `document.getElementById('run')?.disabled === false && document.getElementById('update-note') && document.getElementById('build-id')`; // (started: the footer has its build)
+    const [first, firstMark] = await page.read(`${HELPERS} return [$('build-id').textContent, sessionStorage.getItem('wuica-update-reload')];`, { ready: UPD });
     // The page shows the note, then reloads itself once it is idle (app.js updated(): at most once per build, marked in
     // session storage before the reload). Wait for that state, not for the note: under load it can be gone again
     // before a look at it (the new worker first caches the whole new build).
-    await page.waitFor(`!document.getElementById('update-note').hidden || sessionStorage.getItem('wuica-update-reload') === ${JSON.stringify(versionB)}`, 'the update note (or the reload after it)', 120000);
+    await page.waitFor(`document.getElementById('update-note')?.hidden === false || sessionStorage.getItem('wuica-update-reload') === ${JSON.stringify(versionB)}`, 'the update note (or the reload after it)', 120000);
     await page.waitFor(`(await caches.keys()).join() === ${JSON.stringify(`wuica-${versionB}`)}`, 'the new build\'s cache, alone', 60000);
-    const upd = await page.eval(`${HELPERS} return { keys: await caches.keys(), note: $('update-note').hidden ? null : $('update-note').innerText, build: $('build-id').textContent, mark: sessionStorage.getItem('wuica-update-reload') };`);
+    const upd = await page.read(`${HELPERS} return { keys: await caches.keys(), note: $('update-note').hidden ? null : $('update-note').innerText, build: $('build-id').textContent, mark: sessionStorage.getItem('wuica-update-reload') };`, { ready: UPD });
     check(first === manifest.version || (first === versionB && firstMark === versionB), 'deploy: the open page is still the cached build (or reloaded itself into the new one already)', JSON.stringify([first, firstMark]));
     check(JSON.stringify(upd.keys) === JSON.stringify([`wuica-${versionB}`]) && (/new version/.test(upd.note ?? '') || upd.mark === versionB),
       'deploy: the new worker replaces the cache and the page says so (or, idle, reloads itself)', JSON.stringify(upd));
     // The page marked its own reload (session storage): then it must come back as the new build by itself (no reload by
     // hand that would hide a page that did nothing). Otherwise the note is shown: a reload by hand gives the new build.
+    console.log(`  deploy: the page ${upd.mark === versionB ? 'reloaded itself' : 'showed the note'} (first look: ${first === versionB ? 'already the new build' : 'the cached build'})`);
     if (upd.mark === versionB) {
       check(await page.waitFor(`document.readyState === 'complete' && document.getElementById('build-id')?.textContent === ${JSON.stringify(versionB)}`, 'the page\'s own reload into the new build', 60000),
         'deploy: the page reloaded itself into the new build');
@@ -622,7 +627,7 @@ try {
       await page.reload();
     }
     await page.ready();
-    check(await page.eval(`return document.getElementById('build-id').textContent;`) === versionB, 'deploy: after a reload the page is the new build');
+    check(await page.read(`return document.getElementById('build-id').textContent;`, { ready: UPD }) === versionB, 'deploy: after a reload the page is the new build');
     const p3 = page.take();
     check(p3.length === 0, 'deploy: no console errors', p3.join('\n'));
     await page.cmd('Page.close');

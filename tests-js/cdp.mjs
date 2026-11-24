@@ -32,11 +32,14 @@ export const LONG_TASK_MS = ON_CI ? 400 : 200;
 //   WUICA_TEST_FONT=monospace     every text in that font instead of the page's own (as when it is not loaded; the checks
 //                                 of the font itself then accept it)
 //   WUICA_TEST_SCROLLBARS=1       scrollbars that take room, 15 px (Linux; macOS draws them over the page)
+//   WUICA_TEST_CPU_THROTTLE=N     the page's CPU N times slower (DevTools' throttling: a slow runner)
 // (a constructed style sheet: the page's CSP allows no inline style). cmd: the page's DevTools command function.
 export async function testConditions(cmd) {
   const rules = [];
   if (process.env.WUICA_TEST_FONT) rules.push(`html, body, button, input, select, textarea { font-family: ${process.env.WUICA_TEST_FONT} !important; }`);
   if (process.env.WUICA_TEST_SCROLLBARS) rules.push('::-webkit-scrollbar { width: 15px; height: 15px; background: #808080; }');
+  const rate = Number(process.env.WUICA_TEST_CPU_THROTTLE);
+  if (rate > 1) await cmd('Emulation.setCPUThrottlingRate', { rate });
   if (!rules.length) return;
   await cmd('Page.addScriptToEvaluateOnNewDocument', { source: `{ const s = new CSSStyleSheet(); s.replaceSync(${JSON.stringify(rules.join('\n'))}); document.adoptedStyleSheets = [...document.adoptedStyleSheets, s]; }` });
 }
@@ -111,6 +114,8 @@ export class Browser {
         if (msg.error) p.reject(new Error(`${p.method}: ${msg.error.message}`)); else p.resolve(msg.result);
       } else for (const h of b.#handlers) h(msg);
     };
+    // (a command whose answer never comes because Chrome went away fails instead of waiting for ever)
+    b.#ws.onclose = () => { for (const p of b.#pending.values()) p.reject(new Error(`${p.method}: the connection to Chrome closed`)); b.#pending.clear(); };
     return b;
   }
   send(method, params = {}, sessionId) {
@@ -154,12 +159,41 @@ export async function launch(chrome, { extraArgs = [] } = {}) {
     browser,
     async close() {
       const exit = proc.exitCode !== null || proc.signalCode !== null ? Promise.resolve() : new Promise((r) => proc.once('exit', r));
-      try { await browser.send('Browser.close'); } catch { /* gone */ }
+      try { await Promise.race([browser.send('Browser.close'), sleep(3000)]); } catch { /* gone */ }
       browser.close();
       await Promise.race([exit, sleep(3000)]);
       await stopChrome(proc, [profile]);
     },
   };
+}
+
+// A page that reloads itself (a new deploy's worker: app.js updated()) is, for a moment, a document being replaced: an
+// evaluation then fails with the context destroyed, or runs in the new document before its elements exist (null). A
+// wait treats any failure as "not yet" (Page.waitFor, and the suites' own waits): its condition must still be written to
+// return false rather than throw on a missing element (?.), so that another clause can hold. A read goes through
+// readSettled: it waits for a loaded document in which `ready` holds, reads, and reads again only if the document was
+// replaced meanwhile (another performance.timeOrigin, or the context was destroyed); a failure in a document that stayed
+// is the page's or the test's error and is thrown. evaluate(expression) -> value: the suite's own evaluation.
+const NAVIGATING = /Execution context was destroyed|Cannot find context with specified id|Inspected target navigated or closed|Cannot find default execution context/;
+export async function readSettled(evaluate, expression, { ready = 'true', ms = 60000 } = {}) {
+  const t0 = Date.now();
+  let last = null;
+  for (;;) {
+    let doc = null;
+    try { doc = await evaluate(`return document.readyState === 'complete' && !!(${ready}) ? performance.timeOrigin : null;`); } catch (e) { last = e; }
+    if (doc !== null) {
+      try {
+        return await evaluate(expression);
+      } catch (e) {
+        last = e;
+        let now = null;
+        try { now = await evaluate('return performance.timeOrigin;'); } catch { /* navigating */ }
+        if (now === doc && !NAVIGATING.test(String(e?.message))) throw e; // the same document: not a navigation
+      }
+    }
+    if (Date.now() - t0 > ms) throw new Error(`no loaded document${ready === 'true' ? '' : ` with ${ready}`} within ${ms} ms${last ? ` (last: ${last.message})` : ''}`);
+    await sleep(100);
+  }
 }
 
 export class Page {
@@ -204,15 +238,18 @@ export class Page {
   async reload() { await this.cmd('Page.reload'); await sleep(150); await this.waitFor(`document.readyState === 'complete'`, 'reload'); }
   async waitFor(cond, what, ms = 30000) {
     const t0 = Date.now();
+    let last = null;
     for (;;) {
       let v = false;
-      try { v = await this.eval(`return !!(${cond});`, { timeout: 10000 }); } catch { /* navigating */ }
+      try { v = await this.eval(`return !!(${cond});`, { timeout: 10000 }); } catch (e) { last = e; /* navigating (readSettled) */ }
       if (v) return true;
-      if (Date.now() - t0 > ms) throw new Error(`timeout waiting for ${what}: ${cond}`);
+      if (Date.now() - t0 > ms) throw new Error(`timeout waiting for ${what}: ${cond}${last ? ` (last failure: ${last.message})` : ''}`);
       await sleep(100);
     }
   }
-  ready() { return this.waitFor(`!document.getElementById('run').disabled || document.querySelector('.error-box')`, 'the page to be ready', 60000); }
+  /** a read that survives the page replacing its document meanwhile (readSettled) */
+  read(expression, opts) { return readSettled((x) => this.eval(x, { timeout: 10000 }), expression, opts); }
+  ready() { return this.waitFor(`document.getElementById('run')?.disabled === false || document.querySelector('.error-box')`, 'the page to be ready', 60000); }
   /** a key press with the real input pipeline (focus, default actions) */
   async key(key, { code = key, keyCode = 0, modifiers = 0, text } = {}) {
     const t = text ?? (key.length === 1 ? key : undefined);

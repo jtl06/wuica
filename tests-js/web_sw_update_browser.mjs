@@ -61,14 +61,22 @@ try {
     for (let t = 0; t < 240; t++) {
       await sleep(250);
       try {
-        s = await y.eval(`return { html: document.querySelector('meta[name="wuica-build"]')?.content ?? null, build: document.getElementById('build-id')?.textContent ?? null,
-          note: !document.getElementById('update-note').hidden, mark: sessionStorage.getItem('wuica-update-reload'), ready: !document.getElementById('run').disabled };`, { timeout: 5000 });
+        s = await y.read(`return { html: document.querySelector('meta[name="wuica-build"]')?.content ?? null, build: document.getElementById('build-id').textContent,
+          note: !document.getElementById('update-note').hidden, mark: sessionStorage.getItem('wuica-update-reload'), ready: !document.getElementById('run').disabled };`,
+        { ready: `document.getElementById('build-id') && document.getElementById('update-note') && document.getElementById('run')`, ms: 5000 });
       } catch { continue; }
       seen.add(`${name(s.html)}${s.note ? ' note' : ''}${s.mark ? ' mark' : ''}`);
       if (s.note || (s.mark === vB && s.html === vB && s.ready)) break;
     }
     check(s && (s.note || (s.mark === vB && s.html === vB && s.build === vB)), `round ${round}: a page whose start a new deploy's worker took over reloads into the new build (or says so)`, JSON.stringify({ last: s && { ...s, html: name(s.html), build: name(s.build) }, seen: [...seen] }));
     check(seen.has('A') || seen.has('A mark') || seen.has('A note'), `round ${round}: (the page started as the old build: the race happened)`, JSON.stringify([...seen]));
+    // a read while the page replaces its document (as during its own reload): the new document's values, not a failure
+    if (round === 1) {
+      await y.eval(`setTimeout(() => location.reload(), 0); return 1;`);
+      const r = await y.read(`return [document.getElementById('build-id').textContent, document.getElementById('update-note').hidden];`,
+        { ready: `document.getElementById('run')?.disabled === false && document.getElementById('update-note') && document.getElementById('build-id')`, ms: 60000 }).catch((e) => e.message);
+      check(Array.isArray(r) && r[0] === vB, 'a read during a reload waits for the new document (cdp.mjs readSettled)', JSON.stringify(r));
+    }
     await browser.send('Target.disposeBrowserContext', { browserContextId: ctx });
   }
 } catch (e) {

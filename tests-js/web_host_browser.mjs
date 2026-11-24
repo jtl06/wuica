@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { findChrome } from './chrome.mjs';
 import { hostHandler, compressedByHost, transferSize } from './static-host.mjs';
 import { BUDGET, SLACK } from './budgets.mjs';
-import { stopChrome } from './cdp.mjs';
+import { stopChrome, readSettled } from './cdp.mjs';
 import { DEFAULT_STATE, encodeState, decodeState } from '../web/js/url-state.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -212,10 +212,12 @@ try {
   await works('a new visit after /index.html');
 
   // ---- deploys
-  const shown = () => evaluate(`return { build: document.getElementById('build-id').textContent, hash: location.hash, note: !document.getElementById('update-note').hidden,
-    text: document.getElementById('code').value, controller: navigator.serviceWorker.controller?.scriptURL ?? null };`);
+  // (in a loaded document that has the elements; read again if the page replaced it meanwhile: it reloads itself)
+  const shown = () => readSettled(evaluate, `return { build: document.getElementById('build-id').textContent, hash: location.hash, note: !document.getElementById('update-note').hidden,
+    text: document.getElementById('code').value, controller: navigator.serviceWorker.controller?.scriptURL ?? null };`,
+  { ready: `document.getElementById('run')?.disabled === false && document.getElementById('update-note') && document.getElementById('build-id') && document.getElementById('code')` }); // (started: the footer has its build)
   const settled = async (version, what) => {
-    const ok = await waitFor(`document.getElementById('build-id').textContent === ${JSON.stringify(version)} && document.readyState === 'complete'`, 60000);
+    const ok = await waitFor(`document.getElementById('build-id')?.textContent === ${JSON.stringify(version)} && document.readyState === 'complete'`, 60000);
     check(ok, `${what}: the page is the new build`, JSON.stringify(ok ? null : await shown().catch((e) => e.message)));
     return ok;
   };
@@ -272,7 +274,7 @@ try {
   root = D.dir;
   n0 = navigations;
   await evaluate(`navigator.serviceWorker.getRegistration().then((r) => r.update()); return true;`);
-  const noted = await waitFor(`!document.getElementById('update-note').hidden`, 30000);
+  const noted = await waitFor(`document.getElementById('update-note')?.hidden === false`, 30000);
   await sleep(3000);
   const r = await shown();
   check(noted && navigations === n0 && r.build === C.version && r.note, 'deploy D, already reloaded for D: the note, no reload', JSON.stringify({ noted, reloads: navigations - n0, r }));

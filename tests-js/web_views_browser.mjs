@@ -116,7 +116,7 @@ class Page {
       await sleep(100);
     }
   }
-  ready() { return this.waitFor(`!document.getElementById('run').disabled || document.querySelector('.error-box')`, 'the page to be ready'); }
+  ready() { return this.waitFor(`document.getElementById('run')?.disabled === false || document.querySelector('.error-box')`, 'the page to be ready'); }
   result() { return this.waitFor(`document.querySelector('.tp .value') && document.getElementById('results').dataset.run`, 'a result'); }
   take() { const p = this.problems; this.problems = []; return p; }
   async shot(name) {
