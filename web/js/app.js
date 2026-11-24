@@ -49,7 +49,7 @@ const POOL_SIZE = query.has('pool') ? Math.max(0, Math.min(16, Number.parseInt(q
 // whichever worker answers its later requests (manifest.json among them)
 const PAGE_BUILD = /^[0-9a-f]{12}$/.test(document.querySelector('meta[name="wuica-build"]')?.getAttribute('content') ?? '')
   ? document.querySelector('meta[name="wuica-build"]').getAttribute('content') : '';
-const VERSION = '0.1.9';                  // the page's version (footer); bump it with packages/wuica and server (tests-js/web_version.mjs)
+const VERSION = '0.1.10';                  // the page's version (footer); bump it with packages/wuica and server (tests-js/web_version.mjs)
 
 const el = {
   notice: $('notice'), code: /** @type {HTMLTextAreaElement} */ ($('code')), codeHint: $('code-hint'), messages: $('input-messages'),
