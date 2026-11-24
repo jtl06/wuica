@@ -28,7 +28,7 @@ else die "neither sha256sum nor shasum found"; fi
 
 rm -rf "$out"
 mkdir -p "$out/js" "$out/css" "$out/fonts" "$out/data/arch"
-cp "$here/index.html" "$here/404.html" "$here/favicon.svg" "$here/_headers" "$out/"
+cp "$here/index.html" "$here/404.html" "$here/favicon.svg" "$here/_headers" "$here/robots.txt" "$here/sitemap.xml" "$out/"
 cp "$here"/js/*.js "$out/js/"
 cp "$here"/css/*.css "$out/css/"
 cp "$here"/fonts/*.woff2 "$here/fonts/OFL.txt" "$out/fonts/"
@@ -45,8 +45,8 @@ mcafound=false
 if [ -f "$mca" ]; then cp "$mca" "$out/wuica_mca.wasm"; mcafound=true; fi
 
 cd "$out"
-# What the page can request (not _headers and 404.html, which are for the host), in a stable order.
-files="$(find . -type f ! -name _headers ! -name 404.html | sed 's|^\./||' | LC_ALL=C sort)"
+# What the page can request (not _headers and 404.html, which are for the host, nor robots.txt and sitemap.xml, which are for crawlers), in a stable order.
+files="$(find . -type f ! -name _headers ! -name 404.html ! -name robots.txt ! -name sitemap.xml | sed 's|^\./||' | LC_ALL=C sort)"
 version="$( { echo "$files" | while IFS= read -r f; do sha "$f"; done; sha "$here/sw.js"; } | sha | cut -c1-12)"
 
 {

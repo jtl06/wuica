@@ -1,7 +1,10 @@
-# Cloudflare Pages response headers.
+# Cloudflare Pages response headers. The page may be indexed; the tables and the license texts are not pages.
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
+/data/*
+  X-Robots-Tag: noindex
+/licenses/*
   X-Robots-Tag: noindex
 /sw.js
   Cache-Control: no-cache

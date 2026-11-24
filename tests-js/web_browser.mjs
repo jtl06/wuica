@@ -163,7 +163,7 @@ try {
     check(!requests.some((r) => r.includes('wuica_wasm')), 'mock mode: the analyzer is not fetched');
     const r = await page.eval(`${HELPERS}
       const out = {};
-      out.title = document.title; out.robots = document.querySelector('meta[name=robots]').content;
+      out.title = document.title; out.robots = document.querySelector('meta[name=robots]')?.content ?? null; out.canonical = document.querySelector('link[rel=canonical]')?.href ?? null;
       out.notice = $('notice').hidden ? '' : $('notice').innerText;
       out.groups = [[...document.querySelectorAll('#cpu-grid input')].map((b) => b.value).join(','), [...document.querySelectorAll('#cpu-grid label.proto input')].map((b) => b.value).join(','),
         document.querySelector('#cpu-grid input[value=ZEN3]').getAttribute('aria-label'), document.querySelector('#cpu-grid label.proto').title];
@@ -204,7 +204,7 @@ try {
       out.columns = [document.querySelectorAll('table.uops thead th').length, !!$('hide-empty')];
       await example('error'); out.error = document.querySelector('.error-box')?.textContent;
       return out;`);
-    check(r.robots === 'noindex' && /wuica/.test(r.title), 'mock: title and robots');
+    check(r.robots === null && r.canonical === 'https://wuica.jacen.li/' && /wuica/.test(r.title), 'mock: title, a canonical address and no robots restriction', JSON.stringify([r.robots, r.canonical]));
     check(/Mock mode/.test(r.notice), 'mock: the notice says so', r.notice);
     check(r.groups[0] === 'SNB,IVB,HSW,BDW,SKL,KBL,SKX,CFL,CLX,ICL,TGL,ZEN3,RKL,ICX,ADL-P' && r.groups[1] === 'ZEN3,ICX,ADL-P' && r.groups[2] === 'ZEN3 · AMD Zen 3 (2020) · prototype' && /prototype/.test(r.groups[3])
       && r.arch[0] === 'SKL' && r.arch[1] === 'SKL', 'mock: the CPU checkboxes (in order of release; prototypes marked; names in the accessible name); SKL checked', JSON.stringify([r.groups, r.arch]));
