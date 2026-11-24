@@ -13,6 +13,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { findChrome, launch, serve, copyDist, Page, HELPERS, checker, ROOT } from './cdp.mjs';
 import { fuzzCases, essence, firstDiff } from './fuzz-cases.mjs';
+import { cannotRun } from '../web/js/caveats.js';
 
 const args = process.argv.slice(2);
 const seedAt = args.indexOf('--seed');
@@ -101,8 +102,11 @@ try {
     }
     check(r.focus === c.arch && r.tp === Number(want.tp).toFixed(2), `${where}: the throughput`, JSON.stringify([want.tp, r.tp, r.focus]));
     check(r.report === want.text, `${where}: the uiCA report`, JSON.stringify(firstDiff(want.text, r.report)));
-    check(r.bn === want.bottlenecks.join(', ') || (want.bottlenecks.length === 0 && r.bn === ''), `${where}: the bottlenecks`, JSON.stringify([want.bottlenecks, r.bn]));
-    check(JSON.stringify(r.limits) === JSON.stringify(want.limits.map((l) => `${l.name}=${Number(l.tp).toFixed(2)}`)), `${where}: the limits`, JSON.stringify([want.limits, r.limits]));
+    // a result its CPU cannot run (caveats.js cannotRun: machine code here, so skipped positions or an instruction of an
+    // extension it lacks) shows only its reason: no bottleneck, no limits
+    const struck = !!cannotRun(want, { arch: c.arch });
+    check(struck ? r.bn === '' && /not a result/.test(r.caveat) : r.bn === want.bottlenecks.join(', ') || (want.bottlenecks.length === 0 && r.bn === ''), `${where}: the bottlenecks`, JSON.stringify([struck, want.bottlenecks, r.bn]));
+    check(JSON.stringify(r.limits) === JSON.stringify(struck ? [] : want.limits.map((l) => `${l.name}=${Number(l.tp).toFixed(2)}`)), `${where}: the limits`, JSON.stringify([struck, want.limits, r.limits]));
     check((want.decodeErrors > 0) === /undecodable position/.test(r.caveat), `${where}: the decode-error warning`, JSON.stringify([want.decodeErrors, r.caveat]));
   }
   console.log(`page: ${pcases.length} cases through the controls`);
