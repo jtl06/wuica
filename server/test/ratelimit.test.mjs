@@ -83,6 +83,16 @@ test('server: tokens in proportion to the analyses a request can start, the same
     assert.equal(await left(ip(21)), 29);
     assert.equal((await mcp(ip(22), 'compare_archs', { hex: HEX, archs: ['SKL'] })).status, 200);
     assert.equal(await left(ip(22)), 27);
+    // a batch costs the sum of its calls: 2 what_if align (13 each) 26; 3 of them (39) more than the burst (30): refused,
+    // nothing taken
+    const call = (id) => ({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'what_if', arguments: { hex: HEX, variants: ['align'] } } });
+    const batch = (headers, n) => post(s.base, '/mcp', Array.from({ length: n }, (_, k) => call(k + 1)), { ...headers, Accept: 'application/json, text/event-stream' });
+    assert.equal((await batch(ip(23), 2)).status, 200);
+    assert.equal(await left(ip(23)), 4);
+    const big = await batch(ip(24), 3);
+    assert.equal(big.status, 400);
+    assert.equal(big.json.error.message, 'this batch costs 39 tokens, more than the 30 a client can have at once: send its calls in smaller batches');
+    assert.equal(await left(ip(24)), 30);
   } finally { await s.close(); }
 });
 

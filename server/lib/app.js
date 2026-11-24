@@ -212,7 +212,13 @@ export async function createApp(options = {}) {
     ctx.rpc = msgs.map((m) => (typeof m?.method === 'string' ? m.method.slice(0, 40) : 'response')).join(',').slice(0, 200);
     const call = msgs.find((m) => m?.method === 'tools/call');
     if (call && typeof call.params?.name === 'string') ctx.tool = call.params.name.slice(0, 40);
-    rateLimit(req, ctx, Math.max(1, msgs.reduce((n, m) => n + toolCost(m), 0)));
+    // the batch costs the sum of its calls; more than the burst could never run (and is not cut to the burst)
+    const total = Math.max(1, msgs.reduce((n, m) => n + toolCost(m), 0));
+    if (cfg.rateBurst > 0 && total > cfg.rateBurst) {
+      ctx.code = 1;
+      return send(res, 400, { jsonrpc: '2.0', error: { code: -32600, message: `this batch costs ${total} tokens, more than the ${cfg.rateBurst} a client can have at once: send its calls in smaller batches` }, id: null });
+    }
+    rateLimit(req, ctx, total);
     watchGone(res, ctx);
     const server = createMcpServer(facade.forRequest(ctx));
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
