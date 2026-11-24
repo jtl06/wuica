@@ -2,7 +2,7 @@
 // every flag also takes "--" and "=value" spellings, and flag names are case-insensitive.
 
 import fs from 'node:fs';
-import { createWuica, normalizeHex, listLoops, whatIf, WHAT_IF_VARIANTS, CODES } from './index.js';
+import { createWuica, normalizeHex, listLoops, whatIf, WHAT_IF_VARIANTS, CODES, examples, findExample } from './index.js';
 
 export const VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
@@ -12,8 +12,14 @@ export const USAGE = `Usage: wuica [options] [FILE | - | HEX]
 Predicts the throughput of an x86-64 basic block with uiCA's pipeline model (this is wuica ${VERSION}, a WebAssembly
 port of uiCA). One input per run: assembly from FILE (gcc -S, clang -S, objdump -d output, or a hand-written loop),
 or from stdin if FILE is - or missing. A HEX argument that is not a file (e.g. 4801d84801c349ffcf75f5) is machine code.
+Built-in examples (no file needed): -examples lists them, -example saxpy analyzes one (every option applies),
+-example saxpy -show prints its assembly to save and edit.
 
 Input:
+  -examples              list the built-in examples (name, title, instructions)
+  -example NAME          analyze a built-in example as if its text were the input file (case-insensitive; with -att
+                         its AT&T text)
+  -show                  with -example: print its assembly (machine code for sha256) instead of analyzing it
   -att, -intel           the assembly's syntax (default: detected from the text: %registers mean AT&T)
   -hex                   the input is machine code as hex digits (spaces, commas, 0x prefixes allowed)
   -raw FILE              read the machine code from a binary file that contains only the code (not an object
@@ -70,9 +76,21 @@ Configure it in an MCP client as the command "wuica-mcp" (or "npx -y wuica-cli m
 
 class UsageError extends Error {}
 
+// What a bare run on a terminal prints (no input and stdin is a terminal: nothing to read), on stderr, exit 1.
+export const SHORT_USAGE = `wuica: no input. Usage: wuica [options] FILE   (assembly, objdump -d output; - or a pipe for stdin)
+  wuica loop.s -arch SKL,ZEN3      objdump -d f.o | wuica      wuica -examples (built-in loops)      wuica -h
+Try: wuica -example saxpy -arch SKL,ZEN3,ADL-P
+`;
+
+// A bare run on a terminal: no input argument, no example or binary file, and stdin a terminal (piped stdin is read).
+export function bareTerminalRun(o, stdinIsTTY) {
+  return o.input === null && o.example === undefined && o.raw === undefined && !o.examples && !!stdinIsTTY;
+}
+
 // flag (lower case, without dashes) -> [canonical, takes a value]
 const FLAGS = {
   h: ['help'], help: ['help'], v: ['version'], version: ['version'],
+  examples: ['examples'], example: ['example', 1], show: ['show'],
   arch: ['arch', 1], list: ['list'], hex: ['hex'], att: ['att'], intel: ['intel'], raw: ['raw', 1], data: ['data', 1],
   loop: ['loop', 1], loops: ['loops'], func: ['func', 1], per: ['per', 1], whatif: ['whatif'], threads: ['threads', 1],
   tponly: ['tpOnly'], json: ['json'], trace: ['trace'], details: ['details'],
@@ -155,6 +173,14 @@ function readFile(file) {
 // {request: {hex} | {source, syntax}, name: what the diagnostics call it, notes: [stderr lines]}
 async function readInput(o, io) {
   const notes = [];
+  if (o.example !== undefined) {
+    if (o.input !== null || o.raw !== undefined) throw new UsageError(`-example and an input (${o.input ?? `-raw ${o.raw}`}) cannot be combined`);
+    const e = exampleOf(o.example);
+    const syntax = o.syntax === 'att' ? 'att' : 'intel';
+    notes.push(`example ${e.name}: ${e.title}${e.intel ? `, ${syntax === 'att' ? 'AT&T' : 'Intel'} syntax` : ', machine code'} (-example ${e.name} -show prints it)`);
+    if (!e.intel) return { request: { hex: e.hex }, name: `example ${e.name}`, notes };
+    return { request: { source: e[syntax], syntax, ...(o.loop !== undefined ? { loop: o.loop } : {}), ...(o.func ? { func: o.func } : {}) }, name: `example ${e.name}`, notes };
+  }
   if (o.raw !== undefined) {
     if (o.input !== null) throw new UsageError(`-raw and an input (${o.input}) cannot be combined`);
     const b = readFile(o.raw);
@@ -180,6 +206,21 @@ async function readInput(o, io) {
   }
   if (o.hex) return { request: { hex: text }, name, notes };
   return { request: { source: text, syntax: o.syntax, ...(o.loop !== undefined ? { loop: o.loop } : {}), ...(o.func ? { func: o.func } : {}) }, name, notes };
+}
+
+// The built-in example called name, or a UsageError that lists the names.
+function exampleOf(name) {
+  const e = findExample(name);
+  if (!e) throw new UsageError(`unknown example: ${name} (known: ${examples().map((x) => x.name).join(', ')})`);
+  return e;
+}
+
+function printExamples(o, out) {
+  const list = examples();
+  if (o.json) { out.write(JSON.stringify(list.map(({ name, title, group, arch, instructions }) => ({ name, title, group, arch, instructions }))) + '\n'); return; }
+  const nw = Math.max(...list.map((e) => e.name.length)), tw = Math.max(...list.map((e) => e.title.length));
+  for (const e of list) out.write(`${e.name.padEnd(nw)}  ${e.title.padEnd(tw)}  ${String(e.instructions).padStart(4)} instructions\n`);
+  out.write('\nwuica -example NAME [options] analyzes one; -example NAME -show prints its assembly.\n');
 }
 
 const fmt = (x) => Number(x).toFixed(2);
@@ -314,6 +355,15 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
       } else out.write(`wuica ${VERSION}\n`);
       return 0;
     }
+    if (o.examples) { printExamples(o, out); return 0; }
+    if (o.show) {
+      if (o.example === undefined) throw new UsageError('-show: with -example NAME (prints that example\'s assembly)');
+      const e = exampleOf(o.example);
+      out.write(e.intel ? e[o.syntax === 'att' ? 'att' : 'intel'] : e.hex.replace(/(.{64})/g, '$1\n').replace(/\n?$/, '\n'));
+      if (!e.intel) err.write(`example ${e.name} is machine code: wuica -hex FILE reads it\n`);
+      return 0;
+    }
+    if (bareTerminalRun(o, io.stdin?.isTTY)) { err.write(SHORT_USAGE); return 1; }
     const w = await createWuica({ ...(o.data ? { dataDir: o.data } : {}), ...(o.threads ? { threads: o.threads } : {}) });
     if (o.list) { printList(w, o, out); return 0; }
     // the microarchitectures before the input (stdin is not read for a mistyped name)

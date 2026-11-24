@@ -8,7 +8,7 @@ function check(cond, what, detail = '') { count++; if (!cond) { failed++; consol
 const root = new URL('../', import.meta.url);
 const dir = new URL('packages/wuica/lib/web/', root);
 const files = fs.readdirSync(dir).filter((f) => f.endsWith('.js')).sort();
-check(['accum.js', 'asm-regions.js', 'assembler.js', 'caveats.js', 'loop-find.js'].every((f) => files.includes(f)), 'the copies are there', files.join());
+check(['accum.js', 'asm-regions.js', 'assembler.js', 'caveats.js', 'examples.js', 'loop-find.js', 'showcase.js'].every((f) => files.includes(f)), 'the copies are there', files.join());
 for (const f of files) {
   const page = fs.readFileSync(new URL(`web/js/${f}`, root), 'utf8');
   const pkg = fs.readFileSync(new URL(f, dir), 'utf8');

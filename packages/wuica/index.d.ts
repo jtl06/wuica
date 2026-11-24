@@ -46,6 +46,25 @@ export interface LoopListing {
 }
 /** The loops of assembly text, as `loop` and `func` choose among them (no assembling). */
 export function listLoops(source: string, options?: { func?: string | null }): LoopListing[] | { error: string };
+/** A built-in example: the web page's set (the CLI's -examples / -example NAME). */
+export interface Example {
+  /** "saxpy", "dot1", ... (findExample and the CLI take it in any case). */
+  name: string;
+  title: string;
+  group: 'basics' | 'classic' | 'showcase';
+  /** The CPU the page shows it on first. */
+  arch: string;
+  instructions: number;
+  /** Its machine code. */
+  hex: string;
+  /** Its assembly (a request's `source` with syntax 'intel' or 'att'); absent for the showcase (machine code only). */
+  intel?: string;
+  att?: string;
+}
+/** The built-in examples: basics, classic loops, the SHA-256 showcase. */
+export function examples(): readonly Example[];
+/** The example called `name` (case-insensitive), or null. */
+export function findExample(name: string): Example | null;
 /** 'att' or 'intel' from the text's signs, or null. */
 export function detectSyntax(source: string): 'att' | 'intel' | null;
 /** Per instruction details and the port set / issue slots of an analysis with options.details (the MCP summary's). */
