@@ -18,14 +18,15 @@ export const DIST = path.join(ROOT, 'web', 'dist');
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // The bound of the suites' "no long task" checks. Alone, the page's tasks stay well under 100 ms; scripts/check.sh runs
 // the browser suites beside the Rust tests and the fixtures, and a task then also waits for the CPU (101–115 ms seen):
-// the bound leaves room for that and still catches a task that doubles.
-export const LONG_TASK_MS = 200;
+// the bound leaves room for that and still catches a task that doubles. On CI it is doubled (see TIMING_SLACK below: a task
+// of 80 ms here took exactly 200 ms on a shared runner, on a commit that changed only documents).
 // On CI (GitHub Actions sets CI=true for every step) the browser runs on a shared 4-core runner: a wall-clock bound of a
 // frame or a few milliseconds is noise there (17.8 ms seen for a draw that takes 5 ms here). TIMING_SLACK scales such
 // bounds: 1 locally (strict), 3 on CI. FRAME_MS is the bound of the "under a frame" checks.
 export const ON_CI = !!process.env.CI && process.env.CI !== 'false';
 export const TIMING_SLACK = ON_CI ? 3 : 1;
 export const FRAME_MS = 16 * TIMING_SLACK;
+export const LONG_TASK_MS = ON_CI ? 400 : 200;
 
 // Scratch runs of the browser suites under other conditions than this machine's (layout checks that depend on widths):
 //   WUICA_TEST_FONT=monospace     every text in that font instead of the page's own (as when it is not loaded; the checks
