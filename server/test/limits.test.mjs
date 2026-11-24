@@ -107,8 +107,10 @@ async function mcpCall(name, args) {
 }
 
 test('what-if and diff: the server\'s caps, one deadline for all their analyses, nothing started for a client that has gone', async () => {
-  // a block that takes ~10 ms per analysis on SKL: 64 alignment offsets would take far longer than 300 ms
-  const SLOW = { hex: '48f7f1'.repeat(200), options: { minIterations: 200 } };
+  // a block that takes ~20 ms per analysis on SKL (an M-series Mac): 64 alignment offsets take far longer than 300 ms;
+  // one that takes ~1 s (the cap of minIterations: 1000)
+  const SLOW = { hex: '48f7f1'.repeat(20), options: { minIterations: 200 } };
+  const SLOWER = { hex: '48f7f1'.repeat(200), options: { minIterations: 1000 } };
   const s = await start({ timeoutMs: 300, workers: 1 });
   try {
     // the caps apply to every analysis of what-if and to both blocks of a diff (checked before either is analyzed)
@@ -117,15 +119,34 @@ test('what-if and diff: the server\'s caps, one deadline for all their analyses,
     const b = await post(s.base, '/api/diff/SKL', { a: { hex: 'zz' }, b: { hex: HEX, options: { minIterations: 5000 } } });
     assert.equal(b.status, 400);
     assert.match(b.json.error, /^B: `options.minIterations` is 5000/);
-    // one deadline: the request stops after about one job's budget, with the timeout failure
+    // one deadline: the request stops after about one job's budget; what-if returns what finished (the base, simpleFrontEnd)
+    // and marks the rest "not run: deadline"
     const t0 = performance.now();
-    const r = await post(s.base, '/api/what-if/SKL', { ...SLOW, variants: ['align'] });
+    const r = await post(s.base, '/api/what-if/SKL', { ...SLOW, variants: ['simpleFrontEnd', 'align'] });
     const ms = performance.now() - t0;
-    assert.equal(r.json.code, 3);
-    assert.equal(r.json.timedOut, true);
     assert.ok(ms < 1500, `${Math.round(ms)} ms for a budget of 300 ms`);
-    const d = await post(s.base, '/api/diff/SKL', { a: SLOW, b: { ...SLOW, options: { minIterations: 400 } } });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.code, 0, r.json.error);
+    assert.equal(r.json.notRun, 'deadline');
+    const [fe, al] = r.json.variants;
+    assert.equal(fe.id, 'simpleFrontEnd');
+    assert.ok(fe.tp > 0, JSON.stringify(fe));
+    assert.match(al.error, /^not run: deadline \(\d+ of the 64 offsets analyzed\)$/);
+    assert.deepEqual(r.json.stderr.map((l) => l.text), ['Warning: 1 of 2 variant(s) not run: deadline']);
+    const t = await post(s.base, '/api/what-if/SKL', { ...SLOW, variants: ['simpleFrontEnd', 'align'] }, { Accept: 'text/plain' });
+    assert.match(t.text, /^ {2}alignment 0-63 .* not run: deadline \(\d+ of the 64 offsets analyzed\)$/m);
+    assert.match(t.text, /^ {2}warning: 1 of 2 variant\(s\) not run: deadline$/m);
+    // the base alone over the budget: nothing finished, the failure
+    const f = await post(s.base, '/api/what-if/SKL', { ...SLOWER, variants: ['simpleFrontEnd'] });
+    assert.equal(f.json.code, 3);
+    assert.equal(f.json.error, 'the what-if took longer than 0.3 s, the limit of this server for all its analyses');
+    assert.equal(f.json.notRun, undefined);
+    // diff: a deadline is a failure, which says how far it got
+    const d = await post(s.base, '/api/diff/SKL', { a: SLOW, b: SLOWER });
     assert.equal(d.json.code, 3);
+    assert.equal(d.json.error, 'the diff took longer than 0.3 s, the limit of this server for all its analyses: A was analyzed, B was not');
+    const d2 = await post(s.base, '/api/diff/SKL', { a: SLOWER, b: SLOW });
+    assert.equal(d2.json.error, 'the diff took longer than 0.3 s, the limit of this server for all its analyses: neither block was analyzed');
     // a client that has gone: no job is started
     const ctx = { gone: true };
     const g = await s.app.facade.whatIf('SKL', { hex: HEX }, ctx);

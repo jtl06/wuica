@@ -178,17 +178,31 @@ export async function whatIf(analyze, arch, request, variants = VARIANTS, { asse
   if (options.alignmentOffset === undefined && request.alignmentOffset === undefined && base.loop?.alignmentOffset !== undefined) options.alignmentOffset = base.loop.alignmentOffset;
   const exps = experiments(base, rowsHex, options);
   const accError = exps.find((x) => x.id === 'acc')?.error;
+  // an analysis that says the request stops (notRun: a server's deadline for the whole request, a busy server): the
+  // variants without a result are "not run: <why>"; what finished stays
+  let halt = null;
+  const notRun = (exp) => ({ id: exp.id, label: labelOf(exp.id, options), error: `not run: ${halt}` });
   for (const exp of exps) {
     if (!want.has(exp.id)) continue;
+    if (halt) { out.push(notRun(exp)); continue; }
     if (exp.text && !exp.hex) {
       const a = assemble ? await assemble(exp.text) : null;
+      if (a?.notRun) { halt = a.notRun; out.push(notRun(exp)); continue; }
       if (a?.code === 0 && a.hex) exp.hex = a.hex;
       else { out.push(toolOutcome(base, { ...exp, error: a ? `the variant does not assemble: ${a.error}` : 'no assembler' }, null)); continue; }
     }
     const r = exp.estimate !== undefined ? null : await analyze(base.arch, exp.per > 1 ? { hex: exp.hex, options: exp.options } : { ...code, options: exp.options });
+    if (r?.notRun) { halt = r.notRun; out.push(notRun(exp)); continue; }
     out.push(toolOutcome(base, exp, r));
   }
-  if (want.has('align')) out.push(await alignment(analyze, base, code, options));
+  if (want.has('align')) {
+    if (halt) out.push(notRun({ id: 'align' }));
+    else {
+      const { notRun: why, ...a } = await alignment(analyze, base, code, options);
+      if (why) halt = why;
+      out.push(a);
+    }
+  }
   for (const id of want) {
     if (!out.some((x) => x.id === id)) {
       out.push({ id, label: labelOf(id, options), error: base.mode !== 'loop' && (id.startsWith('unroll') || id.startsWith('acc')) ? 'not a loop' : id === 'nochain' || id.startsWith('acc') ? (id.startsWith('acc') && accError) || 'no loop-carried chain' : 'not applicable' });
@@ -197,20 +211,24 @@ export async function whatIf(analyze, arch, request, variants = VARIANTS, { asse
   out.sort((a, b) => ALL_VARIANTS.indexOf(a.id) - ALL_VARIANTS.indexOf(b.id));
   const accs = out.filter((x) => x.id.startsWith('acc') && x.tp !== undefined);
   const best = accs.length ? bestAccumulators(new Map([[1, base.tp], ...accs.map((x) => /** @type {[number, number]} */ ([Number(x.id.slice(3)), x.tp]))])) : null;
-  // (the base's decode errors and warnings: they hold for the variants too)
+  // (the base's decode errors and warnings: they hold for the variants too; and how many variants were not run)
+  const skipped = halt ? out.filter((x) => /^not run: /.test(x.error ?? '')).length : 0;
+  const stderr = [...(base.stderr ?? []), ...(halt ? [{ text: `Warning: ${skipped} of ${out.length} variant(s) not run: ${halt}` }] : [])];
   return { code: 0, arch: base.arch, tp: base.tp, mode: base.mode, bottlenecks: base.bottlenecks, ...(base.loop ? { loop: base.loop } : {}),
-    ...(base.decodeErrors ? { decodeErrors: base.decodeErrors } : {}), ...(base.stderr?.length ? { stderr: base.stderr } : {}), unit: 'cycles per original iteration', variants: out,
-    ...(best ? { accumulators: { best: best.n, tp: round(best.tp) } } : {}) };
+    ...(base.decodeErrors ? { decodeErrors: base.decodeErrors } : {}), ...(stderr.length ? { stderr } : {}), ...(halt ? { notRun: halt } : {}),
+    unit: 'cycles per original iteration', variants: out, ...(best ? { accumulators: { best: best.n, tp: round(best.tp) } } : {}) };
 }
 
 // The variant align: the code at each alignment offset 0-63 (64 analyses with the other options as given). tp is the
 // median; alignment: {min, median, max, best, worst (the first offset with the minimum, the maximum), spread (max - min),
 // offset (the base's)}. A failed analysis at any offset: the variant's error.
+/** @returns {Promise<any>} */
 async function alignment(analyze, base, code, options) {
   const row = { id: 'align', label: labelOf('align') };
   const tps = [];
   for (let k = 0; k < 64; k++) {
     const r = await analyze(base.arch, { ...code, options: { ...options, alignmentOffset: k } });
+    if (r.notRun) return { ...row, notRun: r.notRun, error: `not run: ${r.notRun} (${k} of the 64 offsets analyzed)` };
     if (r.code !== 0) return { ...row, error: `alignment offset ${k}: ${r.error}` };
     if (r.mode !== base.mode) return { ...row, error: `alignment offset ${k}: analyzed ${r.mode === 'loop' ? 'as a loop' : 'unrolled'}` };
     tps.push(r.tp);
