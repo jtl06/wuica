@@ -43,4 +43,4 @@ function flash(tr) {
 }
 
 // (kept for the callers: a jump no longer waits for a fuller table)
-export function finishJump() {}
+export function finishJump(_root) {}

@@ -334,7 +334,7 @@ function copyTrace(viewers) {
   const cap = (v) => `${v.tag ? `${v.tag}: ` : ''}${v.rows.length} uops, cycles ${v.c0}–${v.c1}`;
   setCopy('trace', {
     what: 'the trace (the shown rows)',
-    md: () => live.map((v) => traceRange(TABLE_HEAD, tableRows(v.model, v.rows), cap(v))).join('\n'),
+    md: () => live.map((v) => traceRange([...TABLE_HEAD], tableRows(v.model, v.rows), cap(v))).join('\n'),
     csv: () => live.map((v) => csvOf(TABLE_HEAD, tableRows(v.model, v.rows))).join('\r\n'),
   });
 }
@@ -423,6 +423,7 @@ export function waitBreakdown(model, from = model.relevant.first, to = model.rel
     if (w.queue !== null) { a.nq++; a.queue += w.queue; }
     for (const p of ['delay', 'operands', 'port', 'exec', 'retire']) a[p] += w[p];
   }
+  /** @type {Map<any, any> & {from?: number, to?: number, max?: number}} */
   const out = new Map();
   let max = 0;
   for (const [k, a] of acc) {
@@ -596,6 +597,9 @@ class TimeSync {
 }
 
 export class Viewer {
+  /** @type {number} the first and last cycle shown (draw) */ c0;
+  /** @type {number} */ c1;
+  /** @type {{destroy(): void, range(): any, draw(ctx: CanvasRenderingContext2D): void, down(e: PointerEvent): boolean, key(e: KeyboardEvent): boolean} | undefined} a cycle range's hooks (trace-range-view.js) */ ext;
   // options: onState(); onHoverGroup(group | null), onPickGroup(group): a uop row under the pointer / clicked (or
   // Enter), as its instruction's group (rowGroups); for an A–B trace: sync (a TimeSync), fixed {from, to, origin}
   // (the rounds shown and the cycle that is 0 on the axis), tag ('A' / 'B')
@@ -1523,7 +1527,7 @@ export function traceGuard(side) {
 // The model of a run's trace (side: {response, request, archKey}; the response has the trace if it was made with it,
 // otherwise the run is analyzed again with includeTrace). Resolves to {model, buildMs}; throws on failure.
 // traceModel(request, opts): the model made by the analyzer's worker (engine-rpc.js), or null where there is no worker.
-export async function loadTrace(side, { analyze, config = () => null, traceModel = null }) {
+export async function loadTrace(side, { analyze, config = (_side) => null, traceModel = null }) {
   const r = side.response;
   let trace = r?.trace;
   let details = r?.details ?? null;
@@ -1563,7 +1567,7 @@ const gate = (b) => { b.dataset.gate = ''; return b; };
 //   trace under the pointer / clicked, as its instruction (rowGroups); onTrace(): the state of the trace changed
 // update(view) is called on every redraw of the result with the shown view ({response, request, archKey, ...});
 // it returns the element to put into the result (always the same element).
-export function createTracePanel({ analyze, config = () => null, traceModel = null, onToggle = null, onHoverGroup = null, onPickGroup = null, onTrace = null }) {
+export function createTracePanel({ analyze, config = (_view) => null, traceModel = null, onToggle = null, onHoverGroup = null, onPickGroup = null, onTrace = null }) {
   const body = el('div', { class: 'trace-body' });
   const summary = el('summary', { title: 'every uop of a few iterations, by cycle' }, 'cycle by cycle');
   const details = el('details', { class: 'trace-panel' }, summary, body);
@@ -1685,7 +1689,7 @@ export function createTracePanel({ analyze, config = () => null, traceModel = nu
 // A–B: the traces of both blocks stacked, on one time axis (same scale, cycle 0 = where the same iteration starts on
 // each side; abWindow), scrolled and zoomed together. A <details> like the single panel; both traces are loaded when it
 // is opened. view: the A–B view of ab.js ({a, b, scale}; each side {response, request, archKey}).
-export function createABTracePanel({ analyze, config = () => null, traceModel = null, onToggle = null }) {
+export function createABTracePanel({ analyze, config = (_side) => null, traceModel = null, onToggle = null }) {
   const body = el('div', { class: 'trace-body' });
   const summary = el('summary', { title: 'A and B on one time axis' }, 'cycle by cycle');
   const details = el('details', { class: 'trace-panel trace-ab' }, summary, body);

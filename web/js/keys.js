@@ -76,7 +76,7 @@ export function createKeys(env = {}) {
 
   const table = () => document.querySelector('table.uops.tl-linkable');
   // the rows by index (vrows.js: a long table draws the rows near the view); the selection is trace-link.js's
-  const vr = () => table()?.vr ?? null;
+  const vr = () => /** @type {(HTMLTableElement & {vr?: import('./vrows.js').VRows}) | null} */ (table())?.vr ?? null;
   const current = () => vr()?.data.sel ?? -1;
 
   // select a row as a click does, keep it in view and give it the focus (the arrows go on from there)
@@ -108,7 +108,7 @@ export function createKeys(env = {}) {
     if (row >= 0) select(row);
   }
   // the n-th tab of the result (workspace.js); its digit again: the first tab
-  const tabs = () => [...document.querySelectorAll('#result-body > .view-tabs > .view-tab')];
+  const tabs = () => [.../** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('#result-body > .view-tabs > .view-tab'))];
   function tab(n) {
     const all = tabs();
     const t = all[n - 1];
@@ -116,7 +116,7 @@ export function createKeys(env = {}) {
     (t.getAttribute('aria-selected') === 'true' && n > 1 ? all[0] : t).click();
   }
   function ab() {
-    const on = document.getElementById('cmp-ab'), off = document.getElementById('cmp-single');
+    const on = /** @type {HTMLInputElement | null} */ (document.getElementById('cmp-ab')), off = /** @type {HTMLInputElement | null} */ (document.getElementById('cmp-single'));
     if (!on || !off) return;
     (on.checked ? off : on).click();
   }
@@ -196,17 +196,17 @@ export function createKeys(env = {}) {
     const b = back;
     back = null;
     if (b?.isConnected) b.focus({ preventScroll: true });
-    else if (dialog?.contains(document.activeElement)) document.activeElement.blur();
+    else if (dialog?.contains(document.activeElement)) /** @type {HTMLElement} */ (document.activeElement).blur();
   }
 
   const ACTIONS = {
     help: show, close: hide,
     code: () => document.getElementById('code')?.focus(),
-    blur: () => document.activeElement?.blur?.(),
+    blur: () => /** @type {HTMLElement | null} */ (document.activeElement)?.blur?.(),
     next: () => step(1), prev: () => step(-1),
     hotNext: () => hot(1), hotPrev: () => hot(-1),
     ab,
-    copy: () => document.querySelector('#result-body .view-tabs .ws-copy')?.click(),
+    copy: () => /** @type {HTMLElement | null} */ (document.querySelector('#result-body .view-tabs .ws-copy'))?.click(),
   };
 
   document.addEventListener('keydown', (e) => {

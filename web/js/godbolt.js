@@ -130,6 +130,7 @@ export function lzDecompressFromBase64(input) {
     }
     return out;
   };
+  /** @type {(number | string)[]} */
   const dict = [0, 1, 2];
   let enlargeIn = 4, dictSize = 4, numBits = 3;
   let c;

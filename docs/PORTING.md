@@ -24,9 +24,11 @@ expression) runs some of them and the builds they need.
 - `typecheck` (in `full`): `scripts/typecheck.mjs`, `tsc --noEmit --checkJs` with the root `tsconfig.json` (strict, without
   `noImplicitAny`) over `packages/wuica/lib` and `bin`, `server/lib`, the page modules `packages/wuica/web-modules.json` lists,
   and `packages/wuica/typecheck/api.ts`, which uses the public API as the README does through `index.d.ts` and checks that
-  `lib/index.js` has every declared export and method, accepting the declared arguments. TypeScript and `@types/node` (20, the
-  package's oldest Node) are development dependencies of `packages/wuica`; nothing of them is shipped. The page's UI modules
-  are not checked yet.
+  `lib/index.js` has every declared export and method, accepting the declared arguments. A second project checks the page's
+  own modules (`web/js/*.js`, the UI with them) with the browser's types only and without `strictNullChecks` (the page looks
+  up the elements of `index.html` by id, which the checker would call possibly null at each of about 600 uses); errors in
+  the shared modules are left to the first project. TypeScript and `@types/node` (20, the package's oldest Node) are
+  development dependencies of `packages/wuica`; nothing of them is shipped.
 - `scripts/check.sh full --remote aethia`: the same on aethia, under a perfq lease (shared) taken from the Mac. The tree is
   copied to `~/wuica-check/` with rsync (`data/` and `fixtures/generated/` are linked to `~/wuica/`), with the WebAssembly
   module built on the Mac (aethia has no wasm32 target). aethia has no Chrome: the browser suites are skipped there.

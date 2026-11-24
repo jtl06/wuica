@@ -35,6 +35,10 @@ import { branchLabels, analyzedLines } from './branch-label.js'; // branch targe
 import { attachHighlight } from './asm-hl.js';     // the code box in colour
 
 const $ = (id) => document.getElementById(id);
+// the page's controls by their kind (index.html has them)
+const input = (id) => /** @type {HTMLInputElement} */ ($(id));
+const select = (id) => /** @type {HTMLSelectElement} */ ($(id));
+const button = (id) => /** @type {HTMLButtonElement} */ ($(id));
 const query = new URLSearchParams(location.search);
 const MOCK = query.get('mock') === '1';       // ?mock=1: do not load the analyzer, use the mock (for work on the page)
 const NO_SW = query.get('nosw') === '1';      // ?nosw=1: do not register the service worker
@@ -43,12 +47,12 @@ const POOL_SIZE = query.has('pool') ? Math.max(0, Math.min(16, Number.parseInt(q
 const VERSION = '0.1.9';                  // the page's version (footer); bump it with packages/wuica and server (tests-js/web_version.mjs)
 
 const el = {
-  notice: $('notice'), code: $('code'), codeHint: $('code-hint'), messages: $('input-messages'),
-  modeAsm: $('mode-asm'), modeHex: $('mode-hex'), syntax: $('syntax'), syntaxWrap: $('syntax-wrap'),
-  examples: $('examples'), cpus: $('cpus'), cpuGrid: $('cpu-grid'), cpuAll: $('cpu-all'), cpuClear: $('cpu-clear'), traceSlot: $('trace-slot'),
-  advanced: $('advanced'), advancedSummary: $('advanced-summary'),
-  align: $('opt-align'), sfe: $('opt-sfe'), nmi: $('opt-nmi'), nma: $('opt-nma'), iter: $('opt-iter'), cycles: $('opt-cycles'),
-  reset: $('opt-reset'), run: $('run'), copy: $('copy-link'), live: $('live'),
+  notice: $('notice'), code: /** @type {HTMLTextAreaElement} */ ($('code')), codeHint: $('code-hint'), messages: $('input-messages'),
+  modeAsm: input('mode-asm'), modeHex: input('mode-hex'), syntax: select('syntax'), syntaxWrap: $('syntax-wrap'),
+  examples: select('examples'), cpus: $('cpus'), cpuGrid: $('cpu-grid'), cpuAll: button('cpu-all'), cpuClear: button('cpu-clear'), traceSlot: $('trace-slot'),
+  advanced: /** @type {HTMLDetailsElement} */ ($('advanced')), advancedSummary: $('advanced-summary'),
+  align: input('opt-align'), sfe: input('opt-sfe'), nmi: input('opt-nmi'), nma: input('opt-nma'), iter: input('opt-iter'), cycles: input('opt-cycles'),
+  reset: button('opt-reset'), run: button('run'), copy: button('copy-link'), live: input('live'),
   status: $('status'), statusWrap: $('status-wrap'), statusBar: $('status-bar'),
   results: $('results'), body: $('result-body'), buildId: $('build-id'), updateNote: $('update-note'), reload: $('reload'),
   toolbar: document.querySelector('#input .toolbar'),
@@ -65,6 +69,7 @@ const PLACEHOLDERS = {
 
 // ---- state ---------------------------------------------------------------------------------------------------
 
+/** @type {import('./url-state.js').PageState} */
 const state = { ...DEFAULT_STATE };
 const buffers = { hex: '', asm: '' }; // the text of each input mode; the text area shows buffers[state.mode]
 const ui = { hideEmpty: true, reportOpen: false, listingOpen: { asm: null, hex: null } }; // listing: per input mode; null: closed
@@ -172,7 +177,7 @@ let bLoopChip = null;
 let textA = '', textB = '';
 let syntaxChosen = false; // the user picked the syntax (not the page from a pasted text)
 function newTextA() { state.loop = 'auto'; if (alignBy === 'manual') alignBy = null; textA = el.code.value; }
-function newTextB() { bLoop = 'auto'; textB = document.getElementById('code-b')?.value ?? ''; }
+function newTextB() { bLoop = 'auto'; textB = /** @type {HTMLTextAreaElement | null} */ (document.getElementById('code-b'))?.value ?? ''; }
 const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o),
   work: (v) => (v?.side === 'b' ? state.bWork : state.aWork), // elements per iteration of the shown result (its side in A–B)
   assemble: async (text) => { const a = await ensureAssembler(); return a ? a.assemble(text, 'intel') : null; }, cpus: () => checked, onToggle: (open) => { Object.assign(state, open); syncUrl(true); if ('bound' in open) cmpSlots.decorate(); }, getSel: () => state.sel, getSource: () => (ceSource && (!pastedSource || ceSource.hex === lastView?.hex) ? ceSource : pastedSource),
@@ -230,7 +235,7 @@ function paintStatus() {
 }
 function setIdle(text) { idleStatus = text; paintStatus(); }
 // Copying as text (copy-view.js): the tab row's control and the key c copy the shown tab; "copy all" the whole result
-createCopy({ copyText, flash: (t, o) => flash(t, o), current: () => document.querySelector('#result-body .view-tab[aria-selected="true"]')?.dataset.tab ?? null,
+createCopy({ copyText, flash: (t, o) => flash(t, o), current: () => /** @type {HTMLElement | null} */ (document.querySelector('#result-body .view-tab[aria-selected="true"]'))?.dataset.tab ?? null,
   stale: () => !!lastView && (runKey() !== lastRunKey || !!inputErrorNote) });
 
 function flash(text, { error = false, ms = 2500 } = {}) {
@@ -275,13 +280,13 @@ function writeControls() {
   el.codeHint.hidden = !HINTS[state.mode];
   codeColors.refresh();
   paintCpus();
-  el.align.value = state.alignmentOffset;
-  for (const r of document.querySelectorAll('input[name="init"]')) r.checked = r.value === state.initPolicy;
+  el.align.value = String(state.alignmentOffset);
+  for (const r of initRadios()) r.checked = r.value === state.initPolicy;
   el.sfe.checked = state.simpleFrontEnd;
   el.nmi.checked = state.noMicroFusion;
   el.nma.checked = state.noMacroFusion;
-  el.iter.value = state.minIterations;
-  el.cycles.value = state.minCycles;
+  el.iter.value = String(state.minIterations);
+  el.cycles.value = String(state.minCycles);
   panels.setOpen({ sweep: state.cmpSweep });
   insight.setOpen({ cost: state.cost, nop: state.costNop });
   tracePanel.setOpen(state.trace);
@@ -425,7 +430,8 @@ function focusArch(key, { rerun = true } = {}) {
   ensureTable(key).catch((e) => flash(`table not loaded: ${e?.message ?? e}`, { error: true, ms: 6000 }));
   changed({ rerun });
 }
-const cpuBoxes = () => [...el.cpuGrid.querySelectorAll('input[type=checkbox]')];
+const cpuBoxes = () => [.../** @type {NodeListOf<HTMLInputElement>} */ (el.cpuGrid.querySelectorAll('input[type=checkbox]'))];
+const initRadios = () => /** @type {NodeListOf<HTMLInputElement>} */ (document.querySelectorAll('input[name="init"]'));
 function paintCpus() {
   if (archItems.has(state.arch)) noteFocus();
   for (const b of cpuBoxes()) {
@@ -463,7 +469,7 @@ function setAlign(offset) {
   const v = clampInt(offset, LIMITS.alignmentOffset, DEFAULT_STATE.alignmentOffset);
   if (v === state.alignmentOffset) return;
   state.alignmentOffset = v;
-  el.align.value = v;
+  el.align.value = String(v);
   changed({ rerun: true });
 }
 let rerunTimer = 0;
@@ -714,7 +720,7 @@ function getPool() {
       return e;
     },
   });
-  window.__wuicaPool = pool; // for the tests (tests-js/web_pool_browser.mjs)
+  /** @type {any} */ (window).__wuicaPool = pool; // for the tests (tests-js/web_pool_browser.mjs)
   return pool;
 }
 
@@ -1100,7 +1106,7 @@ function sweepSide({ auto = true } = {}) {
 // the lines of side A's analyzed assembly (branch-label.js: its labels for the branch targets), or null (machine code)
 let srcA = null;
 document.addEventListener('wuica:ab-side', (e) => {
-  const s = e.detail === 'b' ? 'b' : 'a';
+  const s = /** @type {CustomEvent} */ (e).detail === 'b' ? 'b' : 'a';
   if (s === abSide) return;
   abSide = state.abSide = s;
   document.body.dataset.abSide = s;
@@ -1163,8 +1169,8 @@ function exampleIn(code, mode) {
 }
 
 async function switchMode(side, mode, other, apply) {
-  const box = side === 'B' ? $('code-b') : el.code;
-  const radio = side === 'B' ? $('b-mode-asm') : el.modeAsm;
+  const box = side === 'B' ? /** @type {HTMLTextAreaElement} */ ($('code-b')) : el.code;
+  const radio = side === 'B' ? input('b-mode-asm') : el.modeAsm;
   const get = () => (side === 'B' ? ab.getB() : { mode: state.mode, syntax: state.syntax, text: el.code.value });
   const before = get();
   const seq = ++switching[side];
@@ -1253,7 +1259,7 @@ function setupFeatures() {
   });
   ce.watch(el.code, 'A', el.messages);
   // side B's loop chip, and its pick back to the first loop when B's text is replaced
-  const bCode = document.getElementById('code-b');
+  const bCode = /** @type {HTMLTextAreaElement | null} */ (document.getElementById('code-b'));
   if (bCode) {
     bLoopChip = createLoopChip(document.getElementById('b-arch').closest('label'), (v) => { if (bLoop === v) return; bLoop = v; changed({ rerun: true }); }, 'loop-chip-b', () => [document.getElementById('b-messages')]); // (in B's row, else under its editor)
     textB = bCode.value;
@@ -1317,7 +1323,7 @@ async function updated() {
 async function prefetchTables() {
   if (prefetchStarted) return;
   prefetchStarted = true;
-  if (navigator.connection?.saveData) { setIdle('ready'); return; }
+  if (/** @type {any} */ (navigator).connection?.saveData) { setIdle('ready'); return; }
   let controlled = false;
   if (swUsable()) {
     await Promise.race([navigator.serviceWorker.ready.catch(() => null), sleep(8000)]);
@@ -1403,8 +1409,9 @@ function bind() {
   // phones: only the checked CPUs show (style.css); "more" shows them all
   $('cpu-more')?.addEventListener('click', (e) => {
     const open = el.cpus.classList.toggle('open');
-    e.currentTarget.textContent = open ? 'less' : 'more';
-    e.currentTarget.setAttribute('aria-expanded', String(open));
+    const b = /** @type {HTMLElement} */ (e.currentTarget);
+    b.textContent = open ? 'less' : 'more';
+    b.setAttribute('aria-expanded', String(open));
   });
   // the options popover: Escape or a click elsewhere closes it
   el.advanced.addEventListener('keydown', (e) => {
@@ -1413,7 +1420,7 @@ function bind() {
   // (a popover only: on phones the options are in the flow, and closing them would move what is being tapped)
   const popBody = el.advanced.querySelector('.pop-body');
   document.addEventListener('pointerdown', (e) => {
-    if (el.advanced.open && !el.advanced.contains(e.target) && getComputedStyle(popBody).position === 'absolute') el.advanced.open = false;
+    if (el.advanced.open && !el.advanced.contains(/** @type {Node} */ (e.target)) && getComputedStyle(popBody).position === 'absolute') el.advanced.open = false;
   });
   const int = (input, name) => input.addEventListener('change', () => {
     state[name] = clampInt(input.value, LIMITS[name], DEFAULT_STATE[name]);
@@ -1423,8 +1430,8 @@ function bind() {
   int(el.align, 'alignmentOffset');
   int(el.iter, 'minIterations');
   int(el.cycles, 'minCycles');
-  for (const r of document.querySelectorAll('input[name="init"]')) {
-    r.addEventListener('change', () => { if (r.checked) { state.initPolicy = r.value; changed({ rerun: true }); } });
+  for (const r of initRadios()) {
+    r.addEventListener('change', () => { if (r.checked) { state.initPolicy = /** @type {typeof state.initPolicy} */ (r.value); changed({ rerun: true }); } });
   }
   const flag = (input, name) => input.addEventListener('change', () => { state[name] = input.checked; changed({ rerun: true }); });
   flag(el.sfe, 'simpleFrontEnd');

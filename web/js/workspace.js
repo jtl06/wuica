@@ -21,7 +21,7 @@
     var out = [];
     if (!more) return out;
     for (var i = 0; i < more.children.length; i++) {
-      var row = more.children[i];
+      var row = /** @type {HTMLElement} */ (more.children[i]);
       if (row.hidden) continue;
       var label = row.querySelector(':scope > .label');
       var details = row.querySelector(':scope > .field > details');
@@ -91,7 +91,7 @@
     var stack = document.querySelector('#ab-main .ab-stack');
     if (!stack) return;
     var need = 0;
-    stack.querySelectorAll(':scope > .ab-col table.uops').forEach(function (t) {
+    /** @type {NodeListOf<HTMLTableElement>} */ (stack.querySelectorAll(':scope > .ab-col table.uops')).forEach(function (t) {
       var first = t.querySelector('thead th.first');
       if (!first) return;
       // (the columns at their own width, not stretched to the table's)
@@ -105,7 +105,7 @@
     stack.classList.toggle('ab-side', on);
   }
   function fit() {
-    var top = document.querySelector('.top');
+    var top = /** @type {HTMLElement | null} */ (document.querySelector('.top'));
     if (top) root.style.setProperty('--top-h', top.offsetHeight + 'px');
     var pane = document.getElementById('results');
     if (!pane || !wide || !wide.matches) { fitted.forEach(function (e) { e.style.removeProperty('max-height'); }); fitted = []; return; }
@@ -182,7 +182,7 @@
   // the table tab picked: the selected row in view (picked in the trace while the table was hidden), once it is fitted
   function revealSel() {
     requestAnimationFrame(function () {
-      var t = document.querySelector('#result-body table.uops');
+      var t = /** @type {(HTMLTableElement & {vr?: import('./vrows.js').VRows}) | null} */ (document.querySelector('#result-body table.uops'));
       var sel = t && t.vr ? t.vr.data.sel : -1; // (vrows.js: drawn on the way)
       if (sel >= 0 && t.getClientRects().length) t.vr.reveal(sel);
     });
@@ -251,7 +251,7 @@
       });
       strip.appendChild(g);
       // (focused once it is in the page: a button outside it takes no focus)
-      var f = g.querySelector('[data-tab="' + focusName + '"]');
+      var f = /** @type {HTMLElement | null} */ (g.querySelector('[data-tab="' + focusName + '"]'));
       if (f) f.focus({ preventScroll: true });
     }
     // the copy control of the shown tab, at the end of the row (copy-view.js does the copying)
@@ -344,7 +344,7 @@
     paintFold();
     document.addEventListener('keydown', function (e) {
       if (e.key !== '\\' || e.ctrlKey || e.metaKey || e.altKey) return;
-      var t = e.target;
+      var t = /** @type {HTMLElement} */ (e.target);
       if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
       e.preventDefault();
       fold(!folded);
@@ -354,7 +354,7 @@
   // From 1200 × 700 the page does not scroll (style.css): the limitations ("limitations" in the top bar) are a popover
   function bindAbout() {
     var about = document.getElementById('about');
-    var link = document.querySelector('.top nav a[href="#about"]');
+    var link = /** @type {HTMLElement | null} */ (document.querySelector('.top nav a[href="#about"]'));
     if (!about || !link) return;
     link.setAttribute('aria-controls', 'about');
     link.setAttribute('aria-expanded', 'false');
@@ -371,7 +371,7 @@
       if (e.key === 'Escape' && root.classList.contains('about-open')) { show(false); link.focus(); }
     });
     document.addEventListener('pointerdown', function (e) {
-      if (root.classList.contains('about-open') && !about.contains(e.target) && e.target !== link) show(false);
+      if (root.classList.contains('about-open') && !about.contains(/** @type {Node} */ (e.target)) && e.target !== link) show(false);
     }, true);
   }
 

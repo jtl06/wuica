@@ -3,7 +3,8 @@
   // server (server/lib), the page's DOM-free modules the package shares (packages/wuica/web-modules.json: added by
   // scripts/typecheck.mjs, which runs this), and packages/wuica/typecheck/api.ts, which uses the public API through
   // index.d.ts. TypeScript and @types/node (the oldest Node the package's engines allow) are development dependencies of
-  // packages/wuica; nothing of this is shipped. The page's UI modules are not checked yet.
+  // packages/wuica; nothing of this is shipped. The page's UI modules (web/js/*.js): a second project that
+  // scripts/typecheck.mjs writes (the browser's types only, without strictNullChecks).
   "compilerOptions": {
     "allowJs": true,
     "checkJs": true,

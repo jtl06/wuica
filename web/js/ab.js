@@ -388,9 +388,9 @@ export function createAB(api) {
   // the others, so the tables keep room (workspace.js fits them into the pane)
   const still = window.matchMedia?.('(min-width: 1200px) and (min-height: 700px)');
   document.addEventListener('click', (e) => {
-    const d = e.target instanceof Element ? e.target.closest('#ab-main details.ab-fold > summary')?.parentElement : null;
+    const d = e.target instanceof Element ? /** @type {HTMLDetailsElement | undefined} */ (e.target.closest('#ab-main details.ab-fold > summary')?.parentElement) : null;
     if (!still?.matches || !d || d.open) return;
-    for (const o of document.querySelectorAll('#ab-main details.ab-fold[open]')) if (o !== d) o.open = false;
+    for (const o of /** @type {NodeListOf<HTMLDetailsElement>} */ (document.querySelectorAll('#ab-main details.ab-fold[open]'))) if (o !== d) o.open = false;
   }, true);
 
   function fold(name, label, summary, ...content) {
@@ -684,7 +684,7 @@ export function createAB(api) {
     // the first tab of the result (workspace.js): its content says what it is
     const main = h('div', { class: 'row lead ws-main', id: 'ab-main', 'data-tab': 'diff' }, h('div', { class: 'label', text: 'uops' }), h('div', { class: 'field' }, ...parts));
     // the tab row (workspace.js) and the table per CPU stay in the page, and the focus with them (a tab, a row's button)
-    const keep = api.el.body.contains(document.activeElement) ? document.activeElement : null;
+    const keep = api.el.body.contains(document.activeElement) ? /** @type {HTMLElement} */ (document.activeElement) : null;
     const strip = api.el.body.querySelector(':scope > .view-tabs');
     api.el.body.replaceChildren(...[api.cpusBox, headline(view), strip, main].filter(Boolean));
     if (keep?.isConnected && document.activeElement !== keep) keep.focus({ preventScroll: true });

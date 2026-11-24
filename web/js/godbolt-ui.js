@@ -298,7 +298,7 @@ export function createCeImport(api) {
     const fn = result.listing.functions[s.sel.fn];
     const ext = extractRange(fn, s.sel.start, s.sel.end, result.listing);
     if (!ext.instructions) return null;
-    return { code: { mode: ext.mode, syntax: ext.syntax ?? 'intel', text: ext.text }, info: ext, result, fn };
+    return { code: { mode: ext.mode, syntax: /** @type {{syntax?: string}} */ (ext).syntax ?? 'intel', text: ext.text }, info: ext, result, fn };
   }
 
   function doImport(s) {

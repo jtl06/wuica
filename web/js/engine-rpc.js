@@ -24,6 +24,7 @@ export class CancelledError extends Error {
 // A large answer in parts: the long arrays of an answer (the details' rows of a long block, the uops of a trace's model)
 // go first, in slices, each a message of its own; the answer itself follows with them left empty and a note of where they
 // belong. Reading one message of tens of MB of objects took the page a tenth of a second at once (WorkerEngine joins them).
+/** @type {[string, string, number][]} */
 const PARTS = [['details', 'rows', 400], ['model', 'uops', 4000]];
 export function inParts(answer) {
   const v = answer?.ok ? answer.value : null;
@@ -75,6 +76,7 @@ export function createHandler() {
     memory: () => engine.memory(),
     warmUp: async ({ arch }) => { await engine.analyze(makeRequest(WARM_HEX, arch)); }, // the result is not used
   };
+  /** @type {Promise<unknown>} */
   let queue = Promise.resolve(); // one message at a time, in order
   return (msg) => {
     const answer = queue.then(async () => {
@@ -91,6 +93,7 @@ export function createHandler() {
 }
 
 export class WorkerEngine {
+  /** @type {Readonly<{cancel: boolean} & Record<string, unknown>>} what the engine can (create) */ capabilities;
   #spawn;
   #module;
   #worker = null;

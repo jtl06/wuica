@@ -2,6 +2,7 @@
 
 // Resolves to the bytes of `url`. onProgress(received, total): `total` is `size` (the size build.sh recorded;
 // Content-Length would be the compressed size) or 0 if unknown.
+/** @param {string} url @param {{size?: number, onProgress?: ((received: number, total: number) => void) | null, signal?: AbortSignal}} [opts] */
 export async function fetchBytes(url, { size = 0, onProgress = null, signal } = {}) {
   const res = await fetch(url, { signal });
   if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);

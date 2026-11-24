@@ -215,6 +215,7 @@ export function createTraceLink(env) {
   }
 
   // ---- decorate --------------------------------------------------------------------------------------------------------
+  /** @param {Element} target @param {any} v @param {{onUi?: (name: string, value: unknown) => void}} [opts] */
   function decorate(target, v, { onUi: f } = {}) {
     if (v !== view) linkedRow = -1; // a new run: no mark from the trace of the last one
     root = target;

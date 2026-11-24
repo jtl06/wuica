@@ -162,8 +162,8 @@ export class VRows {
   #pads() {
     if (!this.windowed) return;
     const rowH = this.rowH || 19;
-    this.top.firstChild.style.height = `${this.a * rowH}px`;
-    this.bottom.firstChild.style.height = `${(this.count - this.b) * rowH}px`;
+    /** @type {HTMLElement} */ (this.top.firstChild).style.height = `${this.a * rowH}px`;
+    /** @type {HTMLElement} */ (this.bottom.firstChild).style.height = `${(this.count - this.b) * rowH}px`;
     this.top.hidden = this.a === 0; this.bottom.hidden = this.b === this.count;
   }
 }

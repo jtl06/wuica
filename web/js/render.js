@@ -54,7 +54,7 @@ export async function copyText(text) {
     await navigator.clipboard.writeText(text);
     return true;
   } catch {
-    const active = document.activeElement;
+    const active = /** @type {HTMLElement | null} */ (document.activeElement);
     const t = h('textarea', { readonly: true, 'aria-hidden': 'true', tabindex: '-1' });
     t.value = text;
     t.style.position = 'fixed';

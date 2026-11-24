@@ -1,6 +1,16 @@
 // The state of the page in the URL fragment: input, mode, the checked CPUs, options, the open panels, the selected row and side B of an A–B comparison. The fragment, never the query string:
 // a fragment is not sent to the server. No DOM; btoa/atob exist in browsers and in Node.
 
+/**
+ * The page's state (app.js keeps one, the URL fragment holds it).
+ * @typedef {{mode: 'asm' | 'hex', syntax: 'intel' | 'att', arch: string, cpus: string, text: string, loop: 'auto' | 'whole' | number,
+ *   alignmentOffset: number, initPolicy: 'diff' | 'same' | 'stack', simpleFrontEnd: boolean, noMicroFusion: boolean,
+ *   noMacroFusion: boolean, minIterations: number, minCycles: number, cmpSweep: boolean, ab: boolean, bMode: 'asm' | 'hex',
+ *   bSyntax: 'intel' | 'att', bArch: string, bText: string, aWork: number, bWork: number, abSide: 'a' | 'b', cost: boolean,
+ *   costNop: boolean, trace: boolean, waits: boolean, sel: number, bound: boolean, whatif: boolean, codemap: boolean,
+ *   deps: boolean, srcmap: boolean, mca: boolean}} PageState
+ */
+/** @type {Readonly<PageState>} */
 export const DEFAULT_STATE = Object.freeze({
   mode: 'asm',            // 'asm' | 'hex' (a link without m= is hex: that was the default before)
   syntax: 'intel',        // 'intel' | 'att'
@@ -35,8 +45,10 @@ export const DEFAULT_STATE = Object.freeze({
   codemap: false,
   deps: false,
   srcmap: false,          // cost per source line of a Compiler Explorer import (srcmap.js)
+  mca: false,             // the llvm-mca view (mca.js)
 });
 
+/** @type {Readonly<Record<'alignmentOffset' | 'minIterations' | 'minCycles' | 'aWork' | 'bWork' | 'sel' | 'loop', [number, number]>>} */
 export const LIMITS = Object.freeze({
   alignmentOffset: [0, 63],
   minIterations: [1, 10000],
@@ -74,6 +86,7 @@ function fromBase64Url(s) {
   return new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
 }
 
+/** @template F @param {unknown} value @param {readonly [number, number]} range @param {F} fallback @returns {number | F} */
 export function clampInt(value, [lo, hi], fallback) {
   const n = typeof value === 'number' ? value : /^\d+$/.test(String(value).trim()) ? Number(value) : NaN;
   if (!Number.isInteger(n)) return fallback;
@@ -124,6 +137,7 @@ export function decodeState(fragment) {
     if (i > 0) q.set(part.slice(0, i), part.slice(i + 1));
   }
   if (q.get('v') !== '1') return null;
+  /** @type {PageState} */
   const s = { ...DEFAULT_STATE, mode: q.get('m') === 'asm' ? 'asm' : 'hex' };
   if (q.get('s') === 'att') s.syntax = 'att';
   if (q.has('a')) {

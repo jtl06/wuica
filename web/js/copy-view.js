@@ -36,7 +36,7 @@ export function createCopy(env) {
     return ok;
   }
   if (typeof document !== 'undefined') {
-    document.addEventListener('wuica:copy', (e) => { copy(e.detail?.tab ?? env.current(), e.detail?.format ?? 'md'); });
+    document.addEventListener('wuica:copy', (e) => { const d = /** @type {CustomEvent} */ (e).detail; copy(d?.tab ?? env.current(), d?.format ?? 'md'); });
   }
   return { copy, copyShown: (format = 'md') => copy(env.current(), format) };
 }
