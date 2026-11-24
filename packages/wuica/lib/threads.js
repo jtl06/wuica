@@ -74,15 +74,20 @@ export function threadsForWork(jobs, limit, cores = os.availableParallelism()) {
 }
 
 export class ThreadPool {
+  /** @type {any} */
   #workerData = null;
   #wasm; #uarch; #dataDir;
+  /** @type {Promise<WebAssembly.Module> | null} */
   #compiled = null;   // promise of the module with the threads' memory limit
   #limit;
+  /** @type {any[]} */
   #slots = [];        // {worker, ready, job, tables: Set}
   #warmed = false;
   #want;              // the threads the latest run() may start
+  /** @type {any[]} */
   #queue = [];        // {id, table, request, resolve}
   #nextId = 1;
+  /** @type {ReturnType<typeof setTimeout> | null} */
   #idleTimer = null;
   broken = false;
 
@@ -100,7 +105,7 @@ export class ThreadPool {
   // than `threads` (and `limit`) and jobs wait.
   async run(jobs, threads = this.#limit) {
     this.#want = Math.min(this.#limit, threads);
-    clearTimeout(this.#idleTimer);
+    clearTimeout(this.#idleTimer ?? undefined);
     this.#idleTimer = null;
     if (!this.#workerData) {
       const maxBytes = maxMemoryBytes(this.#limit);
@@ -173,6 +178,7 @@ export class ThreadPool {
 
   #spawn(job) {
     const worker = new Worker(WORKER, { workerData: this.#workerData, stdout: true, stderr: true });
+    /** @type {{worker: Worker, ready: boolean, job: any, tables: Set<string>}} */
     const slot = { worker, ready: false, job: null, tables: new Set() };
     this.#slots.push(slot);
     this.#start(slot, job);
@@ -222,7 +228,7 @@ export class ThreadPool {
 
   // Stops the threads; waiting and running jobs resolve to null. The next run() starts new ones.
   async close() {
-    clearTimeout(this.#idleTimer);
+    clearTimeout(this.#idleTimer ?? undefined);
     this.#idleTimer = null;
     const slots = this.#slots.splice(0);
     for (const j of this.#queue.splice(0)) j.resolve(null);

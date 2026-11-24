@@ -10,6 +10,7 @@ pub mod decoded;
 pub mod details;
 pub mod facile;
 mod fasthash;
+pub use fasthash::{LookupMap, LookupSet};
 pub mod instr_builder;
 pub mod jsoncmp;
 pub mod model;

@@ -21,6 +21,7 @@ export function versionInfo() {
   const server = readJson(fileURLToPath(new URL('../package.json', import.meta.url)));
   const pkgFile = fileURLToPath(import.meta.resolve('wuica/package.json'));
   const pkg = readJson(pkgFile);
+  /** @type {any} */
   let manifest = null;
   try { manifest = readJson(path.join(path.dirname(pkgFile), 'dist', 'manifest.json')); } catch { /* optional */ }
   const sha = (name) => manifest?.files?.[name]?.sha256 ?? null;

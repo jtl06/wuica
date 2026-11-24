@@ -150,6 +150,13 @@ export function toolOutcome(base, exp, r) {
 // variants; Intel syntax). Resolves to {code: 0, arch, tp, mode, bottlenecks, loop?, variants: [{id, label, tp, delta,
 // speedup, estimate?, bottlenecks?, renamed?, error?}], accumulators?: {best, tp}} or the base's failure.
 //   accumulators: the best number of accumulators (the smallest within 1% of the fastest, 1 = as it is) among those run.
+/**
+ * @param {(arch: string, request: any) => Promise<any>} analyze
+ * @param {string} arch
+ * @param {any} request
+ * @param {readonly string[] | null} [variants]
+ * @param {{assemble?: ((text: string) => Promise<any>) | null}} [tools]
+ */
 export async function whatIf(analyze, arch, request, variants = VARIANTS, { assemble = null } = {}) {
   const unknown = (variants ?? []).filter((v) => !VARIANTS.includes(v));
   if (unknown.length) return { code: 1, error: `unknown variant(s): ${unknown.join(', ')} (known: ${VARIANTS.join(', ')})`, stderr: [] };
@@ -183,7 +190,7 @@ export async function whatIf(analyze, arch, request, variants = VARIANTS, { asse
   }
   out.sort((a, b) => VARIANTS.indexOf(a.id) - VARIANTS.indexOf(b.id));
   const accs = out.filter((x) => x.id.startsWith('acc') && x.tp !== undefined);
-  const best = accs.length ? bestAccumulators(new Map([[1, base.tp], ...accs.map((x) => [Number(x.id.slice(3)), x.tp])])) : null;
+  const best = accs.length ? bestAccumulators(new Map([[1, base.tp], ...accs.map((x) => /** @type {[number, number]} */ ([Number(x.id.slice(3)), x.tp]))])) : null;
   return { code: 0, arch: base.arch, tp: base.tp, mode: base.mode, bottlenecks: base.bottlenecks, ...(base.loop ? { loop: base.loop } : {}), unit: 'cycles per original iteration', variants: out,
     ...(best ? { accumulators: { best: best.n, tp: round(best.tp) } } : {}) };
 }

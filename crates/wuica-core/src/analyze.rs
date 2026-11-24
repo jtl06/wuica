@@ -5,7 +5,7 @@ use crate::config::UArch;
 use crate::data::ArchData;
 use crate::decoded::DecodedInstr;
 use crate::facile::{self, InstrInstanceSummary, InstrSource, SimSummary, SimView, UopSummary};
-use crate::instr_builder::build_instructions;
+use crate::instr_builder::try_build_instructions;
 use crate::model::{InstrList, OpId, Operand};
 use crate::sim::{simulate, simulate_with_issue_log, InitPolicy, SimOptions, SimResult, UopSource};
 use serde::{Deserialize, Serialize};
@@ -331,6 +331,14 @@ pub fn strip_hyperlinks(s: &str) -> String {
 
 /// Runs an analysis of decoded instructions. `decode_errors` is passed through to the response. `data` must be the instruction
 /// table of the configuration (`uarch.configs[request.arch].name`).
+/// The work budget: a block with more uops per iteration ([`crate::instr_builder::expanded_uops`]) is refused before it is
+/// simulated. `wbinvd` alone has about 10^6 uops in the tables (the reference runs for hours, wuica for minutes or until the
+/// memory is exhausted); the largest block of the fixture corpus has 1,227, the SHA-256 showcase 3,289 (docs/DEVIATIONS.md).
+pub const MAX_UOPS_PER_ITERATION: usize = 250_000;
+
+/// The largest alignment offset (in magnitude) [`analyze`] accepts: 2^62 (docs/DEVIATIONS.md).
+pub const MAX_ALIGNMENT_OFFSET: u64 = 1 << 62;
+
 pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, uarch: &UArch, data: &ArchData) -> Result<Response, String> {
     let config = uarch.configs.get(&request.arch).ok_or_else(|| format!("unknown microarchitecture: {}", request.arch))?;
     let init_policy = match request.init_policy.as_str() {
@@ -339,6 +347,11 @@ pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, 
         "stack" => InitPolicy::Stack,
         other => return Err(format!("unknown initPolicy: {other}")),
     };
+    // Addresses are the alignment offset plus code offsets (i64; Python's ints are unbounded): an offset of more than 2^62
+    // in magnitude could wrap them (a block of 1 MiB run for 10^8 cycles stays below 2^35 bytes from it).
+    if request.alignment_offset.unsigned_abs() > MAX_ALIGNMENT_OFFSET {
+        return Err(format!("alignmentOffset {} is out of range (at most 2^62 in magnitude)", request.alignment_offset));
+    }
     if decoded.is_empty() {
         return Err("no instructions found".to_string());
     }
@@ -353,7 +366,8 @@ pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, 
     // The port of the reference keeps its failure modes: where the Python code raises an exception, the Rust code returns an
     // error or panics. A panic is turned into an error here (not in WebAssembly, where a panic aborts the call).
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Response, String> {
-        let instrs = build_instructions(decoded, config, uarch, data, request.alignment_offset, request.no_micro_fusion, request.no_macro_fusion);
+        let instrs = try_build_instructions(decoded, config, uarch, data, request.alignment_offset, request.no_micro_fusion, request.no_macro_fusion, MAX_UOPS_PER_ITERATION)
+            .map_err(|n| format!("the block has {n} uops per iteration, more than the {MAX_UOPS_PER_ITERATION} wuica simulates (a work budget: such a block runs for hours in the reference)"))?;
         let mut r = if request.details { simulate_with_issue_log(&instrs, config, uarch, &options) } else { simulate(&instrs, config, uarch, &options) }
             .map_err(|e| e.to_string())?;
         if request.details && !request.include_trace {

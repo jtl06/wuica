@@ -1,6 +1,6 @@
 //! wuica: machine code in, analysis out. Combines the decoder (`wuica-xed`) and the core (`wuica-core`).
 
-use std::collections::HashMap;
+use wuica_core::LookupMap;
 pub use wuica_core::analyze::{Request, Response};
 pub use wuica_core::config::UArch;
 pub use wuica_core::data::ArchData;
@@ -9,7 +9,7 @@ pub use wuica_core::data::ArchData;
 #[derive(Default)]
 pub struct Engine {
     uarch: Option<UArch>,
-    tables: HashMap<String, ArchData>,
+    tables: LookupMap<String, ArchData>,
 }
 
 impl Engine {

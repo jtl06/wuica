@@ -1,6 +1,7 @@
 //! `Scheduler`: port assignment, dispatch, and the tracking of when uops become ready and finish.
 
 use super::prep::{inf, pf, PortList, Prep, NONE};
+use super::idx;
 use super::{crash, opt, Sim, SimError, NO_PORT};
 use crate::config::UArchConfig;
 use std::cmp::Reverse;
@@ -142,7 +143,7 @@ impl CycleBuckets {
             n
         } else {
             self.nodes.push((u, NONE));
-            self.nodes.len() as u32 - 1
+            idx(self.nodes.len()) - 1
         };
         let mask = self.slots.len() as i64 - 1;
         let slot = &mut self.slots[(cycle & mask) as usize];
@@ -879,7 +880,7 @@ impl<'a> Sim<'a> {
                     if s.dep_lists.len() <= producer as usize {
                         s.dep_lists.resize(self.uops.len().max(producer as usize + 1), (NONE, NONE));
                     }
-                    let node = s.dep_nodes.len() as u32;
+                    let node = idx(s.dep_nodes.len());
                     s.dep_nodes.push((u, NONE));
                     let list = &mut s.dep_lists[producer as usize];
                     if list.0 == NONE {

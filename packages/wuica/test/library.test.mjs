@@ -64,6 +64,18 @@ for (const arch of ['SKL', 'ZEN3', 'ADL-P']) {
   });
 }
 
+test('the work budget: wbinvd (about 10^6 uops) fails at once with code 3; an alignment offset beyond 2^62 with code 1 or 3', async () => {
+  const t0 = performance.now();
+  const r = await w.analyze('SKL', { hex: '0f09' });
+  assert.equal(r.code, 3);
+  assert.match(r.error, /^the block has \d+ uops per iteration, more than the 250000 wuica simulates/);
+  assert.ok(performance.now() - t0 < 5000, `${Math.round(performance.now() - t0)} ms`);
+  const big = await w.analyze('SKL', { hex: HEX, options: { alignmentOffset: 2 ** 62 + 4096 } });
+  assert.notEqual(big.code, 0);
+  assert.match(big.error, /alignmentOffset .* out of range|not an integer/);
+  assert.equal((await w.analyze('SKL', { hex: HEX, options: { alignmentOffset: 2 ** 40 } })).tp, (await w.analyze('SKL', { hex: HEX })).tp);
+});
+
 test('SKL result in detail', async () => {
   const r = await w.analyze('SKL', { hex: HEX });
   assert.equal(r.tp, 2);

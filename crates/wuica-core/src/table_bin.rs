@@ -24,7 +24,7 @@
 use crate::data::{ArchData, AttrData, InstrEntry, LatData, LatEntry, LatKind, PerfData, PortData};
 use crate::fasthash::FxBuildHasher;
 use indexmap::IndexMap;
-use std::collections::HashMap;
+use crate::fasthash::LookupMap;
 
 pub const MAGIC: &[u8; 8] = b"WUICATBL";
 /// The format version: increase it with any change of the layout (or of the fields of the structs).
@@ -86,7 +86,7 @@ fn kind_code(k: Option<LatKind>) -> u64 {
 struct Writer {
     s: [Vec<u8>; 5],
     strings: Vec<String>,
-    index: HashMap<String, usize>,
+    index: LookupMap<String, usize>,
 }
 
 impl Writer {
@@ -163,7 +163,7 @@ impl Writer {
 impl ArchData {
     /// The binary form (see the top of this file).
     pub fn to_bin(&self) -> Vec<u8> {
-        let mut w = Writer { s: Default::default(), strings: Vec::new(), index: HashMap::new() };
+        let mut w = Writer { s: Default::default(), strings: Vec::new(), index: LookupMap::default() };
         w.uvar(CTL, self.attr_data.len() as u64);
         for a in &self.attr_data {
             w.fields(&attr_fields(&mut a.clone()));

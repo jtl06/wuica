@@ -7,6 +7,7 @@
 //! that are reused from cycle to cycle.
 
 use super::prep::{inf, pf, NONE};
+use super::idx;
 use super::{crash, FxHashSet, Sim, SimError, UopSource};
 use std::collections::VecDeque;
 
@@ -321,7 +322,7 @@ impl<'a> Sim<'a> {
     /// `next(CacheBlockGenerator(instructions, unroll, alignmentOffset))`
     fn next_cache_block(&mut self) -> Block {
         let n = self.instrs.len();
-        let first = self.insts.len() as u32;
+        let first = idx(self.insts.len());
         loop {
             let instr = self.fe.cbg.pos;
             let (addr, rnd) = (self.fe.cbg.next_addr, self.fe.cbg.rnd);
@@ -334,12 +335,12 @@ impl<'a> Sim<'a> {
             }
             if !g.unroll && instr == n - 1 {
                 g.next_addr = self.fe.alignment_offset;
-                return (first, self.insts.len() as u32);
+                return (first, idx(self.insts.len()));
             }
             let prev_addr = g.next_addr;
             g.next_addr = prev_addr + self.prep.info[instr].len;
             if prev_addr.div_euclid(64) != g.next_addr.div_euclid(64) {
-                return (first, self.insts.len() as u32);
+                return (first, idx(self.insts.len()));
             }
         }
     }
@@ -696,7 +697,7 @@ impl<'a> Sim<'a> {
 
     /// `FrontEnd.newRound`
     fn new_round(&mut self) -> Block {
-        let first = self.insts.len() as u32;
+        let first = idx(self.insts.len());
         let mut addr = self.fe.alignment_offset;
         for instr in 0..self.instrs.len() {
             let rnd = self.fe.op_cache_rnd;
@@ -704,7 +705,7 @@ impl<'a> Sim<'a> {
             addr += self.prep.info[instr].len;
         }
         self.fe.op_cache_rnd += 1;
-        (first, self.insts.len() as u32)
+        (first, idx(self.insts.len()))
     }
 
     /// `FrontEnd.findCacheableAddresses`
@@ -786,7 +787,7 @@ impl<'a> Sim<'a> {
                     }
                     let last = *b16_block.last().unwrap();
                     self.fe.b16_entries.extend(b16_block.iter().copied());
-                    self.fe.b16_block_lens.push_back(b16_block.len() as u32);
+                    self.fe.b16_block_lens.push_back(idx(b16_block.len()));
                     if self.prep.info[self.inst_instr(last)].has(inf::BRANCH) && self.inst_addr(last).rem_euclid(16) + self.inst_len(last) > 16 {
                         // branch instr. ends in next block
                         self.fe.b16_block_lens.push_back(0);

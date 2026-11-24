@@ -261,10 +261,12 @@ export function compare(a, b, meta = {}) {
 
 // ---- the page's other views: bound, bytes, deps, the sweep, a trace range, llvm-mca --------------------------------
 
+/** @param {number} u */
 const pct = (u) => `${Math.round(u * 100)}%`;
 
 // The bound view (bound-core.js): how busy each resource is, the binding one, the next limit; the instructions with the
 // largest share of the selected resource (an item's id, as the view's; default: the binding one).
+/** @param {any} r a response (as analyze returns it) @param {string | null} [selected] */
 export function bound(r, selected = null) {
   const m = boundModel(r);
   if (!m) return '';
@@ -276,12 +278,16 @@ export function bound(r, selected = null) {
   const rows = m.items.map((x) => [text(x.name), x.group, f2(x.cycles), pct(x.util), m.binding.includes(x.id) ? 'yes' : '']);
   const b = sel ? blame(r, sel) : null;
   const top = topRows(b, 5);
-  const shares = top.length ? `top of ${text(it?.name ?? sel)} (by ${b.unit}):\n\n${table(['Instruction', 'Share'], top.map(({ row, share }) => [code(r.rows[row].label), pct(share)]), ['l', 'r'])}` : null;
+  const shares = b && top.length ? `top of ${text(it?.name ?? sel)} (by ${b.unit}):\n\n${table(['Instruction', 'Share'], top.map(({ row, share }) => [code(r.rows[row].label), pct(share)]), ['l', 'r'])}` : null;
   return join([head, table(['Resource', 'Group', 'Cycles/iteration', 'Busy', 'Binding'], rows, ['l', 'l', 'r', 'r', 'c']), shares]);
 }
 
 // The bytes view: each instruction's place on the cache lines at the alignment offset (the page's codemap.js
 // codeMapModel: {bytes, offset, instrs: [{label, start, end, fused, jcc, cross16, cross32, cross64}], counts}).
+/**
+ * @param {{bytes: number, offset: number, counts: {cross16: number, cross32: number, cross64: number},
+ *   instrs: {label: string, start: number, end: number, fused?: boolean, jcc?: boolean, cross16?: boolean, cross32?: boolean, cross64?: boolean}[]} | null} m
+ */
 export function bytes(m) {
   if (!m) return '';
   const head = `**bytes** · ${m.bytes} bytes from offset ${m.offset} · crossing 16 B: ${m.counts.cross16}, 32 B: ${m.counts.cross32}, 64 B: ${m.counts.cross64}`;
@@ -293,6 +299,11 @@ export function bytes(m) {
 // The deps view: its arcs (producer → consumer, the iterations between them, the latency, the critical chain) and the
 // slack of each instruction (the page's deps.js depGraph: {nodes: [{label}], edges: [{a, b, dist, lat, mem, critical}],
 // slack: {period}}). slack: the slack of each node as the view writes it (deps-slack.js fmtSlack), or null.
+/**
+ * @param {{nodes: {label: string}[], edges: {a: number, b: number, dist: number, lat?: number | null, mem?: boolean, critical?: boolean}[],
+ *   slack?: {period: number} | null} | null} g
+ * @param {{slack?: string[] | null}} [opts]
+ */
 export function deps(g, { slack = null } = {}) {
   if (!g) return '';
   const carried = g.edges.filter((e) => e.dist).length;
@@ -306,6 +317,11 @@ export function deps(g, { slack = null } = {}) {
 
 // The sweep: cycles/iteration at each alignment offset (the page's compare.js sweepData: {n, values (null: none),
 // failed, pending, complete, min, max, minAt, maxAt}).
+/**
+ * @param {{n: number, values: (number | null)[], failed: number[], pending: number, complete: boolean, min: number | null,
+ *   max: number | null, minAt: number[], maxAt: number[]} | null} d
+ * @param {string} [arch]
+ */
 export function sweep(d, arch = '') {
   if (!d) return '';
   const head = `**sweep** · alignment 0–${d.n - 1}${arch ? ` · ${text(arch)}` : ''}${d.min !== null ? ` · min ${f2(d.min)} at ${d.minAt.join(', ')} · max ${f2(d.max)} at ${d.maxAt.join(', ')}` : ''}${d.complete ? '' : ` · ${d.pending} pending`}`;
@@ -314,12 +330,14 @@ export function sweep(d, arch = '') {
 
 // A trace range: the shown rows of the trace view as a table (the page's trace.js TABLE_HEAD and tableRows); caption:
 // what is shown.
+/** @param {string[]} head @param {string[][]} rows @param {string} [caption] */
 export function traceRange(head, rows, caption = '') {
   if (!rows?.length) return '';
   return join([caption ? `**trace** · ${text(caption)}` : '**trace**', table(head.map(text), rows.map((r) => r.map(text)), head.map((_, i) => (i === 1 || i === 2 || i === head.length - 1 ? 'l' : 'r')))]);
 }
 
 // llvm-mca's text, as it printed it
+/** @param {string} out @param {string} [caption] */
 export function mcaText(out, caption = '') {
   if (!out) return '';
   return join([caption ? `**llvm-mca** · ${text(caption)}` : '**llvm-mca**', fence(out)]);

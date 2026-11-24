@@ -12,12 +12,14 @@ const GPR = [
   ['rsi', 'esi', 'si', 'sil'], ['rdi', 'edi', 'di', 'dil'], ['rbp', 'ebp', 'bp', 'bpl'], ['rsp', 'esp', 'sp', 'spl'],
   ...Array.from({ length: 8 }, (_, k) => [`r${k + 8}`, `r${k + 8}d`, `r${k + 8}w`, `r${k + 8}b`]),
 ];
+/** @type {Map<string, Family>} */
 const FAMILY = new Map(GPR.flatMap((names) => names.map((n, size) => [n, { kind: 'gpr', base: names[0], size }])));
 // the registers a copy can get, in this order (not rsp; the ones with implicit uses last)
 const GPR_FREE = ['r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15', 'rbx', 'rbp', 'rsi', 'rdi', 'rcx', 'rdx', 'rax'];
 // Instructions with implicit register operands (the response has no operand sets without the details: this list is
 // the x86-64 instructions that read or write a register they do not name): [test, registers]. 'vall': every vector
 // register. Renaming such a register would change what they do, and none of them may get a copy's register.
+/** @type {[RegExp, string[]][]} */
 const IMPLICIT = [
   [/^(?:i?div|mul|cdq|cqo|cwd|rdtsc|xsave\w*|xrstor\w*|in|out)$/, ['rax', 'rdx']],
   [/^(?:cbw|cwde|cdqe|lahf|sahf|cmpxchg|stos\w*|lods\w*|scas\w*)$/, ['rax']],
@@ -51,17 +53,21 @@ export const implicitUse = (mnemonic, operands) => {
 const VEC = /^([xyz]mm)(\d+)$/;
 
 // The family of a register name: {kind: 'gpr', base: 'rax', size} or {kind: 'vec', index}; null if not renamable.
+/** @typedef {{kind: 'gpr', base: string, size: number} | {kind: 'vec', base: string, index: number}} Family */
+/** @returns {Family | null} */
 export function family(name) {
   const n = String(name).toLowerCase();
   const v = VEC.exec(n);
-  if (v) return { kind: 'vec', index: Number(v[2]), base: `v${v[2]}` };
+  if (v) return { kind: /** @type {const} */ ('vec'), index: Number(v[2]), base: `v${v[2]}` };
   return FAMILY.get(n) ?? null;
 }
 
 // The registers on the critical loop-carried chain: {ok, bases: ['rax' | 'v0', ...], names} or {ok: false, reason}.
+/** @returns {{ok: true, bases: string[], names: string[]} | {ok: false, reason: string}} */
 export function chainRegisters(response) {
   const edges = response?.criticalPath?.edges;
   if (!Array.isArray(edges) || !edges.length) return { ok: false, reason: 'no loop-carried chain' };
+  /** @type {string[]} */
   const bases = [], names = [];
   for (const e of edges) {
     const op = String(e.operand ?? '');
@@ -87,7 +93,7 @@ function renameText(text, map) {
     if (!f || !map.has(f.base)) return tok;
     const to = map.get(f.base);
     if (f.kind === 'vec') return tok.slice(0, 3) + to.slice(1);
-    const names = GPR.find((g) => g[0] === to);
+    const names = GPR.find((g) => g[0] === to) ?? [];
     const n = names[f.size];
     if (!n) { bad = true; return tok; }
     return tok === tok.toUpperCase() ? n.toUpperCase() : n;
@@ -125,6 +131,7 @@ const splitInstr = (label) => { const t = String(label).trim().replace(/\s+/g, '
 
 // The variant with n accumulators: {ok: true, text, per: n, renamed: [{from, to: [names]}]} or {ok: false, reason}.
 // response: the analysis of hex (a loop); the rows must make up the code (as for the unrolled variants).
+/** @returns {{ok: true, text: string, per: number, renamed: {from: string, to: string[]}[]} | {ok: false, reason: string}} */
 export function accumulatorText(response, hex, n) {
   if (response?.mode !== 'loop') return { ok: false, reason: 'not a loop' };
   const rows = Array.isArray(response.rows) ? response.rows : [];
@@ -145,6 +152,7 @@ export function accumulatorText(response, hex, n) {
   const body = ins.slice(0, tailFrom), tail = ins.slice(tailFrom);
   // registers in use (any form: al/ax/eax/rax, xmm/ymm/zmm are one register), and the implicit ones
   const uses = (i) => { const s = splitInstr(i.label); return new Set([...regsIn(i.label).map((r) => family(r)?.base).filter(Boolean), ...implicitUse(s.mnemonic, s.operands)]); };
+  /** @type {Map<any, any>} */
   const usesOf = new Map(ins.map((i) => [i, uses(i)]));
   const used = new Set(ins.flatMap((i) => [...usesOf.get(i)]));
   const implicit = new Set(ins.flatMap((i) => { const s = splitInstr(i.label); return implicitUse(s.mnemonic, s.operands); }));

@@ -49,8 +49,9 @@ export class Pool {
   get idle() { return this.#slots.filter((s) => s?.ready && !s.job).length; }
 
   #spawn(i) {
-    return new Promise((resolve, reject) => {
+    return new Promise(/** @type {(resolve: (v?: void) => void, reject: (e: Error) => void) => void} */ ((resolve, reject) => {
       const worker = new Worker(WORKER, { workerData: this.#workerData });
+      /** @type {{worker: Worker, ready: boolean, job: any, timer: any, started: number}} */
       const slot = { worker, ready: false, job: null, timer: null, started: 0 };
       this.#slots[i] = slot;
       worker.on('message', (m) => {
@@ -81,7 +82,7 @@ export class Pool {
         }
         if (!this.#closed) this.#replace(i, 'exit');
       });
-    });
+    }));
   }
 
   // Replaces the worker in slot i (after a delay that grows while new workers keep failing).

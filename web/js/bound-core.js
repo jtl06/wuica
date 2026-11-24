@@ -80,6 +80,7 @@ export function boundModel(r) {
   const binding = bottlenecks.map((b) => resourceId(r, b)).filter((b) => items.some((x) => x.id === b));
   if (!bottlenecks.length) for (const x of limits) if (x.cycles >= max - EPS) binding.push(x.id);
   const bindValue = Math.max(...binding.map((b) => items.find((x) => x.id === b).cycles), 0);
+  /** @type {{name: string, tp: number, speedup?: number} | null} */
   let next = null;
   for (const x of limits) if (!binding.includes(x.id) && x.cycles < bindValue - EPS && (!next || x.cycles > next.tp)) next = { name: x.name, tp: x.cycles };
   if (next) next.speedup = next.tp > 0 ? tp / next.tp : Infinity;
@@ -174,6 +175,7 @@ export const defaultResource = (m) => m?.binding[0] ?? null;
 //   caveats: [{id, text, title, instructions: [index]}]: known blind spots the block meets (caveats.js); absent if none
 // config: the CPU's configuration in uarch.json (configs[r.arch]), for the caveats; without it, split warns as on a CPU
 // without a split-load cost.
+/** @param {any} r @param {{splitLoadCycles?: number} | null} [config] */
 export function insights(r, config = null) {
   const m = boundModel(r);
   if (!m) return null;
@@ -183,6 +185,7 @@ export function insights(r, config = null) {
   for (const x of m.items) if (x.id.startsWith('col:')) utilization[x.id.slice(4)] = round(x.util);
   const binding = [...(r.bottlenecks ?? [])];
   const largest = binding.length ? [] : m.binding;
+  /** @type {Record<string, any>} */
   const out = { utilization, binding };
   if (largest.length) out.largest = largest;
   if (m.next) out.next = { limit: m.next.name, tp: m.next.tp, maxSpeedup: m.next.tp > 0 ? round(tp / m.next.tp) : null };

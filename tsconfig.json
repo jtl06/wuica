@@ -1,0 +1,30 @@
+{
+  // Type checking of the JavaScript without a build step (tsc --noEmit --checkJs): the npm package (lib, bin), the
+  // server (server/lib), the page's DOM-free modules the package shares (packages/wuica/web-modules.json: added by
+  // scripts/typecheck.mjs, which runs this), and packages/wuica/typecheck/api.ts, which uses the public API through
+  // index.d.ts. TypeScript and @types/node (the oldest Node the package's engines allow) are development dependencies of
+  // packages/wuica; nothing of this is shipped. The page's UI modules are not checked yet.
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "es2023",
+    "lib": ["es2023", "dom"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "strict": true,
+    "noImplicitAny": false,
+    "useUnknownInCatchVariables": false,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "typeRoots": ["./packages/wuica/node_modules/@types"],
+    "types": ["node"]
+  },
+  "include": [
+    "packages/wuica/lib/**/*.js",
+    "packages/wuica/bin/*.js",
+    "packages/wuica/typecheck/api.ts",
+    "server/lib/**/*.js"
+  ]
+}

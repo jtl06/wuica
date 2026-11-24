@@ -21,6 +21,12 @@ expression) runs some of them and the builds they need.
 - `scripts/check.sh` (= `quick`, about a minute): the simulation fixtures only for SKL and ZEN3, `analyze_fixtures.mjs 7`,
   `web_trace.mjs 16`, browser suites only if their last run took at most 10 s; no npm package, no doc tests. While working.
 - `scripts/check.sh full`: everything (`analyze_fixtures.mjs 1` in 4 shards). The gate before a commit to main or a deploy.
+- `typecheck` (in `full`): `scripts/typecheck.mjs`, `tsc --noEmit --checkJs` with the root `tsconfig.json` (strict, without
+  `noImplicitAny`) over `packages/wuica/lib` and `bin`, `server/lib`, the page modules `packages/wuica/web-modules.json` lists,
+  and `packages/wuica/typecheck/api.ts`, which uses the public API as the README does through `index.d.ts` and checks that
+  `lib/index.js` has every declared export and method, accepting the declared arguments. TypeScript and `@types/node` (20, the
+  package's oldest Node) are development dependencies of `packages/wuica`; nothing of them is shipped. The page's UI modules
+  are not checked yet.
 - `scripts/check.sh full --remote aethia`: the same on aethia, under a perfq lease (shared) taken from the Mac. The tree is
   copied to `~/wuica-check/` with rsync (`data/` and `fixtures/generated/` are linked to `~/wuica/`), with the WebAssembly
   module built on the Mac (aethia has no wasm32 target). aethia has no Chrome: the browser suites are skipped there.
@@ -55,6 +61,11 @@ downloads them from the pre-release named in `ci/data-asset.txt` (`data/`, the f
 table, and `assembler/dist/wuica_asm.wasm` and `mca/dist/wuica_mca.wasm`, whose LLVM builds are too heavy for CI) and checks their
 sha256.
 
+A second job, `node20`, runs the package on the oldest Node its `engines` field allows (`>=20`): it builds the analyzer and the
+package from the asset's data (`ci/fetch-data-asset.sh --data-only`), runs `npm test` in `packages/wuica`, and installs the
+packed tarball into an empty directory (`packages/wuica/test/smoke.sh`: the CLI with one and several CPUs, a batch of files,
+`-md`, `-whatif`, and `wuica-mcp` over stdio). The server is not run there: its `engines` field says `>=22`.
+
 The accuracy table `fixtures/generated/accuracy.jsonl.gz` (read by `crates/wuica/tests/accuracy_gate.rs`; see `docs/ACCURACY.md`,
 "Policy and the accuracy gate") is made in the fork's tree on the reference machine from the measurement files of the sets and their
 prediction caches (`microbench/measurements/fuzz/`, the caches are not in git) and the dogfood loops:
@@ -77,6 +88,20 @@ When the data, the fixtures or the assembler change, publish a new asset (the ol
 
 then commit `ci/data-asset.txt` with the change that needs it. A new fixture file that a default suite reads also has to be
 added to the list in `ci/make-data-asset.sh`.
+
+## Releases
+
+The version is written in 15 places: the page (`web/js/app.js` `VERSION`), `packages/wuica` and `server/` (their
+`package.json` and lock files), and the Rust workspace (`Cargo.toml`'s `[workspace.package]` version and the workspace crates in
+`Cargo.lock`). `node scripts/check-version.mjs [VERSION]` lists them and fails unless all are equal (and equal to `VERSION` if
+given); the suite `web_version` runs it in every check. Bump them together.
+
+After a deploy, `scripts/smoke-live.sh VERSION` checks what is live, reading only: the site in headless Chrome (the footer's
+version, the service worker's cache named after the stamp in `/sw.js`, one analysis, and the bytes on the wire of the first
+visit and of the 15 tables against `tests-js/budgets.mjs`, which `web_host_browser` checks for the build: the check that would
+have caught the uncompressed tables of 0.1.9; also that the analyzer, the assembler and the tables arrive compressed) and the API
+(`/healthz`, `/api/version` for the package and the server, one analyze, one compare, MCP `tools/list` and one `what_if`).
+`--site URL` and `--api URL` point it elsewhere (a staging host, a local server), `--no-site`/`--no-api` skip a part.
 
 ## Speed
 

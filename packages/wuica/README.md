@@ -411,7 +411,7 @@ which clamps it into its range.
 
 | Interface | `alignmentOffset` | `minIterations` | `minCycles` | Other limits |
 |---|---|---|---|---|
-| library, `wuica` CLI, the reference/test binary (`crates/wuica-cli`) | any integer (negative values and values above 63 are simulated as given) | any integer | any integer | none; very large values run out of memory (library: code 3) |
+| library, `wuica` CLI, the reference/test binary (`crates/wuica-cli`) | any integer up to ±2^62 (negative values and values above 63 are simulated as given) | any integer | any integer | at most 250,000 uops per iteration (a work budget: code 3); very large values run out of memory (library: code 3) |
 | MCP tools of `wuica mcp` (stdio) | 0–63 | 1–100000 | 1–1000000 | |
 | REST API (`server/`) | any integer | at most 1000 | at most 20000 | `source` at most 64 KB, `hex` at most 65536 characters, at most 10,000 instructions |
 | remote MCP (`server/`, `/mcp`) | 0–63 | 1–1000 | 1–20000 | as REST |

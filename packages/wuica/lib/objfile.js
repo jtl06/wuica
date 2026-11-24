@@ -24,13 +24,14 @@ export function objectKind(b) {
 const ARCH_HELP = 'compile for x86-64: clang --target=x86_64-linux-gnu -c (Linux objects) or clang -arch x86_64 -c (macOS)';
 
 // The code of an object file: {format, functions: [{name, section, address, size, bytes}]} or {error}.
+/** @returns {any} */
 export function readObject(bytes) {
   const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   const k = objectKind(b);
   if (!k) return { error: 'not an object file' };
   try {
     if (k.kind === 'elf') return readElf(b);
-    if (k.kind === 'macho') return readMachO(b, 0);
+    if (k.kind === 'macho') return readMachO(b);
     if (k.kind === 'fat') return readFat(b);
     if (k.kind === 'macho32') return { error: `a 32-bit Mach-O file: wuica analyzes x86-64 code; ${ARCH_HELP}` };
     if (k.kind === 'archive') return { error: 'an archive (.a): extract an object from it (ar x lib.a foo.o) and give that' };
@@ -122,7 +123,7 @@ function readFat(b) {
   }
   const x = archs.find((a) => a.cpu === MACHO_X86_64);
   if (!x) return { error: `a universal Mach-O file without x86-64 code (${archs.map((a) => cpuName(a.cpu)).join(', ')}): wuica analyzes x86-64 code; ${ARCH_HELP}` };
-  return readMachO(b.subarray(x.offset, x.offset + x.size), 0);
+  return readMachO(b.subarray(x.offset, x.offset + x.size));
 }
 
 const cpuName = (c) => (c === MACHO_ARM64 ? 'arm64' : c === MACHO_X86_64 ? 'x86_64' : c === MACHO_I386 ? 'i386' : `cpu ${c}`);
@@ -132,6 +133,7 @@ function readMachO(b) {
   const cpu = dv.getUint32(4, true), filetype = dv.getUint32(12, true), ncmds = dv.getUint32(16, true);
   if (cpu !== MACHO_X86_64) return { error: `${cpu === MACHO_ARM64 ? 'an arm64' : `a ${cpuName(cpu)}`} Mach-O file: wuica analyzes x86-64 code; ${ARCH_HELP}` };
   const sects = [];
+  /** @type {{symoff: number, nsyms: number, stroff: number} | null} */
   let symtab = null;
   let o = 32;
   for (let i = 0; i < ncmds; i++) {

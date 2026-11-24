@@ -1,6 +1,7 @@
 //! `Renamer`, `StoreBufferEntry`, and `AbstractValueGenerator` (from `utils.py`).
 
 use super::prep::{inf, pf, AvKind, Key, MemAddrInfo, KEY_NONE, NONE};
+use super::idx;
 use super::{crash, FxHashMap, InitPolicy, RenamedOperand, SFused, SLam, Sim, SimError, READY_UNSET, UNSET};
 use crate::config::Slots;
 
@@ -49,7 +50,7 @@ impl AddressTable {
     }
 
     fn intern(&mut self, key: Option<AbstractAddress>) -> u32 {
-        let next = self.values.len() as u32;
+        let next = idx(self.values.len());
         let id = *self.ids.entry(key).or_insert(next);
         if id == next {
             self.values.push(key);
@@ -146,7 +147,7 @@ impl SmallKeys {
     pub fn retain(&mut self, f: impl Fn(&Key) -> bool) {
         if self.spilled {
             self.heap.retain(|k| f(k));
-            self.len = self.heap.len() as u32;
+            self.len = idx(self.heap.len());
         } else {
             let mut n = 0;
             for i in 0..self.len as usize {
@@ -425,8 +426,8 @@ impl<'a> Sim<'a> {
                     let inst = self.uops[first_unfused_uop as usize].instr_instance;
                     for merge_prop in first_merge_prop..first_merge_prop + n_merge_props {
                         let u = self.new_uop(merge_prop, inst);
-                        let merge_lam = self.lams.len() as u32;
-                        let merge_uop = self.fused.len() as u32;
+                        let merge_lam = idx(self.lams.len());
+                        let merge_uop = idx(self.fused.len());
                         self.fused.push(SFused { first_uop: u, n_uops: 1, laminated_uop: merge_lam, issued: UNSET, retired: UNSET, retire_idx: UNSET });
                         self.uops[u as usize].fused_uop = merge_uop;
                         renamer_uops.push(merge_uop);
@@ -579,7 +580,7 @@ impl<'a> Sim<'a> {
             let instr_mem_width = self.prep.info[ii].mem_width;
             if is_store_addr {
                 let key = self.get_store_buffer_key(mem_addr_id, mem_addr.as_ref());
-                let sbe_id = self.rn.sbes.len() as u32;
+                let sbe_id = idx(self.rn.sbes.len());
                 let mut sbe = StoreBufferEntry {
                     abstract_address: key,
                     uops: SmallU32List::default(),
@@ -667,7 +668,7 @@ impl<'a> Sim<'a> {
                 }
             }
 
-            let ren_in_start = self.ren_lists.len() as u32;
+            let ren_in_start = idx(self.ren_lists.len());
             let (in_start, n_in) = self.prep.props[prop_id].in_keys;
             // foldedInputs: a register whose value was computed by the renamer, read by an instruction that gets it later
             let fold_delay = self.prep.props[prop_id].has(pf::FOLD_SHIFT) && self.cfg.folded_shift_delay != 0;
@@ -691,7 +692,7 @@ impl<'a> Sim<'a> {
                 self.ren_lists.push(ren_op);
             }
             self.uops[u as usize].folded_in = folded_in;
-            let ren_out_start = self.ren_lists.len() as u32;
+            let ren_out_start = idx(self.ren_lists.len());
             // (at most 255 operands: checked in Prep::new)
             self.uops[u as usize].ren = ren_in_start;
             self.uops[u as usize].n_in = (ren_out_start - ren_in_start) as u16;
@@ -710,7 +711,7 @@ impl<'a> Sim<'a> {
                     }
                 }
             }
-            self.uops[u as usize].n_out = (self.ren_lists.len() as u32 - ren_out_start) as u16;
+            self.uops[u as usize].n_out = (idx(self.ren_lists.len()) - ren_out_start) as u16;
         } else {
             // e.g., xor rax, rax
             let (out_start, n_out) = self.prep.info[ii].out_regs;

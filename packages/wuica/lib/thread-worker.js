@@ -17,33 +17,36 @@ import { Analyzer } from './wasm.js';
 import { readMaybeCompressed, readMaybeCompressedSync, tableFile } from './files.js';
 import { analysisResult, compareFields } from './core.js';
 
+if (!parentPort) throw new Error('thread-worker.js runs as a worker thread');
+const port = parentPort;
 const { module, uarch, dataDir, recycleBytes } = workerData;
+/** @type {Analyzer | null} */
 let analyzer = null;
 try {
   analyzer = new Analyzer(module);
   analyzer.loadUarch(uarch);
 } catch (e) {
-  parentPort.postMessage({ type: 'init-error', message: String(e?.message ?? e) });
+  port.postMessage({ type: 'init-error', message: String(e?.message ?? e) });
 }
 
 if (analyzer) {
-  parentPort.on('message', async ({ id, table, request, full }) => {
+  port.on('message', async ({ id, table, request, full }) => {
     if (!analyzer.hasArch(table)) {
       try {
         const file = tableFile(dataDir, table);
         analyzer.loadArch(table, await readMaybeCompressed(file), () => readMaybeCompressedSync(file));
       } catch {
-        parentPort.postMessage({ id, fields: null, recycle: analyzer.memoryBytes === 0 }); // 0: the module trapped
+        port.postMessage({ id, fields: null, recycle: analyzer.memoryBytes === 0 }); // 0: the module trapped
         return;
       }
     }
     const response = analyzer.analyze(request);
     if (response.trapped || analyzer.memoryBytes === 0) { // trapped, or could not be restarted after an earlier trap
-      parentPort.postMessage({ id, fields: null, recycle: true });
+      port.postMessage({ id, fields: null, recycle: true });
       return;
     }
     const result = analysisResult(response);
-    parentPort.postMessage({ id, fields: full ? result : compareFields(result), recycle: analyzer.memoryBytes > recycleBytes });
+    port.postMessage({ id, fields: full ? result : compareFields(result), recycle: analyzer.memoryBytes > recycleBytes });
   });
-  parentPort.postMessage({ type: 'ready' });
+  port.postMessage({ type: 'ready' });
 }

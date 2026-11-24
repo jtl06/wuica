@@ -44,6 +44,7 @@ const COND_BRANCH = /^(?:j(?!mp)[a-z]+|loop\w*)$/;
 // Without a register destination (cmp, test, bt, push, branches) the first operand is only read.
 const READS_FIRST = /^(?:cmp|test|bt|push\w*|call\w*|jmp|j[a-z]+|loop\w*|out\w*|v?u?comis[sd]|v?ptest|kortest\w|ktest\w|nop\w*|prefetch\w*|clflush\w*|clwb|cldemote)$/;
 const BOTH_WRITTEN = /^(?:xchg|xadd|mulx)$/; // the second register operand is written too
+/** @type {[RegExp, string[]][]} */
 const IMPLICIT_WRITES = [
   [/^(?:i?div|mul|cdq|cqo|cwd|rdtsc)$/, ['rax', 'rdx']],
   [/^(?:cbw|cwde|cdqe|lahf|cmpxchg|lods\w*)$/, ['rax']],
@@ -99,7 +100,11 @@ export function memOperand(label) {
   if (!m) return null;
   const inner = m[2].replace(/\s/g, '').toLowerCase();
   const parts = inner.split(/(?=[+-])/);
-  let base = null, index = null, disp = 0;
+  /** @type {string | null} */
+  let base = null;
+  /** @type {string | null} */
+  let index = null;
+  let disp = 0;
   for (const p of parts) {
     const v = p.replace(/^\+/, '');
     if (/\*/.test(v)) index = v.split('*')[0];
@@ -116,6 +121,7 @@ export function memOperand(label) {
 // change of its own controls).
 const memo = new WeakMap();
 const some = (rows, ks) => `${ks.slice(0, 4).map((k) => rows[k].label).join('; ')}${ks.length > 4 ? '; …' : ''}`;
+/** @param {{splitLoadCycles?: number} | null} [config] */
 export function caveats(response, config = null) {
   const splitCost = Number(config?.splitLoadCycles) > 0;
   const kept = response && typeof response === 'object' ? memo.get(response) : undefined;
@@ -162,7 +168,7 @@ export function caveats(response, config = null) {
   for (const [addr, st] of stores) if (loads.has(addr)) rmw.push(...loads.get(addr), ...st);
   // only where the address can repeat with the data: a register of it written other than by advancing it by a constant
   const dynamic = rmw.length ? untrackedWrites(rows, { lea: true }) : null;
-  const hit = rmw.filter((row) => { const m = memOperand(rows[row].label); return [m.base, m.index].some((r) => dynamic.has(family(r)?.base)); });
+  const hit = rmw.filter((row) => { const m = memOperand(rows[row].label); return [m?.base, m?.index].some((r) => dynamic?.has(family(r)?.base)); });
   if (hit.length) {
     const r = [...new Set(hit)].sort((a, b) => a - b);
     out.push({ id: 'rmw-index', text: 'store forwarding', rows: r,
@@ -200,7 +206,7 @@ export function caveats(response, config = null) {
   } else if (split.length) {
     // this CPU's model charges the crossings of loads whose address advances by a constant: only the others warn
     const writes = untrackedWrites(rows);
-    const regsOf = (row) => { const m = memOperand(rows[row].label); return [m.base, m.index].map((r) => family(r)?.base).filter((r) => r && writes.has(r)); };
+    const regsOf = (row) => { const m = memOperand(rows[row].label); return [m?.base, m?.index].map((r) => family(r)?.base).filter((r) => r && writes.has(r)); };
     const untracked = split.filter((row) => regsOf(row).length);
     if (untracked.length) {
       const regs = [...new Set(untracked.flatMap(regsOf))];

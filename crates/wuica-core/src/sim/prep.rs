@@ -6,6 +6,7 @@
 //! with the boolean attributes as bits), never the [`Instr`] objects, which are only used to build it and for the outputs.
 
 use super::{FxHashMap, SFused, SLam, SUop, SimError, NO_PORT, UNSET};
+use super::idx;
 use crate::config::{UArch, UArchConfig};
 use crate::decoded::MemAddr;
 use crate::model::{Instr, InstrList, OpId, Operand, TpKey, UopProperties};
@@ -469,7 +470,7 @@ impl Prep {
     fn build_templates(&mut self) {
         for ii in 0..self.info.len() {
             let (first_prop, n_props) = (self.info[ii].first_prop, self.info[ii].n_props);
-            let (u0, f0, l0) = (self.tmpl_uops.len() as u32, self.tmpl_fused.len() as u32, self.tmpl_lams.len() as u32);
+            let (u0, f0, l0) = (idx(self.tmpl_uops.len()), idx(self.tmpl_fused.len()), idx(self.tmpl_lams.len()));
             for p in first_prop..first_prop + n_props {
                 let u = self.new_uop(p);
                 self.tmpl_uops.push(u);
@@ -497,7 +498,7 @@ impl Prep {
                 }
                 self.tmpl_lams.push(SLam {
                     first_fused_uop: first_fused,
-                    n_fused_uops: lam_group.len() as u32,
+                    n_fused_uops: idx(lam_group.len()),
                     first_uop: lam_first_uop,
                     n_uops: uop - lam_first_uop,
                     added_to_idq: UNSET,
@@ -583,14 +584,14 @@ impl Prep {
                        out_key_list: &mut Vec<OutKey>,
                        mem_addrs: &mut Vec<MemAddrInfo>|
          -> Result<PropInfo, SimError> {
-            let ports_start = port_lists.len() as u32;
+            let ports_start = idx(port_lists.len());
             let mut mask = 0u32;
             for port in p.possible_ports.iter().flatten() {
                 let i = port_of(port)?;
                 port_lists.push(i);
                 mask |= 1 << i;
             }
-            let n_ports = port_lists.len() as u32 - ports_start;
+            let n_ports = idx(port_lists.len()) - ports_start;
             if n_ports > u8::MAX as u32 {
                 return Err(invalid("too many ports"));
             }
@@ -610,12 +611,12 @@ impl Prep {
             if p.input_operands.len() > u16::MAX as usize || p.output_operands.len() > u16::MAX as usize {
                 return Err(invalid("too many operands"));
             }
-            let in_start = in_key_list.len() as u32;
+            let in_start = idx(in_key_list.len());
             for &op in &p.input_operands {
                 let (is_pseudo, key, _) = key_of(op)?;
                 in_key_list.push(InKey { op, is_pseudo, key });
             }
-            let out_start = out_key_list.len() as u32;
+            let out_start = idx(out_key_list.len());
             for &op in &p.output_operands {
                 let (is_pseudo, key, is_reg) = key_of(op)?;
                 let lat = p.latencies.iter().find(|(o, _)| *o == op).map_or(1, |(_, l)| *l);
@@ -624,7 +625,7 @@ impl Prep {
             let mem_addr = match &p.mem_addr {
                 Some(m) => {
                     mem_addrs.push(mem_addr_info(keys, m));
-                    mem_addrs.len() as u32 - 1
+                    idx(mem_addrs.len()) - 1
                 }
                 None => NONE,
             };
@@ -650,8 +651,8 @@ impl Prep {
                 n_ports: n_ports as u8,
                 port0,
                 port_list,
-                in_keys: (in_start, in_key_list.len() as u32 - in_start),
-                out_keys: (out_start, out_key_list.len() as u32 - out_start),
+                in_keys: (in_start, idx(in_key_list.len()) - in_start),
+                out_keys: (out_start, idx(out_key_list.len()) - out_start),
                 tp_res: res as u32,
                 tp: instr.tp.unwrap_or(0.0),
                 div_cycles: p.div_cycles,
@@ -662,22 +663,22 @@ impl Prep {
         };
 
         // the properties of stack-sync uops: UopProperties(instr, ALUPorts, [RSP], [RSP], {RSP: 1}, isFirstUopOfInstr=True)
-        let alu_ports_start = port_lists.len() as u32;
+        let alu_ports_start = idx(port_lists.len());
         let mut alu_mask = 0;
         for p in alu_ports {
             let i = port_of(p)?;
             port_lists.push(i);
             alu_mask |= 1 << i;
         }
-        let n_alu_ports = port_lists.len() as u32 - alu_ports_start;
+        let n_alu_ports = idx(port_lists.len()) - alu_ports_start;
         if n_alu_ports > u8::MAX as u32 {
             return Err(invalid("too many ports"));
         }
         let alu_port0 = if n_alu_ports > 0 { port_lists[alu_ports_start as usize] } else { 0 };
         let alu_port_list = port_list_of(alu_ports);
-        let rsp_in = in_key_list.len() as u32;
+        let rsp_in = idx(in_key_list.len());
         in_key_list.push(InKey { op: NONE, is_pseudo: false, key: rsp });
-        let rsp_out = out_key_list.len() as u32;
+        let rsp_out = idx(out_key_list.len());
         out_key_list.push(OutKey { op: NONE, is_pseudo: false, key: rsp, is_reg: true, lat: 1 });
 
         for (ii, instr) in list.instrs.iter().enumerate() {
@@ -685,15 +686,15 @@ impl Prep {
             let res = *tp_res.entry(&instr.tp_key).or_insert(1 + ports.len() + n);
             n_resources = n_resources.max(res + 1);
 
-            let first_prop = props.len() as u32;
+            let first_prop = idx(props.len());
             for p in &instr.uop_properties_list {
                 props.push(convert(p, instr, ii as u32, res, &mut keys, &mut port_lists, &mut in_key_list, &mut out_key_list, &mut mem_addrs)?);
             }
-            let first_merge_prop = props.len() as u32;
+            let first_merge_prop = idx(props.len());
             for p in &instr.reg_merge_uop_properties_list {
                 props.push(convert(p, instr, ii as u32, res, &mut keys, &mut port_lists, &mut in_key_list, &mut out_key_list, &mut mem_addrs)?);
             }
-            let stack_sync_prop = props.len() as u32;
+            let stack_sync_prop = idx(props.len());
             let mut ss_flags = pf::FIRST | pf::STACK_SYNC;
             if n_alu_ports > 0 {
                 ss_flags |= pf::HAS_PORTS;
@@ -716,11 +717,11 @@ impl Prep {
                 mem_addr: NONE,
             });
 
-            let (lam_start, fused_start) = (group_lams.len() as u32, group_fused.len() as u32);
+            let (lam_start, fused_start) = (idx(group_lams.len()), idx(group_fused.len()));
             if !instr.uop_properties_list.is_empty() {
                 compute_uop_grouping(instr, &instr.uop_properties_list, config, &mut group_fused, &mut group_lams);
             }
-            let grouping = (lam_start, group_lams.len() as u32 - lam_start, fused_start);
+            let grouping = (lam_start, idx(group_lams.len()) - lam_start, fused_start);
 
             let mut regs = |ops: &[OpId]| -> Result<Vec<(Key, i64, bool, bool)>, SimError> {
                 ops.iter()
@@ -768,7 +769,7 @@ impl Prep {
             let in_mem0 = match instr.input_mem_operands.first().map(|&op| list.operands.get(op as usize)) {
                 Some(Some(Operand::Mem { mem_addr })) => {
                     mem_addrs.push(mem_addr_info(&mut keys, mem_addr));
-                    mem_addrs.len() as u32 - 1
+                    idx(mem_addrs.len()) - 1
                 }
                 Some(_) => return Err(invalid("memory operand expected")),
                 None => NONE,
@@ -809,9 +810,9 @@ impl Prep {
                 }
             }
             flags |= vector_domain(s);
-            let out_regs_start = out_reg_list.len() as u32;
+            let out_regs_start = idx(out_reg_list.len());
             out_reg_list.extend(out_regs.iter().map(|r| (r.0, r.1)));
-            let in_regs_start = in_reg_list.len() as u32;
+            let in_regs_start = idx(in_reg_list.len());
             in_reg_list.extend(in_regs.iter().map(|r| r.0));
             info.push(InstrInfo {
                 flags,
@@ -823,17 +824,17 @@ impl Prep {
                 n_available_simple_decoders: instr.n_available_simple_decoders,
                 implicit_rsp_change: instr.implicit_rsp_change,
                 first_prop,
-                n_props: instr.uop_properties_list.len() as u32,
+                n_props: idx(instr.uop_properties_list.len()),
                 first_merge_prop,
-                n_merge_props: instr.reg_merge_uop_properties_list.len() as u32,
+                n_merge_props: idx(instr.reg_merge_uop_properties_list.len()),
                 stack_sync_prop,
                 grouping,
                 tmpl_uops: (0, 0),
                 tmpl_fused: (0, 0),
                 tmpl_lams: (0, 0),
                 in_reg0: in_regs.first().map(|r| r.0),
-                out_regs: (out_regs_start, out_regs.len() as u32),
-                in_regs: (in_regs_start, in_regs.len() as u32),
+                out_regs: (out_regs_start, idx(out_regs.len())),
+                in_regs: (in_regs_start, idx(in_regs.len())),
                 folded_input_reg: instr.folded_input_reg.as_deref().map(|r| keys.intern(r)),
                 mem_width: mem_width(s),
                 mov_store_width,

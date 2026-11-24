@@ -426,14 +426,25 @@ impl std::hash::Hasher for FxHasher {
 }
 
 pub(crate) type FxBuild = std::hash::BuildHasherDefault<FxHasher>;
-/// a `HashMap` with [`FxHasher`]; only for maps that are never iterated
-pub(crate) type FxHashMap<K, V> = std::collections::HashMap<K, V, FxBuild>;
-/// a `HashSet` with [`FxHasher`]; only for sets that are never iterated
-pub(crate) type FxHashSet<K> = std::collections::HashSet<K, FxBuild>;
+/// a lookup-only map with [`FxHasher`] (it cannot be iterated: crate::fasthash::LookupMap)
+pub(crate) type FxHashMap<K, V> = crate::fasthash::LookupMap<K, V, FxBuild>;
+/// a lookup-only set with [`FxHasher`] (crate::fasthash::LookupSet)
+pub(crate) type FxHashSet<K> = crate::fasthash::LookupSet<K, FxBuild>;
 
-/// Python's `round(x, 2)`
+/// The index of the next entity of an array (uops, fused and laminated uops, instruction instances, renamer lists, ...): the
+/// arrays are indexed with `u32` (half the memory of `usize` per link). A simulation that would need more than 2^32 of one
+/// kind fails (a panic: an error natively, a trap in WebAssembly) instead of wrapping. Unreachable in WebAssembly (4 GiB of
+/// memory holds far fewer entities) and with the work budget (`analyze.rs`) and the 10^8-cycle limit for any realistic
+/// native memory; Python's unbounded ints never wrap.
+#[inline]
+pub(crate) fn idx(len: usize) -> u32 {
+    u32::try_from(len).unwrap_or_else(|_| panic!("more than 2^32 simulation entities of one kind"))
+}
+
+/// Python's `round(x, 2)` (the one implementation: [`crate::facile::py_round2`], checked against Python for every
+/// `k / n`, `n <= 1000`, `k <= 3n`, in tests/round2.rs)
 pub(crate) fn round2(x: f64) -> f64 {
-    format!("{x:.2}").parse().unwrap()
+    crate::facile::py_round2(x)
 }
 
 pub(crate) struct Sim<'a> {
@@ -474,8 +485,8 @@ impl<'a> Sim<'a> {
 
     /// `LaminatedUop([FusedUop([uop])])`; returns the laminated uop
     pub(crate) fn wrap_uop(&mut self, uop: u32) -> u32 {
-        let lam = self.lams.len() as u32;
-        let fused = self.fused.len() as u32;
+        let lam = idx(self.lams.len());
+        let fused = idx(self.fused.len());
         self.fused.push(SFused { first_uop: uop, n_uops: 1, laminated_uop: lam, issued: UNSET, retired: UNSET, retire_idx: UNSET });
         self.uops[uop as usize].fused_uop = fused;
         self.lams.push(SLam { first_fused_uop: fused, n_fused_uops: 1, first_uop: uop, n_uops: 1, added_to_idq: UNSET, uop_source: None });
@@ -484,9 +495,9 @@ impl<'a> Sim<'a> {
 
     /// `InstrInstance(instr, address, rnd)`
     pub(crate) fn new_instr_instance(&mut self, instr: usize, address: i64, rnd: i64) -> u32 {
-        let inst = self.insts.len() as u32;
+        let inst = idx(self.insts.len());
         let info = &self.prep.info[instr];
-        let (u_base, f_base, l_base) = (self.uops.len() as u32, self.fused.len() as u32, self.lams.len() as u32);
+        let (u_base, f_base, l_base) = (idx(self.uops.len()), idx(self.fused.len()), idx(self.lams.len()));
         let (s, n) = info.tmpl_uops;
         self.uops.extend(self.prep.tmpl_uops[s as usize..(s + n) as usize].iter().map(|t| {
             let mut u = *t;

@@ -63,13 +63,14 @@ export function statements(line) {
 // The syntax of assembly text: 'att' or 'intel' (null: no sign of either). A directive (.att_syntax, .intel_syntax
 // [noprefix]) before the first instruction decides; else the signs: AT&T's %registers, $immediates and (%base,...)
 // memory operands against Intel's "ptr [" and [register...] operands. Comments are left out.
+/** @returns {'att' | 'intel' | null} */
 export function detectSyntax(text) {
   const lines = normalizeText(text).split('\n');
   let att = 0, intel = 0;
   for (const l of lines) {
     const code = l.replace(/(?:#|\/\/).*$/, '');
     const d = /^\s*\.(att|intel)_syntax\b/i.exec(code);
-    if (d && att + intel === 0) return d[1].toLowerCase();
+    if (d && att + intel === 0) return /** @type {'att' | 'intel'} */ (d[1].toLowerCase());
     const n = syntaxSigns(code);
     att += n.att;
     intel += n.intel;
@@ -120,6 +121,7 @@ function byteColumn(rest) {
 const ONE_BYTE = /^(?:push|pop|xchg|in|out|ins\w*|outs\w*|stos\w*|lods\w*|movs\w*|scas\w*|cmps\w*|bswap|int)$/i;
 
 // {text, objdump: true, addresses: Map line -> address, bytes: Map line -> the line as .byte} or {objdump: false}.
+/** @returns {any} */
 export function fromObjdump(text) {
   const lines = normalizeText(text).split('\n');
   let header = false, symbolic = false, column = false, increasing = true, other = 0, plausible = true;
@@ -150,6 +152,7 @@ export function fromObjdump(text) {
     if (rows.some((r) => /^\s*(?:\S+\s+)*?(?:j[a-z]{1,4}|jmp\w*|call\w*|loop[a-z]*)\s+\d+[bf]\s*$/i.test(r.rest))) return { objdump: false };
   }
 
+  /** @type {any[]} */
   const parsed = lines.map((l) => {
     // a function's header ("0000000000000020 <fir8>:") becomes its label (the loops' function), if it is a plain name
     const fh = /^\s*[0-9a-fA-F]+\s+<([A-Za-z_][\w.$]*)>:\s*$/.exec(l);
@@ -220,7 +223,7 @@ export function scan(text) {
   const stack = [];
   for (let i = 0; i < lines.length; i++) {
     for (const st of statements(lines[i])) {
-      const lead = LABELS.exec(st.text)[0].length;
+      const lead = /** @type {RegExpExecArray} */ (LABELS.exec(st.text))[0].length;
       LABEL_ONE.lastIndex = 0;
       let m;
       const head = st.text.slice(0, lead);
@@ -307,7 +310,7 @@ export function findLoops(s) {
     const keyOf = (label) => {
       const n = s.notes.get(label) ?? '';
       if (/This (?:Inner )?Loop Header/.test(n) || !/Header=(\w+)/.test(n)) return label.replace(/^\.L/, '');
-      return /Header=(\w+)/.exec(n)[1];
+      return /** @type {RegExpExecArray} */ (/Header=(\w+)/.exec(n))[1];
     };
     const groups = new Map();
     for (const l of real) {
@@ -376,6 +379,11 @@ export function functionBody(s) {
 //   loop or the body: a choice matters), pick: {begin, end, lines: [the line of each instruction]} | null,
 //   body: {begin, end} | null, alignment: number | null, address: number | null, stubs: [names],
 //   notes: [{line, column, severity, message}], fallback: Map line -> text, error?}
+/**
+ * @param {string} text
+ * @param {{loop?: string | number, func?: string | null}} [opts]
+ * @returns {any}
+ */
 export function preparePaste(text, { loop = 'auto', func = null } = {}) {
   let t = leadingSemicolons(normalizeText(text).replace(/^﻿/, ''));
   const od = fromObjdump(t);
@@ -396,7 +404,8 @@ export function preparePaste(text, { loop = 'auto', func = null } = {}) {
   const named = (l) => (l.label.startsWith('.Lwuica_a') ? `0x${l.label.slice(9)}` : l.label);
   // a loop by its label ("-loop .LBB0_12", "-loop 0x10"): as its index
   if (typeof loop === 'string' && loop !== 'auto' && loop !== 'whole') {
-    const hits = loops.flatMap((l, i) => (named(l) === loop || l.label === loop || named(l) === `.${loop}` || (/^0x/i.test(loop) && named(l).toLowerCase() === loop.toLowerCase()) ? [i] : []));
+    const name = loop;
+    const hits = loops.flatMap((l, i) => (named(l) === name || l.label === name || named(l) === `.${name}` || (/^0x/i.test(name) && named(l).toLowerCase() === name.toLowerCase()) ? [i] : []));
     const k = hits.length ? hits[0] : -1;
     // the same label in several functions (numeric labels: "1:" ... "jnz 1b"): not a guess
     if (hits.length > 1) return { error: `loop: ${JSON.stringify(loop)} names ${hits.length} loops (${hits.map((i) => `${i} in ${loops[i].function ?? 'no function'}`).join(', ')}): -func NAME or -loop N (0-based) picks one`, loops: [] };
@@ -410,6 +419,7 @@ export function preparePaste(text, { loop = 'auto', func = null } = {}) {
     for (const [line, b] of od.bytes) lines[line - 1] = b;
     asm = lines.join('\n');
   }
+  /** @type {any} */
   const out = { text: asm, objdump: od.objdump, loops: loops.map((l) => ({ begin: l.begin, end: l.end, label: named(l), function: l.function, instructions: l.instructions, depth: l.depth, inner: l.inner })),
     choice: null, choosable: false, pick: null, body: null, alignment: null, address: null, stubs: [], notes: [], fallback: new Map() };
   if (loop !== 'auto' && loop !== 'whole' && !(Number.isInteger(loop) && loop >= 0)) {
@@ -417,7 +427,7 @@ export function preparePaste(text, { loop = 'auto', func = null } = {}) {
     return out;
   }
   const code = s.instrs;
-  if (Number.isInteger(loop) && loop >= loops.length) {
+  if (Number.isInteger(loop) && Number(loop) >= loops.length) {
     out.error = `loop: ${loop} is not the index of a loop (0-based; the text has ${loops.length === 0 ? 'none' : `${loops.length}: 0 to ${loops.length - 1}`})`;
     return out;
   }
@@ -428,7 +438,7 @@ export function preparePaste(text, { loop = 'auto', func = null } = {}) {
       // a compiler's function (a function label, directives, objdump, or a prologue/epilogue): its body; a bare snippet
       // ("add rax, 1 / ret") is analyzed as typed
       const b = functionBody(s);
-      const compiled = od.objdump || s.directives > 0 || [...s.labels.keys()].some((n) => !n.startsWith('.L') && !/^\d+$/.test(n)) || b?.trimmed > 0;
+      const compiled = od.objdump || s.directives > 0 || [...s.labels.keys()].some((n) => !n.startsWith('.L') && !/^\d+$/.test(n)) || (b?.trimmed ?? 0) > 0;
       out.body = b && compiled ? { begin: b.begin, end: b.end } : null;
       out.choosable = !!out.body;
     }

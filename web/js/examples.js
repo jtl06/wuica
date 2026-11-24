@@ -85,6 +85,7 @@ export const CLASSIC_EXAMPLES = [
 export const SHOWCASE_EXAMPLES = [
   { id: 'sha256', title: 'SHA-256 block (2,949 instr)', arch: 'SKL', hex: SHA256_BLOCK_HEX.replace(/\s+/g, ''), text: { hex: SHA256_BLOCK_HEX },
     // Intel assembly, loaded when picked (showcase-asm.js, about 60 KB); the example opens in asm mode, hex if it cannot load
+    // @ts-ignore: the page's module (the npm package's copy of this file has no showcase-asm.js and never calls asm())
     asm: () => import('./showcase-asm.js').then((m) => m.SHA256_BLOCK_ASM) },
 ];
 

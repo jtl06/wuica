@@ -8,6 +8,8 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { installWasmLimits, getAnalyzerModule, RawInstance, wasmMemoryBytes } from './wasm-limits.js';
 
+if (!parentPort) throw new Error('worker.js runs as a worker thread');
+const port = parentPort;
 const cfg = workerData;
 installWasmLimits(cfg.analyzerMemoryMb * 2 ** 20);
 const { createWuica, normalizeHex, WARM_HEX } = await import('wuica');
@@ -34,7 +36,7 @@ try {
     if (a.code !== 0) throw new Error(`warm-up of the assembler failed: ${a.error}`);
   }
 } catch (e) {
-  parentPort.postMessage({ type: 'init-error', message: e?.stack ?? String(e) });
+  port.postMessage({ type: 'init-error', message: e?.stack ?? String(e) });
   process.exit(1);
 }
 const baseline = wasmMemoryBytes();
@@ -49,6 +51,7 @@ function chipOf(arch) {
 
 // Counts the instructions XED decodes in `bytes` (undecodable bytes are skipped), with an instance of the analyzer
 // module of its own (not the library's). null if that is not possible.
+/** @type {any} */
 let decoder = null;
 function countInstructions(bytes, chip) {
   const module = getAnalyzerModule();
@@ -148,7 +151,7 @@ const ops = {
   },
 };
 
-parentPort.on('message', async ({ id, op, args }) => {
+port.on('message', async ({ id, op, args }) => {
   let out;
   try {
     out = await ops[op](args);
@@ -157,7 +160,7 @@ parentPort.on('message', async ({ id, op, args }) => {
     out = { result: { code: 3, error, stderr: [{ text: error }] }, meta: {} };
   }
   const grown = wasmMemoryBytes() - baseline;
-  parentPort.postMessage({ id, ...out, recycle: grown > cfg.recycleMemoryMb * 2 ** 20 });
+  port.postMessage({ id, ...out, recycle: grown > cfg.recycleMemoryMb * 2 ** 20 });
 });
 
-parentPort.postMessage({ type: 'ready', baseline });
+port.postMessage({ type: 'ready', baseline });

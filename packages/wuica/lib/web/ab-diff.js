@@ -137,9 +137,15 @@ export const signedCycles = (v) => `${v < 0 ? '−' : '+'}${cycles(Math.abs(v))}
 // cycle counts are divided by them before they are compared (cycles per element). scale (older form): B does the work
 // of `scale` iterations of A, i.e. workA = 1, workB = scale.
 // Either response may be an error ({error}) or missing: then only what can be compared is filled in.
+/**
+ * @param {any} ra
+ * @param {any} rb
+ * @param {{workA?: number, workB?: number | null, scale?: number}} [opts]
+ */
 export function compareResponses(ra, rb, { workA = 1, workB = null, scale = 1 } = {}) {
-  const wa = workA > 0 ? workA : 1, wb = workB > 0 ? workB : scale > 0 ? scale : 1;
+  const wa = workA > 0 ? workA : 1, wb = workB !== null && workB > 0 ? workB : scale > 0 ? scale : 1;
   const okA = okResponse(ra), okB = okResponse(rb);
+  /** @type {any} */
   const out = { okA, okB, workA: wa, workB: wb, scale: wb / wa, perElement: wa !== 1 || wb !== 1, tp: null, bottlenecks: null, limits: [], diff: null };
   if (!okA || !okB) return out;
   const a = Number(ra.tp) / wa, b = Number(rb.tp) / wb;

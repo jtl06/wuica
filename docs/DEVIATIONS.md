@@ -29,10 +29,20 @@ the `-json` row); they now have results, and every other case is byte-identical 
 `docs/PORTING.md`). The cases of the other rows were found with the fuzzer (`crates/wuica/examples/fuzz.rs`) and by reading the
 code; blocks for them are in `fixtures/extra-src` (`x_dsb_fused_mid*.s`, `x_push_mem_pair.s`).
 
-Inputs that exhaust time or memory are unchanged: for example `wbinvd`, whose port data has about 10^6 uops (172,044 of them
-loads on IVB), makes the reference run for hours; wuica rejects a uop with more than 65,535 operands ("invalid input: too many
-operands"), stops after 10^8 cycles ("invalid input: the simulation does not terminate"), and otherwise needs minutes or runs out
-of memory on such blocks (see `docs/WASM-API.md`, "Failures and traps").
+Inputs that exhaust time or memory: `wbinvd`, whose port data has about 10^6 uops (956,045 on IVB, 1,180,985 on SKL, 5,354,354
+on ADL-P; 172,044 of IVB's are loads), makes the reference run for hours. The reference has no bound; wuica has a **work budget**:
+a block with more than 250,000 uops per iteration (`analyze::MAX_UOPS_PER_ITERATION`, counted from the port data and the retire
+slots before the uops are expanded: `instr_builder::expanded_uops`) is refused at once ("the block has N uops per iteration, more
+than the 250000 wuica simulates ...", result code 3). The largest block of the fixture corpus has 1,227 uops per iteration and
+the SHA-256 showcase 3,289; no fixture case is refused and every output is unchanged. Below the budget, wuica rejects a uop with
+more than 65,535 operands ("invalid input: too many operands"), stops after 10^8 cycles ("invalid input: the simulation does not
+terminate"), and can still run out of memory on very large blocks with large `minIterations`/`minCycles` (see
+`docs/WASM-API.md`, "Failures and traps").
+
+An `alignmentOffset` beyond ±2^62 is refused ("alignmentOffset ... is out of range (at most 2^62 in magnitude)"; a request
+error): addresses are 64-bit integers in wuica and unbounded in Python, and such an offset could make them wrap (before, an
+offset of 2^63 - 1 wrapped silently). The offsets anyone uses are 0 to 63; the result depends on the offset only through
+addresses modulo 64.
 
 ## Results that differ from upstream
 

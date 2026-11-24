@@ -37,11 +37,50 @@ pub fn build_instructions(
     no_micro_fusion: bool,
     no_macro_fusion: bool,
 ) -> InstrList {
+    match try_build_instructions(decoded, config, uarch, data, alignment_offset, no_micro_fusion, no_macro_fusion, usize::MAX) {
+        Ok(list) => list,
+        Err(_) => unreachable!("no budget"),
+    }
+}
+
+/// [`build_instructions`] with a work budget: `Err(n)` before the uops are expanded if the block has more than `max_uops`
+/// uops per iteration ([`expanded_uops`]), so that a block like `wbinvd` (about 10^6 uops) fails at once instead of
+/// running for minutes or exhausting the memory (docs/DEVIATIONS.md; `analyze::MAX_UOPS_PER_ITERATION`).
+#[allow(clippy::too_many_arguments)]
+pub fn try_build_instructions(
+    decoded: &[DecodedInstr],
+    config: &UArchConfig,
+    uarch: &UArch,
+    data: &ArchData,
+    alignment_offset: i64,
+    no_micro_fusion: bool,
+    no_macro_fusion: bool,
+    max_uops: usize,
+) -> Result<InstrList, usize> {
     let mut operands = Vec::new();
     let mut instrs = get_instructions(decoded, config, uarch, data, alignment_offset, no_micro_fusion, no_macro_fusion, &mut operands);
+    let n = expanded_uops(&instrs);
+    if n > max_uops {
+        return Err(n);
+    }
     adjust_latencies_and_add_merge_uops(&mut instrs, &mut operands, config);
     compute_uop_properties(&mut instrs, &mut operands, config);
-    InstrList { operands, instrs }
+    Ok(InstrList { operands, instrs })
+}
+
+/// The uops of one iteration as `computeUopProperties` will make them, from the port data and the retire slots (what
+/// `getInstructions` gives): per instruction that is not macro-fused into the one before, the uops of its port data or its
+/// retire slots, whichever is more. (The merge and stack-synchronization uops the renamer adds come on top: at most a few
+/// per instruction.)
+pub fn expanded_uops(instrs: &[Instr]) -> usize {
+    instrs
+        .iter()
+        .filter(|i| !i.macro_fused_with_prev_instr)
+        .map(|i| {
+            let ports: i64 = i.port_data.iter().map(|(_, n)| (*n).max(0)).fold(0i64, i64::saturating_add);
+            usize::try_from(ports.max(i.retire_slots).max(0)).unwrap_or(usize::MAX)
+        })
+        .fold(0usize, usize::saturating_add)
 }
 
 /// `xed.matchXMLAttributes(instrD, attrDict)` (C code in uiCA's XED module): false if an attribute that both have differs;

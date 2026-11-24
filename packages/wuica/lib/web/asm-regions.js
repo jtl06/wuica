@@ -42,6 +42,11 @@ const sectionName = (args) => (/^\s*("?)([^",\s]+)\1/.exec(args)?.[2] ?? '');
 // opts (loop-find.js, preparePaste): pick {begin, end}: lines (1-based) of the code to analyze when nothing is marked (the
 // loop: its first instruction at or after `begin` to the end of line `end`); stubs: symbols to define right after the
 // analyzed code (the loop's exits: its conditional branches out of it are then short and not taken).
+/**
+ * @param {string} text
+ * @param {{pick?: {begin: number, end: number} | null, stubs?: string[]}} [opts]
+ * @returns {any}
+ */
 export function planMarked(text, { pick = null, stubs = [] } = {}) {
   text = String(text ?? '');
   if (!QUICK.test(text) && !pick && !stubs.length) return null;
@@ -49,10 +54,15 @@ export function planMarked(text, { pick = null, stubs = [] } = {}) {
   const labels = [];
   const inserts = []; // {line, col, label}
   const regions = [];
-  let region = null, pendingBegin = false, error = null;
+  /** @type {any} */
+  let region = null;
+  let pendingBegin = false;
+  /** @type {{line: number, message: string} | null} */
+  let error = null;
   const locs = [], files = new Map(), views = new Set();
   let inText = true, prev = false;
   const stack = [];
+  /** @type {any} */
   let iaca = null; // {kind: '111' | '222', line, col} of a mov that can be an IACA marker
   let block = false;
   const label = (line, col) => { const name = `.Lwuica_${labels.length}`; labels.push(name); inserts.push({ line, col, label: name }); return labels.length - 1; };
@@ -98,7 +108,7 @@ export function planMarked(text, { pick = null, stubs = [] } = {}) {
     }
     const sts = statements(line);
     for (const st of sts) {
-      const lead = LABELS.exec(st.text)[0].length;
+      const lead = /** @type {RegExpExecArray} */ (LABELS.exec(st.text))[0].length;
       const body = st.text.slice(lead);
       if (!body) continue;
       const col = st.at + lead;
@@ -122,7 +132,7 @@ export function planMarked(text, { pick = null, stubs = [] } = {}) {
         const name = d?.[1].toLowerCase() ?? '';
         const args = d?.[2] ?? '';
         // an objdump line with its bytes (loop-find.js) starts the picked code like an instruction
-        if (name === 'byte' && pickPending && inText && i + 1 >= pick.begin) { region.begin = label(i, col); pickPending = false; }
+        if (name === 'byte' && pickPending && inText && i + 1 >= Number(pick?.begin)) { region.begin = label(i, col); pickPending = false; }
         if (name === 'loc') {
           const m = /^(\d+)\s+(\d+)/.exec(args);
           if (m && inText) locs.push({ label: label(i, col), file: Number(m[1]), line: Number(m[2]) });
@@ -148,7 +158,7 @@ export function planMarked(text, { pick = null, stubs = [] } = {}) {
       }
       if (/^[\w.$@]+\s*=/.test(body)) continue; // a symbol assignment
       // an instruction
-      if (pickPending && inText && i + 1 >= pick.begin) { region.begin = label(i, col); pickPending = false; }
+      if (pickPending && inText && i + 1 >= Number(pick?.begin)) { region.begin = label(i, col); pickPending = false; }
       // (a mov that can be an IACA marker is decided by the next statement)
       const im = IACA_MOV.exec(body);
       if (im) iaca = { kind: im[1] ?? im[2], line: i, col, inText };
@@ -232,7 +242,9 @@ const base = (p) => String(p).split(/[\\/]/).pop();
 
 // The analyzed bytes and the source lines of a plan: {bytes, region, source} or {error}.
 export function cutPlan(plan, code, offsets) {
-  let start = 0, end = code.length, region = null;
+  let start = 0, end = code.length;
+  /** @type {any} */
+  let region = null;
   if (plan.region) {
     const r = plan.region;
     if (plan.error) return { error: plan.error };
@@ -241,6 +253,7 @@ export function cutPlan(plan, code, offsets) {
     if (!(end > start)) return { error: { line: r.line, message: 'the marked region has no machine code in .text' } };
     region = r.auto ? { auto: true } : { name: r.name, line: r.line, index: 0, count: plan.regions.length };
   }
+  /** @type {any} */
   let source = null;
   if (plan.locs.length) {
     const at = plan.locs.map((l) => ({ off: offsets[l.label], file: l.file, line: l.line }))

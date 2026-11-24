@@ -107,7 +107,7 @@ export class Facade {
     if (!split) return this.#run('compare', { req: request }, ctx);
     const { parts, lanes } = split;
     const sizeArch = Array.isArray(request.archs) && request.archs.length ? request.archs[0] : undefined;
-    const ctxs = parts.map(() => ({}));
+    const ctxs = parts.map(() => /** @type {Record<string, any>} */ ({}));
     const out = new Array(parts.length).fill(null);
     const deadline = performance.now() + this.#cfg.timeoutMs; // one job's budget for all parts
     let next = 0;
