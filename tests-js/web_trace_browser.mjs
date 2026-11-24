@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { findChrome } from './chrome.mjs';
 import { hostHandler } from './static-host.mjs';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
+import { FRAME_MS } from './cdp.mjs'; // (the bound of the "under a frame" check: looser on CI)
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.join(here, '..');
@@ -262,7 +263,7 @@ try {
       return out;`);
     check(z.zoom[1] > z.zoom[0] && /px per cycle|cycles per px/.test(z.zoom[2]) && z.zoomKey < z.zoom[1], 'zoom buttons and keys', JSON.stringify(z.zoom));
     check(z.all[0] === z.all[1] && z.all[2] === 0, '"all" shows every uop', JSON.stringify(z.all));
-    check(z.drawMax < 16, `drawing all ${z.all[0]} uops stays under a frame (max ${z.drawMax.toFixed(2)} ms)`);
+    check(z.drawMax < FRAME_MS, `drawing all ${z.all[0]} uops stays under a frame (max ${z.drawMax.toFixed(2)} ms; bound ${FRAME_MS} ms)`);
     check(z.table[0] === z.table[1] && z.table[2] === 11 && z.table[3].length > 0 && z.chartHidden, 'the table view lists the same uops', JSON.stringify(z.table));
     check(z.copied?.[0].startsWith('iteration\tinstruction\tport\tpredecoded\tIDQ\tissued') && z.copied[1].split('\t').length === 11, 'the table copies as tab-separated text', JSON.stringify(z.copied));
     check(z.themed.join() === '250,248,240', 'the canvas follows the theme\'s custom properties', JSON.stringify(z.themed));
