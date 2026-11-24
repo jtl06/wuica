@@ -10,10 +10,10 @@
 //   POST /api/diff/<arch>        two blocks, before and after (the MCP tool diff_blocks)
 //   POST /api/assemble           assembly -> hex
 //   GET  /api/version            versions
-//   POST /mcp                    MCP (tools list_archs, analyze, what_if, compare_archs, assemble)
+//   POST /mcp                    MCP (tools list_archs, analyze, what_if, diff_blocks, compare_archs, list_loops, assemble)
 //
-// JSON by default; `Accept: text/plain` gives uiCA's text report (or the stderr lines of a failure); `Accept:
-// text/markdown` on analyze and compare gives the package's Markdown (markdown.report, markdown.cpuTable).
+// JSON by default; `Accept: text/plain` gives uiCA's text report or the CLI's text (or the stderr lines of a failure);
+// `Accept: text/markdown` on analyze, compare, what-if and diff gives the package's Markdown.
 
 import http from 'node:http';
 import { createWuica, ARCH_FIELDS, detailInsights, markdown, whatIfText, diffMarkdown, diffText, WHAT_IF_VARIANTS } from 'wuica';
@@ -82,10 +82,10 @@ function index() {
       'POST /api/diff/<arch>': 'two blocks, before and after: {a: {source | hex, ...}, b: {...}, options?, per?}',
       'POST /api/assemble': 'assembly to machine code: {source, syntax?}',
       'GET /api/version': 'versions',
-      'POST /mcp': 'remote MCP server (Streamable HTTP): tools list_archs, analyze, what_if, compare_archs, assemble',
+      'POST /mcp': 'remote MCP server (Streamable HTTP): tools list_archs, analyze, what_if, diff_blocks, compare_archs, list_loops, assemble',
       'GET /healthz': 'health',
     },
-    formats: 'JSON; send "Accept: text/plain" for uiCA\'s text report, "Accept: text/markdown" (analyze, compare) for Markdown',
+    formats: 'JSON; send "Accept: text/plain" for text (uiCA\'s report for analyze), "Accept: text/markdown" for Markdown (analyze, compare, what-if, diff)',
   };
 }
 

@@ -88,5 +88,5 @@ test('a bare run on a terminal: the short usage, exit 1; piped stdin is read as 
   const p = run([]);
   assert.equal(p.code, 1);
   assert.match(p.err, /no instructions/);
-  assert.match(run(['-h']).out.split('\n').slice(0, 9).join('\n'), /-examples lists them, -example saxpy analyzes one/);
+  assert.match(run(['-h']).out.split('\n').slice(0, 10).join('\n'), /-examples lists them, -example saxpy analyzes one/);
 });

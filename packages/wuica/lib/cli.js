@@ -11,7 +11,8 @@ import { diffAnalyses, diffMarkdown, diffText } from './web/block-diff.js';
 export const VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 export const USAGE = `Usage: wuica [options] [FILE | - | HEX]
-       wuica diff [options] A B     two blocks (files, - or hex): throughput, bottlenecks, ports, instructions changed
+       wuica diff [options] A B     two blocks (files, - or hex) on one CPU: throughput, bottlenecks, ports, instructions
+                                    changed; -per N or -per A,B (per element), -md, -json, -arch NAME, -loop, the options
        wuica [options] FILE FILE...   several inputs in one run: one table (-files LIST reads the names from a file)
        wuica mcp                start the MCP server (stdio)
 
