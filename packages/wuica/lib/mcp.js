@@ -355,6 +355,8 @@ export async function runServer(options = {}, io = { stdin: process.stdin, stdou
   const w = await createWuica(options);
   const tools = mcpTools(w);
   const state = { version: null };
+  // a client that closes its end early: the writes that follow are dropped, the end of stdin still ends the server
+  io.stdout.on?.('error', (e) => { if (e?.code !== 'EPIPE') throw e; });
   const rl = readline.createInterface({ input: io.stdin, crlfDelay: Infinity });
   for await (const line of rl) {
     const out = await handleLine(state, tools, line);
