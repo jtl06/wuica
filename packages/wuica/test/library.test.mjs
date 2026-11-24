@@ -196,6 +196,16 @@ test('clang 23 -S output as is: .prefalign is read as the .p2align clang 22 wrot
   assert.equal((await w.assemble(s)).code, 0);
 });
 
+test('what-if carries the base\'s decode errors and warnings (also with align)', async () => {
+  const { whatIfText, markdown, findExample } = await import('../lib/index.js');
+  const x = await w.whatIf('SNB', { source: findExample('dot1').intel, variants: ['unroll2', 'align'] }); // SNB has no FMA
+  assert.equal(x.decodeErrors, 4);
+  assert.deepEqual(x.stderr.map((l) => l.text), ['Warning: 4 position(s) could not be decoded']);
+  assert.match(whatIfText(x), /^ {2}warning: 4 position\(s\) could not be decoded$/m);
+  assert.match(markdown.whatIfAlignment(x), /^- Warning: 4 position\(s\) could not be decoded$/m);
+  assert.equal(x.variants.find((v) => v.id === 'align').alignment.min, 4, 'written out: 4 cycles at the best offset');
+});
+
 test('SKL result in detail', async () => {
   const r = await w.analyze('SKL', { hex: HEX });
   assert.equal(r.tp, 2);

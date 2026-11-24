@@ -278,13 +278,14 @@ export function toJSON(r, request) {
 // ---- the alignment variant of what-if (appended) ----------------------------------------------------------------------
 
 // whatIf's table and, when the result has the variant align, its alignment over the 64 offsets (min, median, max, the
-// best and the worst offset, the spread).
+// best and the worst offset, the spread); the base's warnings (decode errors) as a list.
 export function whatIfAlignment(x) {
   const md = whatIf(x);
+  const warn = (x?.stderr ?? []).map((l) => `- ${text(l.text)}`).join('\n');
   const v = x?.variants?.find((y) => y.alignment);
-  if (!v) return md;
+  if (!v) return md + (warn ? `\n${warn}\n` : '');
   const per = x.elementsPerIteration > 0 ? x.elementsPerIteration : null;
   const c = (n) => (per ? cycles(n / per) : Number(n).toFixed(2));
   const a = v.alignment;
-  return md + `\n**Alignment** over the 64 offsets${per ? ' (cycles per element)' : ''}: min ${c(a.min)} (offset ${a.best}), median ${c(a.median)}, max ${c(a.max)} (offset ${a.worst}), spread ${c(a.spread)}; this block at offset ${a.offset}\n`;
+  return md + `\n**Alignment** over the 64 offsets${per ? ' (cycles per element)' : ''}: min ${c(a.min)} (offset ${a.best}), median ${c(a.median)}, max ${c(a.max)} (offset ${a.worst}), spread ${c(a.spread)}; this block at offset ${a.offset}\n` + (warn ? `\n${warn}\n` : '');
 }

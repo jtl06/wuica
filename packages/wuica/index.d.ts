@@ -414,6 +414,9 @@ export interface WhatIfResult {
   bottlenecks: string[];
   unit: 'cycles per original iteration';
   loop?: LoopInfo;
+  /** The base's decode errors and warnings (they hold for the variants too). */
+  decodeErrors?: number;
+  stderr?: StderrLine[];
   /** tp per original iteration, delta = tp − base tp, speedup = base tp / tp; estimate: no analysis (nochain);
    * renamed (accN): the chain's registers and the ones of the copies after the first. */
   variants: { id: WhatIfVariant; label: string; tp?: number; delta?: number; speedup?: number | null; estimate?: boolean; bottlenecks?: string[]; renamed?: { from: string; to: string[] }[]; error?: string;

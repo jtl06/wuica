@@ -197,7 +197,9 @@ export async function whatIf(analyze, arch, request, variants = VARIANTS, { asse
   out.sort((a, b) => ALL_VARIANTS.indexOf(a.id) - ALL_VARIANTS.indexOf(b.id));
   const accs = out.filter((x) => x.id.startsWith('acc') && x.tp !== undefined);
   const best = accs.length ? bestAccumulators(new Map([[1, base.tp], ...accs.map((x) => /** @type {[number, number]} */ ([Number(x.id.slice(3)), x.tp]))])) : null;
-  return { code: 0, arch: base.arch, tp: base.tp, mode: base.mode, bottlenecks: base.bottlenecks, ...(base.loop ? { loop: base.loop } : {}), unit: 'cycles per original iteration', variants: out,
+  // (the base's decode errors and warnings: they hold for the variants too)
+  return { code: 0, arch: base.arch, tp: base.tp, mode: base.mode, bottlenecks: base.bottlenecks, ...(base.loop ? { loop: base.loop } : {}),
+    ...(base.decodeErrors ? { decodeErrors: base.decodeErrors } : {}), ...(base.stderr?.length ? { stderr: base.stderr } : {}), unit: 'cycles per original iteration', variants: out,
     ...(best ? { accumulators: { best: best.n, tp: round(best.tp) } } : {}) };
 }
 
@@ -243,7 +245,8 @@ export function whatIfText(x) {
   return [per ? `What if (${x.arch}), cycles per element (${per} per original iteration; base ${fmtEl(x.tp / per)}):` : `What if (${x.arch}), cycles per original iteration (base ${fmt2(x.tp)}):`,
     `  ${'variant'.padEnd(VARIANT_W)} ${'cycles'.padStart(8)} ${'delta'.padStart(8)} ${'speedup'.padStart(7)}`, ...rows,
     ...(x.accumulators ? [`  best number of accumulators: ${x.accumulators.best}${x.accumulators.best === 1 ? ' (as it is)' : ''}`] : []),
-    ...x.variants.filter((v) => v.alignment).map((v) => { const a = v.alignment; return `  alignment over 64 offsets: min ${f(a.min)} (offset ${a.best}), median ${f(a.median)}, max ${f(a.max)} (offset ${a.worst}), spread ${f(a.spread)}; this block at offset ${a.offset}`; })].join('\n') + '\n';
+    ...x.variants.filter((v) => v.alignment).map((v) => { const a = v.alignment; return `  alignment over 64 offsets: min ${f(a.min)} (offset ${a.best}), median ${f(a.median)}, max ${f(a.max)} (offset ${a.worst}), spread ${f(a.spread)}; this block at offset ${a.offset}`; }),
+    ...(x.stderr ?? []).map((l) => `  warning: ${String(l.text).replace(/^Warning: /, '')}`)].join('\n') + '\n';
 }
 
 // The what-if of a request as the interfaces take it (the library's whatIf method, the MCP tool what_if, the REST API's
