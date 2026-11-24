@@ -27,7 +27,7 @@ const f2 = (x) => Number(x).toFixed(2);
 // ---- the view ----------------------------------------------------------------------------------------------------
 
 // env: { onToggle(open) (the URL keeps whether the view is open), details (details.js: "Ports" drills down to the port
-// set once they are there) }
+// set once they are there), work(view) (its elements per iteration) }
 export function createBound(env = {}) {
   let open = false;
   let selected = null; // the resource the user picked (kept while the response has it)
@@ -142,8 +142,8 @@ export function createBound(env = {}) {
       btn.addEventListener('click', () => jumpToRow(root, k));
       return h('li', null, btn);
     });
-    // what the shares are of (the headline can be per element), and in A–B whose block it is
-    const cap = h('p', { class: 'ab-cap bd-cap' }, ...[sideTag(view), `${view?.side ? ' ' : ''}${f2(Number(r.tp))} cycles/iteration`].filter(Boolean));
+    // what the shares are of, where the headline does not say it (per element) or in A–B (and whose block it is)
+    const cap = view?.side || (env.work?.(view) ?? 1) > 1 ? h('p', { class: 'ab-cap bd-cap' }, ...[sideTag(view), `${view?.side ? ' ' : ''}${f2(Number(r.tp))} cycles/iteration`].filter(Boolean)) : null;
     body.replaceChildren(...[cap, h('div', { class: 'bd-groups' }, groups, ps ? setLine(ps) : null, d?.issue ? slotsLine(d.issue) : null),
       top.length ? h('div', { class: 'bd-top' }, h('span', { class: 'bd-g', text: 'top', title: `the instructions with the largest share of ${name}; the uop table is shaded by the share` }), h('ol', { class: 'bd-list' }, list)) : null].filter(Boolean));
     shade(b, name);

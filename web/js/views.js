@@ -19,7 +19,7 @@ import { createMca } from './mca.js';
 
 export function createViews(env) {
   const details = createDetails({ engine: env.engine });
-  const bound = createBound({ details, onToggle: (open) => env.onToggle?.({ bound: open }) });
+  const bound = createBound({ details, work: env.work, onToggle: (open) => env.onToggle?.({ bound: open }) });
   const whatif = createWhatIf({ engine: env.engine, pool: env.pool, assemble: env.assemble, cpus: env.cpus, onToggle: (open) => env.onToggle?.({ whatif: open }) });
   const codemap = createCodeMap({ setAlign: env.setAlign, onToggle: (open) => env.onToggle?.({ codemap: open }) });
   const deps = createDeps({ engine: env.engine, onToggle: (open) => env.onToggle?.({ deps: open }) });

@@ -469,6 +469,14 @@ try {
     check(r.key[0] === 'dp-i1' && r.key[1] === 'add rax, 0x1 slack 0 ← add rax, 0x1 → add rax, 0x1 ↻' && r.key[2] === 2 && r.flash === 1, 'deps: arrow keys select an instruction and its arcs; Enter jumps to the row', JSON.stringify([r.key, r.flash]));
     await page.shot('deps-chain.png');
 
+    // the bound view says what its shares are of only where the headline does not: per element (or in A–B)
+    for (const [aw, want] of [[1, null], [2, '2.00 cycles/iteration']]) {
+      await page.goto(`${origin}/?nosw=1#v=1&bound=1&aw=${aw}&c=${b64(chain.text.hex)}`);
+      await page.result();
+      const cap = await page.eval(`${HELPERS} await until(() => document.querySelector('#bound .bd-groups'), 20000); return document.querySelector('#bound .bd-cap')?.textContent ?? null;`);
+      check(cap === want, `bound: its caption with ${aw} element(s) per iteration`, JSON.stringify(cap));
+    }
+
     // where the latencies are drawn: beside their own arc, nearer the producing instruction's row than any other (a user
     // test saw imul → xor's "3" on the movzx row between them), in a short block and in a long one (drawn in a window
     // of rows) scrolled to its middle, on the critical chain and for a selected instruction
