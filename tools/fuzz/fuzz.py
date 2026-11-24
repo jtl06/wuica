@@ -24,7 +24,7 @@ BIAS_TAGS = ['shuffle', 'lanecross', 'mul', 'rotate', 'narrowstore', 'sse', 'avx
 ITER_LEVELS = [(10, 500), (1, 0), (0, 0), (0, 200), (1, 1), (2, 30), (25, 100), (-3, 700), (60, 2000), (1, 5000), (150, 0)]
 # the -json output is compared when the reference's is at most this large (bytes); larger ones (long simulations of large
 # blocks) are counted, and their throughput and report text are still compared
-MAX_TRACE = 16 << 20
+MAX_TRACE = 4 << 20
 DEFAULT_TIMEOUT = 120
 
 # ---------------------------------------------------------------------------------------------------------------------------

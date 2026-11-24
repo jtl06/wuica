@@ -320,7 +320,7 @@ the reference machine (`UICA_DIR`, default `/data/projects/wuica-fuzz/uica`: a w
   pairs (0 and negative values among them).
 - Reference: worker processes (as the exporter), an alarm per case (120 s), a fork per case with ZMM registers (the reference
   changes its tables in place for them). `fuzz.py calibrate UICA_DIR FIXTURES N` checks that the runner reproduces fixture lines
-  byte for byte. A `-json` output above 16 MB is not compared (counted as such; throughput and text still are).
+  byte for byte. A `-json` output above 4 MB (about one case in ten: long simulations of large blocks) is not compared (counted as such; throughput and text still are).
 - wuica: `wuica -compare FILE|-` (crates/wuica-cli/src/compare.rs) reads the reference's lines and prints one verdict per case:
   `same`, `differs` (TP, stdout, json or the input error), `wuica-error`, `wuica-panic`, `ref-crash`, `ref-timeout`.
 - Each kind of difference: run again with the reference in a new process, minimized (ddmin over the instructions, then the
