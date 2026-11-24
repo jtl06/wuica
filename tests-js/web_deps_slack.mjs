@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import { canonReg, edgeLatency, annotateLatencies, slackOf, slackOfAsync, fmtSlack } from '../web/js/deps-slack.js';
 import { depGraph } from '../web/js/deps.js';
+import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -55,7 +56,7 @@ if (!wasmPath || !fs.existsSync(new URL('uarch.json', dataDir))) {
   const prototype = (arch) => arch !== 'SKL'; // models that change from round to round: reported, not required
   for (const arch of ['SKL', 'ZEN3', 'ADL-P']) {
     const table = configs[arch].name;
-    if (!engine.hasArch(table)) await engine.loadArch(table, fs.readFileSync(new URL(`arch/${table}.json`, dataDir)));
+    if (!engine.hasArch(table)) await engine.loadArch(table, tableBytes(table));
     for (const ex of [...EXAMPLES, ...CLASSIC_EXAMPLES]) {
       const req = makeRequest(ex.hex, arch);
       const r = await engine.analyze(req);

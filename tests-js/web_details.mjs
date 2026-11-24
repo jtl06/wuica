@@ -15,6 +15,7 @@ import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
 import { SHA256_BLOCK_HEX } from '../web/js/showcase.js';
 import * as pkg from '../packages/wuica/lib/details.js';
+import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -142,7 +143,7 @@ if (!fs.existsSync(wasm) || !fs.existsSync(new URL('data/uarch.json', root))) {
   await e.loadUarch(uarchBytes);
   const uarch = JSON.parse(uarchBytes);
   const archs = Object.keys(uarch.configs).filter((k) => !k.includes('_'));
-  for (const t of new Set(archs.map((a) => uarch.configs[a].name))) await e.loadArch(t, fs.readFileSync(new URL(`data/arch/${t}.json`, root)));
+  for (const t of new Set(archs.map((a) => uarch.configs[a].name))) await e.loadArch(t, tableBytes(t));
   let cases = 0;
   const blocks = [...EXAMPLES, ...CLASSIC_EXAMPLES].map((x) => ({ id: x.id, hex: x.hex }));
   for (const b of blocks) {

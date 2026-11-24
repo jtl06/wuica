@@ -81,13 +81,24 @@ pub unsafe extern "C" fn wuica_load_uarch(json: *const u8, len: usize) -> usize 
     status(text(json, len).and_then(|json| ENGINE.with(|e| e.borrow_mut().load_uarch(json))))
 }
 
-/// Loads an instruction table (the content of `data/arch/<name>.json`). Result: `{"ok": true}` or `{"error": ...}`.
+/// Loads an instruction table. Result: `{"ok": true}` or `{"error": ...}`. The module that ships reads only the binary
+/// form (`data/arch/<name>.bin`; a binary table given here is loaded as by `wuica_load_arch_bin`); the JSON form
+/// (`data/arch/<name>.json`) only a module built with the feature `json-tables`, else the error says so.
 ///
 /// # Safety
 /// The pointers must be valid for the given lengths.
 #[no_mangle]
 pub unsafe extern "C" fn wuica_load_arch(name: *const u8, name_len: usize, json: *const u8, len: usize) -> usize {
-    status(text(name, name_len).and_then(|name| text(json, len).and_then(|json| ENGINE.with(|e| e.borrow_mut().load_arch(name, json)))))
+    let bytes = std::slice::from_raw_parts(json, len);
+    if bytes.starts_with(b"WUICATBL") {
+        return wuica_load_arch_bin(name, name_len, json, len);
+    }
+    #[cfg(feature = "json-tables")]
+    return status(text(name, name_len).and_then(|name| text(json, len).and_then(|json| ENGINE.with(|e| e.borrow_mut().load_arch(name, json)))));
+    #[cfg(not(feature = "json-tables"))]
+    status(text(name, name_len).and_then(|name| {
+        Err(format!("instruction table {name}: this analyzer module reads only binary tables (data/arch/<NAME>.bin, written from the JSON by tools/encode-tables.sh); JSON tables need a module built with the feature json-tables"))
+    }))
 }
 
 /// Loads the binary form of an instruction table (`data/arch/<name>.bin`, written by `encode_tables` from the JSON; see

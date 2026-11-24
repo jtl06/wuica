@@ -10,6 +10,7 @@ import { archGroups } from '../web/js/archs.js';
 import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
 import { costUnits, costJobs } from '../web/js/insight.js';
 import { SWEEP_OFFSETS } from '../web/js/compare.js';
+import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -343,7 +344,7 @@ if (!fs.existsSync(wasmPath) || !fs.existsSync(new URL('data/uarch.json', root))
   const items = archGroups(JSON.parse(uarchBytes.toString()))[0].items;
   const tableOf = (arch) => items.find((i) => i.key === arch).table;
   const bytes = new Map();
-  const tableBytes = async (name) => { if (!bytes.has(name)) bytes.set(name, new Uint8Array(fs.readFileSync(new URL(`data/arch/${name}.json`, root)))); return bytes.get(name); };
+  const tableBytes = async (name) => { if (!bytes.has(name)) bytes.set(name, new Uint8Array(tableBytes(name))); return bytes.get(name); };
   const single = await WasmEngine.create(module);
   await single.loadUarch(uarchBytes);
   for (const it of items) await single.loadArch(it.table, await tableBytes(it.table));

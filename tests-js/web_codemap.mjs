@@ -8,6 +8,7 @@ import { codeMapModel } from '../web/js/codemap.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
 import { encodeState, decodeState } from '../web/js/url-state.js';
+import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -44,7 +45,7 @@ if (!fs.existsSync(wasm) || !fs.existsSync(new URL('data/uarch.json', root))) {
 } else {
   const e = await WasmEngine.create(fs.readFileSync(wasm));
   await e.loadUarch(fs.readFileSync(new URL('data/uarch.json', root)));
-  await e.loadArch('SKL', fs.readFileSync(new URL('data/arch/SKL.json', root)));
+  await e.loadArch('SKL', tableBytes('SKL'));
   let jccSeen = 0;
   for (const ex of [...EXAMPLES, ...CLASSIC_EXAMPLES]) {
     const lens = ex.text.hex.trimEnd().split('\n').map((l) => l.split(/:\s+/)[1].split(/\s{2,}/)[0].split(' ').length);

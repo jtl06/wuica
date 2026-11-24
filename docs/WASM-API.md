@@ -14,7 +14,7 @@ by the module. All text is UTF-8; structured values are JSON.
 | `wuica_result_ptr() -> ptr` | start of the result of the last call (valid until the next call) |
 | `wuica_decode(code, code_len, chip, chip_len) -> len` | decodes machine code for an XED chip name; result: JSON array of decoded instructions, or `{"error": ...}` |
 | `wuica_load_uarch(json, len) -> len` | loads `data/uarch.json` (once); result: `{"ok": true}` or `{"error": ...}` |
-| `wuica_load_arch(name, name_len, json, len) -> len` | loads the instruction table `data/arch/<name>.json`; result as above |
+| `wuica_load_arch(name, name_len, json, len) -> len` | loads an instruction table: in the module that ships only the binary form (as `wuica_load_arch_bin`); JSON (`data/arch/<name>.json`) only in a module built with the Cargo feature `json-tables` (`cargo build -p wuica-wasm --features json-tables`), else the error says that the module reads only binary tables (`tools/encode-tables.sh` writes them); result as above |
 | `wuica_load_arch_bin(name, name_len, bin, len) -> len` | loads the binary form of the table, `data/arch/<name>.bin`, into the same tables as the JSON (what the site, the npm package and the server ship; written at build time by `tools/encode-tables.sh`; layout in `crates/wuica-core/src/table_bin.rs`: the magic `WUICATBL`, a format version, five streams); a file of another format version is an error that says so; result as above |
 | `wuica_analyze(request, len) -> len` | runs an analysis; result: a response object (below) |
 
@@ -57,7 +57,7 @@ No known input makes the module panic: a fuzzer (`crates/wuica/examples/fuzz.rs`
 
 A call can still **trap** (the module throws a `WebAssembly.RuntimeError`) when it runs out of memory: e.g. 200 × `div rcx` with
 `minIterations` 10000 and `minCycles` 100000, or a 5,000-instruction block at the server's limits (about 2 GB). After a trap, the
-instance must not be used again: create a new instance, call `wuica_load_uarch` and `wuica_load_arch` again, and continue. (The
+instance must not be used again: create a new instance, call `wuica_load_uarch` and `wuica_load_arch_bin` again, and continue. (The
 web page keeps the bytes of the loaded tables for this.) `wbinvd` has about 10^6 uops in the tables: with it, a block is
 rejected ("invalid input: too many operands", e.g. on IVB and ADL-P, where one of its uops has more than 65,535 input operands),
 takes 40 s to several minutes (seen on SKL, SKX, KBL, CFL), or runs out of memory (seen on CLX); the reference takes hours.
@@ -266,7 +266,7 @@ was analyzed. In `"auto"`:
   `;` follows the statement without a space: `dec rcx; jnz 1b`); what does not is a comment (a note if it starts with a
   mnemonic). Nothing after a `;` makes a valid line an error.
 
-Only the package's CLI takes `-loop`; the native CLI (`crates/wuica-cli`) reads machine code only.
+Only the package's CLI takes `-loop`; the reference/test binary (`crates/wuica-cli`, not a product) reads machine code only.
 
 ### Derived fields (the npm package, REST, MCP)
 

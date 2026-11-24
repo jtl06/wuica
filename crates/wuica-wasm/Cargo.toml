@@ -8,6 +8,10 @@ license.workspace = true
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+# the JSON instruction-table loader in wuica_load_arch (off: the module that ships reads only binary tables)
+json-tables = ["wuica/json-tables"]
+
 [dependencies]
-wuica = { path = "../wuica" }
+wuica = { path = "../wuica", default-features = false }
 wuica-xed = { path = "../wuica-xed" }

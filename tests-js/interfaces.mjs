@@ -20,6 +20,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { fuzzCases, essence, firstDiff } from './fuzz-cases.mjs';
+import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const args = process.argv.slice(2);
@@ -54,7 +55,7 @@ const engine = await WasmEngine.create(fs.readFileSync(wasmPath));
 await engine.loadUarch(fs.readFileSync(path.join(ROOT, 'data/uarch.json')));
 async function wasm(c) {
   const table = uarch.configs[c.arch].name;
-  if (!engine.hasArch(table)) await engine.loadArch(table, fs.readFileSync(path.join(ROOT, 'data/arch', `${table}.json`)));
+  if (!engine.hasArch(table)) await engine.loadArch(table, tableBytes(table));
   const req = makeRequest(c.hex, c.arch, c.options);
   if (c.options.details) req.details = true; // as the page asks for them (web/js/details.js)
   return engine.analyze(req);

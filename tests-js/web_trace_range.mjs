@@ -8,6 +8,7 @@ import { issueLog } from '../web/js/trace-issue.js';
 import { clampRange, issuedPerCycle, rangeStats, rangeSlotParts, steadyShares, traceRange, flush } from '../web/js/trace-range.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
+import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -86,7 +87,7 @@ if (!fs.existsSync(wasm) || !fs.existsSync(new URL('data/uarch.json', root))) {
   const close = []; // [what, port, trace share, steady share]
   for (const arch of archs) {
     const cfg = uarch.configs[arch];
-    await e.loadArch(cfg.name, fs.readFileSync(new URL(`data/arch/${cfg.name}.json`, root)));
+    await e.loadArch(cfg.name, tableBytes(cfg.name));
     for (const b of [...EXAMPLES, ...CLASSIC_EXAMPLES]) {
       const request = makeRequest(b.hex, arch);
       const r = await e.analyze(request);

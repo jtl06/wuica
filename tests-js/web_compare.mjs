@@ -9,6 +9,7 @@ import { WasmEngine, makeRequest, REQUEST_DEFAULTS } from '../web/js/engine.js';
 import { archGroups } from '../web/js/archs.js';
 import { EXAMPLES } from '../web/js/examples.js';
 import { DEFAULT_STATE, encodeState, decodeState } from '../web/js/url-state.js';
+import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -188,7 +189,7 @@ if (fs.existsSync(wasmPath) && fs.existsSync(new URL('data/uarch.json', root))) 
   const uarch = fs.readFileSync(new URL('data/uarch.json', root));
   await e.loadUarch(uarch);
   const items = archGroups(JSON.parse(uarch))[0].items;
-  for (const it of items) await e.loadArch(it.table, fs.readFileSync(new URL(`data/arch/${it.table}.json`, root)));
+  for (const it of items) await e.loadArch(it.table, tableBytes(it.table));
   for (const ex of EXAMPLES) {
     const res = new Map();
     for (const it of items) res.set(it.key, summarize(await e.analyze(makeRequest(ex.hex, it.key))));

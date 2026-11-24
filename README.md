@@ -26,8 +26,8 @@ For reviewers: [docs/SPEC.md](docs/SPEC.md) states the rules, architecture, meas
 | Pipeline simulator (`uiCA.py`) | `crates/wuica-core` (`sim`) | identical throughput, uop table and `-json` output |
 | Bottleneck analysis (`facile.py`, `printBottlenecks`) | `crates/wuica-core` (`facile`) | identical report text |
 | Analysis API | `crates/wuica` | the request/response of [docs/WASM-API.md](docs/WASM-API.md) |
-| Command-line tool | `crates/wuica-cli` | `wuica HEX -arch SKL` prints uiCA's report |
-| WebAssembly module | `crates/wuica-wasm` | 3.1 MB, 0.8 MB gzipped |
+| Reference/test binary (not a product: the CLI to install is the npm package's) | `crates/wuica-cli` | `wuica HEX -arch SKL` prints uiCA's report; the exactness checks use it as an independent interface |
+| WebAssembly module | `crates/wuica-wasm` | 3.06 MB, 0.8 MB gzipped (binary tables only: no JSON table loader) |
 | Assembler (LLVM 22.1.2 MC, x86 only) | `assembler/` | identical bytes to `llvm-mc` on 3000 files; 3.8 MB, 0.7 MB brotli |
 | Web page | `web/` | static site, runs entirely in the browser |
 
@@ -36,7 +36,7 @@ For reviewers: [docs/SPEC.md](docs/SPEC.md) states the rules, architecture, meas
     scripts/check.sh                           # builds what changed, runs the tests in parallel (quick subset, ~1 min)
     scripts/check.sh full                      # all suites: Rust, WebAssembly, web page, npm package (see docs/PORTING.md)
     cargo test --release                       # all Rust tests (needs data/ and fixtures/generated/, see below)
-    cargo run --release -p wuica-cli -- 4801d84801c349ffcf75f5 -arch SKL
+    cargo run --release -p wuica-cli -- 4801d84801c349ffcf75f5 -arch SKL   # the reference/test binary
     ./build-wasm.sh                            # WebAssembly; needs clang with the wasm32 target (not Apple's clang)
     node tests-js/analyze_fixtures.mjs         # the WebAssembly module against the Python reference
     assembler/build.sh                         # the assembler (Linux; downloads LLVM and wasi-sdk), see assembler/README.md

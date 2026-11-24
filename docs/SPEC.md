@@ -61,7 +61,7 @@ A suggestion that breaks one of these will not be taken, whatever it gains. Each
  assembler: LLVM 22.1.2 MC as wasm32-wasi       assembler/wuica_asm.cpp → wuica_asm.wasm            (C++, compiled)
    │  bytes of .text only
    ▼  hex
- ┌──────────────────────── wuica_wasm.wasm (or the native CLI) ───────────────────────────────────── (Rust + C) ─┐
+ ┌──────────────────────── wuica_wasm.wasm (or the reference binary) ─────────────────────────────── (Rust + C) ─┐
  │ decode: Intel XED, the version uiCA pins     crates/wuica-xed (shim/wuica_xed.c, src/lib.rs)                  │
  │ instruction builder + uops.info tables       crates/wuica-core/src/instr_builder.rs, data.rs, config.rs       │
  │ pipeline simulation                          crates/wuica-core/src/sim/{frontend,renamer,scheduler,prep,…}.rs │
@@ -82,12 +82,12 @@ The Python file each Rust module mirrors: `instructions.py` → `instr_builder.r
 |---|---|---|---|
 | Decoder | C (XED subset, `third_party/xed`) + Rust wrapper | `crates/wuica-xed` | The pinned XED plus a shim produce "the same records as uiCA's Python `xed` module" (`docs/DESIGN.md`, "Architecture"), checked at the decoder boundary |
 | Builder, simulator, analysis, report | Rust, no I/O, no C | `crates/wuica-core` | The exact port (rules 1–2); runs natively for tests and as wasm |
-| Engine facade | Rust | `crates/wuica/src/lib.rs` (`Engine`: `load_uarch`, `load_arch`, `analyze`, `analyze_json`) | One entry point for wasm and native CLI |
+| Engine facade | Rust | `crates/wuica/src/lib.rs` (`Engine`: `load_uarch`, `load_arch_bin`, `load_arch` (JSON, feature `json-tables`: native tools and tests only), `analyze`, `analyze_json`) | One entry point for wasm and the reference binary |
 | WebAssembly exports | Rust | `crates/wuica-wasm/src/{lib,alloc}.rs` | Plain C ABI, no wasm-bindgen; own small-block allocator |
-| Native CLI | Rust | `crates/wuica-cli/src/main.rs` | Comparing with the reference; **machine code only** (hex or `-raw`) |
+| Reference/test binary | Rust | `crates/wuica-cli/src/main.rs` | Not a product: an independent interface for the exactness checks (`scripts/check.mjs`, `tests-js/interfaces.mjs`); **machine code only** (hex or `-raw`) |
 | Assembler | C++ (LLVM MC) as wasm32-wasip1, no imports | `assembler/` | Instruction lengths must match a real assembler; identical bytes to `llvm-mc` (`assembler/README.md`) |
 | llvm-mca view | C++ (LLVM 22.1.2 `llvm-mca`) as wasm | `mca/` | Side-by-side comparison in the page only |
-| Syntax detection, loop finding, regions, `;` comments, objdump text | JavaScript | `web/js/loop-find.js`, `asm-regions.js`, `asm-text.js` (copies in `packages/wuica/lib/web/`) | Written for the page; reused by the package. The repository records no design reason for not doing this in Rust; the effect is that the native CLI has none of it (section 8.4) |
+| Syntax detection, loop finding, regions, `;` comments, objdump text | JavaScript | `web/js/loop-find.js`, `asm-regions.js`, `asm-text.js` (copies in `packages/wuica/lib/web/`) | Written for the page; reused by the package. The repository records no design reason for not doing this in Rust; the effect is that the reference binary has none of it (section 8.4) |
 | Insights, what-if, N accumulators, caveats | JavaScript | `web/js/{bound,insight,whatif,accum,caveats}.js`; package: `lib/insights.js`, `lib/whatif.js` (own implementations, kept equal by `tests-js/web_bound.mjs`, `web_whatif.mjs`), `lib/web/{accum,caveats}.js` (copies) | Derived from the response; not in uiCA |
 | UI, worker pool, service worker, Compiler Explorer import | JavaScript, no framework, no bundler | `web/js/*.js` (61 files, 14,037 lines), `web/css/`, `web/sw.js` | Static hosting, no build step but copying (`web/build.sh`) |
 | CLI, library, stdio MCP | JavaScript (Node ≥ 20) | `packages/wuica/{bin,lib}`, `index.d.ts` | Same wasm modules as the page |
@@ -100,7 +100,7 @@ during a simulation (`docs/DESIGN.md`, "Data layout in the simulator").
 
 | Module | Built by | Exports | Memory (from the module's memory section) | Loaded |
 |---|---|---|---|---|
-| `wuica_wasm.wasm` (analyzer) | `build-wasm.sh`: `cargo build -p wuica-wasm --target wasm32-unknown-unknown --release`, fat LTO, 1 codegen unit, opt-level 3 | `memory`, `wuica_alloc`, `wuica_free`, `wuica_result_ptr`, `wuica_decode`, `wuica_load_uarch`, `wuica_load_arch`, `wuica_analyze` | initial 34 pages (2.1 MiB), **no maximum** (up to 4 GiB) | Page: at start. Package: in `createWuica` |
+| `wuica_wasm.wasm` (analyzer) | `build-wasm.sh`: `cargo build -p wuica-wasm --target wasm32-unknown-unknown --release`, fat LTO, 1 codegen unit, opt-level 3 | `memory`, `wuica_alloc`, `wuica_free`, `wuica_result_ptr`, `wuica_decode`, `wuica_load_uarch`, `wuica_load_arch` (binary tables only; JSON with the Cargo feature `json-tables`), `wuica_load_arch_bin`, `wuica_analyze` | initial 34 pages (2.1 MiB), **no maximum** (up to 4 GiB) | Page: at start. Package: in `createWuica` |
 | `wuica_asm.wasm` (assembler) | `assembler/build.sh` (x86-64 Linux; `-Oz`, full LTO, a size patch) | `_initialize`, `malloc`, `free`, `wuica_assemble`, `wuica_fatal_message` | max 256 MiB | Page: at start in assembly mode (the default), else on first use. Package: on first assembly |
 | `wuica_mca.wasm` (llvm-mca) | `mca/build.sh` | `wuica_mca_run`, `wuica_mca_output`, … | max 1 GiB | Page only, when the `mca` tab is first opened |
 
@@ -146,8 +146,8 @@ Full contracts: `docs/WASM-API.md` (module), `packages/wuica/README.md` ("API co
 
 | Interface | Input | Can | Cannot |
 |---|---|---|---|
-| Module `wuica_analyze(request JSON)` | `{hex, arch, alignmentOffset, initPolicy, simpleFrontEnd, noMicroFusion, noMacroFusion, minIterations, minCycles, includeTrace, details}` | Response: `tp`, `mode` (`loop`/`unroll`), `decodeErrors`, `bottlenecks`, `limits`, `columns`/`rows` (uop table), `text` (uiCA's report), `trace` (uiCA's `-json`), `criticalPath`, `details` (not in uiCA; adding it changes no other field) | Assembly; loop finding; insights; tables must be loaded first (`wuica_load_uarch`, `wuica_load_arch`) |
-| Native CLI `crates/wuica-cli` | Hex argument or `-raw FILE`; `-data DIR` | uiCA's report, `-TPonly`, `-json`, `-trace`, `-details`, uiCA's options | Assembly, objdump text, loop finding, several CPUs per run, what-if, caveats, insights |
+| Module `wuica_analyze(request JSON)` | `{hex, arch, alignmentOffset, initPolicy, simpleFrontEnd, noMicroFusion, noMacroFusion, minIterations, minCycles, includeTrace, details}` | Response: `tp`, `mode` (`loop`/`unroll`), `decodeErrors`, `bottlenecks`, `limits`, `columns`/`rows` (uop table), `text` (uiCA's report), `trace` (uiCA's `-json`), `criticalPath`, `details` (not in uiCA; adding it changes no other field) | Assembly; loop finding; insights; tables must be loaded first (`wuica_load_uarch`, `wuica_load_arch_bin`) |
+| Reference/test binary `crates/wuica-cli` (not a product) | Hex argument or `-raw FILE`; `-data DIR` | uiCA's report, `-TPonly`, `-json`, `-trace`, `-details`, uiCA's options | Assembly, objdump text, loop finding, several CPUs per run, what-if, caveats, insights |
 | npm CLI `wuica` | Assembly file (syntax detected), stdin, hex, `-raw`, objdump text, `-example NAME` | Loop finding (`-loops`, `-loop N\|LABEL\|whole`, `-func`), `-arch A,B,…\|all` (one table), `-per N`, `-whatif`, `-json`, caveats and nearest limit after the report, exit codes 0/1/2/3 | One input per run; object files (use `objdump -d`) |
 | Library `createWuica()` | `analyze(arch, {source\|hex, syntax, loop, func, options})`, `compare`, `assemble`, `archs`, `summarize`, `insights`, `whatIf` | Never throws on bad input: resolves to `{code, error, stderr}`; recovers from traps (`trapped: true`) | — |
 | Stdio MCP (`wuica mcp`, `wuica-mcp`) | JSON-RPC 2.0 over stdio, protocol revisions 2025-11-25 … 2024-11-05 | Tools `analyze`, `what_if`, `compare_archs`, `list_archs`, `assemble`; arguments checked against JSON Schemas | Resources, prompts; option ranges narrower than the library's |
@@ -244,7 +244,7 @@ installed from the local tarball.
 | `wuica -example sha256 -arch SKL -TPonly` | 0.18 s | 165 MB |
 | `wuica -example sha256 -arch all` (default threads) | 0.51 s | 670 MB |
 | `wuica -example sha256 -arch all -threads 1` | 0.70 s | 310 MB |
-| native `wuica <saxpy hex> -arch SKL -TPonly` (`check-fast` profile, 50 runs in a loop) | 7 ms per run | 10 MB |
+| reference binary `wuica <saxpy hex> -arch SKL -TPonly` (`check-fast` profile, 50 runs in a loop) | 7 ms per run | 10 MB |
 
 ### 7.4 Memory inside the module
 
@@ -272,7 +272,7 @@ Counts from the last local `scripts/check.sh full` run (development machine, 202
 | End to end, bytes → complete report text | `wuica:end_to_end` (native), `tests-js/analyze_fixtures.mjs 1` in 4 shards (wasm: `tp` and `text`) | 17,081 cases each |
 | `details` changes no other field; critical path; dependency cycle | `wuica:details`, `critical_path`, `wuica-core:dependency_cycle` | 9,899; 9,899 (8,512 with a path); 36,138 |
 | No panics | `wuica:fuzz_short`, `details_fuzz` (`crates/wuica/tests/fuzz/mod.rs`) | random real encodings, random options, all 15 CPUs |
-| Same result through every interface but the page | `tests-js/interfaces.mjs` (library, wasm via `engine.js`, native CLI, npm CLI, REST, both MCP servers; random requests) | 2,647 checks |
+| Same result through every interface but the page | `tests-js/interfaces.mjs` (library, wasm via `engine.js`, the reference binary, npm CLI, REST, both MCP servers; random requests) | 2,647 checks |
 | npm package; server | `node --test` | 83; 63 tests |
 | Page logic in Node (30 suites) | `tests-js/web_*.mjs` without a browser | 23,314 checks |
 | Page in headless Chrome (19 suites) | `tests-js/web_*_browser.mjs`, `web_browser*.mjs` via `tests-js/cdp.mjs` | 1,276 checks |
@@ -377,7 +377,7 @@ Check this table before suggesting an optimization. "Identical results" means ru
 
 ### 10.4 Interfaces
 
-- **The native Rust CLI takes machine code only**: syntax detection, loop finding, regions, what-if, caveats and insights
+- **The reference/test binary (Rust, not a product) takes machine code only**: syntax detection, loop finding, regions, what-if, caveats and insights
   exist only in JavaScript. A Rust user or a future native server gets less than `npx wuica-cli`.
 - The package's `insights.js` and `whatif.js` re-implement the page's `bound.js` and `whatif.js`; agreement is tested on the
   built-in examples only (`tests-js/web_bound.mjs`, `web_whatif.mjs`).
