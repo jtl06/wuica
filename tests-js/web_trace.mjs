@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import zlib from 'node:zlib';
 import readline from 'node:readline';
-import { buildModel, relevantRounds, rangeChoices, selectRows, cycleSpan, uopDetails, tableRows, toTSV, TABLE_HEAD, STAGES, uopKey, traceEstimate, TRACE_LIMIT,
+import { buildModel, relevantRounds, rangeChoices, aboutText, steadyText, selectRows, cycleSpan, uopDetails, tableRows, toTSV, TABLE_HEAD, STAGES, uopKey, traceEstimate, TRACE_LIMIT,
   rowGroups, rowOfGroup, groupKey, waitBreakdown, uopWaits, waitText, abWindow, roundStart, roundEnds, shownSpan, STUB_C, portGroupName, portGroups, sameTrace } from '../web/js/trace.js';
 import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
@@ -168,6 +168,13 @@ for (const set of sets) {
     if (rr.last - rr.first >= 5) { tpWide++; if (rr.tp === c.TP) tpWideSame++; }
     const ch = rangeChoices(m);
     if (!(ch[0].id === 'steady' && ch[0].from === rr.first && ch[0].to - ch[0].from <= 2 && ch.at(-1).id === 'all' && ch.at(-1).from === 0)) check(false, `${c.file}/${c.arch}: range choices`, JSON.stringify(ch));
+    // the menu and the legend name one range for the steady state (a user test read "iterations 8–14" in the legend and
+    // "steady state: iterations 8–10" in the menu)
+    const steady = `${rr.first}–${rr.last}`, about = aboutText(m);
+    const named = rr.first === rr.last ? `iteration ${rr.first}` : `iterations ${steady}`;
+    const menuSays = ch[0].label === `steady state: ${named}` || ch[0].label.endsWith(` of ${steady}`);
+    if (!(steadyText(m) === named && about.startsWith(`Steady state (what the throughput is computed from): ${named}`) && menuSays
+      && (ch.length === 2 || ch[1].label === `all steady-state: ${named}`))) check(false, `${c.file}/${c.arch}: the menu and the legend name the same steady state`, JSON.stringify([ch, about]));
     const rows = selectRows(m, ch[0].from, ch[0].to);
     if (!(rows.length > 0 && Array.from(rows).every((i) => m.uops[i].rnd >= ch[0].from && m.uops[i].rnd <= ch[0].to))) check(false, `${c.file}/${c.arch}: rows of the default range`);
   }

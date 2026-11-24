@@ -196,15 +196,25 @@ function pyRound2(x) {
   return Math.round(s) / 100;
 }
 
-// The range menu: [{id, label, from, to}]; the first entry is the default (a few iterations of the steady state).
+const its = (a, b) => (a === b ? `iteration ${a}` : `iterations ${a}–${b}`);
+// The steady state's iterations, as the range menu and the legend both say them (one text for both)
+export function steadyText(model) { return its(model.relevant.first, model.relevant.last); }
+// The legend's note: what the steady state is (hiddenPorts: ports without uops, not drawn)
+export function aboutText(model, hiddenPorts = 0) {
+  const { tp } = model.relevant;
+  return `Steady state (what the throughput is computed from): ${steadyText(model)}` + (tp !== null ? `, ${tp} cycles per iteration` : '') + '.'
+    + (hiddenPorts ? ` ${hiddenPorts} port${hiddenPorts === 1 ? '' : 's'} without uops not shown.` : '');
+}
+
+// The range menu: [{id, label, from, to}]; the first entry is the default (a few iterations of the steady state: said
+// as a part of it when the steady state is longer, so that the menu and the legend name one range for it).
 export function rangeChoices(model, few = 3) {
   const { first, last } = model.relevant;
   const out = [];
   const to = Math.min(model.nRounds - 1, first + few - 1);
-  const it = (a, b) => (a === b ? `iteration ${a}` : `iterations ${a}–${b}`);
-  out.push({ id: 'steady', label: `steady state: ${it(first, to)}`, from: first, to });
-  if (last > to) out.push({ id: 'relevant', label: `all steady-state: ${it(first, last)}`, from: first, to: last });
-  out.push({ id: 'all', label: `all: ${it(0, Math.max(0, model.nRounds - 1))}`, from: 0, to: Math.max(0, model.nRounds - 1) });
+  out.push({ id: 'steady', label: `steady state: ${its(first, to)}${last > to ? ` of ${first}–${last}` : ''}`, from: first, to });
+  if (last > to) out.push({ id: 'relevant', label: `all steady-state: ${steadyText(model)}`, from: first, to: last });
+  out.push({ id: 'all', label: `all: ${its(0, Math.max(0, model.nRounds - 1))}`, from: 0, to: Math.max(0, model.nRounds - 1) });
   return out;
 }
 
@@ -760,11 +770,9 @@ export class Viewer {
     this.pinned = false;
     this.tip.hidden = true;
     const hiddenPorts = this.model.ports.length - this.ports.length;
-    const { first, last, tp } = this.model.relevant;
     const shownIts = [...new Set(Array.from(this.rows, (i) => this.model.uops[i].rnd))];
     this.note.textContent = `${this.rows.length} uops · cycles ${this.c0}–${this.c1}` + (shownIts.length ? ` · iteration${shownIts.length === 1 ? '' : 's'} ${shownIts[0]}${shownIts.length > 1 ? `–${shownIts.at(-1)}` : ''}` : '');
-    this.about.textContent = `Steady state (what the throughput is computed from): iterations ${first}–${last}`
-      + (tp !== null ? `, ${tp} cycles per iteration` : '') + '.' + (hiddenPorts ? ` ${hiddenPorts} port${hiddenPorts === 1 ? '' : 's'} without uops not shown.` : '');
+    this.about.textContent = aboutText(this.model, hiddenPorts);
     if (!keepScale) { this.state.scale = null; this.state.fit = true; this.state.scrollLeft = 0; this.state.scrollTop = 0; }
     this.setMode(this.state.mode === 'table' ? 'table' : 'chart'); // (re)renders the table or lays out the chart
   }
