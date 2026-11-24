@@ -45,6 +45,24 @@ if [ -f "$asm" ]; then cp "$asm" "$out/wuica_asm.wasm"; assembler=true; fi
 mcafound=false
 if [ -f "$mca" ]; then cp "$mca" "$out/wuica_mca.wasm"; mcafound=true; fi
 
+# <link rel="modulepreload"> for every module that js/app.js imports statically, directly or not (not the dynamic import()s,
+# nor the workers' modules), so the browser requests them all when it reads the page instead of one level of imports per
+# round trip (four levels): the analyzer's download starts only when app.js runs. The list follows the imports at build time.
+preload=()
+queue=(app.js)
+while [ ${#queue[@]} -gt 0 ]; do
+  f="${queue[0]}"; queue=("${queue[@]:1}")
+  for d in $(grep -oE "(from|import)[[:space:]]*'\./[A-Za-z0-9_.-]+\.js'" "$out/js/$f" | sed -E "s/.*'\.\/(.*)'/\1/"); do
+    case " app.js ${preload[*]-} " in *" $d "*) ;; *) [ -f "$out/js/$d" ] || die "js/$f imports a missing js/$d"; preload+=("$d"); queue+=("$d") ;; esac
+  done
+done
+links=""
+for d in "${preload[@]}"; do links+="<link rel=\"modulepreload\" href=\"js/$d\">"$'\n'; done
+entry='<script type="module" src="js/app.js"></script>'
+grep -qF "$entry" "$out/index.html" || die "index.html has no $entry"
+LINKS="$links" ENTRY="$entry" awk 'index($0, ENVIRON["ENTRY"]) { printf "%s", ENVIRON["LINKS"] } { print }' "$out/index.html" > "$out/index.html.tmp"
+mv "$out/index.html.tmp" "$out/index.html"
+
 cd "$out"
 # What the page can request (not _headers and 404.html, which are for the host, nor robots.txt and sitemap.xml, which are for crawlers), in a stable order.
 files="$(find . -type f ! -name _headers ! -name 404.html ! -name robots.txt ! -name sitemap.xml | sed 's|^\./||' | LC_ALL=C sort)"
