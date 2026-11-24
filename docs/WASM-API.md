@@ -58,9 +58,13 @@ No known input makes the module panic: a fuzzer (`crates/wuica/examples/fuzz.rs`
 A call can still **trap** (the module throws a `WebAssembly.RuntimeError`) when it runs out of memory: e.g. 200 × `div rcx` with
 `minIterations` 10000 and `minCycles` 100000, or a 5,000-instruction block at the server's limits (about 2 GB). After a trap, the
 instance must not be used again: create a new instance, call `wuica_load_uarch` and `wuica_load_arch_bin` again, and continue. (The
-web page keeps the bytes of the loaded tables for this.) `wbinvd` has about 10^6 uops in the tables: with it, a block is
-rejected ("invalid input: too many operands", e.g. on IVB and ADL-P, where one of its uops has more than 65,535 input operands),
-takes 40 s to several minutes (seen on SKL, SKX, KBL, CFL), or runs out of memory (seen on CLX); the reference takes hours.
+web page keeps the bytes of the loaded tables for this; the hosts' recovery stays as it is.)
+
+**Work budget.** A block with more than 250,000 uops per iteration is refused before it is simulated, with result code 3 and the
+error "the block has N uops per iteration, more than the 250000 wuica simulates (a work budget: ...)". `wbinvd` has about 10^6
+uops in the tables (956,045 on IVB to 5,354,354 on ADL-P): it fails at once instead of taking 40 s to several minutes or running
+out of memory (before the budget, seen on SKL, SKX, KBL, CFL and CLX); the reference takes hours. The largest block of the fixture
+corpus has 1,227 uops per iteration, the SHA-256 showcase 3,289. The reference has no such bound (`docs/DEVIATIONS.md`).
 
 ## Analysis response
 
