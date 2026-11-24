@@ -216,15 +216,14 @@ export async function createApp(options = {}) {
     await transport.handleRequest(req, res, body);
   }
 
-  // Tokens: a request costs in proportion to the analyses it can start, a compare of every microarchitecture costing
-  // compareCost; at least 1 (any request), at most the burst (a request that costs more could never run). The same for
-  // REST and /mcp. Analyses: analyze 1; compare the microarchitectures asked for (default all); what-if the base and
-  // each variant that analyzes (not nochain), align 64; diff 2.
-  function cost(analyses) {
-    const n = Math.max(1, facade.archs().length);
-    return Math.max(1, Math.min(cfg.rateBurst || Infinity, Math.ceil((analyses * cfg.compareCost) / n)));
-  }
-  const compareAnalyses = (archs) => (Array.isArray(archs) && archs.length ? archs.length : facade.archs().length);
+  // Tokens: a request costs in proportion to the analyses it can start, as many as a compare of every microarchitecture
+  // (compareCost) costing compareCost; at least 1 (any request), at most the burst (a request that costs more could
+  // never run). The same for REST and /mcp. Analyses: analyze 1; what-if the base and each variant that analyzes (not
+  // nochain), align 64; diff 2. A compare (any microarchitectures): compareCost, and at least one token per job it can
+  // run at once (Facade#compareLanes).
+  const cap = (n) => Math.max(1, Math.min(cfg.rateBurst || Infinity, n));
+  const cost = (analyses) => cap(Math.ceil((analyses * cfg.compareCost) / Math.max(1, facade.archs().length)));
+  const compareTokens = (archs) => cap(Math.max(cfg.compareCost, facade.compareLanes(archs)));
   function whatIfAnalyses(variants) {
     const v = Array.isArray(variants) ? variants : WHAT_IF_VARIANTS;
     return 1 + v.filter((x) => x !== 'nochain' && x !== 'align').length + (v.includes('align') ? 64 : 0);
@@ -234,7 +233,7 @@ export async function createApp(options = {}) {
     const a = m.params?.arguments ?? {};
     switch (m.params?.name) {
       case 'analyze': return cost(1);
-      case 'compare_archs': return cost(compareAnalyses(a.archs));
+      case 'compare_archs': return compareTokens(a.archs);
       case 'what_if': return cost(whatIfAnalyses(a.variants));
       case 'diff_blocks': return cost(2);
       default: return 1;
@@ -350,7 +349,7 @@ export async function createApp(options = {}) {
     if (p === '/api/compare') {
       method(['POST']);
       const body = await readJson(req);
-      rateLimit(req, ctx, cost(compareAnalyses(body?.archs)));
+      rateLimit(req, ctx, compareTokens(body?.archs));
       const r = await facade.compare(body, ctx);
       ctx.code = r.code;
       if (!wantText && wantsMarkdown(req)) return sendMarkdown(res, r, r.code ? markdown.report(r) : markdown.cpuTable(r, { per: r.elementsPerIteration }));

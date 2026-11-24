@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { RateLimiter } from '../lib/ratelimit.js';
 import { start, post, get, HEX } from './helpers.mjs';
+import { WHAT_IF_VARIANTS } from 'wuica';
 
 test('token bucket: burst, refill, per key, bounded map', () => {
   let now = 0;
@@ -57,20 +58,46 @@ test('server: tokens in proportion to the analyses a request can start, the same
   const mcp = (headers, name, args) => post(s.base, '/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, { ...headers, Accept: 'application/json, text/event-stream' });
   try {
     const ip = (k) => ({ 'CF-Connecting-IP': `203.0.113.${k}` });
-    // what-if, the default variants: 11 analyses -> 3 tokens; with align: 1 + 64 -> 13; diff: 2 -> 1; compare of 5 -> 1
+    // what-if, the default variants: 11 analyses -> 3 tokens; align alone: 1 + 64 -> 13; with the default variants: 75 ->
+    // 15; diff: 2 -> 1; a compare: compareCost (3), whatever it lists
     assert.equal((await post(s.base, '/api/what-if/SKL', { hex: HEX }, ip(10))).status, 200);
     assert.equal(await left(ip(10)), 27);
     assert.equal((await post(s.base, '/api/what-if/SKL', { hex: HEX, variants: ['align'] }, ip(11))).status, 200);
     assert.equal(await left(ip(11)), 17);
     assert.equal((await post(s.base, '/api/diff/SKL', { a: { hex: HEX }, b: { hex: HEX } }, ip(12))).status, 200);
     assert.equal(await left(ip(12)), 29);
+    assert.equal((await post(s.base, '/api/what-if/SKL', { hex: HEX, variants: [...WHAT_IF_VARIANTS, 'align'] }, ip(14))).status, 200);
+    assert.equal(await left(ip(14)), 15);
     assert.equal((await post(s.base, '/api/compare', { hex: HEX, archs: ['SKL', 'ZEN3', 'ICL', 'HSW', 'SNB'] }, ip(13))).status, 200);
-    assert.equal(await left(ip(13)), 29);
+    assert.equal(await left(ip(13)), 27);
+    assert.equal((await post(s.base, '/api/compare', { hex: HEX, archs: ['SKL'] }, ip(15))).status, 200);
+    assert.equal(await left(ip(15)), 27);
     // /mcp: the same costs
     assert.equal((await mcp(ip(20), 'what_if', { hex: HEX, variants: ['align'] })).status, 200);
     assert.equal(await left(ip(20)), 17);
     assert.equal((await mcp(ip(21), 'diff_blocks', { a: { hex: HEX }, b: { hex: HEX } })).status, 200);
     assert.equal(await left(ip(21)), 29);
+    assert.equal((await mcp(ip(22), 'compare_archs', { hex: HEX, archs: ['SKL'] })).status, 200);
+    assert.equal(await left(ip(22)), 27);
+  } finally { await s.close(); }
+});
+
+test('server: a compare costs at least one token per job it can run at once', async () => {
+  // 4 workers: a split compare runs up to 2 parts at once; compareCost 1
+  const s = await start({ rateBurst: 30, ratePerMinute: 1, compareCost: 1, workers: 4 });
+  const left = async (headers) => { let n = 0; while ((await post(s.base, '/api/analyze/SKL', { hex: HEX }, headers)).status === 200) n++; return n; };
+  const mcp = (headers, name, args) => post(s.base, '/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, { ...headers, Accept: 'application/json, text/event-stream' });
+  try {
+    const ip = (k) => ({ 'CF-Connecting-IP': `203.0.113.${k}` });
+    assert.equal(s.app.facade.compareLanes(['SKL', 'ZEN3', 'ICL']), 2);
+    assert.equal(s.app.facade.compareLanes(undefined), 2);
+    assert.equal(s.app.facade.compareLanes(['SKL', 'ZEN3']), 1, 'two microarchitectures: one job');
+    assert.equal((await post(s.base, '/api/compare', { hex: HEX }, ip(30))).status, 200);
+    assert.equal(await left(ip(30)), 28);
+    assert.equal((await mcp(ip(31), 'compare_archs', { hex: HEX, archs: ['SKL', 'ZEN3', 'ICL'] })).status, 200);
+    assert.equal(await left(ip(31)), 28);
+    assert.equal((await post(s.base, '/api/compare', { hex: HEX, archs: ['SKL', 'ZEN3'] }, ip(32))).status, 200);
+    assert.equal(await left(ip(32)), 29);
   } finally { await s.close(); }
 });
 

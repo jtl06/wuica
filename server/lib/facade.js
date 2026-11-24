@@ -130,6 +130,15 @@ export class Facade {
     return failed ?? { ...out[0], results: out.flatMap((r) => r.results) };
   }
 
+  // The most jobs a compare of these microarchitectures (default all) can run at once: its lanes when it is split (with
+  // every worker idle), else 1. (The rate limit's cost of a compare: at least one token per lane.)
+  compareLanes(archs) {
+    const n = Array.isArray(archs) && archs.length ? archs.length : this.#local.archs().length;
+    const size = this.#pool.size;
+    if (!this.#cfg.splitCompare || n <= PART_ARCHS || size < 2) return 1;
+    return Math.min(Math.max(2, Math.ceil(size / 2)), size, Math.ceil(n / PART_ARCHS));
+  }
+
   // The parts of a compare and the number of lanes for them (see the top), or null for one job.
   #split(request) {
     if (request === null || typeof request !== 'object' || Array.isArray(request)) return null;
