@@ -100,6 +100,48 @@ added to the list in `ci/make-data-asset.sh`.
   without), and on a small block 8 threads are as fast as none and 15 are 12% slower; the default is one thread per two
   microarchitectures. `-arch all` minus `-arch SKL` is the cost of the other 14: 0.73 s before, 0.30 s on threads.
 
+## Size of the modules
+
+Measured on 0.1.8 (sizes in bytes; brotli with the command-line tool, window 24 unless said otherwise).
+
+- The analyzer, `wuica_wasm.wasm`: 4,307,652 with the name section, 3,093,000 without (shipped so after 0.1.8, `build-wasm.sh`):
+  code 1,898,829, data 1,125,476, function table (element section) 46,422, the rest under 22 kB. Brotli -q 11: 629,775 ->
+  569,418; -q 4: 841,200 -> 747,612; gzip -9: 924,647 -> 816,848. Code: Rust 814,584 (`wuica-core` ~455 k, `serde_json` ~173 k,
+  formatting and float parsing of `core`), XED 1,084,242 (the decoder's 19,719 small `xed3_phash_find_*` functions 727 k in
+  `xed3-phash-lu-vv*.c`, `xed3-dynamic-decode.c` 256 k, the shim's `decode` with the record writer 36 k, the Intel disassembler
+  `xed-disas.c` 12 k). Data: XED ~1.07 MB (the phash lookup tables 477 k, `xed_inst_table` 91 k, the decoder's function-pointer
+  tables 61 k, `xed_iform_db` 55 k, the iform names 222 k of strings plus 55 k of pointers, the iclass names 15 k + 14 k), Rust
+  ~60 kB plus its strings. Everything of XED that is linked is reached: the linker keeps only what is called (`wasm-ld`
+  collects unused functions and data, and clang puts each in its own section for wasm by default:
+  `-ffunction-sections -fdata-sections` gives the same bytes), and the shim uses the iclass, iform, category, extension,
+  isa-set, operand, register and operand-action names, `str2xed_chip_enum_t` and `xed_format_generic` (the `asm` field); the
+  enums it does not print (e.g. `xed-iformfl-enum.c`) are not in the module. Identical data symbols: 5 kB.
+- `panic = "abort"` is already the target's default for wasm32-unknown-unknown (setting it changes only the order of a few
+  functions and strings: 64 bytes). Brotli -q 11 moves by up to 6 kB with such reorderings (563,389 for that build), so
+  differences of a few kB at -q 11 are noise; -q 4 moved by 76 bytes.
+- `wasm-opt -Oz` (binaryen 123) on the stripped module: 2,714,295 raw but 578,742 with brotli -q 11, 771,552 with -q 4 and
+  818,200 with gzip: larger compressed than the module it started from. Not used.
+- The LLVM modules have no custom sections at all (no name section to strip): the assembler 3,802,001 (code 967,243, data
+  2,827,957; brotli -q 11 687,897), llvm-mca 4,376,885 (code 1,134,742, data 3,233,333; -q 11 801,898). Their data is 44% zero
+  bytes but in short runs (runs of 64 or more: 21 kB and 55 kB), so splitting the data segments would not help either.
+- One module for the assembler and llvm-mca: the two compressed in one brotli stream (-q 11) are 921,005 instead of 1,489,795
+  apart, so they share ~570 kB of compressed content (the x86 tables and MC); llvm-mca adds only ~233 kB to the assembler.
+  A merged module would therefore be ~233 kB (~34%) larger for a visitor who never opens the llvm-mca tab, and save ~570 kB
+  for one who does; it would also lose the assembler-only patch. Not done: the assembler is on the common path.
+- What the site sends: the host compresses on the fly at a low brotli level. Measured on the live site (0.1.8): the analyzer
+  866,526 (brotli -q 11: 629,775), the assembler 941,580 (687,897), llvm-mca 1,103,294 (801,898), the 15 tables 1,280,826
+  (680,863). The host has no setting for the level (Compression Rules choose only the algorithm), and its documentation of static
+  assets says nothing about precompressed files (a `Content-Encoding` set in `_headers` is reported not to work; not tried
+  here). A Worker in front of the `.wasm` paths (`run_worker_first`) can return a
+  precompressed `.br` file with `Content-Encoding: br` and `encodeBody: "manual"`, which the browser decodes itself.
+  Measured with the local host (`tests-js/static-host.mjs` serving brotli: -q 2 for everything, close to the site's sizes,
+  or the two modules precompressed at -q 11), time to the first result of a fresh visit in headless Chrome (median of 3):
+  unthrottled 232 / 217 / 224 ms (with names / stripped / stripped at -q 11), 10 Mbit/s with 40 ms latency 2,582 / 2,499 /
+  2,084 ms, 4 Mbit/s with 80 ms 5,690 / 5,567 / 4,548 ms; the two modules on the wire 1,848,252 / 1,757,297 / 1,257,315.
+  Decompressing in the page instead needs a brotli decoder in JavaScript or WebAssembly in Chrome: `DecompressionStream`
+  has no `brotli` in Chrome 157 (Node has it); `gzip` it has everywhere, but gzip -9 of the stripped analyzer (816,848) is
+  larger than the host's brotli of it.
+
 ## The reference
 
 The reference is [jtl06/uiCA](https://github.com/jtl06/uiCA), branch `improve-r9` (model at commit `640e40e`; not pushed yet,
