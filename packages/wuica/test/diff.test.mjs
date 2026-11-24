@@ -67,6 +67,14 @@ test('the MCP tool list_loops: listLoops\' entries, func, errors', async () => {
   assert.match(JSON.parse(e.content[0].text).error, /^func: "nope" is not a label/);
 });
 
+test('the MCP tool compare_archs with per', async () => {
+  const tools = mcpTools(w);
+  const r = await callTool(tools, 'compare_archs', { hex: '4801d84801c349ffcf75f5', archs: ['SKL'], per: 2 });
+  const c = JSON.parse(r.content[0].text);
+  assert.equal(c.results[0].perElement, c.results[0].tp / 2);
+  assert.match((await callTool(tools, 'compare_archs', { hex: '4801d8', per: 0 })).content[0].text, /per: expected more than 0/);
+});
+
 test('wuica diff A B: text, -json, -md (golden), exit codes', () => {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'wuica-diff-'));
   fs.writeFileSync(path.join(dir, 'dot1.s'), DOT1);

@@ -227,6 +227,7 @@ export function mcpTools(w) {
         ...codeShape,
         archs: { description: 'microarchitecture ids to compare (default: all of list_archs)', type: 'array', items: { type: 'string' } },
         options: optionsShape,
+        per: PER,
       }),
       annotations: readOnly, execution,
       handler: async (request) => result(await w.compare(request)),

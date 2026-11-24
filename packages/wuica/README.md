@@ -329,7 +329,7 @@ text, and errors with structured stderr.
 | `GET /api/archs[?fields=id,name]` | `w.archs(fields?)` | `list_archs {fields?}` |
 | — | `listLoops(source, {func?})` | `list_loops {source, func?}` |
 | `POST /api/analyze/<arch>` | `w.analyze(arch, request)` | `analyze {arch, ...request, format?}` |
-| `POST /api/compare` | `w.compare(request)` | `compare_archs {...request}` |
+| `POST /api/compare` | `w.compare({...request, archs?, per?})` | `compare_archs {...request, archs?, per?}` |
 | `POST /api/what-if/<arch>` | `w.whatIf(arch, {...request, variants?, per?})` | `what_if {arch, ...request, variants?, per?}` |
 | `POST /api/diff/<arch>` | `w.diff(arch, {a, b, options?, per?})` | `diff_blocks {arch, a, b, options?, per?}` |
 | `POST /api/assemble` | `w.assemble(source, syntax)` | `assemble {source, syntax?}` |
@@ -407,8 +407,8 @@ Request:
   only models 64-bit mode. `assemble` alone accepts them.
 - `loop` exists in the library, REST (`/api/analyze`, `/api/compare`), the MCP tools `analyze`, `what_if` and
   `compare_archs`, and the package's CLI (`wuica -loop auto|whole|N`). The reference/test binary (`crates/wuica-cli`) reads
-  machine code only (hex or `-raw`), so it has no `-loop`. When the text has more than one loop, `otherLoops` lists the others (as `listLoops` and `-loops` give them, without
-`auto`), in the analyze, summary and compare results.
+  machine code only (hex or `-raw`), so it has no `-loop`. When the text has more than one loop, `otherLoops` lists the others (as `listLoops`
+  and `-loops` give them, without `auto`), in the analyze, summary and compare results.
 
 ### Option ranges per interface
 
@@ -507,7 +507,7 @@ Every call can fail like a compiler run in Compiler Explorer, with a non-zero `c
 
 ### Compare: `POST /api/compare`
 
-The request is the same as for analyze, plus an optional `archs` (ids; missing or empty: all listed ones; a repeated id counts once). The response:
+The request is the same as for analyze, plus an optional `archs` (ids; missing or empty: all listed ones; a repeated id counts once) and `per` (elements per iteration: `elementsPerIteration` and each row's `perElement`, as `wuica -arch A,B -per N`). The response:
 
 ```json
 {

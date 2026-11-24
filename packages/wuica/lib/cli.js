@@ -457,7 +457,7 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
     };
 
     if (o.archs) {
-      const c = await w.compare({ ...req, ...(o.archs.length ? { archs: o.archs } : {}) });
+      const c = await w.compare({ ...req, ...(o.archs.length ? { archs: o.archs } : {}), ...(o.per ? { per: o.per } : {}) });
       const status = c.code || Math.max(0, ...(c.results ?? []).map((r) => r.code));
       if (c.code) {
         if (o.json) { out.write(JSON.stringify(c) + '\n'); return status; }
@@ -714,7 +714,7 @@ async function batch(w, o, io) {
       const extra = c.results.map((r) => ({ ins: insOf(r), per: r.code === 0 ? per(r.tp) : undefined }));
       const wi = o.whatif ? await whatIfs(it.req, c.results.filter((r) => r.code === 0).map((r) => r.arch)) : null;
       const results = c.results.map((r, j) => ({ ...r, ...(extra[j].per !== undefined ? { perElement: extra[j].per } : {}), ...(extra[j].ins?.caveats ? { caveats: extra[j].ins.caveats } : {}) }));
-      const doc = { ...c, code: status, results, ...(wi ? { whatIf: wi } : {}) };
+      const doc = { ...c, code: status, ...(o.per ? { elementsPerIteration: o.per } : {}), results, ...(wi ? { whatIf: wi } : {}) };
       docs.set(it, { doc, status, c, wi, rows: c.results.map((r, j) => ({ ...rowOf(r, extra[j].ins, per), cpu: r.arch, prototype: r.prototype })) });
     }
   }

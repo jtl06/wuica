@@ -136,6 +136,18 @@ test('POST /api/diff/<arch>: the library\'s diff (the MCP tool diff_blocks), tex
   assert.match(asm.json.error, /^B: /);
 });
 
+test('POST /api/compare with per: cycles per element (one job or split into parts)', async () => {
+  for (const archs of [['SKL', 'ZEN3'], undefined]) {
+    const body = { hex: HEX, per: 4, ...(archs ? { archs } : {}) };
+    const r = await post(s.base, '/api/compare', body);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.json, await w.compare(body));
+    assert.equal(r.json.elementsPerIteration, 4);
+    assert.ok(r.json.results.every((x) => x.code !== 0 || x.perElement === x.tp / 4));
+  }
+  assert.equal((await post(s.base, '/api/compare', { hex: HEX, per: 0 })).status, 400);
+});
+
 test('Accept: text/markdown: the package\'s Markdown for analyze and compare', async () => {
   const src = 'loop:\n  add rax, 1\n  add rax, 1\n  dec r15\n  jnz loop\n';
   const r = await post(s.base, '/api/analyze/SKL', { source: src }, { Accept: 'text/markdown' });

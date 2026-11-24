@@ -108,6 +108,14 @@ test('otherLoops: the loops not analyzed when the text has more than one (listLo
   assert.equal(listLoops(42).error, '`source` must be assembly text');
 });
 
+test('compare with per: cycles per element on each row (as the CLI\'s -arch with -per)', async () => {
+  const c = await w.compare({ hex: HEX, archs: ['SKL', 'ZEN3', 'NOPE'], per: 4 });
+  assert.equal(c.elementsPerIteration, 4);
+  assert.deepEqual(c.results.map((r) => r.perElement), [c.results[0].tp / 4, c.results[1].tp / 4, undefined]);
+  assert.equal((await w.compare({ hex: HEX, archs: ['SKL'] })).elementsPerIteration, undefined);
+  for (const per of [0, -1, '4']) assert.equal((await w.compare({ hex: HEX, per })).code, 1, String(per));
+});
+
 test('SKL result in detail', async () => {
   const r = await w.analyze('SKL', { hex: HEX });
   assert.equal(r.tp, 2);

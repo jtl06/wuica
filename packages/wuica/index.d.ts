@@ -107,7 +107,8 @@ export type CodeRequest =
 export type AnalyzeRequest = CodeRequest & { options?: AnalysisOptions };
 
 /** Body of POST /api/compare. */
-export type CompareRequest = CodeRequest & { archs?: string[]; options?: AnalysisOptions };
+/** `per`: elements per iteration (also cycles per element: `elementsPerIteration` and each row's `perElement`). */
+export type CompareRequest = CodeRequest & { archs?: string[]; options?: AnalysisOptions; per?: number };
 
 /** Result codes, like an exit status. */
 export declare const CODES: Readonly<{ OK: 0; REQUEST: 1; ASSEMBLER: 2; ANALYSIS: 3 }>;
@@ -270,7 +271,7 @@ export interface AssembleResult {
 }
 
 export type CompareRow =
-  | { arch: string; name: string; year: number | null; prototype: boolean; code: 0; tp: number; mode: 'loop' | 'unroll'; bottlenecks: string[]; limits: Limit[]; decodeErrors: number }
+  | { arch: string; name: string; year: number | null; prototype: boolean; code: 0; tp: number; mode: 'loop' | 'unroll'; bottlenecks: string[]; limits: Limit[]; decodeErrors: number; perElement?: number }
   | { arch: string; name: string; year: number | null; prototype: boolean; code: 1 | 2 | 3; error: string };
 
 export interface CompareResult {
@@ -280,9 +281,13 @@ export interface CompareResult {
   loop?: LoopInfo;
   /** The loops of the text that were not analyzed, when it has more than one (listLoops without `auto`). */
   otherLoops?: OtherLoop[];
+  /** With the request's `per`. */
+  elementsPerIteration?: number;
   stderr: StderrLine[];
   results: CompareRow[];
 }
+/** A compare() result with cycles per element (`per` elements per iteration); unchanged without `per`. */
+export function comparePerElement(result: CompareResult | Failure, per?: number): CompareResult | Failure;
 
 export interface Wuica {
   /** POST /api/analyze/<arch>. Failures resolve to a Failure (never throw for bad input). */

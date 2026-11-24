@@ -169,6 +169,13 @@ function pickOptions(req, extraKeys) {
 }
 
 
+// A compare() result with cycles per element (`per` elements per iteration, as the CLI's -arch with -per):
+// elementsPerIteration on it and perElement (tp / per) on each row that has a tp. Unchanged without `per`.
+export function comparePerElement(c, per) {
+  if (!per || c.code) return c;
+  return { ...c, elementsPerIteration: per, results: c.results.map((r) => (r.code === CODES.OK ? { ...r, perElement: r.tp / per } : r)) };
+}
+
 // A list of arch names without repeats (the same id, or the same unknown name), in the order of their first appearance.
 function uniqueArchs(list, resolve) {
   const seen = new Set();
@@ -488,7 +495,7 @@ class Wuica {
   // POST /api/compare {source | hex, syntax, archs?, options}: one block on several microarchitectures (default: all).
   /** @param {any} [request] @returns {Promise<any>} */
   async compare(request = {}) {
-    const opts = pickOptions(request, ['archs']);
+    const opts = pickOptions(request, ['archs', 'per']);
     if (opts.error) return failure(CODES.REQUEST, opts.error);
     const code = await this.#code(request);
     if (code.code !== undefined) return code;
@@ -496,8 +503,10 @@ class Wuica {
     const ids = request.archs?.length ? uniqueArchs(request.archs, (a) => this.resolveArch(a)) : this.#archs.map((a) => a.id);
     const options = { ...Wuica.#withAlignment(request, opts.options, code), includeTrace: false, details: false };
     // each microarchitecture as #run() would do it here, on the threads when the work is worth it (#runJobs)
+    const per = request.per;
+    if (per !== undefined && !(typeof per === 'number' && Number.isFinite(per) && per > 0)) return failure(CODES.REQUEST, '`per` must be a positive number (elements per iteration)');
     const fields = await this.#runJobs(ids.map((arch) => ({ hex: code.hex, arch, options })));
-    return this.#compareResult(code, ids, fields);
+    return comparePerElement(this.#compareResult(code, ids, fields), per);
   }
 
   // Stops compare()'s threads, if any (they also stop by themselves when idle, and never keep the process alive while
