@@ -147,6 +147,10 @@ export interface Row {
   /** Assembly input: the instruction's 1-based line in the text, and its `.loc` source line ("file.c:12") when the text has .file/.loc directives. Absent for machine code. */
   line?: number;
   loc?: string;
+  /** objdump -S and perf annotate input: the interleaved source line in force ("s += a[i] * b[i];"). */
+  source?: string;
+  /** perf annotate input: the instruction's percent of the samples. */
+  samples?: number;
 }
 
 /** A successful analysis: the response of docs/WASM-API.md plus code, hex and stderr. */
@@ -207,6 +211,8 @@ export interface AnalyzeSummary {
     instr: string;
     line?: number;
     loc?: string;
+    source?: string;
+    samples?: number;
     bytes?: string;
     kind?: 'regMerge' | 'stackSync';
     issued?: number;

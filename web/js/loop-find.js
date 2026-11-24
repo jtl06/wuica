@@ -120,7 +120,8 @@ function byteColumn(rest) {
 // One-byte instructions that have operands (an objdump step of 1 for an instruction with operands must be one of these).
 const ONE_BYTE = /^(?:push|pop|xchg|in|out|ins\w*|outs\w*|stos\w*|lods\w*|movs\w*|scas\w*|cmps\w*|bswap|int)$/i;
 
-// {text, objdump: true, addresses: Map line -> address, bytes: Map line -> the line as .byte} or {objdump: false}.
+// {text, objdump: true, addresses: Map line -> address, bytes: Map line -> the line as .byte, sources: Map line -> the
+// source line in force (objdump -dS, -S: the interleaved source text, llvm-objdump's after "; ")} or {objdump: false}.
 /** @returns {any} */
 export function fromObjdump(text) {
   const lines = normalizeText(text).split('\n');
@@ -185,6 +186,21 @@ export function fromObjdump(text) {
     else name = `${OUTSIDE_PREFIX}${t.toString(16)}`;
     p.text = `${b[1]}${b[2]}${b[3]}${name}`;
   }
+  // objdump -S: a source line (llvm-objdump: "; text"; GNU objdump: the text itself) holds for the instructions after it,
+  // up to the next one or the next function; GNU's -l lines ("/path/file.c:12", "dot():") are not source text
+  const sources = new Map();
+  /** @type {string | null} */
+  let src = null;
+  lines.forEach((l, k) => {
+    const p = parsed[k];
+    if (p.kind === 'instr') { if (src !== null) sources.set(k + 1, src); return; }
+    if (/^\s*[0-9a-fA-F]+\s+<[^>]*>:\s*$/.test(l)) { src = null; return; }
+    if (OD_HEADER.test(l) || OD_NOISE.test(l) || p.kind === 'more' || /^\s*$/.test(l) || /^\s*\/\//.test(l)) return;
+    // (llvm-objdump's "; " is "# " here: a ';' that starts a line is read as '#', leadingSemicolons)
+    const t = l.replace(/^\s*[;#]\s?/, '').trim();
+    if (!t || /^\S+:\d+(?:\s*\(discriminator \d+\))?$/.test(t) || /^[\w.$]+\(\):$/.test(t)) return;
+    src = t;
+  });
   const addresses = new Map(), byteMap = new Map();
   const out = parsed.map((p, k) => {
     if (p.kind === 'blank' || p.kind === 'more') return '';
@@ -194,7 +210,33 @@ export function fromObjdump(text) {
     if (p.bytes?.length) byteMap.set(k + 1, `${p.indent}${label}.byte ${p.bytes.map((b) => '0x' + b.toString(16).padStart(2, '0')).join(', ')}`);
     return `${p.indent}${label}${p.text}`;
   });
-  return { objdump: true, text: out.join('\n'), addresses, bytes: byteMap };
+  return { objdump: true, text: out.join('\n'), addresses, bytes: byteMap, sources };
+}
+
+// ---- perf annotate --------------------------------------------------------------------------------------------------
+
+// `perf annotate --stdio` output ("   12.34 :   401130:   movss (%rdi,%rax,4),%xmm1", source and header lines after an
+// empty percent column " :"): the same lines as objdump text (an instruction as "  401130:\tmovss ...", a source line as
+// "; text", the function header as is), and the percent of samples of each instruction line. {text, perf: true,
+// samples: Map line -> percent} or {perf: false}. Lines stay where they are (diagnostics keep their lines).
+const PERF_INSN = /^\s*(\d+(?:\.\d+)?)\s*:\s+([0-9a-fA-F]+):\s+(\S.*)$/;
+const PERF_OTHER = /^\s*:\s?(.*)$/;
+/** @returns {any} */
+export function fromPerfAnnotate(text) {
+  const lines = normalizeText(text).split('\n');
+  if (lines.filter((l) => PERF_INSN.test(l)).length < 2 || !lines.some((l) => /^\s*Percent\s*\|/.test(l) || PERF_OTHER.test(l))) return { perf: false };
+  const samples = new Map();
+  const out = lines.map((l, k) => {
+    const m = PERF_INSN.exec(l);
+    if (m) { samples.set(k + 1, Number(m[1])); return `  ${m[2]}:\t${m[3].trim()}`; }
+    const o = PERF_OTHER.exec(l);
+    if (!o) return ''; // the header ("Percent | Source code & Disassembly of ..."), the rule, a summary
+    const t = o[1].trim();
+    if (!t || /^Disassembly of section\b/.test(t)) return '';
+    if (/^[0-9a-fA-F]+\s+<[^>]*>:$/.test(t)) return t;
+    return `; ${t}`;
+  });
+  return { perf: true, text: out.join('\n'), samples };
 }
 
 // ---- the statements of a text ----------------------------------------------------------------------------------------
@@ -386,7 +428,8 @@ export function functionBody(s) {
  * @returns {any}
  */
 export function preparePaste(text, { loop = 'auto', func = null } = {}) {
-  let t = leadingSemicolons(normalizeText(text).replace(/^﻿/, ''));
+  const pf = fromPerfAnnotate(normalizeText(text).replace(/^﻿/, ''));
+  let t = leadingSemicolons(pf.perf ? pf.text : normalizeText(text).replace(/^﻿/, ''));
   const od = fromObjdump(t);
   if (od.objdump) t = od.text;
   // code sections other than .text (gcc's main in .text.startup, -ffunction-sections): into .text, which the assembler
@@ -428,7 +471,19 @@ export function preparePaste(text, { loop = 'auto', func = null } = {}) {
     return out;
   }
   const code = s.instrs;
-  out.lines = code.map((x) => x.line); // the source line of each instruction of the text (pick.lines: of the pick)
+  out.lines = code.map((x) => x.line);
+  // per instruction line: the interleaved source line (objdump -S, perf annotate) and the percent of samples (perf)
+  out.lineInfo = new Map();
+  for (const x of code) {
+    const source = od.objdump ? od.sources?.get(x.line) : undefined, samples = pf.perf ? pf.samples.get(x.line) : undefined;
+    if (source !== undefined || samples !== undefined) out.lineInfo.set(x.line, { ...(source !== undefined ? { source } : {}), ...(samples !== undefined ? { samples } : {}) });
+  }
+  out.profile = pf.perf ? 'perf' : null;
+  // perf annotate with several loops: "auto" picks the one with the most samples (the first of equals)
+  if (pf.perf && loop === 'auto' && loops.length > 1) {
+    const heat = loops.map((l) => code.filter((x) => x.line >= l.begin && x.line <= l.end).reduce((n, x) => n + (pf.samples.get(x.line) ?? 0), 0));
+    loop = heat.indexOf(Math.max(...heat));
+  } // the source line of each instruction of the text (pick.lines: of the pick)
   if (Number.isInteger(loop) && Number(loop) >= loops.length) {
     out.error = `loop: ${loop} is not the index of a loop (0-based; the text has ${loops.length === 0 ? 'none' : `${loops.length}: 0 to ${loops.length - 1}`})`;
     return out;

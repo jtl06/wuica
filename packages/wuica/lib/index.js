@@ -190,7 +190,8 @@ function withSourceLines(r, src) {
   const rows = r.rows.map((x) => {
     if (x.kind !== 'instr') return x;
     const i = k++;
-    return { ...x, ...(lines ? { line: lines[i] } : {}), ...(locs && file && locs[i] ? { loc: `${file}:${locs[i]}` } : {}) };
+    const info = lines && src.info ? src.info.get(lines[i]) : undefined; // objdump -S, perf annotate: source, samples
+    return { ...x, ...(lines ? { line: lines[i] } : {}), ...(locs && file && locs[i] ? { loc: `${file}:${locs[i]}` } : {}), ...(info ?? {}) };
   });
   return { ...r, rows };
 }
@@ -354,7 +355,7 @@ class Wuica {
     // the other loops of the text, when it has more than one (what -loop N or LABEL can pick instead)
     const otherLoops = r.loops.length > 1 ? loopListing(r.loops, null).filter((l) => l.index !== picked?.index).map(({ auto, ...l }) => l) : null;
     // where each instruction came from: its line of the text (the loop finder's), and its .loc line (the assembler's)
-    const sourceLines = { lines: r.lines ?? null, loc: r.source ?? null };
+    const sourceLines = { lines: r.lines ?? null, loc: r.source ?? null, info: r.lineInfo ?? null };
     return { code: CODES.OK, hex: Buffer.from(r.bytes).toString('hex'), bytes: r.bytes, stderr: diagnosticLines(r.diagnostics), loop: loopInfo, syntax: { name: syn.name, detected: syn.detected }, ...(otherLoops ? { otherLoops } : {}), sourceLines };
   }
 
@@ -569,7 +570,7 @@ class Wuica {
     const sources = new Set(['MITE', 'MS', 'DSB', 'LSD']);
     const instructions = r.rows.map((row, k) => {
       /** @type {Record<string, any>} */
-      const e = { instr: row.label, ...(row.line ? { line: row.line } : {}), ...(row.loc ? { loc: row.loc } : {}) };
+      const e = { instr: row.label, ...(row.line ? { line: row.line } : {}), ...(row.loc ? { loc: row.loc } : {}), ...(row.source !== undefined ? { source: row.source } : {}), ...(row.samples !== undefined ? { samples: row.samples } : {}) };
       if (row.opcode) e.bytes = row.opcode.toLowerCase();
       if (row.kind !== 'instr') e.kind = row.kind;
       const uopSource = {}, ports = {};

@@ -1,0 +1,47 @@
+ Percent |	Source code & Disassembly of sum for cycles:u (8421 samples, percent: local period)
+---------------------------------------------------------------------------------------------
+         :
+         :
+         :
+         :	Disassembly of section .text:
+         :
+         :	0000000000401120 <dot>:
+         :	dot():
+         :	float dot(const float *a, const float *b, long n) {
+    0.03 :	  401120:	xorps  %xmm0,%xmm0
+         :	for (long i = 0; i < n; i++)
+    0.00 :	  401123:	test   %rdx,%rdx
+    0.00 :	  401126:	jle    401146 <dot+0x26>
+    0.01 :	  401128:	xor    %eax,%eax
+    0.00 :	  40112a:	nopw   0x0(%rax,%rax,1)
+         :	s += a[i] * b[i];
+    4.12 :	  401130:	movss  (%rdi,%rax,4),%xmm1
+    3.97 :	  401135:	mulss  (%rsi,%rax,4),%xmm1
+    9.86 :	  40113a:	addss  %xmm1,%xmm0
+         :	for (long i = 0; i < n; i++)
+    0.41 :	  40113e:	inc    %rax
+    0.02 :	  401141:	cmp    %rax,%rdx
+    0.37 :	  401144:	jne    401130 <dot+0x10>
+         :	return s;
+    0.00 :	  401146:	ret
+    0.00 :	  401147:	nopw   0x0(%rax,%rax,1)
+         :
+         :	0000000000401150 <count>:
+         :	count():
+         :	long count(const unsigned char *p, long n) {
+    0.00 :	  401150:	xor    %eax,%eax
+         :	for (long i = 0; i < n; i++)
+    0.00 :	  401152:	test   %rsi,%rsi
+    0.00 :	  401155:	jle    401172 <count+0x22>
+    0.00 :	  401157:	xor    %ecx,%ecx
+    0.00 :	  401159:	nopl   0x0(%rax)
+         :	c += p[i] > 127;
+   21.48 :	  401160:	movzbl (%rdi,%rcx,1),%edx
+   18.77 :	  401164:	shr    $0x7,%edx
+   20.15 :	  401167:	add    %rdx,%rax
+         :	for (long i = 0; i < n; i++)
+   10.26 :	  40116a:	inc    %rcx
+    5.31 :	  40116d:	cmp    %rcx,%rsi
+    5.24 :	  401170:	jne    401160 <count+0x10>
+         :	return c;
+    0.00 :	  401172:	ret

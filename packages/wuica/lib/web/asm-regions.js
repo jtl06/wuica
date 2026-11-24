@@ -393,7 +393,7 @@ export async function assembleMarked(assemble, text, opts = {}) {
   };
   // the source line of each analyzed instruction: of the pick, or of the whole text (not with a marked region)
   const lines = prep.pick ? prep.pick.lines : r.region ? null : prep.lines ?? null;
-  const out = { ...r, loop, loops: prep.loops, body: prep.body, choosable: prep.choosable, alignment: prep.alignment, lines };
+  const out = { ...r, loop, loops: prep.loops, body: prep.body, choosable: prep.choosable, alignment: prep.alignment, lines, lineInfo: prep.lineInfo ?? null, profile: prep.profile ?? null };
   if (r.ok && prep.notes.length) out.diagnostics = [...r.diagnostics, ...prep.notes];
   return out;
 }

@@ -37,6 +37,7 @@ wuica diff dot.s dot4.s -per 8,32              # before and after: speed-up, bot
 clang -O3 -c dot.c && wuica dot.o -func dot    # an object file (ELF or Mach-O, x86-64): no objdump needed
 wuica *.s -arch SKL,ZEN3                       # several files in one run: one table (-files LIST for long lists)
 objdump -d dot.o | wuica                       # objdump output: the loop's real alignment from its address
+perf annotate --stdio -s dot | wuica           # a profile: the hottest loop, samples and source lines per instruction
 ```
 
 - **Syntax.** Intel (noprefix) or AT&T is detected from the text (`%rdx`, `$8`, `(%rdi,%rcx,4)` are AT&T);
@@ -413,6 +414,9 @@ Request:
 - Assembly input: each instruction row (and `instructions[]`, `insights.chain[]`, `insights.hot.instructions[]`) has
   `line`, its 1-based line in the text, and `loc` ("file.c:12") when the text has `.file`/`.loc` directives: what the
   loop finder and the assembler record, not a match of the text. Machine code has neither.
+- Profiles are read as they are: `objdump -dS` (or `-S`) output gives each instruction `source`, the interleaved source
+  line in force; `perf annotate --stdio` output gives `samples` (its percent) and `source`, and when the text has several
+  loops, the one with the most samples is analyzed (`loop` still picks another).
 
 ### Option ranges per interface
 

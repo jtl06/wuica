@@ -160,6 +160,27 @@ test('the what-if variant align: the 64 alignment offsets, only when asked for',
   assert.equal((await w.whatIf('SKL', { source: src, variants: ['align'], options: { alignmentOffset: 8 } })).variants[0].alignment.offset, 8);
 });
 
+test('profiles: objdump -dS keeps the source lines, perf annotate --stdio the samples and picks the hottest loop', async () => {
+  const { listLoops } = await import('../lib/index.js');
+  // real llvm-objdump -dS output (tests-js/fixtures/profiles/sum.c, clang -O1 -g)
+  const od = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/profiles/objdump-dS.txt'), 'utf8');
+  const r = await w.analyze('SKL', { source: od });
+  assert.equal(r.loop.function, 'dot');
+  assert.deepEqual(r.rows.map((x) => x.source), [...Array(3).fill('s += a[i] * b[i];'), ...Array(3).fill('for (long i = 0; i < n; i++)')]);
+  assert.deepEqual(w.summarize(r).instructions.map((x) => x.source), r.rows.map((x) => x.source));
+  // perf annotate --stdio: a sample written by hand from the documented format (perf is not on the development Mac)
+  const pf = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/profiles/perf-annotate.txt'), 'utf8');
+  const p = await w.analyze('SKL', { source: pf });
+  assert.equal(p.code, 0);
+  assert.equal(p.loop.function, 'count', 'the loop with the most samples (dot comes first in the text)');
+  assert.deepEqual(p.rows.map((x) => x.samples), [21.48, 18.77, 20.15, 10.26, 5.31, 5.24]);
+  assert.equal(p.rows[0].source, 'c += p[i] > 127;');
+  assert.deepEqual(listLoops(pf).map((l) => [l.function, l.auto]), [['dot', false], ['count', true]]);
+  assert.equal((await w.analyze('SKL', { source: pf, loop: 0 })).loop.function, 'dot', 'an explicit loop wins');
+  assert.equal((await w.analyze('SKL', { source: pf, loop: 0 })).rows[2].samples, 9.86);
+  assert.equal(p.tp, (await w.analyze('SKL', { hex: '0fb6140fc1ea074801d048ffc14839ce75ee', options: { alignmentOffset: 32 } })).tp);
+});
+
 test('SKL result in detail', async () => {
   const r = await w.analyze('SKL', { hex: HEX });
   assert.equal(r.tp, 2);
