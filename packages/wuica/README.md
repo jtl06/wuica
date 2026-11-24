@@ -16,7 +16,62 @@ experimental models of the fork [jtl06/uiCA](https://github.com/jtl06/uiCA): **A
 
 Everything runs offline. The two WebAssembly modules (the analyzer, and LLVM's x86 assembler for assembly input) and the
 instruction tables are shipped brotli-compressed. A table is loaded the first time its microarchitecture is used.
-Requirements: Node.js 20 or later.
+Requirements: Node.js 20 or later. **No dependencies**: `npm install wuica` (or `npx wuica`) adds this one package,
+2.3 MB unpacked; the MCP server is part of it.
+
+## The CLI in five minutes
+
+```
+clang -O3 -march=haswell -S dot.c -o dot.s     # AT&T, as clang and gcc write it: detected, no flag needed
+npx wuica dot.s                                # uiCA's report for SKL, of the loop wuica picked
+npx wuica dot.s -arch SKL,ZEN3,ADL-P           # one table for several CPUs ("all": every one)
+npx wuica dot.s -per 8                         # the loop does 8 elements per iteration: cycles per element too
+npx wuica dot.s -loops                         # the loops in the file; -loop N or -loop .LBB0_12 picks one
+npx wuica dot.s -whatif                        # unrolled, N accumulators, front end and fusion variants
+objdump -d dot.o | npx wuica                   # objdump output: the loop's real alignment from its address
+```
+
+- **Syntax.** Intel (noprefix) or AT&T is detected from the text (`%rdx`, `$8`, `(%rdi,%rcx,4)` are AT&T);
+  stderr says which (`analyzed: loop .LBB0_9 (lines 28-47, in dot), AT&T syntax (detected)`). `-att` or `-intel`
+  force one.
+- **Per iteration.** `tp` is cycles per iteration of the loop as the compiler wrote it. Compilers unroll and vectorize
+  (×8, ×16, ×32 elements per iteration), so compare per element: `-per N` prints `Per element: … cycles` (JSON
+  `perElement`; under 0.1 with 3 significant digits, `0.0625`); without it, stderr shows the loop's step when it can,
+  in the register's units: `rcx += 8 per iteration (index; ×4 bytes in [rdi+rcx*4])` is 8 elements of 4 bytes,
+  `r13 += 64 per iteration (bytes; the base of [r13+0x20])` is 64 bytes (16 floats: `-per 16`), `(register step)` a
+  counter no address uses.
+- **Which loop.** A whole function or file is analyzed at one loop: the deepest one (clang's
+  `# =>This Inner Loop Header` notes count), among equals the first in the code. That can be a remainder loop: clang
+  often emits it before the main loop, gcc after it. Stderr says what was picked and how many others there are;
+  `-loops` lists them (index, label, function, lines, instructions, depth, auto), `-loop N` (0-based) or
+  `-loop LABEL` picks one, `-func NAME` keeps one function's loops, `-loop whole` analyzes the whole text. A label
+  that names loops in several functions (`1:` … `jnz 1b`) is an error that lists them; `-func` or the index picks one.
+- **Branches inside the loop.** uiCA runs the analyzed code straight through: in a loop with an if/else (or two back
+  edges, as clang's remainder loops often have), both sides of the branch are simulated, one after the other, while a
+  real iteration takes one. A `Not modelled: both paths: both sides of the branch at line N …` line (table note
+  `both paths`; JSON caveat `paths`) says so. To analyze one side, put `# wuica-begin` and `# wuica-end` around it.
+- **One input per run**: a file, `-` or nothing for stdin, a hex argument, `-hex` or `-raw FILE` (bare machine code:
+  for an object file, `objdump -d file.o | wuica`).
+- **Tables.** `-arch A,B,C` prints one row per CPU; `-` means unknown (uiCA names no single bottleneck; the notes
+  give the nearest limit), `5.00*` that the CPU could not decode some instructions (they are left out), and the notes
+  column the caveats (what the model does not simulate, such as store forwarding through an indexed address).
+- **After the report** come what uiCA's text leaves out: the nearest limit when the bottleneck is unknown, the next
+  limit, and `Not modelled:` lines.
+- **Exit status**: 0 ok, 1 bad request or usage, 2 assembler error, 3 the analysis failed; with several CPUs, the
+  largest of their codes, which is also the JSON's `code`. A reader that closes the pipe (`| head`) does not change it.
+- **What if** (`-whatif`): a table per CPU, in cycles per original iteration, or per element with `-per N`. With
+  `-TPonly`, one `variant cycles` line per variant after the throughput (`acc2 16.00`; with `-per`, `acc2 16.00
+  2.00`; with several CPUs, each line starts with the CPU). Estimates (`>=` in the table) are printed as plain numbers.
+- **JSON** (`-json`): one CPU gives the analyze response (`tp`, `bottlenecks`, `limits`, `rows`, `criticalPath`,
+  `insights`, `loop`, `syntax`, and `perElement` / `whatIf` when asked); several give `{code, hex, loop, stderr,
+  results: [{arch, tp, bottlenecks, limits, decodeErrors, perElement?, caveats?}]}`. The shapes are the same for one
+  CPU and several: `whatIf` is keyed by CPU (`{SKL: {tp, variants: [{id, tp, …, perElement?}], perElement?}}`), and a
+  caveat is `{id, text, title, instructions}` (in `insights.caveats` with one CPU, `results[].caveats` with several).
+  Types: `CliAnalyzeJson`, `CliCompareJson`, `CliWhatIf` in index.d.ts. `--version -json` gives `{wuica, uiCA:
+  {repository, commit, branch}, node}`: the uiCA commit whose data and model the package has.
+- **Syntax mistakes.** When the assembler fails, a `hint:` line names a line with the other syntax's operands (mixed
+  AT&T and Intel lines, a `.intel_syntax` directive over AT&T code, `mov rdx, $8` in Intel code) and the flag to try.
+- No colours and no links, on a terminal or not.
 
 ## What the numbers mean
 
@@ -72,10 +127,10 @@ Inputs on which the original uiCA fails can make the WebAssembly module trap. In
 ## Command line
 
 ```
-npx wuica loop.s                     # assembly file (Intel syntax), uiCA's report for SKL
+npx wuica loop.s                     # assembly file (syntax detected), uiCA's report for SKL
 npx wuica loop.s -arch ICL -TPonly   # only the throughput
 cat loop.s | npx wuica -arch ZEN3    # stdin (or "-")
-npx wuica -att loop_att.s            # AT&T syntax
+npx wuica -att loop_att.s            # AT&T syntax, forced (-intel forces Intel)
 npx wuica 4801d84801c349ffcf75f5     # a hex argument (as in the Rust CLI)
 npx wuica -hex code.txt              # hex from a file or stdin ("48 01 d8", "0x48,0x01" are fine)
 npx wuica -raw code.bin              # raw machine code
@@ -84,17 +139,28 @@ npx wuica loop.s -arch SKL,ICL,ZEN3  # throughput table for these
 npx wuica -list                      # the microarchitectures
 npx wuica loop.s -json               # the JSON result (the contract's analyze response)
 npx wuica psum.s -loop whole         # the whole text, not the loop found in it (-loop auto, the default, or -loop N)
+npx wuica psum.s -loops              # list the loops; -loop .LBB0_12 or -func psum to choose
+npx wuica psum.s -whatif -per 8      # what-if variants; cycles per element (8 elements per iteration)
+npx wuica --version
 ```
 
 The simulation options are uiCA's: `-alignmentOffset N`, `-initPolicy diff|same|stack`, `-simpleFrontEnd`,
-`-noMicroFusion`, `-noMacroFusion`, `-minIterations N`, `-minCycles N`, and `-trace` (with `-json`). With several
+`-noMicroFusion`, `-noMacroFusion`, `-minIterations N`, `-minCycles N`, and `-trace` (with `-json`). Every flag also
+takes `--flag` and `--flag=value`, in any case (`--tponly`, `--arch=zen3`). With several
 microarchitectures, `-threads N` analyzes them on at most N threads at a time (`-threads 1`: one after another).
 Diagnostics go to stderr. The exit status is the result code: 0 ok, 1 bad request or usage, 2 assembler error, 3 analysis failed.
 `npx wuica -h` lists everything.
 
 ## MCP server
 
-`wuica mcp` (or the `wuica-mcp` binary) is a Model Context Protocol server on stdio. It has five tools:
+`wuica mcp` (or the `wuica-mcp` binary) is a Model Context Protocol server on stdio, written without an MCP library:
+newline-delimited JSON-RPC 2.0 with the `initialize` handshake of the protocol revisions 2025-11-25, 2025-06-18,
+2025-03-26 and 2024-11-05 (the client's revision if it is one of these, else 2025-11-25; batches only under 2025-03-26),
+`ping`, `tools/list` and `tools/call`. Arguments are checked against the tools' JSON Schemas; a mismatch is a tool error
+(`isError`) that says what is wrong, an unknown tool a JSON-RPC error. The server ends with its stdin, and writes only
+protocol messages to stdout. `wuica mcp --help` prints the usage. The tool table itself (names, descriptions, JSON
+Schemas, handlers) is exported as `mcpTools(w)` from `wuica/mcp`, with `callTool` and `validate`; the remote server
+(`server/`) serves the same table over HTTP. It has five tools:
 
 | Tool | What it does |
 |---|---|
@@ -174,13 +240,16 @@ Request:
   `0x` are allowed).
 - `source` is read as the web page reads pasted assembly. `loop` (optional) says what of it is analyzed:
   - `"auto"` (the default): a whole function (`gcc -S`, `clang -S`, `objdump -d` lines with addresses, with or
-    without the bytes, Intel or AT&T) is analyzed at its innermost loop (the first in the code: a compiler puts the
-    main loop before its remainder loop). A span that holds a `ret` or another function's label is not a loop (a tail
+    without the bytes, Intel or AT&T) is analyzed at its deepest loop (clang's `Inner Loop Header` notes count;
+    among equals the first in the code, which may be a remainder loop: clang often emits it first). A span that holds a `ret` or another function's label is not a loop (a tail
     call jumping back). A compiler's function without a loop (it has a function label, directives or a
     prologue/epilogue, and ends in `ret`) is analyzed at its body, without prologue, epilogue and `ret`; a bare snippet
     such as `add rax, 1` / `ret` is analyzed as typed. A text that is one loop already, or has region markers, is
     analyzed as it is.
-  - `"whole"`: the whole text, never a pick; a number: that loop (innermost first, in code order).
+  - `"whole"`: the whole text, never a pick; a number: that loop (0-based: deepest first, then in code order); any
+    other string: the loop with that label (`".LBB0_12"`, `"0x10"`). `func` (optional) keeps one function's loops.
+- `syntax` is `"auto"` (the default: detected from the text), `"intel"` or `"att"`; the response's `syntax` says
+  which was used.
 
   objdump text is recognised by a header line (`0000… <f>:`), a byte column or `<sym+off>` branch targets; without
   those, only when every line is address-prefixed, there are at least three, and the steps between the addresses fit
@@ -194,8 +263,8 @@ Request:
   `stderr`. An undefined target of a `jmp` gives a warning (it is encoded as a 32-bit jump to an external symbol).
   objdump lines with their bytes are assembled as those bytes. With addresses, the alignment offset is the analyzed
   code's address modulo 64, unless `options.alignmentOffset` is given. When something other than the whole text was
-  analyzed, the response has `loop`: `{index, count, name, line, endLine, address?, alignmentOffset?}` (`name`:
-  `"loop .L3"`, `"loop 0x10"`, `"body"`).
+  analyzed, the response has `loop`: `{index, count, name, line, endLine, lines?, address?, alignmentOffset?}` (`name`:
+  `"loop .L3"`, `"loop 0x10"`, `"body"`; `lines`: the source line of each instruction).
   Region markers (`# LLVM-MCA-BEGIN` … `# LLVM-MCA-END`, `# wuica-begin` … `# wuica-end`, IACA's byte markers) select
   the first marked region. A `;` that starts a line is a comment. After a statement, LLVM reads `;` as a separator. If
   what follows assembles, it is assembled, with a note in `stderr` naming it (`';' separates statements: 'call helper'
@@ -204,7 +273,7 @@ Request:
   valid line an error; a note says so when it starts with a mnemonic (`add the next element`), and nothing when it does
   not (`sum += a[i]`). A line the assembler rejects inside the analyzed code is an error with its line number (objdump
   lines outside the picked loop that the assembler rejects, such as padding, are left out).
-- `syntax` is `intel` (noprefix, the default) or `att`. The source may also switch syntax itself with
+- `syntax` is `auto` (the default), `intel` (noprefix) or `att`. The source may also switch syntax itself with
   `.intel_syntax noprefix` / `.att_syntax`.
 - Every field of `options` is optional; the defaults are shown. Unknown options and unknown request fields are an
   error (code 1), not ignored. The library also accepts the options at the top level of the request
@@ -274,7 +343,9 @@ limit explains),
 instructions: [{index, instr, share}]}`: the largest shares of the binding resource, or of the largest limit), and
 `caveats` (only if any: `[{id, text, title, instructions}]`, known blind spots of the model that the block meets:
 `rmw-index` a read-modify-write to an indexed address, whose store forwarding between iterations depends on the data;
-`exit` an exit before the loop's branch, whose mispredict is not modelled; `split` loads at an offset that is not a
+`paths` a conditional branch inside the block (an if/else, a second back edge), both of whose sides are simulated one
+after the other while a real iteration takes one (named by its source line); `exit` an exit before the loop's branch,
+whose mispredict is not modelled; `split` loads at an offset that is not a
 multiple of their width, which may cross a cache line: on the CPUs whose model charges line crossings (ZEN3, ADL-P,
 ICX: `splitLoadCycles` in uarch.json) only the loads whose address the model cannot follow (an address register written
 other than by adding an immediate); the web page shows them in one line under the throughput). With `options.details` (MCP:

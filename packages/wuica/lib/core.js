@@ -23,7 +23,7 @@ export function analysisResult(r) {
 // The fields of a compare() row taken from an analysis result (after arch, name, year, prototype).
 export function compareFields(r) {
   if (r.code !== undefined) return { code: r.code, error: r.error };
-  return { code: CODES.OK, tp: r.tp, mode: r.mode, bottlenecks: r.bottlenecks, decodeErrors: r.decodeErrors };
+  return { code: CODES.OK, tp: r.tp, mode: r.mode, bottlenecks: r.bottlenecks, limits: r.limits, decodeErrors: r.decodeErrors };
 }
 
 // A block for warming up the analyzer: ~500 instructions of several kinds in a loop (a 24-instruction mix, 20 times;

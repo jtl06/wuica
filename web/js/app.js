@@ -25,7 +25,7 @@ import { createABSlots } from './ab-slots.js';     // A–B: the issue slots of 
 import { createCmpSlots } from './cmp-slots.js';   // the issue slots per CPU in the CPU table (bound view open)
 import { withRegions } from './asm-regions.js';     // marked regions and .loc lines of pasted assembly
 import { createRegionChip, createLoopChip } from './region-chip.js';
-import { replacesText } from './loop-find.js';
+import { replacesText, detectSyntax } from './loop-find.js';
 import { createKeys } from './keys.js';           // keyboard shortcuts, the ? overlay
 import { createABCpus } from './ab-cpus.js';       // A–B on every checked CPU
 import { branchLabels, analyzedLines } from './branch-label.js'; // branch targets as labels in the uop table
@@ -36,7 +36,7 @@ const MOCK = query.get('mock') === '1';       // ?mock=1: do not load the analyz
 const NO_SW = query.get('nosw') === '1';      // ?nosw=1: do not register the service worker
 // ?pool=N: N workers for the compare panels and the cost column (0: none, they share the main analyzer's worker)
 const POOL_SIZE = query.has('pool') ? Math.max(0, Math.min(16, Number.parseInt(query.get('pool'), 10) || 0)) : poolSize();
-const VERSION = '0.1.6';                  // the page's version (footer); bump it with packages/wuica and server (tests-js/web_version.mjs)
+const VERSION = '0.1.7';                  // the page's version (footer); bump it with packages/wuica and server (tests-js/web_version.mjs)
 
 const el = {
   notice: $('notice'), code: $('code'), codeHint: $('code-hint'), messages: $('input-messages'),
@@ -159,6 +159,7 @@ let bLoop = 'auto';
 let bLoopChip = null;
 // (a text that replaces the box's text: loop-find.js, replacesText)
 let textA = '', textB = '';
+let syntaxChosen = false; // the user picked the syntax (not the page from a pasted text)
 function newTextA() { state.loop = 'auto'; if (alignBy === 'manual') alignBy = null; textA = el.code.value; }
 function newTextB() { bLoop = 'auto'; textB = document.getElementById('code-b')?.value ?? ''; }
 const views = createViews({ engine: () => engine, pool: () => getPool(), setAlign: (o) => setAlign(o),
@@ -882,7 +883,8 @@ async function run({ auto = false } = {}) {
     const prevArch = lastView?.archKey;
     const tell = !auto || (prevArch !== undefined && prevArch !== archKey);
     lastView = {
-      response, request, elapsedMs, hex, byteCount: bytes.length, inputMode: state.mode,
+      // the source lines of the picked code, for the caveats that name a line (caveats.js)
+      response: response && !response.error && srcA?.lines && !response.loop ? { ...response, loop: { lines: srcA.lines } } : response, request, elapsedMs, hex, byteCount: bytes.length, inputMode: state.mode,
       archKey, archTitle: archTitle(archKey, item.experimental), experimental: item.experimental,
       shown: response && !response.error && Array.isArray(response.rows) ? branchLabels(response.rows, srcA) : null,
     };
@@ -1275,6 +1277,7 @@ function bind() {
   el.modeAsm.addEventListener('change', () => switchMode('A', 'asm', buffers.asm, (c) => setMode('asm', c)));
   el.modeHex.addEventListener('change', () => switchMode('A', 'hex', buffers.hex, (c) => setMode('hex', c)));
   el.syntax.addEventListener('change', () => {
+    syntaxChosen = true; // the user's choice: a pasted text no longer switches it
     const old = state.syntax;
     state.syntax = el.syntax.value === 'att' ? 'att' : 'intel';
     // an untouched example follows the syntax
@@ -1289,7 +1292,12 @@ function bind() {
   });
   el.code.addEventListener('input', (e) => {
     buffers[state.mode] = el.code.value;
-    if (state.mode === 'asm' && replacesText(textA, el.code.value)) newTextA(); else textA = el.code.value;
+    if (state.mode === 'asm' && (textA.trim() === '' || replacesText(textA, el.code.value))) {
+      newTextA();
+      // a pasted text in the other syntax (clang -S, objdump: AT&T) switches the select, unless the user chose it
+      const syn = detectSyntax(el.code.value);
+      if (syn && syn !== state.syntax && !syntaxChosen) { state.syntax = syn; el.syntax.value = syn; }
+    } else textA = el.code.value;
     changed({ now: replaced(e) });
   });
   el.align.addEventListener('change', () => { alignBy = 'manual'; });

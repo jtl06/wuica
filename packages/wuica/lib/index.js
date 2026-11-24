@@ -21,7 +21,16 @@ import { ThreadPool, threadLimit, threadOption, threadsFor } from './threads.js'
 // the web page's reading of pasted assembly (copies of web/js in lib/web: tests-js/web_pkg_copies.mjs): the loop of a whole function, objdump lines,
 // exits as not taken, ';' comments, region markers
 import { assembleMarked, commentFixes, separatorNotes } from './web/asm-regions.js';
-import { normalizeText } from './web/loop-find.js';
+import { normalizeText, detectSyntax, preparePaste, syntaxSigns } from './web/loop-find.js';
+export { detectSyntax };
+
+// The loops of assembly text, as `loop` and `func` choose among them: [{index, label, function, line, endLine,
+// instructions, depth, auto}] (auto: the one "auto" analyzes) or {error}. No assembling.
+export function listLoops(source, { func = null } = {}) {
+  const p = preparePaste(normalizeText(source), { loop: 'auto', func });
+  if (p.error) return { error: p.error };
+  return p.loops.map((l, index) => ({ index, label: l.label, function: l.function, line: l.begin, endLine: l.end, instructions: l.instructions, depth: l.depth, auto: p.choice === index }));
+}
 
 export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, CODES, WARM_HEX, parseDiagnostics, insights };
 export { whatIf, VARIANTS as WHAT_IF_VARIANTS } from './whatif.js';
@@ -49,10 +58,52 @@ export function normalizeHex(input) {
   return /^(?:[0-9a-f]{2})+$/.test(s) ? s : null;
 }
 
+// 0 Intel, 1 AT&T, 2 auto (detected from the text: loop-find.js, detectSyntax); -1 unknown. Missing: auto.
 function syntaxCode(syntax) {
-  if (syntax === undefined || syntax === null || syntax === 'intel' || syntax === 0) return 0;
+  if (syntax === undefined || syntax === null || syntax === 'auto') return 2;
+  if (syntax === 'intel' || syntax === 0) return 0;
   if (syntax === 'att' || syntax === 1) return 1;
   return -1;
+}
+// {code: 0 | 1, name: 'intel' | 'att', detected: true if it was auto}
+function syntaxOf(syntax, text) {
+  const c = syntaxCode(syntax);
+  if (c !== 2) return { code: c, name: c === 1 ? 'att' : 'intel', detected: false };
+  const d = detectSyntax(text) ?? 'intel';
+  return { code: d === 'att' ? 1 : 0, name: d, detected: true };
+}
+const SYNTAX_ERROR = (syntax) => `unknown syntax "${syntax}" (use "auto", "intel" or "att")`;
+
+// After an assembler error: a line with the other syntax's operands (AT&T's %registers or $immediates in text read as
+// Intel, Intel's [registers] or "ptr [" in text read as AT&T: mixed lines, a directive that does not match the code,
+// "mov rdx, $8"), as a one-line hint, or null. name: the syntax the text was read as.
+export function syntaxHint(text, name) {
+  const lines = String(text).split('\n');
+  let att = 0, intel = 0, dollar = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const code = lines[i].replace(/(?:#|\/\/|;).*$/, '');
+    if (/^\s*\./.test(code)) continue;
+    const n = syntaxSigns(code);
+    // "mov rdx, $8": an Intel line with an AT&T immediate
+    if (n.att && n.intel && !/%/.test(code)) { dollar ||= i + 1; continue; }
+    if (n.att && !att) att = i + 1;
+    else if (n.intel && !n.att && !intel) intel = i + 1;
+  }
+  if (dollar && name === 'intel' && !att) return `hint: line ${dollar} has an AT&T immediate ($) in Intel code: in Intel syntax an immediate has no $ (if the text is AT&T, -att, syntax "att", reads it so)`;
+  if (att && intel) return `hint: the text mixes AT&T (line ${att}) and Intel (line ${intel}) operands; the assembler reads one syntax per text: -att or -intel (syntax "att" or "intel")`;
+  if (name === 'intel' && att) return `hint: line ${att} has AT&T operands (%register or $immediate) but the text is read as Intel; if it is AT&T, -att (syntax "att") reads it so`;
+  if (name === 'att' && intel) return `hint: line ${intel} has Intel operands but the text is read as AT&T; if it is Intel, -intel (syntax "intel") reads it so`;
+  return null;
+}
+
+// AArch64 assembly (a common mistake on an Arm Mac): its registers and mnemonics on several lines
+export function looksAArch64(text) {
+  let n = 0;
+  for (const l of String(text).split('\n')) {
+    const code = l.replace(/(?:\/\/|;|@).*$/, '').trim();
+    if (/^(?:ldr|str|ldp|stp|adrp|cbz|cbnz|b\.\w+|fmadd|fmla|ld1|st1|csel|madd|msub|subs|adds|ldur|stur|fmov|movk)\b/i.test(code) || /(?:^|[\s,\[])[xw](?:[12]?\d|30)\b/.test(code)) n++;
+  }
+  return n >= 3;
 }
 
 // llvm-mc's diagnostics as stderr lines; lines with a position carry a tag {line, column, severity, text}.
@@ -64,11 +115,13 @@ export function stderrLines(message) {
   });
 }
 
-const REQUEST_KEYS = ['source', 'asm', 'hex', 'syntax', 'loop', 'options'];
+const REQUEST_KEYS = ['source', 'asm', 'hex', 'syntax', 'loop', 'func', 'options'];
 
 // `loop` of a request: what of the source is analyzed (web/js/loop-find.js). null if it is not one of these.
 export const LOOP_CHOICES = Object.freeze(['auto', 'whole']);
-const loopChoice = (v) => (v === undefined || v === null ? 'auto' : LOOP_CHOICES.includes(v) || (Number.isSafeInteger(v) && v >= 0) ? v : null);
+// (a string other than these is a loop's label: ".LBB0_12", "0x10")
+const loopChoice = (v) => (v === undefined || v === null ? 'auto' : LOOP_CHOICES.includes(v) || (Number.isSafeInteger(v) && v >= 0) || (typeof v === 'string' && v.trim() !== '') ? v : null);
+const LOOP_ERROR = '`loop` must be "auto", "whole", the index of a loop (0-based) or its label';
 
 // Diagnostics ({line, column, severity, message}) as stderr lines in llvm-mc's form, with tags.
 function diagnosticLines(diagnostics) {
@@ -183,14 +236,14 @@ class Wuica {
   }
 
   // POST /api/assemble {source, syntax}
-  async assemble(source, syntax = 'intel') {
+  async assemble(source, syntax = 'auto') {
     if (typeof source !== 'string') return failure(CODES.REQUEST, '`source` must be a string');
-    const s = syntaxCode(syntax);
-    if (s < 0) return failure(CODES.REQUEST, `unknown syntax "${syntax}" (use "intel" or "att")`);
+    if (syntaxCode(syntax) < 0) return failure(CODES.REQUEST, SYNTAX_ERROR(syntax));
     // a byte order mark (a file saved by some Windows editors) is not part of the code: LLVM would reject it
     const asm = await this.#getAssembler();
     // (CRLF and a lone CR are line feeds)
     let text = normalizeText(source).replace(/^\uFEFF/, '');
+    const s = syntaxOf(syntax, text).code;
     let r = asm.assemble(text, s);
     // ';' comments: a ';' whose rest the assembler rejects is retried as '#' (web/js/asm-regions.js)
     const notes = [];
@@ -215,12 +268,15 @@ class Wuica {
 
   // The machine code an analysis of assembly text gets (as the web page reads it): the loop of a whole function, objdump
   // lines, exits as not taken, ';' comments, a marked region (web/js/loop-find.js, asm-regions.js). loop: 'auto',
-  // 'whole' or a loop's index. -> {code: 0, hex, bytes, stderr, loop} (loop: what was picked, or null) or a failure.
-  async machineCode(source, syntax = 'intel', loop = 'auto') {
+  // 'whole', a loop's index or its label; func: the function whose loops count (or null).
+  // -> {code: 0, hex, bytes, stderr, loop, syntax} (loop: what was picked, or null; syntax: {name, detected}) or a failure.
+  async machineCode(source, syntax = 'auto', loop = 'auto', func = null) {
     if (typeof source !== 'string') return failure(CODES.REQUEST, '`source` must be a string');
-    const s = syntaxCode(syntax);
-    if (s < 0) return failure(CODES.REQUEST, `unknown syntax "${syntax}" (use "intel" or "att")`);
-    if (loopChoice(loop) === null) return failure(CODES.REQUEST, '`loop` must be "auto", "whole" or the index of a loop (0, 1, ...)');
+    if (syntaxCode(syntax) < 0) return failure(CODES.REQUEST, SYNTAX_ERROR(syntax));
+    if (loopChoice(loop) === null) return failure(CODES.REQUEST, LOOP_ERROR);
+    if (func !== null && func !== undefined && typeof func !== 'string') return failure(CODES.REQUEST, '`func` must be the name of a function');
+    const syn = syntaxOf(syntax, normalizeText(source));
+    const s = syn.code;
     const asm = await this.#getAssembler();
     let trap = null;
     const assemble = async (t) => {
@@ -229,23 +285,27 @@ class Wuica {
       return { ok: r.ok, bytes: r.bytes, diagnostics: parseDiagnostics(r.message) };
     };
     const text = normalizeText(source).replace(/^\uFEFF/, '');
-    const r = await assembleMarked(assemble, text, { loop: loopChoice(loop) });
+    const r = await assembleMarked(assemble, text, { loop: loopChoice(loop), func });
     if (trap) return failure(CODES.ASSEMBLER, trap, undefined, { trapped: true });
     if (!r.ok) {
-      const bad = r.diagnostics.find((d) => /^loop: /.test(d.message));
+      const bad = r.diagnostics.find((d) => /^(?:loop|func): /.test(d.message));
       if (bad) return failure(CODES.REQUEST, bad.message);
+      if (looksAArch64(text)) return failure(CODES.ASSEMBLER, 'this looks like AArch64 assembly; wuica analyzes x86-64 (compile with --target=x86_64-linux-gnu)');
       const first = r.diagnostics.find((d) => d.severity === 'error');
       const error = first ? `assembly failed: ${first.line ? `line ${first.line}: ` : ''}${first.message}` : 'assembly failed';
       // llvm-mc's own lines (with the source line and the caret) when the text alone fails on the same line
       const plain = asm.assemble(text, s);
       const same = !plain.ok && first && parseDiagnostics(plain.message).find((d) => d.severity === 'error')?.line === first.line;
-      return failure(CODES.ASSEMBLER, error, same ? stderrLines(plain.message) : diagnosticLines(r.diagnostics));
+      const hint = syntaxHint(text, syn.name);
+      return failure(CODES.ASSEMBLER, error, [...(same ? stderrLines(plain.message) : diagnosticLines(r.diagnostics)), ...(hint ? [{ text: hint }] : [])]);
     }
     // what was analyzed, if not the whole text as it is: the loop (or body) picked, or the alignment from addresses
     const picked = r.loop ?? (r.alignment !== null ? { index: null, count: r.loops.length, name: 'whole', line: null, endLine: null, address: null, alignment: r.alignment } : null);
-    const loopInfo = picked && { index: picked.index, count: picked.count, name: picked.name, line: picked.line, endLine: picked.endLine,
+    const info = picked && Number.isInteger(picked.index) ? r.loops[picked.index] : null;
+    const loopInfo = picked && { index: picked.index, count: picked.count, name: picked.name, line: picked.line, endLine: picked.endLine, ...(picked.lines ? { lines: picked.lines } : {}),
+      ...(info ? { function: info.function, depth: info.depth, instructions: info.instructions } : {}),
       ...(picked.address !== null && picked.address !== undefined ? { address: picked.address } : {}), ...(r.alignment !== null ? { alignmentOffset: r.alignment } : {}) };
-    return { code: CODES.OK, hex: Buffer.from(r.bytes).toString('hex'), bytes: r.bytes, stderr: diagnosticLines(r.diagnostics), loop: loopInfo };
+    return { code: CODES.OK, hex: Buffer.from(r.bytes).toString('hex'), bytes: r.bytes, stderr: diagnosticLines(r.diagnostics), loop: loopInfo, syntax: { name: syn.name, detected: syn.detected } };
   }
 
   // {source | asm | hex, syntax, loop} -> {hex, assembled, stderr, loop} or a failure.
@@ -254,9 +314,9 @@ class Wuica {
     const hasSource = source !== undefined && source !== null;
     const hasHex = req.hex !== undefined && req.hex !== null;
     if (hasSource === hasHex) return failure(CODES.REQUEST, 'give exactly one of `source` (assembly text) and `hex` (machine code)');
-    if (loopChoice(req.loop) === null) return failure(CODES.REQUEST, '`loop` must be "auto", "whole" or the index of a loop (0, 1, ...)');
+    if (loopChoice(req.loop) === null) return failure(CODES.REQUEST, LOOP_ERROR);
     if (hasHex) {
-      if (req.syntax !== undefined && syntaxCode(req.syntax) < 0) return failure(CODES.REQUEST, `unknown syntax "${req.syntax}"`);
+      if (req.syntax !== undefined && syntaxCode(req.syntax) < 0) return failure(CODES.REQUEST, SYNTAX_ERROR(req.syntax));
       const hex = normalizeHex(req.hex);
       if (hex === null && typeof req.hex === 'string' && normalizeHex(req.hex + '00') === '00') return failure(CODES.REQUEST, '`hex` is empty: no machine code');
       if (hex === null) return failure(CODES.REQUEST, '`hex`: expected an even number of hex digits (spaces, commas and 0x prefixes are allowed)');
@@ -265,10 +325,10 @@ class Wuica {
     // 16- or 32-bit code would be analyzed as 64-bit code (the analyzer only models 64-bit mode)
     const mode = typeof source === 'string' ? codeModeError(source) : null;
     if (mode) return failure(CODES.REQUEST, `line ${mode.line}: ${mode.message}`);
-    const a = await this.machineCode(source, req.syntax ?? 'intel', loopChoice(req.loop));
+    const a = await this.machineCode(source, req.syntax ?? 'auto', loopChoice(req.loop), req.func ?? null);
     if (a.code !== CODES.OK) return a;
     if (a.bytes.length === 0) return failure(CODES.REQUEST, 'the source contains no instructions');
-    return { hex: a.hex, assembled: true, stderr: a.stderr, loop: a.loop };
+    return { hex: a.hex, assembled: true, stderr: a.stderr, loop: a.loop, syntax: a.syntax.name };
   }
 
   // The options of a request with the alignment offset of the code's addresses (objdump input), unless it was given.
@@ -302,7 +362,7 @@ class Wuica {
     if (r.code !== undefined) return r;
     const stderr = [...code.stderr];
     if (r.decodeErrors > 0) stderr.push({ text: `Warning: ${r.decodeErrors} position(s) could not be decoded` });
-    return { code: CODES.OK, ...r, ...(code.assembled ? { hex: code.hex } : {}), ...(code.loop ? { loop: code.loop } : {}), stderr };
+    return { code: CODES.OK, ...r, ...(code.assembled ? { hex: code.hex, syntax: code.syntax } : {}), ...(code.loop ? { loop: code.loop } : {}), stderr };
   }
 
   // POST /api/compare {source | hex, syntax, archs?, options}: one block on several microarchitectures (default: all).
@@ -334,7 +394,10 @@ class Wuica {
       const row = { arch: id ?? String(arch), name, year, prototype };
       results.push({ ...row, ...(fields[i] ?? compareFields(await this.#run(code.hex, arch, options))) });
     }
-    return { code: CODES.OK, ...(code.assembled ? { hex: code.hex } : {}), ...(code.loop ? { loop: code.loop } : {}), stderr: code.stderr, results };
+    // a CPU that could not decode some instructions (FMA on SNB): its throughput leaves them out
+    const decode = results.filter((r) => r.code === CODES.OK && r.decodeErrors > 0)
+      .map((r) => ({ text: `Warning: ${r.arch}: ${r.decodeErrors} position(s) could not be decoded (instructions it does not have): its throughput leaves them out` }));
+    return { code: CODES.OK, ...(code.assembled ? { hex: code.hex, syntax: code.syntax } : {}), ...(code.loop ? { loop: code.loop } : {}), stderr: [...code.stderr, ...decode], results };
   }
 
   // Stops compare()'s threads, if any (they also stop by themselves when idle, and never keep the process alive while

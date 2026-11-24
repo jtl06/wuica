@@ -236,7 +236,7 @@ try {
   {
     const cases = [
       ['hex', 'zz top', /Not hex/], ['hex', '48 8', /Odd number/], ['hex', '', /No bytes/], ['asm', 'frobnicate rax', /invalid instruction mnemonic/],
-      ['asm', '', /No code/], ['asm', '# only a comment', /No machine code/], ['asm', 'addq %rbx, %rax', /unknown token/],
+      ['asm', '', /No code/], ['asm', '# only a comment', /No machine code/], ['asm', 'movq %rax, [rbx]', /unknown token|invalid operand|unexpected token/],
       ['hex', 'ff ff ff ff', /no instructions found/], ['asm', '.rept 100000\nnop\n.endr', null], ['asm', '.rept 2000000\nnop\n.endr', /Too much machine code: 2,000,000 bytes/],
       ['asm', '.zero 1000000000', /assembler failed/],
     ];

@@ -4,6 +4,8 @@
 #   dist/wuica_asm.wasm.br          the assembler (assembler/dist), brotli-compressed
 #   dist/data/uarch.json.br         the configurations (data/uarch.json)
 #   dist/data/arch/<NAME>.json.br   the instruction tables (data/arch/*.json)
+#   dist/manifest.json              size and sha256 of each file; uiCA: the reference whose data and model these are,
+#                                   from ci/data-asset.txt (uica_commit), the one place it is written down
 #   LICENSE, licenses/              the license texts (AGPL-3.0, Intel XED, LLVM)
 # Then `npm pack` in this directory makes the tarball (`./build.sh --pack` does both).
 #
@@ -29,13 +31,16 @@ rm -rf "$PKG/dist" "$PKG/licenses"
 mkdir -p "$PKG/dist/data/arch" "$PKG/licenses"
 
 # brotli (quality 11, 24-bit window) with Node's zlib, so no extra tool is needed; Node decompresses it at run time.
-UV_THREADPOOL_SIZE="${UV_THREADPOOL_SIZE:-8}" node --input-type=module - "$PKG/dist" "$WASM" "$ASM_WASM" "$DATA" <<'EOF'
+UV_THREADPOOL_SIZE="${UV_THREADPOOL_SIZE:-8}" node --input-type=module - "$PKG/dist" "$WASM" "$ASM_WASM" "$DATA" "$ROOT/ci/data-asset.txt" <<'EOF'
 import fs from 'node:fs'; import path from 'node:path'; import zlib from 'node:zlib'; import crypto from 'node:crypto';
-const [out, wasm, asmWasm, data] = process.argv.slice(2);
+const [out, wasm, asmWasm, data, asset] = process.argv.slice(2);
+// "uica_commit=640e40e (improve-r9)": the commit and its branch
+const m = /^uica_commit=([0-9a-f]{7,40})(?:\s+\(([^)]+)\))?\s*$/m.exec(fs.readFileSync(asset, 'utf8'));
+if (!m) throw new Error(`${asset}: no uica_commit line`);
 const files = [[wasm, 'wuica_wasm.wasm'], [asmWasm, 'wuica_asm.wasm'], [path.join(data, 'uarch.json'), 'data/uarch.json']];
 for (const f of fs.readdirSync(path.join(data, 'arch')).filter((f) => f.endsWith('.json')).sort()) files.push([path.join(data, 'arch', f), 'data/arch/' + f]);
 const { BROTLI_PARAM_QUALITY: Q, BROTLI_PARAM_LGWIN: W, BROTLI_PARAM_SIZE_HINT: S } = zlib.constants;
-const manifest = { files: {} };
+const manifest = { uiCA: { repository: 'https://github.com/jtl06/uiCA', commit: m[1], ...(m[2] ? { branch: m[2] } : {}) }, files: {} };
 let raw = 0, packed = 0;
 // compressed in parallel on libuv's thread pool (largest first); the manifest keeps the order of `files`
 const brotli = (bytes) => new Promise((ok, fail) => zlib.brotliCompress(bytes, { params: { [Q]: 11, [W]: 24, [S]: bytes.length } }, (e, r) => (e ? fail(e) : ok(r))));

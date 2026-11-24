@@ -42,6 +42,19 @@ const loop = (...labels) => ({ mode: 'loop', rows: labels.map(instr) });
   // exits
   check(ids(loop('add rdx, 0x20', 'cmp rdx, rsi', 'jnb 0x20', 'vpcmpeqb ymm0, ymm1, ymmword ptr [rdi+rdx*1]', 'vpmovmskb ecx, ymm0', 'test ecx, ecx', 'jz 0x0')) === 'exit', 'exit: a jnb before the loop\'s jz');
   check(ids(loop('add rax, 0x1', 'dec rcx', 'jnz 0x0')) === '' && ids({ mode: 'unroll', rows: [instr('jz 0x4'), instr('add rax, rbx')] }) === '', 'no exit: one branch; not a loop');
+  // a branch within the block (an if/else; a second back edge, clang's sum_mod remainder loop): both paths
+  const ifelse = ['mov rax, qword ptr [rdi+rcx*8]', 'test rax, rax', 'jz 0x2', 'add rdx, rax', 'add rcx, 0x1', 'cmp rcx, rsi', 'jnz 0x0'];
+  const pc = caveats(loop(...ifelse));
+  check(pc.length === 1 && pc[0].id === 'paths' && pc[0].text === 'both paths' && j(pc[0].rows) === '[2]' && /^both sides of the branch at instruction 3 \(jz\) are simulated, one after the other; a real iteration takes one/.test(pc[0].title) && /# wuica-begin and # wuica-end/.test(pc[0].title), 'paths: a forward branch inside the loop (not an exit), by instruction', j(pc));
+  const pl = caveats({ ...loop(...ifelse), loop: { lines: [10, 11, 12, 13, 14, 15, 16] } });
+  check(/^both sides of the branch at line 12 \(jz\)/.test(pl[0]?.title), 'paths: by source line when the response has the lines of the span (the package\'s loop.lines)', j(pl));
+  check(ids(loop('xor edx, edx', 'div rcx', 'add r8, rdx', 'jnz 0xfffffffffffffffd', 'add rdi, 0x1', 'jnz 0x0')) === 'paths', 'paths: a second back edge to the top of the span');
+  check(ids(loop('add rdx, 0x20', 'cmp rdx, rsi', 'jnb 0x20', 'jz 0x1', 'nop', 'test ecx, ecx', 'jz 0x0')) === 'paths,exit', 'paths and exit together: an exit and a branch inside');
+  // an outer loop: its inner loop's back edge (backward, to after the header the last branch goes to) is not a path
+  check(ids(loop('mov rax, 0x0', 'add rax, rbx', 'dec rcx', 'jnz 0xfffffffffffffffe', 'dec rdx', 'jnz 0xfffffffffffffffb')) === '', 'no paths: an inner loop\'s back edge');
+  // the lines once the alignment padding (nops the source does not have) is out
+  const padded = { mode: 'loop', rows: ['nop word ptr [rax+rax*1]', ...ifelse].map(instr), loop: { lines: [10, 11, 12, 13, 14, 15, 16] } };
+  check(/^both sides of the branch at line 12 \(jz\)/.test(caveats(padded)[0]?.title), 'paths: by line with .p2align padding in the span', j(caveats(padded)));
   // split loads
   const fir = caveats(loop('vmovups ymm1, ymmword ptr [rdi+rax*4]', 'vfmadd231ps ymm0, ymm15, ymmword ptr [rdi+rax*4+0x4]', 'vfmadd231ps ymm0, ymm14, ymmword ptr [rdi+rax*4+0x20]', 'vmovups ymmword ptr [rdx+rax*4+0x4], ymm0', 'jnz 0x0'));
   check(fir.length === 1 && fir[0].id === 'split' && j(fir[0].rows) === '[1]' && fir[0].text === 'split loads? (1)', 'split: a ymm load at +4; not at +0 or +32, not a store', j(fir));
@@ -66,7 +79,7 @@ const loop = (...labels) => ({ mode: 'loop', rows: labels.map(instr) });
   // review round 1: a forward branch inside the loop (an if) is not an exit; lea is not an access; xchg is a read-modify-write
   const op = (label, opcode) => ({ kind: 'instr', label, opcode, notes: '', values: [] });
   const ifLoop = { mode: 'loop', rows: [op('mov eax, dword ptr [rdi]', '8b07'), op('test eax, eax', '85c0'), op('jle 0x5', '7e03'), op('add rbx, rax', '4801c3'), op('add rdi, 0x4', '4883c704'), op('dec rcx', '48ffc9'), op('jnz 0xffffffffffffffeb', '75eb')] };
-  check(ids(ifLoop) === '', 'an if inside the loop (jle to a later instruction of the loop): not an exit', j(caveats(ifLoop)));
+  check(ids(ifLoop) === 'paths', 'an if inside the loop (jle to a later instruction of the loop): not an exit, both paths', j(caveats(ifLoop)));
   const out = { ...ifLoop, rows: ifLoop.rows.map((x, k) => (k === 2 ? op('jle 0x12', '7e10') : x)) };
   check(ids(out) === 'exit', 'a branch past the end of the loop: an exit');
   check(ids(loop('lea rdx, ptr [rdi+rax*4]', 'mov dword ptr [rdi+rax*4], ecx', 'inc rax', 'jnz 0x0')) === '', 'lea with an indexed address and a store to it: not a read-modify-write');

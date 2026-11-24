@@ -282,6 +282,23 @@ try {
     check(got.SKL.caveats.join() === 'split loads? (7)' && got.ZEN3.arch === 'ZEN3' && got.ZEN3.caveats.length === 0, 'split loads: SKL warns, ZEN3 (splitLoadCycles 2) does not', JSON.stringify(got));
   }
 
+  // --- a branch inside the picked loop (clang's sum_mod remainder loop): "both paths", its title naming the source line
+  // (the picked loop's lines from the assembler result, app.js) ----------------------------------------------------------
+  {
+    const DIVMOD = fs.readFileSync(path.join(here, 'fixtures/cli/divmod.hsw.s'), 'utf8');
+    const page = await openPage();
+    await page.goto(`${origin}/?nosw=1#v=1&m=asm`);
+    const p = await page.eval(`${HELPERS}
+      await until(() => !$('run').disabled);
+      setCode(${JSON.stringify(DIVMOD)});
+      await done(() => $('run').click());
+      const cv = document.querySelector('.cv-line .cv[data-cv="paths"]');
+      return { text: cv?.textContent, title: cv?.title, all: [...document.querySelectorAll('.cv-line .cv')].map((x) => x.textContent) };`);
+    check(p.text === 'both paths' && /^both sides of the branch at line 46 \(jnz\) are simulated/.test(p.title) && p.all.join() === 'both paths,exit mispredict', 'a branch inside the loop: both paths, at its source line', JSON.stringify(p));
+    check(page.problems.length === 0, 'no console errors (both paths)', page.problems.join('\n'));
+    await page.cmd('Page.close');
+  }
+
   // --- links: lp=whole analyzes the whole text; an alignment offset in the link stays (not the address's) ------------------
   {
     const OBJDUMP = fs.readFileSync(path.join(here, 'fixtures/loop-find/psum.noraw'), 'utf8');
@@ -366,6 +383,30 @@ try {
     check(rb.start[0] === 'loop .L1' && rb.start[1] === null, 'A–B: side B has its own loop chip', JSON.stringify(rb));
     check(rb.picked === 'loop .L2' && rb.replaced === 'loop .L7', 'A–B: B picks its second loop; a new B text starts at the first', JSON.stringify(rb));
     check(page.problems.length === 0, 'no console errors (review)', page.problems.join('\n'));
+    await page.cmd('Page.close');
+  }
+
+  // --- the syntax select follows a pasted text (clang -S: AT&T), unless the user picked it -------------------------------
+  {
+    const ATT = fs.readFileSync(path.join(here, 'fixtures/cli/dot.hsw.s'), 'utf8');
+    const INTEL = '.L1:\n  add rax, qword ptr [rdi]\n  add rdi, 8\n  dec rcx\n  jnz .L1\n';
+    const page = await openPage();
+    await page.goto(`${origin}/?nosw=1#v=1&m=asm`);
+    const r = await page.eval(`${HELPERS}
+      await until(() => !$('run').disabled);
+      setCode(${JSON.stringify(ATT)}); await done(() => $('run').click()).catch((e) => { throw new Error('att: ' + $('syntax').value + ' ' + $('input-messages').textContent.slice(0, 200)); });
+      const out = { att: [$('syntax').value, document.querySelector('.tp .value')?.textContent, loopChip()] };
+      setCode(${JSON.stringify(INTEL)}); await done(() => $('run').click());
+      out.intel = [$('syntax').value, document.querySelector('.tp .value')?.textContent];
+      // picked by hand: a pasted AT&T text no longer switches it
+      const s = $('syntax'); s.value = 'intel'; s.dispatchEvent(new Event('change', { bubbles: true }));
+      setCode(${JSON.stringify(ATT)}); $('run').click();
+      await until(() => $('input-messages').textContent.length > 0);
+      out.kept = $('syntax').value;
+      return out;`);
+    check(r.att[0] === 'att' && r.att[1] === '32.00' && r.att[2] === 'loop .LBB0_9', 'a pasted clang -S (AT&T) text: the select follows, its loop analyzed', JSON.stringify(r.att));
+    check(r.intel[0] === 'intel', 'a pasted Intel text: back to Intel', JSON.stringify(r.intel));
+    check(r.kept === 'intel', 'a syntax picked by hand stays', JSON.stringify(r.kept));
     await page.cmd('Page.close');
   }
 

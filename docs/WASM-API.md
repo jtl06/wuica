@@ -237,14 +237,16 @@ gcc's `view` operand of `.loc`, which LLVM rejects, is dropped.
 ### The loop of a whole function (the page, the library, REST, MCP, the package's CLI)
 
 For an analysis, pasted assembly goes through `web/js/loop-find.js` before the regions above (the npm package has a copy
-in `packages/wuica/lib/web`). The option is `loop`: `"auto"` (the default), `"whole"` (never a pick) or the index of a
-loop (innermost first, in code order). The page shows the choice as a select under the input when it matters; the API
-returns `loop: {index, count, name, line, endLine, address?, alignmentOffset?}` when something other than the whole text
+in `packages/wuica/lib/web`). The option is `loop`: `"auto"` (the default), `"whole"` (never a pick), the index of a
+loop (0-based: the deepest first, then in code order) or its label; `func` keeps one function's loops. The page shows the choice as a select under the input when it matters; the API
+returns `loop: {index, count, name, line, endLine, lines?, address?, alignmentOffset?}` (`lines`: the source line of each instruction) when something other than the whole text
 was analyzed. In `"auto"`:
 
 - **Loops**: backward branches to a label or an address; several branches back to one label are one loop. A span with a
   `ret` or another function's label (`.globl`, `.type @function`, or a call/jump target from outside) is not a loop.
-  The first innermost loop is analyzed, unless the text is that loop already.
+  clang's notes (`# =>This Inner Loop Header: Depth=2`, `# in Loop: Header=BB0_4`) make the blocks of one header one loop
+  at clang's depth. The deepest innermost loop is analyzed, among equals the first in the code (clang often puts a
+  remainder loop first), unless the text is that loop already.
 - **No loop**: a compiler's function (a function label, directives, a prologue/epilogue, or objdump) that ends in `ret`
   is analyzed without prologue, epilogue and `ret`; a bare snippet (`add rax, 1` / `ret`) as typed.
 - **Exits**: a conditional branch to a symbol the text does not define is a short, not-taken jump to the end of the
@@ -256,6 +258,9 @@ was analyzed. In `"auto"`:
   each pick; an offset set by hand, in a link or by an import stays for that text).
 - **Sections**: `.text.*` (gcc's `main` in `.text.startup`, `-ffunction-sections`) is analyzed as `.text`.
 - **Line ends**: CRLF and a lone CR are line feeds.
+- **Syntax**: the API's `syntax` defaults to `"auto"` (`loop-find.js`, `detectSyntax`: `%registers`, `$immediates`,
+  `(%base,…)` against `ptr [` and `[register…]`; a leading `.att_syntax` / `.intel_syntax` decides); the page's select
+  follows a pasted text unless the user picked it.
 - **`;`**: at the start of a line, a comment. After a statement, what assembles is assembled (a note names it, unless the
   `;` follows the statement without a space: `dec rcx; jnz 1b`); what does not is a comment (a note if it starts with a
   mnemonic). Nothing after a `;` makes a valid line an error.
@@ -266,7 +271,7 @@ Only the package's CLI takes `-loop`; the native CLI (`crates/wuica-cli`) reads 
 
 Not in this module's response; the package computes them (`packages/wuica/README.md`, "Compact form"):
 `insights.binding` (exactly `bottlenecks`, `Divider` included), `insights.largest` (when `bottlenecks` is empty: the
-largest limit, the nearest bound), `insights.caveats` (known blind spots the block meets: `rmw-index`, `exit`, `split`;
+largest limit, the nearest bound), `insights.caveats` (known blind spots the block meets: `rmw-index`, `paths` (a branch inside the block: both sides simulated), `exit`, `split`;
 `split` depends on the CPU's `splitLoadCycles`), and `what_if`'s `acc2`/`acc3`/`acc4`/`acc8` variants (N
 accumulators: the chain's register renamed in each unrolled copy; refused, with a reason, for a chain through memory,
 flags, an implicit operand, the induction variable, or a register also used off the chain) with `accumulators.best`.

@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { COMPONENTS, versionInfo } from '../lib/version.js';
 import { capMemory } from '../lib/wasm-limits.js';
 import { ROOT } from './helpers.mjs';
@@ -11,12 +12,19 @@ import { ROOT } from './helpers.mjs';
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
 test('version constants match the repository', () => {
-  assert.match(read('docs/DESIGN.md'), new RegExp(`commit\\s+\`${COMPONENTS.uiCA.commit}\``));
   assert.ok(read('third_party/xed/README.md').includes(`\`${COMPONENTS.xed}\``));
   assert.ok(read('packages/wuica/README.md').includes(`LLVM ${COMPONENTS.llvm}`));
   assert.ok(fs.existsSync(path.join(ROOT, `assembler/llvm-${COMPONENTS.llvm}-wasi.patch`)));
   const v = versionInfo();
   assert.equal(v.wuica, JSON.parse(read('packages/wuica/package.json')).version);
+});
+
+test('the uiCA commit is the data asset\'s (ci/data-asset.txt, through the package\'s dist/manifest.json; the CLI\'s --version -json)', () => {
+  const m = /^uica_commit=([0-9a-f]+)(?:\s+\(([^)]+)\))?/m.exec(read('ci/data-asset.txt'));
+  const want = { repository: 'https://github.com/jtl06/uiCA', commit: m[1], branch: m[2] };
+  assert.deepEqual(versionInfo().uiCA, want);
+  const cli = JSON.parse(execFileSync(process.execPath, [path.join(ROOT, 'packages/wuica/bin/wuica.js'), '--version', '-json'], { encoding: 'utf8' }));
+  assert.deepEqual(cli.uiCA, want);
 });
 
 test('the server and the library have the site\'s version (web/js/app.js; tests-js/web_version.mjs)', () => {

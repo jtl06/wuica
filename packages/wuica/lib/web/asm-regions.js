@@ -349,7 +349,7 @@ export function separatorNotes(text) {
 // the text's addresses, or null), and the notes (exits, undefined jump targets) among its diagnostics.
 export async function assembleMarked(assemble, text, opts = {}) {
   const analysis = opts.loop !== undefined && opts.loop !== null;
-  const prep = analysis ? preparePaste(text, { loop: opts.loop }) : null;
+  const prep = analysis ? preparePaste(text, { loop: opts.loop, func: opts.func }) : null;
   if (prep?.error) return { ok: false, diagnostics: [{ line: null, column: null, severity: 'error', message: prep.error }] };
   let work = prep ? prep.text : normalizeText(text);
   const fallback = new Map(prep?.fallback ?? []);
@@ -376,7 +376,7 @@ export async function assembleMarked(assemble, text, opts = {}) {
   if (!prep) return r;
   const loop = prep.choice === null ? null : {
     index: prep.choice === 'body' ? null : prep.choice, count: prep.loops.length, name: loopName(prep),
-    line: prep.pick.begin, endLine: prep.pick.end, address: prep.address, alignment: prep.alignment,
+    line: prep.pick.begin, endLine: prep.pick.end, lines: prep.pick.lines, address: prep.address, alignment: prep.alignment,
   };
   const out = { ...r, loop, loops: prep.loops, body: prep.body, choosable: prep.choosable, alignment: prep.alignment };
   if (r.ok && prep.notes.length) out.diagnostics = [...r.diagnostics, ...prep.notes];

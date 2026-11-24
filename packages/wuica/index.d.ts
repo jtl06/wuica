@@ -21,11 +21,35 @@ export interface AnalysisOptions {
   details?: boolean;
 }
 
-export type Syntax = 'intel' | 'att';
+/** "auto" (the default): detected from the text (%registers, $immediates: AT&T; else Intel noprefix). */
+export type Syntax = 'auto' | 'intel' | 'att';
 
 /** What of `source` is analyzed: "auto" (default: the innermost loop of a whole function, or its body if it has no
  * loop; else the text as it is), "whole", or the index of a loop (innermost first, in code order). */
-export type LoopChoice = 'auto' | 'whole' | number;
+export type LoopChoice = 'auto' | 'whole' | number | string;
+/** The named loop choices ('auto', 'whole'); a number is a loop's index (0-based), any other string its label. */
+export declare const LOOP_CHOICES: readonly ['auto', 'whole'];
+/** A loop of assembly text (listLoops; the CLI's -loops). */
+export interface LoopListing {
+  /** Its index for `loop` (0-based): the deepest loops first, then in code order. */
+  index: number;
+  label: string;
+  /** The function it is in (the last non-local label before it), or null. */
+  function: string | null;
+  line: number;
+  endLine: number;
+  instructions: number;
+  /** 1 for a loop in no other loop (clang's Depth when its notes say). */
+  depth: number;
+  /** The loop "auto" analyzes. */
+  auto: boolean;
+}
+/** The loops of assembly text, as `loop` and `func` choose among them (no assembling). */
+export function listLoops(source: string, options?: { func?: string | null }): LoopListing[] | { error: string };
+/** 'att' or 'intel' from the text's signs, or null. */
+export function detectSyntax(source: string): 'att' | 'intel' | null;
+/** Per instruction details and the port set / issue slots of an analysis with options.details (the MCP summary's). */
+export function detailInsights(result: AnalyzeResult): Partial<Insights>;
 
 /** What was analyzed when it is not the whole text as given (AnalyzeResult.loop). */
 export interface LoopInfo {
@@ -38,6 +62,12 @@ export interface LoopInfo {
   /** Its first and last line in the source (null: the whole text). */
   line: number | null;
   endLine: number | null;
+  /** The source line of each of its instructions, in order (a picked loop or body): row k of the analysis is line lines[k]. */
+  lines?: number[];
+  /** The function it is in, its nesting depth and its instruction count (for a loop). */
+  function?: string | null;
+  depth?: number;
+  instructions?: number;
   /** Its address (objdump input). */
   address?: number;
   /** The alignment offset from the addresses (objdump input): used unless options.alignmentOffset is given. */
@@ -46,8 +76,8 @@ export interface LoopInfo {
 
 /** The code: exactly one of `source` (assembly; `asm` is accepted as an alias) and `hex` (machine code). */
 export type CodeRequest =
-  | { source: string; asm?: undefined; hex?: undefined; syntax?: Syntax; loop?: LoopChoice }
-  | { asm: string; source?: undefined; hex?: undefined; syntax?: Syntax; loop?: LoopChoice }
+  | { source: string; asm?: undefined; hex?: undefined; syntax?: Syntax; loop?: LoopChoice; func?: string }
+  | { asm: string; source?: undefined; hex?: undefined; syntax?: Syntax; loop?: LoopChoice; func?: string }
   | { hex: string | Uint8Array; source?: undefined; asm?: undefined; syntax?: Syntax; loop?: LoopChoice };
 
 /** Body of POST /api/analyze/<arch>. */
@@ -113,10 +143,15 @@ export interface AnalyzeResult {
     ratio: number;
     edges: { from: number; to: number; operand: string; latency: number; carried: boolean }[];
   };
+  /** With options.details: per row its allowed ports, latencies, front-end facts; the port set and issue slots
+   * (docs/WASM-API.md, "Details"). */
+  details?: { rows: unknown[]; ports?: unknown; slots?: unknown };
   /** The assembled machine code (lower-case hex), when `source` was given. */
   hex?: string;
   /** What of `source` was analyzed, when not the whole text as given (request.loop). */
   loop?: LoopInfo;
+  /** The syntax `source` was read in (detected unless the request said). */
+  syntax?: 'intel' | 'att';
   /** Assembler warnings, notes (exits taken as not taken), and the decode warning. */
   stderr: StderrLine[];
 }
@@ -175,8 +210,8 @@ export interface Insights {
   chain?: { index: number; instr: string; operand: string; latency: number; carried: boolean }[];
   /** The instructions with the largest share of the binding resource, or of the largest limit (top 5). */
   hot?: { resource: string; ports?: string[]; instructions: { index: number; instr: string; share: number }[] };
-  /** Known blind spots of the model the block meets (absent if none): rmw-index, exit, split; instructions: indexes. */
-  caveats?: { id: 'rmw-index' | 'exit' | 'split'; text: string; title: string; instructions: number[] }[];
+  /** Known blind spots of the model the block meets (absent if none): rmw-index, paths, exit, split. */
+  caveats?: Caveat[];
   /** With options.details: the ports behind the Ports limit (cycles = uops / ports) and the instructions that load them. */
   portSet?: { ports: string[]; uops: number; cycles: number; instructions: { index: number; instr: string; uops: number }[] };
   /** With options.details: issue slots per iteration, used and lost by cause. */
@@ -208,7 +243,7 @@ export interface AssembleResult {
 }
 
 export type CompareRow =
-  | { arch: string; name: string; year: number | null; prototype: boolean; code: 0; tp: number; mode: 'loop' | 'unroll'; bottlenecks: string[]; decodeErrors: number }
+  | { arch: string; name: string; year: number | null; prototype: boolean; code: 0; tp: number; mode: 'loop' | 'unroll'; bottlenecks: string[]; limits: Limit[]; decodeErrors: number }
   | { arch: string; name: string; year: number | null; prototype: boolean; code: 1 | 2 | 3; error: string };
 
 export interface CompareResult {
@@ -288,6 +323,20 @@ export const ARCH_INFO: Record<string, { name: string; year: number }>;
  * without it, as on a CPU without a split-load cost. The instance's insights() passes it. */
 export function insights(result: AnalyzeResult, config?: { splitLoadCycles?: number } | null): Insights | null;
 
+/** A known blind spot of the model that the block meets (Insights.caveats; the CLI's -json, one CPU or several). */
+export interface Caveat {
+  /** rmw-index: a read-modify-write to an indexed address (store forwarding depends on the data); paths: a conditional
+   * branch inside the block (an if/else, a second back edge): both sides are simulated, a real iteration takes one;
+   * exit: an exit before the loop's branch (its mispredict); split: loads that may cross a cache line. */
+  id: 'rmw-index' | 'paths' | 'exit' | 'split';
+  /** The short form ("both paths"). */
+  text: string;
+  /** The explanation (paths: the branch's source line when the result has loop.lines, else its instruction number). */
+  title: string;
+  /** Indexes into the instructions (rows). */
+  instructions: number[];
+}
+
 export type WhatIfVariant = 'unroll2' | 'unroll4' | 'unroll8' | 'acc2' | 'acc3' | 'acc4' | 'acc8' | 'simpleFrontEnd' | 'noMacroFusion' | 'noMicroFusion' | 'nochain';
 export const WHAT_IF_VARIANTS: readonly WhatIfVariant[];
 export interface WhatIfResult {
@@ -304,6 +353,19 @@ export interface WhatIfResult {
   /** With accumulator variants: the best N (the smallest within 1% of the fastest; 1 = as it is) and its tp. */
   accumulators?: { best: number; tp: number };
 }
+
+/** The CLI's `-json -whatif`: one WhatIfResult per CPU, keyed by its id, with one CPU as with several. With `-per N`,
+ * each has elementsPerIteration (N) and perElement (tp / N), and each variant with a tp its perElement. */
+export type CliWhatIf = Record<string, (WhatIfResult & { elementsPerIteration?: number; perElement?: number; variants: (WhatIfResult['variants'][number] & { perElement?: number })[] }) | Failure>;
+/** The CLI's `-json` with one CPU: the analyze result with insights (caveats in insights.caveats), perElement (-per)
+ * and whatIf (-whatif). */
+export type CliAnalyzeJson = AnalyzeResult & { insights?: Insights; perElement?: number; whatIf?: CliWhatIf };
+/** The CLI's `-json` with several CPUs: the compare result; each result with perElement (-per) and caveats (the same
+ * objects as insights.caveats with one CPU); whatIf (-whatif) as with one CPU. */
+export type CliCompareJson = CompareResult & { results: (CompareResult['results'][number] & { perElement?: number; caveats?: Caveat[] })[]; whatIf?: CliWhatIf };
+/** The CLI's `--version -json`: the package's version and the uiCA reference whose data and model it has (from the
+ * repository's ci/data-asset.txt at build time; null if the package was not built). */
+export interface CliVersionJson { wuica: string; uiCA: { repository: string; commit: string; branch?: string } | null; node: string }
 /** The what-if experiments of the web page (the MCP tool `what_if`), with `analyze` (e.g. a Wuica's analyze, bound) and,
  * for the accumulator variants, `assemble` (e.g. a Wuica's assemble, bound). */
 export function whatIf(analyze: (arch: string, request: AnalyzeRequest) => Promise<AnalyzeResult | Failure>, arch: string, request: AnalyzeRequest, variants?: readonly WhatIfVariant[],

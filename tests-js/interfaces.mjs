@@ -257,6 +257,8 @@ for (const [arch, hex, id] of [['adlp', '0x48,0x01,0xd8,0x48,0x01,0xc3', 'ADL-P'
   });
   const row = (x) => x && ({ arch: x.arch, code: x.code, tp: x.tp, mode: x.mode, bottlenecks: x.bottlenecks, decodeErrors: x.decodeErrors });
   const rows = (c) => c?.code === 0 ? c.results.map(row) : { code: c?.code };
+  // the CLI's JSON: its code is the exit status (the largest of the rows' codes), its rows the library's
+  const rowsCli = (c) => (Array.isArray(c?.results) && c.code === Math.max(0, ...c.results.map((x) => x.code)) ? c.results.map(row) : { code: c?.code });
   const ccases = [
     { hex: '4801d84801c349ffcf75f5', archs: ['SKL', 'ICL'], options: {} },
     { hex: '488b0048ffc975f8', archs: undefined, options: { noMacroFusion: true } },
@@ -287,13 +289,13 @@ for (const [arch, hex, id] of [['adlp', '0x48,0x01,0xd8,0x48,0x01,0xc3', 'ADL-P'
       const a = cliArgs({ hex: cc.hex, arch: cc.archs ? cc.archs.join(',') : 'all', options: cc.options });
       const r = await runProc(process.execPath, [path.join(PKG, 'bin/wuica.js'), ...a, '-threads', t]);
       let got;
-      try { got = rows(JSON.parse(r.out)); } catch { got = { error: r.err || r.out }; }
+      try { got = rowsCli(JSON.parse(r.out)); } catch { got = { error: r.err || r.out }; }
       compared(`npmcli -threads ${t}`, c, firstDiff(want, got));
     }
     // WUICA_THREADS for the npm CLI
     const r = await runProc(process.execPath, [path.join(PKG, 'bin/wuica.js'), ...cliArgs({ hex: cc.hex, arch: cc.archs ? cc.archs.join(',') : 'all', options: cc.options })], { WUICA_THREADS: '2' });
     let got;
-    try { got = rows(JSON.parse(r.out)); } catch { got = { error: r.err || r.out }; }
+    try { got = rowsCli(JSON.parse(r.out)); } catch { got = { error: r.err || r.out }; }
     compared('npmcli WUICA_THREADS=2', c, firstDiff(want, got));
   }
   console.log(`compare: ${ccases.length} requests through the library (1 and 4 threads), the npm CLI (-threads 1, 3, WUICA_THREADS), REST (split and not) and both MCP servers`);

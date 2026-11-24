@@ -104,10 +104,10 @@ export function branchLabels(rows, src = null) {
 }
 
 // The lines of the analyzed code of an assembly result (asm-regions.js): the picked loop or body, a marked region, or
-// the whole text. {text, from, to}.
+// the whole text. {text, from, to, lines?: the line of each instruction of a picked loop or body}.
 export function analyzedLines(text, r) {
   const t = String(text ?? '');
-  if (r?.loop?.line) return { text: t, from: r.loop.line, to: r.loop.endLine ?? r.loop.line };
+  if (r?.loop?.line) return { text: t, from: r.loop.line, to: r.loop.endLine ?? r.loop.line, ...(r.loop.lines ? { lines: r.loop.lines } : {}) };
   if (r?.region?.line) {
     const lines = t.split('\n');
     let to = lines.length;

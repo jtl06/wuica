@@ -4,7 +4,7 @@
 // no gain from 4), and the dot product's vaddss chain; the page's numbers are the MCP tool's.
 // Usage: node tests-js/web_accum.mjs
 import fs from 'node:fs';
-import { family, chainRegisters, accumulatorText, bestAccumulators, ACCUMULATORS } from '../web/js/accum.js';
+import { family, chainRegisters, accumulatorText, bestAccumulators, ACCUMULATORS, writesOnly } from '../web/js/accum.js';
 import { experiments, outcome, bestOf } from '../web/js/whatif.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { WasmAssembler } from '../web/js/assembler.js';
@@ -47,7 +47,7 @@ const CRC = {
   check(!accumulatorText(ah, '00dc49ffc875f9', 2).ok, 'refused: ah has no form in r8..');
   // aliases: al is rax; an off-chain use of the chain register in any form refuses; a register used in any form is not free
   const storeAl = { ...CRC, rows: [instr('add eax, ecx', '01C8'), instr('mov byte ptr [rdi], al', '8807'), instr('dec r9', '49FFC9'), instr('jnz 0x0', '75F7', 'M')], criticalPath: { edges: [edge(0, 0, 'EAX', true)] } };
-  check(/eax is also used off the chain \(mov byte ptr \[rdi\], al\)/.test(accumulatorText(storeAl, '01c8880749ffc975f7', 2).reason), 'refused: the chain register stored off the chain (as al)', accumulatorText(storeAl, '01c8880749ffc975f7', 2).reason);
+  check(/eax's running value is also read off the chain \(mov byte ptr \[rdi\], al\)/.test(accumulatorText(storeAl, '01c8880749ffc975f7', 2).reason), 'refused: the chain register stored off the chain (as al)', accumulatorText(storeAl, '01c8880749ffc975f7', 2).reason);
   const r8b = { ...CRC, rows: [instr('add eax, ecx', '01C8'), instr('add r8b, 0x1', '4180C001'), instr('dec r9', '49FFC9'), instr('jnz 0x0', '75F7', 'M')], criticalPath: { edges: [edge(0, 0, 'EAX', true)] } };
   check(accumulatorText(r8b, '01c84180c00149ffc975f7', 2).renamed[0].to[0] === 'r10d', 'free registers: r8 (used as r8b) and r9 are not free; eax gets r10d', j(accumulatorText(r8b, '01c84180c00149ffc975f7', 2)));
   // implicit operands: the legacy blendvps reads xmm0, so xmm0 is not free for a copy
@@ -59,6 +59,9 @@ const CRC = {
     const x = { ...CRC, rows: [instr(mn, '90'), instr('dec r9', '49FFC9'), instr('jnz 0x0', '75F6', 'M')], criticalPath: { edges: [edge(0, 0, reg, true)] } };
     check(/implicit operand/.test(accumulatorText(x, '9049ffc975f6', 2).reason ?? ''), `refused: ${reg.toLowerCase()} is implicit in ${mn}`, j(accumulatorText(x, '9049ffc975f6', 2)));
   }
+  // writing the chain's register off the chain (clang loads into it) is sound; reading it is not
+  check(writesOnly('vmovss xmm1, dword ptr [rdi+rcx*4]', 'v1') && writesOnly('mov eax, dword ptr [rdi]', 'rax') && writesOnly('vmovaps ymm2, ymm5', 'v2'), 'writesOnly: loads and whole-register moves');
+  check(!writesOnly('mov al, byte ptr [rdi]', 'rax') && !writesOnly('movss xmm1, xmm2', 'v1') && !writesOnly('vaddss xmm1, xmm1, xmm2', 'v1') && !writesOnly('mov qword ptr [rdi], rcx', 'rcx') && !writesOnly('lea rax, ptr [rax+0x8]', 'rax'), 'writesOnly: not a partial write, a merge, a read or a store');
   const ptr = { ...CRC, criticalPath: { edges: [edge(2, 2, 'RDX', true)] } };
   check(/induction variable rdx/.test(accumulatorText(ptr, CRC_HEX, 2).reason), 'refused: a chain through the pointer (used in an address) is not an accumulator');
   const notLoop = accumulatorText({ ...CRC, mode: 'unroll' }, CRC_HEX, 2);
@@ -114,7 +117,7 @@ if (!fs.existsSync(wasm) || !fs.existsSync(asmPath) || !fs.existsSync(new URL('d
   const psumHex = await assembleHex('.L:\n  imul rdx, rdx, 3\n  add rdx, [rdi+rax*8]\n  mov [rsi+rax*8], rdx\n  inc rax\n  cmp rax, rcx\n  jne .L\n');
   const pb = await e.analyze(makeRequest(psumHex, 'SKL'));
   const pe = experiments(pb, psumHex, {});
-  check(pe.filter((x) => /^acc/.test(x.id)).length === 1 && /rdx is also used off the chain/.test(pe.find((x) => x.id === 'acc').error), 'prefix sum: no accumulator rows, the reason', j(pe.map((x) => [x.id, x.error])));
+  check(pe.filter((x) => /^acc/.test(x.id)).length === 1 && /rdx.s running value is also read off the chain/.test(pe.find((x) => x.id === 'acc').error), 'prefix sum: no accumulator rows, the reason', j(pe.map((x) => [x.id, x.error])));
   // three free registers: 2, 3 and 4 accumulators, and 8 with its own reason (not "no loop-carried chain")
   const few = await assembleHex('.L:\n  crc32 rax, qword ptr [rdi+rdx]\n  add r8, r9\n  add r10, r11\n  add r12, rbx\n  add rbp, rsi\n  add rdx, 8\n  cmp rdx, rcx\n  jb .L\n');
   const fb = await e.analyze(makeRequest(few, 'SKL'));
@@ -122,6 +125,16 @@ if (!fs.existsSync(wasm) || !fs.existsSync(asmPath) || !fs.existsSync(new URL('d
   const fv = Object.fromEntries(fw.variants.map((x) => [x.id, x]));
   check(fb.criticalPath && fv.acc2.tp > 0 && fv.acc4.tp > 0 && /7 free registers needed for rax/.test(fv.acc8.error), 'acc8 without enough free registers: its own reason', j(fw.variants));
   check(experiments(fb, few, {}).find((x) => x.id === 'acc8')?.error && experiments(fb, few, {}).find((x) => x.id === 'acc4')?.text, 'the page: acc8 with its reason, acc4 as text');
+  // clang's dot product (AT&T, -O3 without -ffast-math): the chain moves through xmm0, xmm1 and xmm2, which also take
+  // loads; the copies rename all three: 2 accumulators halve the cycles per element
+  const A2 = await WasmAssembler.create(fs.readFileSync(asmPath));
+  const dotText = fs.readFileSync(new URL('tests-js/fixtures/cli/dot.hsw.s', root), 'utf8').split('\n').slice(27, 47).join('\n') + '\n';
+  const dr = await A2.assemble(dotText, 'att');
+  const clangDot = hexOf(dr.bytes);
+  const db = await e.analyze(makeRequest(clangDot, 'SKL'));
+  const da = accumulatorText(db, clangDot, 2);
+  const dv = da.ok ? await e.analyze(makeRequest(await assembleHex(da.text), 'SKL')) : null;
+  check(db.tp === 32 && da.ok && da.renamed.length === 3 && dv.tp / 2 === 16, "clang's dot (the chain through xmm0-xmm2, reloaded): 2 accumulators, 32 -> 16 per iteration", j([db.tp, da.reason, da.renamed, dv?.tp]));
   const noAsm = await whatIf(analyze, 'ZEN3', { hex: CRC_HEX }, ['acc2']);
   check(/no assembler/.test(noAsm.variants[0].error), 'what_if without an assembler: the accumulator variants say so');
 }

@@ -1,12 +1,10 @@
 // The remote MCP endpoint through the SDK's client over Streamable HTTP: the same tools and results as the package's
-// stdio server (the same createServer(w), run in-process here over an in-memory transport).
+// stdio server (the hand-written JSON-RPC loop of wuica-mcp, on the same tool table), spawned here.
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { createWuica } from 'wuica';
-import { createServer } from 'wuica/mcp';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { start, post, get, HEX, ASM, ROOT } from './helpers.mjs';
@@ -19,12 +17,9 @@ before(async () => {
   s = await start();
   remote = new Client({ name: 'wuica-server-test', version: '0' });
   await remote.connect(new StreamableHTTPClientTransport(new URL(s.base + '/mcp')));
-  // the package's MCP server on the library, for the expected results
-  const w = await createWuica();
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await createServer(w).connect(a);
+  // the package's stdio MCP server, for the expected results
   local = new Client({ name: 'local', version: '0' });
-  await local.connect(b);
+  await local.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(ROOT, 'packages/wuica/bin/wuica-mcp.js')] }));
 });
 after(async () => { await remote.close(); await local.close(); await s.close(); });
 
