@@ -29,15 +29,16 @@ export default {
     const url = new URL(request.url);
     const br = /\bbr\b/.test(request.headers.get("Accept-Encoding") ?? "");
     if (br && (request.method === "GET" || request.method === "HEAD") && !request.headers.has("Range")) {
-      const res = await env.ASSETS.fetch(new Request(new URL(url.pathname + ".br", url), {
-        method: request.method, headers: { "If-None-Match": request.headers.get("If-None-Match") ?? "" },
-      }));
+      const headers = new Headers();
+      const etag = request.headers.get("If-None-Match");
+      if (etag) headers.set("If-None-Match", etag);
+      const res = await env.ASSETS.fetch(new Request(new URL(url.pathname + ".br", url), { method: request.method, headers }));
       if (res.ok || res.status === 304) {
-        const headers = new Headers(res.headers);
-        headers.set("Content-Type", "application/wasm");
-        headers.set("Content-Encoding", "br");
-        headers.set("Vary", "Accept-Encoding");
-        return new Response(res.body, { status: res.status, headers, encodeBody: "manual" });
+        const out = new Headers(res.headers);
+        out.set("Content-Type", "application/wasm");
+        out.set("Content-Encoding", "br");
+        out.set("Vary", "Accept-Encoding");
+        return new Response(res.body, { status: res.status, headers: out, encodeBody: "manual" });
       }
     }
     return env.ASSETS.fetch(request); // no br, a range request, or no .br file: the asset as the host serves it
@@ -82,7 +83,7 @@ which `manifest.json` gives) and `WebAssembly.compile` see the same bytes.
 - The tables (`data/arch/*.json`) could be served the same way (1,281 kB served vs 681 kB at -q 11 for the 15), but they
   are being replaced by a binary form in this release: measure again then.
 - Without the Worker (or if it is not wanted), the page could fetch `.br` files and decode them itself, but Chrome 157's
-  `DecompressionStream` has no `brotli` (Firefox has it since 147, Node has it), so Chrome would need a brotli decoder
+  `DecompressionStream` has no `brotli` (Firefox 147 has it according to Mozilla's bug tracker, not tested here; Node has it), so Chrome would need a brotli decoder
   in JavaScript or WebAssembly (the static dictionary alone is 122 kB raw), downloaded before the modules and run before
   `WebAssembly.compile`; gzip, which `DecompressionStream` has everywhere, is larger than the host's brotli (816,848 for the
   stripped analyzer at gzip -9).

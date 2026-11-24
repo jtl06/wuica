@@ -23,7 +23,7 @@ reference needs 40–55 ms plus startup). See [docs/DESIGN.md](docs/DESIGN.md) f
 | Bottleneck analysis (`facile.py`, `printBottlenecks`) | `crates/wuica-core` (`facile`) | identical report text |
 | Analysis API | `crates/wuica` | the request/response of [docs/WASM-API.md](docs/WASM-API.md) |
 | Command-line tool | `crates/wuica-cli` | `wuica HEX -arch SKL` prints uiCA's report |
-| WebAssembly module | `crates/wuica-wasm` | 4.3 MB, 0.9 MB gzipped |
+| WebAssembly module | `crates/wuica-wasm` | 3.1 MB, 0.8 MB gzipped |
 | Assembler (LLVM 22.1.2 MC, x86 only) | `assembler/` | identical bytes to `llvm-mc` on 3000 files; 3.8 MB, 0.7 MB brotli |
 | Web page | `web/` | static site, runs entirely in the browser |
 
