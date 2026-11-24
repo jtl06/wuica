@@ -274,3 +274,17 @@ export function toJSON(r, request) {
   const { trace, text: report_, ...rest } = r;
   return JSON.stringify({ request: request ?? null, response: rest }, null, 1) + '\n';
 }
+
+// ---- the alignment variant of what-if (appended) ----------------------------------------------------------------------
+
+// whatIf's table and, when the result has the variant align, its alignment over the 64 offsets (min, median, max, the
+// best and the worst offset, the spread).
+export function whatIfAlignment(x) {
+  const md = whatIf(x);
+  const v = x?.variants?.find((y) => y.alignment);
+  if (!v) return md;
+  const per = x.elementsPerIteration > 1 ? x.elementsPerIteration : null;
+  const c = (n) => (per ? cycles(n / per) : Number(n).toFixed(2));
+  const a = v.alignment;
+  return md + `\n**Alignment** over the 64 offsets${per ? ' (cycles per element)' : ''}: min ${c(a.min)} (offset ${a.best}), median ${c(a.median)}, max ${c(a.max)} (offset ${a.worst}), spread ${c(a.spread)}; this block at offset ${a.offset}\n`;
+}

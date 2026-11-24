@@ -53,6 +53,8 @@ Output:
   -per N                 the loop does N elements (bytes, floats, ...) per iteration: also print cycles per element
                          (what-if values too)
   -whatif                the what-if variants (unrolled, N accumulators, front end, fusion) per microarchitecture
+  -variants LIST         with -whatif (implied): these variants only, comma-separated; also align (the 64 alignment
+                         offsets: min, median, max, best and worst offset; 64 analyses, not in the default set)
   -md                    print GitHub-flavoured Markdown instead of the text report (for an issue, a review, a
                          chat): the result with its uop table, the CPU table, the what-if and loop tables; not with
                          -json or -TPonly
@@ -111,7 +113,7 @@ const FLAGS = {
   examples: ['examples'], example: ['example', 1], show: ['show'], files: ['files', 1], report: ['report'], funcs: ['funcs'],
   arch: ['arch', 1], list: ['list'], hex: ['hex'], att: ['att'], intel: ['intel'], raw: ['raw', 1], data: ['data', 1],
   loop: ['loop', 1], loops: ['loops'], func: ['func', 1], per: ['per', 1], whatif: ['whatif'], threads: ['threads', 1],
-  tponly: ['tpOnly'], json: ['json'], md: ['md'], trace: ['trace'], details: ['details'],
+  tponly: ['tpOnly'], json: ['json'], md: ['md'], variants: ['variants', 1], trace: ['trace'], details: ['details'],
   alignmentoffset: ['alignmentOffset', 1], initpolicy: ['initPolicy', 1], simplefrontend: ['simpleFrontEnd'],
   nomicrofusion: ['noMicroFusion'], nomacrofusion: ['noMacroFusion'], miniterations: ['minIterations', 1], mincycles: ['minCycles', 1],
 };
@@ -144,6 +146,7 @@ export function parseArgs(argv) {
     switch (name) {
       case 'att': case 'intel': o.syntax = name; break;
       case 'loop': o.loop = /^\d+$/.test(v) ? Number(v) : v; break;
+      case 'variants': o.variants = v.split(',').map((x) => x.trim()).filter(Boolean); o.whatif = true; break;
       case 'per': o.per = Number(v); if (!(o.per > 0)) throw new UsageError(`-per: a positive number of elements per iteration: ${v}`); break;
       case 'threads': o.threads = int(v, name); if (o.threads < 1) throw new UsageError('-threads: at least 1'); break;
       case 'trace': o.options.includeTrace = true; break;
@@ -452,7 +455,7 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
     const bound = { analyze: (a, r) => w.analyze(a, r), assemble: (t) => w.assemble(t, 'intel') };
     const whatIfs = async (archs) => {
       const res = {};
-      for (const a of archs) res[w.resolveArch(a)] = whatIfPer(await whatIf(bound.analyze, a, req, WHAT_IF_VARIANTS, { assemble: bound.assemble }), o.per);
+      for (const a of archs) res[w.resolveArch(a)] = whatIfPer(await whatIf(bound.analyze, a, req, o.variants ?? WHAT_IF_VARIANTS, { assemble: bound.assemble }), o.per);
       return res;
     };
 
@@ -480,7 +483,7 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
       if (o.md) {
         const results = c.results.map((r, k) => ({ ...r, ...(extra[k].ins?.caveats ? { caveats: extra[k].ins.caveats } : {}) }));
         out.write(markdown.cpuTable({ ...c, results }, { per: o.per }));
-        for (const x of Object.values(wi ?? {})) out.write('\n' + markdown.whatIf(x));
+        for (const x of Object.values(wi ?? {})) out.write('\n' + markdown.whatIfAlignment(x));
         if (base?.code === 0 && !o.per) { const s = inductionSteps(base); if (s.length) err.write(stepLine(s)); }
         return status;
       }
@@ -523,7 +526,7 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
     printAnalyzed(r, err, o);
     if (o.md) {
       out.write(markdown.report(r, { arch: archTitle(w, r.arch), per: o.per, insights: ins, src: srcOf(req, r), code: analyzedCode(req, r) }));
-      for (const x of Object.values(wi ?? {})) out.write('\n' + markdown.whatIf(x));
+      for (const x of Object.values(wi ?? {})) out.write('\n' + markdown.whatIfAlignment(x));
       const steps = !o.per ? inductionSteps(r) : [];
       if (steps.length) err.write(stepLine(steps));
       return 0;
@@ -682,7 +685,7 @@ async function batch(w, o, io) {
   const bound = { analyze: (a, r) => w.analyze(a, r), assemble: (t) => w.assemble(t, 'intel') };
   const whatIfs = async (req, archs) => {
     const res = {};
-    for (const a of archs) res[w.resolveArch(a)] = whatIfPer(await whatIf(bound.analyze, a, req, WHAT_IF_VARIANTS, { assemble: bound.assemble }), o.per);
+    for (const a of archs) res[w.resolveArch(a)] = whatIfPer(await whatIf(bound.analyze, a, req, o.variants ?? WHAT_IF_VARIANTS, { assemble: bound.assemble }), o.per);
     return res;
   };
   const docs = new Map(); // item -> {doc (as a single run's JSON), status, rows: [{cpu, tp, pe, bn, notes, code}], report, wi}
@@ -804,7 +807,7 @@ async function batchMarkdown(w, o, out, items, docs, worst) {
     const wi = docs.get(it).wi;
     if (!wi) continue;
     out.write(`\n### ${markdown.text(it.name)}\n`);
-    for (const x of Object.values(wi)) out.write('\n' + markdown.whatIf(x));
+    for (const x of Object.values(wi)) out.write('\n' + markdown.whatIfAlignment(x));
   }
   return worst;
 }

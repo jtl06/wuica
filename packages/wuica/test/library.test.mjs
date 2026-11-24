@@ -141,6 +141,25 @@ test('source lines: line (and loc from .loc) on each instruction row, instructio
   assert.ok(h.rows.every((x) => x.line === undefined && x.loc === undefined));
 });
 
+test('the what-if variant align: the 64 alignment offsets, only when asked for', async () => {
+  const { WHAT_IF_VARIANTS, WHAT_IF_OPT_IN_VARIANTS, whatIfText, markdown, findExample } = await import('../lib/index.js');
+  assert.ok(!WHAT_IF_VARIANTS.includes('align') && WHAT_IF_OPT_IN_VARIANTS.includes('align'));
+  const src = findExample('saxpy').intel;
+  assert.ok(!(await w.whatIf('SKL', { source: src })).variants.some((v) => v.id === 'align'));
+  const x = await w.whatIf('SKL', { source: src, variants: ['align'] });
+  const v = x.variants[0];
+  const tps = [];
+  for (let k = 0; k < 64; k++) tps.push((await w.analyze('SKL', { source: src, options: { alignmentOffset: k } })).tp);
+  const sorted = [...tps].sort((a, b) => a - b);
+  assert.deepEqual(v.alignment, { min: sorted[0], median: Math.round((sorted[31] + sorted[32]) / 2 * 100) / 100, max: sorted[63],
+    best: tps.indexOf(sorted[0]), worst: tps.indexOf(sorted[63]), spread: Math.round((sorted[63] - sorted[0]) * 100) / 100, offset: 0 });
+  assert.equal(v.tp, v.alignment.median);
+  assert.ok(v.alignment.spread > 0, 'saxpy on SKL depends on the alignment');
+  assert.match(whatIfText(x), /^ {2}alignment over 64 offsets: min 1\.50 \(offset \d+\), median 1\.50, max 3\.00 \(offset \d+\), spread 1\.50; this block at offset 0$/m);
+  assert.match(markdown.whatIfAlignment(x), /\*\*Alignment\*\* over the 64 offsets: min 1\.50/);
+  assert.equal((await w.whatIf('SKL', { source: src, variants: ['align'], options: { alignmentOffset: 8 } })).variants[0].alignment.offset, 8);
+});
+
 test('SKL result in detail', async () => {
   const r = await w.analyze('SKL', { hex: HEX });
   assert.equal(r.tp, 2);

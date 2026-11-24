@@ -8,6 +8,10 @@
 import { ACCUMULATORS, accumulatorText, bestAccumulators } from './accum.js';
 
 export const VARIANTS = Object.freeze(['unroll2', 'unroll4', 'unroll8', 'acc2', 'acc3', 'acc4', 'acc8', 'simpleFrontEnd', 'noMacroFusion', 'noMicroFusion', 'nochain']);
+// Variants that run only when asked for (not in the default set): align, the block at each of the 64 alignment offsets
+// (64 analyses: min, median, max, the best and the worst offset, the spread).
+export const OPT_IN_VARIANTS = Object.freeze(['align']);
+const ALL_VARIANTS = [...VARIANTS, ...OPT_IN_VARIANTS];
 
 const UNROLL = [2, 4, 8];
 
@@ -122,6 +126,7 @@ export function bestOf(baseTp, exps, results) {
 function labelOf(id, options) {
   if (id.startsWith('unroll')) return `unroll ×${id.slice(6)}`;
   if (id.startsWith('acc')) return `${id.slice(3)} accumulators`;
+  if (id === 'align') return 'alignment 0-63';
   const f = FLAGS.find(([k]) => k === id);
   return f ? (options?.[id] ? f[2] : f[1]) : 'no chain';
 }
@@ -158,8 +163,8 @@ export function toolOutcome(base, exp, r) {
  * @param {{assemble?: ((text: string) => Promise<any>) | null}} [tools]
  */
 export async function whatIf(analyze, arch, request, variants = VARIANTS, { assemble = null } = {}) {
-  const unknown = (variants ?? []).filter((v) => !VARIANTS.includes(v));
-  if (unknown.length) return { code: 1, error: `unknown variant(s): ${unknown.join(', ')} (known: ${VARIANTS.join(', ')})`, stderr: [] };
+  const unknown = (variants ?? []).filter((v) => !ALL_VARIANTS.includes(v));
+  if (unknown.length) return { code: 1, error: `unknown variant(s): ${unknown.join(', ')} (known: ${ALL_VARIANTS.join(', ')})`, stderr: [] };
   const base = await analyze(arch, request);
   if (base.code !== 0) return base;
   // the code as the rows have it (the analyzed bytes, if every byte was decoded), for the unrolled copies; the other
@@ -183,16 +188,35 @@ export async function whatIf(analyze, arch, request, variants = VARIANTS, { asse
     const r = exp.estimate !== undefined ? null : await analyze(base.arch, exp.per > 1 ? { hex: exp.hex, options: exp.options } : { ...code, options: exp.options });
     out.push(toolOutcome(base, exp, r));
   }
+  if (want.has('align')) out.push(await alignment(analyze, base, code, options));
   for (const id of want) {
     if (!out.some((x) => x.id === id)) {
       out.push({ id, label: labelOf(id, options), error: base.mode !== 'loop' && (id.startsWith('unroll') || id.startsWith('acc')) ? 'not a loop' : id === 'nochain' || id.startsWith('acc') ? (id.startsWith('acc') && accError) || 'no loop-carried chain' : 'not applicable' });
     }
   }
-  out.sort((a, b) => VARIANTS.indexOf(a.id) - VARIANTS.indexOf(b.id));
+  out.sort((a, b) => ALL_VARIANTS.indexOf(a.id) - ALL_VARIANTS.indexOf(b.id));
   const accs = out.filter((x) => x.id.startsWith('acc') && x.tp !== undefined);
   const best = accs.length ? bestAccumulators(new Map([[1, base.tp], ...accs.map((x) => /** @type {[number, number]} */ ([Number(x.id.slice(3)), x.tp]))])) : null;
   return { code: 0, arch: base.arch, tp: base.tp, mode: base.mode, bottlenecks: base.bottlenecks, ...(base.loop ? { loop: base.loop } : {}), unit: 'cycles per original iteration', variants: out,
     ...(best ? { accumulators: { best: best.n, tp: round(best.tp) } } : {}) };
+}
+
+// The variant align: the code at each alignment offset 0-63 (64 analyses with the other options as given). tp is the
+// median; alignment: {min, median, max, best, worst (the first offset with the minimum, the maximum), spread (max - min),
+// offset (the base's)}. A failed analysis at any offset: the variant's error.
+async function alignment(analyze, base, code, options) {
+  const row = { id: 'align', label: labelOf('align') };
+  const tps = [];
+  for (let k = 0; k < 64; k++) {
+    const r = await analyze(base.arch, { ...code, options: { ...options, alignmentOffset: k } });
+    if (r.code !== 0) return { ...row, error: `alignment offset ${k}: ${r.error}` };
+    if (r.mode !== base.mode) return { ...row, error: `alignment offset ${k}: analyzed ${r.mode === 'loop' ? 'as a loop' : 'unrolled'}` };
+    tps.push(r.tp);
+  }
+  const sorted = [...tps].sort((a, b) => a - b);
+  const min = sorted[0], max = sorted[63], median = round((sorted[31] + sorted[32]) / 2);
+  return { ...row, tp: median, delta: round(median - base.tp), speedup: median > 0 ? round(base.tp / median) : null,
+    alignment: { min, median, max, best: tps.indexOf(min), worst: tps.indexOf(max), spread: round(max - min), offset: Number(options.alignmentOffset ?? 0) } };
 }
 
 // ---- per element and as text (the CLI's -whatif, the REST API's text/plain) ------------------------------------------------
@@ -218,7 +242,8 @@ export function whatIfText(x) {
     : `  ${v.label.padEnd(VARIANT_W)} ${`${v.estimate ? '>=' : ''}${f(v.tp)}`.padStart(8)} ${`${v.delta > 0 ? '+' : ''}${f(v.delta)}`.padStart(8)} ${`${fmt2(v.speedup ?? 0)}x`.padStart(7)}`));
   return [per ? `What if (${x.arch}), cycles per element (${per} per original iteration; base ${fmtEl(x.tp / per)}):` : `What if (${x.arch}), cycles per original iteration (base ${fmt2(x.tp)}):`,
     `  ${'variant'.padEnd(VARIANT_W)} ${'cycles'.padStart(8)} ${'delta'.padStart(8)} ${'speedup'.padStart(7)}`, ...rows,
-    ...(x.accumulators ? [`  best number of accumulators: ${x.accumulators.best}${x.accumulators.best === 1 ? ' (as it is)' : ''}`] : [])].join('\n') + '\n';
+    ...(x.accumulators ? [`  best number of accumulators: ${x.accumulators.best}${x.accumulators.best === 1 ? ' (as it is)' : ''}`] : []),
+    ...x.variants.filter((v) => v.alignment).map((v) => { const a = v.alignment; return `  alignment over 64 offsets: min ${f(a.min)} (offset ${a.best}), median ${f(a.median)}, max ${f(a.max)} (offset ${a.worst}), spread ${f(a.spread)}; this block at offset ${a.offset}`; })].join('\n') + '\n';
 }
 
 // The what-if of a request as the interfaces take it (the library's whatIf method, the MCP tool what_if, the REST API's

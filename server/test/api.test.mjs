@@ -136,6 +136,16 @@ test('POST /api/diff/<arch>: the library\'s diff (the MCP tool diff_blocks), tex
   assert.match(asm.json.error, /^B: /);
 });
 
+test('POST /api/what-if/<arch> with the variant align (64 analyses)', async () => {
+  const body = { source: ASM, variants: ['align'] };
+  const r = await post(s.base, '/api/what-if/SKL', body);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json, await w.whatIf('SKL', body));
+  assert.equal(r.json.variants[0].id, 'align');
+  const m = await post(s.base, '/api/what-if/SKL', body, { Accept: 'text/markdown' });
+  assert.equal(m.text, markdown.whatIfAlignment(r.json));
+});
+
 test('POST /api/compare with per: cycles per element (one job or split into parts)', async () => {
   for (const archs of [['SKL', 'ZEN3'], undefined]) {
     const body = { hex: HEX, per: 4, ...(archs ? { archs } : {}) };

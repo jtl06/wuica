@@ -42,7 +42,7 @@ function loopListing(loops, choice) {
 }
 
 export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, CODES, WARM_HEX, parseDiagnostics, insights };
-export { whatIf, VARIANTS as WHAT_IF_VARIANTS, whatIfPerElement, whatIfText, whatIfRequest } from './web/whatif-core.js';
+export { whatIf, VARIANTS as WHAT_IF_VARIANTS, OPT_IN_VARIANTS as WHAT_IF_OPT_IN_VARIANTS, whatIfPerElement, whatIfText, whatIfRequest } from './web/whatif-core.js';
 export { diffResult, diffAnalyses, diffRequest, diffMarkdown, diffText } from './web/block-diff.js';
 import { diffRequest } from './web/block-diff.js';
 import { whatIfRequest } from './web/whatif-core.js';

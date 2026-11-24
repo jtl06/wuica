@@ -204,13 +204,20 @@ export async function createApp(options = {}) {
     ctx.rpc = msgs.map((m) => (typeof m?.method === 'string' ? m.method.slice(0, 40) : 'response')).join(',').slice(0, 200);
     const call = msgs.find((m) => m?.method === 'tools/call');
     if (call && typeof call.params?.name === 'string') ctx.tool = call.params.name.slice(0, 40);
-    const cost = msgs.reduce((n, m) => n + (m?.method === 'tools/call' && ['compare_archs', 'what_if'].includes(m.params?.name) ? cfg.compareCost : 1), 0);
+    const cost = msgs.reduce((n, m) => n + (m?.method !== 'tools/call' ? 1 : m.params?.name === 'what_if' ? whatIfCost(m.params?.arguments?.variants) : m.params?.name === 'compare_archs' ? cfg.compareCost : m.params?.name === 'diff_blocks' ? 2 : 1), 0);
     rateLimit(req, ctx, Math.max(1, cost));
     const server = createMcpServer(facade.forRequest(ctx));
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => { transport.close().catch(() => {}); server.close().catch(() => {}); });
     await server.connect(transport);
     await transport.handleRequest(req, res, body);
+  }
+
+  // A what-if costs as a compare (about 11 analyses); with the variant align (64 analyses more), six times that, at most
+  // the burst (a request that costs more than the burst could never run).
+  function whatIfCost(variants) {
+    const align = Array.isArray(variants) && variants.includes('align');
+    return Math.max(1, Math.min(cfg.rateBurst || Infinity, align ? 6 * cfg.compareCost : cfg.compareCost));
   }
 
   function rateLimit(req, ctx, cost = 1) {
@@ -293,12 +300,12 @@ export async function createApp(options = {}) {
       let arch;
       try { arch = decodeURIComponent(p.slice('/api/what-if/'.length)).trim(); } catch { arch = ''; }
       if (!arch) throw new HttpError(404, 'give the microarchitecture in the path: POST /api/what-if/<arch> (see GET /api/archs)');
-      rateLimit(req, ctx, cfg.compareCost);
       const body = await readJson(req);
+      rateLimit(req, ctx, whatIfCost(body?.variants));
       const r = await facade.whatIf(arch, body, ctx);
       ctx.code = r.code;
       const unknownArch = r.code === 1 && facade.resolveArch(arch) === null && /^unknown microarchitecture/.test(r.error ?? '');
-      if (!wantText && wantsMarkdown(req)) return sendMarkdown(res, r, r.code ? markdown.report(r) : markdown.whatIf(r), unknownArch ? 404 : undefined);
+      if (!wantText && wantsMarkdown(req)) return sendMarkdown(res, r, r.code ? markdown.report(r) : markdown.whatIfAlignment(r), unknownArch ? 404 : undefined);
       return sendResult(res, r, wantText, whatIfText, unknownArch ? 404 : undefined);
     }
     if (p === '/api/diff' || p.startsWith('/api/diff/')) {

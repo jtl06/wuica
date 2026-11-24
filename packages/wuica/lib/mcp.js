@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import readline from 'node:readline';
 import { createWuica, listLoops } from './index.js';
-import { whatIfRequest, VARIANTS } from './web/whatif-core.js';
+import { whatIfRequest, VARIANTS, OPT_IN_VARIANTS } from './web/whatif-core.js';
 import { diffRequest } from './web/block-diff.js';
 
 const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
@@ -178,13 +178,15 @@ export function mcpTools(w) {
         'issue width), noMacroFusion / noMicroFusion (switched; if the base already has the option set, the variant ' +
         'switches it back), nochain (no analysis: the largest limit other than Dependencies, an estimate of the ' +
         'throughput without the loop-carried chain; `estimate: true`). A variant that cannot be made or analyzed has ' +
-        '`error`. Use it to decide whether unrolling, breaking the chain or front-end work is worth it. ' + INPUT_NOTE + ' ' +
+        '`error`. Only when asked for: align (the block at each of the 64 alignment offsets: `tp` is the median, `alignment` = ' +
+        '{min, median, max, best, worst (offsets), spread, offset (this block\'s)}). Use it to decide whether unrolling, ' +
+        'breaking the chain, front-end work or alignment is worth it. ' + INPUT_NOTE + ' ' +
         ASSUMPTIONS + ' ' + ERRORS_NOTE,
       inputSchema: obj({
         arch: str('microarchitecture id (default "SKL"); see list_archs'),
         ...codeShape,
         options: optionsShape,
-        variants: { description: `the experiments (default: all of ${VARIANTS.join(', ')})`, type: 'array', items: { type: 'string', enum: [...VARIANTS] } },
+        variants: { description: `the experiments (default: all of ${VARIANTS.join(', ')}; also align: the 64 alignment offsets, 64 analyses, only when asked for)`, type: 'array', items: { type: 'string', enum: [...VARIANTS, ...OPT_IN_VARIANTS] } },
         per: PER,
       }),
       annotations: readOnly, execution,

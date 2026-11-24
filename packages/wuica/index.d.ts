@@ -395,8 +395,11 @@ export interface Caveat {
   instructions: number[];
 }
 
-export type WhatIfVariant = 'unroll2' | 'unroll4' | 'unroll8' | 'acc2' | 'acc3' | 'acc4' | 'acc8' | 'simpleFrontEnd' | 'noMacroFusion' | 'noMicroFusion' | 'nochain';
+export type WhatIfVariant = 'unroll2' | 'unroll4' | 'unroll8' | 'acc2' | 'acc3' | 'acc4' | 'acc8' | 'simpleFrontEnd' | 'noMacroFusion' | 'noMicroFusion' | 'nochain' | 'align';
+/** The default variants (not align). */
 export const WHAT_IF_VARIANTS: readonly WhatIfVariant[];
+/** The variants that run only when asked for: align (64 analyses). */
+export const WHAT_IF_OPT_IN_VARIANTS: readonly WhatIfVariant[];
 export interface WhatIfResult {
   code: 0;
   arch: string;
@@ -407,7 +410,9 @@ export interface WhatIfResult {
   loop?: LoopInfo;
   /** tp per original iteration, delta = tp − base tp, speedup = base tp / tp; estimate: no analysis (nochain);
    * renamed (accN): the chain's registers and the ones of the copies after the first. */
-  variants: { id: WhatIfVariant; label: string; tp?: number; delta?: number; speedup?: number | null; estimate?: boolean; bottlenecks?: string[]; renamed?: { from: string; to: string[] }[]; error?: string }[];
+  variants: { id: WhatIfVariant; label: string; tp?: number; delta?: number; speedup?: number | null; estimate?: boolean; bottlenecks?: string[]; renamed?: { from: string; to: string[] }[]; error?: string;
+    /** align: the 64 alignment offsets (tp: the median); best and worst: the first offset with the minimum, the maximum; offset: this block's. */
+    alignment?: { min: number; median: number; max: number; best: number; worst: number; spread: number; offset: number } }[];
   /** With accumulator variants: the best N (the smallest within 1% of the fastest; 1 = as it is) and its tp. */
   accumulators?: { best: number; tp: number };
 }
@@ -496,6 +501,8 @@ export namespace markdown {
     options?: { per?: number }): string;
   /** The what-if table of one CPU (per element with elementsPerIteration). */
   function whatIf(result: (WhatIfResult & { elementsPerIteration?: number }) | (Failure & { arch?: string })): string;
+  /** whatIf's table, and the alignment line when the result has the variant align. */
+  function whatIfAlignment(result: (WhatIfResult & { elementsPerIteration?: number }) | (Failure & { arch?: string })): string;
   /** The loops of assembly text (listLoops). */
   function loops(list: LoopListing[]): string;
   /** A against B (as the page's A–B view): summary, bottlenecks, limits, the aligned instructions with B − A per column;

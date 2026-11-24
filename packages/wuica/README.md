@@ -174,6 +174,7 @@ wuica loop.s -arch SKL,ZEN3 -md      # Markdown (an issue, a review, a chat); wi
 wuica psum.s -loop whole             # the whole text, not the loop found in it (-loop auto, the default, or -loop N)
 wuica psum.s -loops                  # list the loops; -loop .LBB0_12 or -func psum to choose
 wuica psum.s -whatif -per 8          # what-if variants; cycles per element (8 elements per iteration)
+wuica psum.s -variants align,acc4    # these variants only; align: the 64 alignment offsets (min, median, max)
 wuica dot.o -func dot                # an object file (ELF or Mach-O x86-64); -funcs lists its functions
 wuica a.s b.s c.o -arch SKL,ZEN3     # several inputs: one table, a row per file and CPU
 wuica -files list.txt -TPonly        # the names from a file (- for stdin): file<TAB>cycles lines
@@ -529,8 +530,9 @@ reported in its row.
 ### What-if: `POST /api/what-if/<arch>`
 
 The request is analyze's plus `variants` (ids, default all: `unroll2`, `unroll4`, `unroll8`, `acc2`, `acc3`, `acc4`,
-`acc8`, `simpleFrontEnd`, `noMacroFusion`, `noMicroFusion`, `nochain`) and `per` (elements per iteration: also cycles
-per element). The response is the MCP tool's and `wuica -whatif -json`'s (`WhatIfResult`): the base `tp` and per variant
+`acc8`, `simpleFrontEnd`, `noMacroFusion`, `noMicroFusion`, `nochain`; also `align`, only when asked for: the block at
+each of the 64 alignment offsets, 64 analyses, `tp` the median and `alignment` {min, median, max, best, worst, spread,
+offset}; it costs six compares in the server's rate limit) and `per` (elements per iteration: also cycles per element). The response is the MCP tool's and `wuica -whatif -json`'s (`WhatIfResult`): the base `tp` and per variant
 `tp` per original iteration, `delta`, `speedup`, or `error`; `accumulators.best`. `text/plain` gives the CLI's table,
 `text/markdown` the Markdown one. Each variant is one analysis (rate-limited like compare).
 
