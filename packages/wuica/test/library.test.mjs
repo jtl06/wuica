@@ -143,6 +143,27 @@ test('source lines: line (and loc from .loc) on each instruction row, instructio
   assert.ok(h.rows.every((x) => x.line === undefined && x.loc === undefined));
 });
 
+test('what-if stopped part way (an analyzer that says notRun after N analyses): nochain still estimated; no best number of accumulators unless every one ran', async () => {
+  const { whatIf, findExample } = await import('../lib/index.js');
+  const src = findExample('dot1').intel;
+  const stopAfter = (n) => { let k = 0; return (arch, req) => (++k > n ? Promise.resolve({ code: 3, error: 'out of time', notRun: 'deadline' }) : w.analyze(arch, req)); };
+  const all = ['acc2', 'acc4', 'nochain'];
+  const asm = { assemble: (t) => w.assemble(t, 'intel') };
+  const full = await whatIf(stopAfter(99), 'SKL', { source: src }, all, asm);
+  assert.ok(full.accumulators?.best >= 1, JSON.stringify(full));
+  // the base and acc2 finish; acc4 not; nochain needs no analysis
+  const cut = await whatIf(stopAfter(2), 'SKL', { source: src }, all, asm);
+  assert.equal(cut.notRun, 'deadline');
+  assert.deepEqual(cut.variants.map((v) => [v.id, v.error ?? 'ok']), [['acc2', 'ok'], ['acc4', 'not run: deadline'], ['nochain', 'ok']]);
+  assert.equal(cut.variants[2].estimate, true);
+  assert.equal(cut.variants[2].tp, full.variants[2].tp);
+  assert.equal(cut.accumulators, undefined, 'acc4 did not run: no best');
+  assert.deepEqual(cut.stderr.map((l) => l.text).slice(-1), ['Warning: 1 of 3 variant(s) not run: deadline']);
+  // the deadline right after the base: nochain still there
+  const early = await whatIf(stopAfter(1), 'SKL', { source: src }, all, asm);
+  assert.deepEqual(early.variants.map((v) => [v.id, v.error ?? 'ok']), [['acc2', 'not run: deadline'], ['acc4', 'not run: deadline'], ['nochain', 'ok']]);
+});
+
 test('the what-if variant align: the 64 alignment offsets, only when asked for', async () => {
   const { WHAT_IF_VARIANTS, WHAT_IF_OPT_IN_VARIANTS, whatIfText, markdown, findExample } = await import('../lib/index.js');
   assert.ok(!WHAT_IF_VARIANTS.includes('align') && WHAT_IF_OPT_IN_VARIANTS.includes('align'));
@@ -212,6 +233,15 @@ test('profiles, real output (tests-js/fixtures/profiles/make-fixtures.sh): perf 
   assert.ok(c.rows.some((x) => x.samples === 0.95), JSON.stringify(c.rows.map((x) => x.samples)));
   assert.ok(c.rows.some((x) => x.samples === 0.44), '1519 at 8.68 % of count: 0.44');
   assert.ok(!c.rows.some((x) => x.samples > 1), 'no instruction of count has more than 1 % of all the samples');
+  // hand-edited: a count with a thousands separator ("1,069 samples") is the same count
+  const sep = await w.analyze('SKL', { source: pf.replace('(1069 samples', '(1,069 samples') });
+  assert.deepEqual(sep.rows.map((x) => x.samples), p.rows.map((x) => x.samples));
+  // hand-edited: a header without a count (count's) does not take matvec's: no weighting at all, each symbol's own
+  // percentages (1430: 26.33 as printed), said in a note
+  const nc = await w.analyze('SKL', { source: pf.replace('(58 samples, ', '('), loop: '0x1400' });
+  assert.ok(nc.rows.some((x) => x.samples === 26.33), JSON.stringify(nc.rows.map((x) => x.samples)));
+  assert.match(nc.stderr.map((l) => l.text).join('\n'), /note: perf annotate: a symbol's header has no sample count, so the samples are each symbol's own percentages/);
+  assert.ok(!p.stderr?.some((l) => /no sample count/.test(l.text)));
   // hand-edited from the real output: two blocks with the same count (count's header says 1069 too) both count:
   // 26.33 * 1069 / (1069 + 1069 + 20) = 13.04
   const same = pf.replace('(58 samples,', '(1069 samples,');
@@ -281,6 +311,23 @@ test('source lines only when the lines are the instructions: .rept, .irp, .if, .
   const m = await w.analyze('SKL', { source: macro });
   assert.equal(m.code, 0, m.error);
   assert.ok(m.rows.every((x) => x.line === undefined));
+  // a data directive among the instructions: its bytes are an instruction (or part of one) of their own: no lines, also
+  // where the counts happen to match (the nop of .byte 0x90 is not the lock line); a prefix alone on its line is part
+  // of the next instruction (lock / add: one instruction, the add's line)
+  for (const src of ['loop:\n .byte 0x90\n lock\n add [rdi], eax\n dec rcx\n jnz loop\n', 'loop:\n .zero 1\n lock\n add [rdi], eax\n dec rcx\n jnz loop\n',
+    'loop:\n .fill 1,1,0x90\n rep\n movsb\n dec rcx\n jnz loop\n', 'loop:\n .space 1,0x90\n data16\n add eax, 1\n dec rcx\n jnz loop\n',
+    'loop:\n .byte 0x48,0x01,0xd8\n lock\n add [rdi], eax\n dec rcx\n jnz loop\n']) {
+    const r = await w.analyze('SKL', { source: src });
+    assert.equal(r.code, 0, `${src}: ${r.error}`);
+    assert.ok(r.rows.every((x) => x.line === undefined), `${src}: ${JSON.stringify(r.rows.map((x) => x.line))}`);
+  }
+  assert.deepEqual(await lines('loop:\n lock\n add [rdi], eax\n rep\n movsb\n dec rcx\n jnz loop\n'), [3, 5, 6, 7]);
+  // where the counts match (a REX byte as data: 48 01 d8 is one instruction, as many as the instruction lines): still none
+  const rex = await w.analyze('SKL', { source: 'loop:\n .byte 0x48\n add eax, ebx\n dec rcx\n jnz loop\n' });
+  assert.equal(rex.rows.filter((x) => x.kind === 'instr').length, 3);
+  assert.ok(rex.rows.every((x) => x.line === undefined), JSON.stringify(rex.rows.map((x) => x.line)));
+  // a data directive outside the analyzed loop: the loop's lines stay
+  assert.deepEqual(await lines('f:\n .byte 0x90\nloop:\n add rax, 1\n dec rcx\n jnz loop\n ret\n'), [4, 5, 6]);
   // a NUL in a comment: the comment ends at the line's end, the instructions stay (6.00: the imul chain, three lines on)
   const nul = await w.analyze('SKL', { source: 'loop:\n add rax, 1 # a\x00b\n imul rbx, rbx\n imul rbx, rbx\n dec rcx\n jnz loop\n' });
   assert.equal(nul.code, 0, nul.error);

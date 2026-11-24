@@ -184,6 +184,7 @@ export async function whatIf(analyze, arch, request, variants = VARIANTS, { asse
   const notRun = (exp) => ({ id: exp.id, label: labelOf(exp.id, options), error: `not run: ${halt}` });
   for (const exp of exps) {
     if (!want.has(exp.id)) continue;
+    if (exp.estimate !== undefined) { out.push(toolOutcome(base, exp, null)); continue; } // (no analysis: nochain)
     if (halt) { out.push(notRun(exp)); continue; }
     if (exp.text && !exp.hex) {
       const a = assemble ? await assemble(exp.text) : null;
@@ -191,7 +192,7 @@ export async function whatIf(analyze, arch, request, variants = VARIANTS, { asse
       if (a?.code === 0 && a.hex) exp.hex = a.hex;
       else { out.push(toolOutcome(base, { ...exp, error: a ? `the variant does not assemble: ${a.error}` : 'no assembler' }, null)); continue; }
     }
-    const r = exp.estimate !== undefined ? null : await analyze(base.arch, exp.per > 1 ? { hex: exp.hex, options: exp.options } : { ...code, options: exp.options });
+    const r = await analyze(base.arch, exp.per > 1 ? { hex: exp.hex, options: exp.options } : { ...code, options: exp.options });
     if (r?.notRun) { halt = r.notRun; out.push(notRun(exp)); continue; }
     out.push(toolOutcome(base, exp, r));
   }
@@ -209,8 +210,10 @@ export async function whatIf(analyze, arch, request, variants = VARIANTS, { asse
     }
   }
   out.sort((a, b) => ALL_VARIANTS.indexOf(a.id) - ALL_VARIANTS.indexOf(b.id));
+  // (the best number of accumulators only when every accumulator variant asked for has run)
   const accs = out.filter((x) => x.id.startsWith('acc') && x.tp !== undefined);
-  const best = accs.length ? bestAccumulators(new Map([[1, base.tp], ...accs.map((x) => /** @type {[number, number]} */ ([Number(x.id.slice(3)), x.tp]))])) : null;
+  const accsCut = out.some((x) => x.id.startsWith('acc') && /^not run: /.test(x.error ?? ''));
+  const best = accs.length && !accsCut ? bestAccumulators(new Map([[1, base.tp], ...accs.map((x) => /** @type {[number, number]} */ ([Number(x.id.slice(3)), x.tp]))])) : null;
   // (the base's decode errors and warnings: they hold for the variants too; and how many variants were not run)
   const skipped = halt ? out.filter((x) => /^not run: /.test(x.error ?? '')).length : 0;
   const stderr = [...(base.stderr ?? []), ...(halt ? [{ text: `Warning: ${skipped} of ${out.length} variant(s) not run: ${halt}` }] : [])];
