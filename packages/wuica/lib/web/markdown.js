@@ -16,6 +16,7 @@
 import { insights, boundModel, blame, topRows } from './bound-core.js';
 import { compareResponses, cycles, signed, signedCycles, MINOR } from './ab-diff.js';
 import { branchLabels, analyzedLines } from './branch-label.js';
+import { shownOutcome } from './whatif-core.js';
 
 export { cycles, signedCycles };
 
@@ -191,9 +192,11 @@ export function whatIf(x) {
   if (x?.code) return `**What if (${text(x.arch ?? '')}):** ${text(x.error)}\n`;
   const per = x.elementsPerIteration > 0 ? x.elementsPerIteration : null;
   const v = (n) => (per ? cycles(n / per) : f2(n));
-  const rows = x.variants.map((y) => (y.error ? [text(y.label), '-', '', '', text(y.error)]
-    : [text(y.label), `${y.estimate ? '>=' : y.approx ? '≈' : ''}${v(y.tp)}`, `${y.delta > 0 ? '+' : ''}${v(y.delta)}`, `${f2(y.speedup ?? 0)}x`,
-      y.estimate ? 'estimate' : y.approx ? `at its ${text(y.approx.limit)} limit (simulated ${per ? Number(y.approx.simulated / per).toPrecision(3) : f2(y.approx.simulated)})` : '']));
+  // (a variant within sampling of its Ports or Issue limit at the limit, ≈: whatif-core.js shownOutcome)
+  const rows = x.variants.map((y) => { if (y.error) return [text(y.label), '-', '', '', text(y.error)];
+    const s = shownOutcome(y, x.tp);
+    return [text(y.label), `${y.estimate ? '>=' : y.approx ? '≈' : ''}${v(s.tp)}`, `${s.delta > 0 ? '+' : ''}${v(s.delta)}`, `${f2(s.speedup ?? 0)}x`,
+      y.estimate ? 'estimate' : y.approx ? `at its ${text(y.approx.limit)} limit (simulated ${per ? Number(y.tp / per).toPrecision(3) : f2(y.tp)})` : '']; });
   const head = `**What if (${text(x.arch)})**, ${per ? `cycles per element (${per} per original iteration; base ${cycles(x.tp / per)})` : `cycles per original iteration (base ${f2(x.tp)})`}`;
   const best = x.accumulators ? `best number of accumulators: ${x.accumulators.best}${x.accumulators.best === 1 ? ' (as it is)' : ''}` : null;
   return join([head, table(['Variant', 'Cycles', 'Δ', 'Speedup', 'Note'], rows, ['l', 'r', 'r', 'r', 'l']), best]);

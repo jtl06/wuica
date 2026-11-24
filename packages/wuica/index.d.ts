@@ -419,11 +419,11 @@ export interface WhatIfResult {
   decodeErrors?: number;
   stderr?: StderrLine[];
   /** tp per original iteration, delta = tp − base tp, speedup = base tp / tp; estimate: no analysis (nochain);
-   * renamed (accN): the chain's registers and the ones of the copies after the first; approx: the simulation came out
-   * under the variant's own Ports or Issue limit (a short steady state), so tp is that limit and `simulated` the
-   * simulation's number. */
+   * renamed (accN): the chain's registers and the ones of the copies after the first; approx: the simulation (tp) came
+   * out under the variant's own Ports or Issue limit by at most 1% (a short steady state): the text and the Markdown
+   * show `shown`, that limit per original iteration, marked ≈ (~ in text). */
   variants: { id: WhatIfVariant; label: string; tp?: number; delta?: number; speedup?: number | null; estimate?: boolean; bottlenecks?: string[]; renamed?: { from: string; to: string[] }[]; error?: string;
-    approx?: { limit: 'Ports' | 'Issue'; simulated: number };
+    approx?: { limit: 'Ports' | 'Issue'; shown: number };
     /** align: the 64 alignment offsets (tp: the median); best and worst: the first offset with the minimum, the maximum; offset: this block's. */
     alignment?: { min: number; median: number; max: number; best: number; worst: number; spread: number; offset: number } }[];
   /** With accumulator variants: the best N (the smallest within 1% of the fastest; 1 = as it is) and its tp. */

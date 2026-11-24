@@ -7,7 +7,7 @@ import { instrRanges, unrollHex, experiments, outcome, formatDelta, formatSpeedu
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES } from '../web/js/examples.js';
 import { encodeState, decodeState } from '../web/js/url-state.js';
-import { toolOutcome, bestOf, whatIfText } from '../web/js/whatif-core.js';
+import { toolOutcome, bestOf, whatIfText, shownOutcome } from '../web/js/whatif-core.js';
 import { whatIf as whatIfMarkdown } from '../web/js/markdown.js';
 import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
@@ -55,20 +55,21 @@ const OPTS = { alignmentOffset: 0, initPolicy: 'diff', simpleFrontEnd: false, no
   check(/not comparable/.test(outcome(base, exps[3], { tp: 1, mode: 'unroll' }).error), 'outcome: another mode is not comparable');
   check(outcome(base, nc, undefined).tp === 1 && outcome(base, nc).estimate, 'outcome: the estimate needs no result');
   // under the variant's own Ports or Issue limit (a short steady state: 8 accumulators of the SKL dot product, 63.75 cycles
-  // per 8 original iterations with Ports 64, 64.00 with minCycles 20000): at the limit, marked, the simulated number kept
+  // per 8 original iterations with Ports 64, 64.00 with minCycles 20000): the data keeps the simulated number and says
+  // so (approx: {limit, shown}); the page, the Markdown and the text show the limit, marked
   {
     const acc8 = { id: 'acc8', label: '8 accumulators', per: 8, hex: '90', options: OPTS };
     const lim = (ports, deps = 4) => [{ name: 'Issue', tp: ports * 0.75 }, { name: 'Ports', tp: ports }, { name: 'Dependencies', tp: deps * 8 }];
     const b = { tp: 32, mode: 'loop' };
     const under = outcome(b, acc8, { tp: 63.75, mode: 'loop', limits: lim(64) });
-    check(under.tp === 8 && under.approx?.limit === 'Ports' && under.approx.simulated === 63.75 / 8 && under.delta === -24 && under.speedup === 4, 'outcome: under its own Ports limit: at the limit, approximate', JSON.stringify(under));
+    check(under.tp === 63.75 / 8 && under.approx?.limit === 'Ports' && under.approx.shown === 8 && JSON.stringify(shownOutcome(under, 32)) === JSON.stringify({ tp: 8, delta: -24, speedup: 4 }), 'outcome: under its own Ports limit: simulated in the data, shown at the limit', JSON.stringify(under));
     check(!outcome(b, acc8, { tp: 64, mode: 'loop', limits: lim(64) }).approx && outcome(b, acc8, { tp: 66, mode: 'loop', limits: lim(64) }).tp === 8.25, 'outcome: at or over the limit: as simulated');
     check(outcome(b, acc8, { tp: 63.75, mode: 'loop', limits: lim(60, 9) }).tp === 63.75 / 8, 'outcome: the chain\'s limit is not a floor (a simulation can be under it)');
     // further under than sampling (uiCA's model is under its own Ports limit by up to 10% on some loops): as simulated
     const far = outcome(b, acc8, { tp: 62, mode: 'loop', limits: lim(64) });
     check(far.tp === 62 / 8 && !far.approx, 'outcome: more than 1% under the limit: as simulated (the model, not sampling)', JSON.stringify(far));
     const t = toolOutcome({ ...b, code: 0 }, acc8, { code: 0, tp: 63.75, mode: 'loop', bottlenecks: ['Ports'], limits: lim(64) });
-    check(t.tp === 8 && t.delta === -24 && t.speedup === 4 && t.approx?.limit === 'Ports' && t.approx.simulated === 7.97, 'toolOutcome (the package): the same', JSON.stringify(t));
+    check(t.tp === 7.97 && t.delta === -24.03 && t.speedup === 4.02 && t.approx?.limit === 'Ports' && t.approx.shown === 8, 'toolOutcome (the package JSON): the simulated number, with approx', JSON.stringify(t));
     const best = bestOf(32, [{ id: 'acc4', per: 4 }, acc8], new Map([['acc4', { tp: 32, limits: lim(32) }], ['acc8', { tp: 63.75, limits: lim(64) }]]));
     check(best?.n === 4, 'best number of accumulators: from the numbers shown (8 is not faster than 4)', JSON.stringify(best));
     const x = { code: 0, arch: 'SKL', tp: 32, variants: [{ id: 'acc8', label: '8 accumulators', ...t }] };

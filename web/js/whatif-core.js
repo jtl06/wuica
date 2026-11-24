@@ -93,8 +93,9 @@ export function experiments(response, hex, options) {
 // The limits a simulation cannot beat in its steady state: port pressure and the issue width (uiCA's Ports and Issue
 // limits). A variant's analysis measures its steady state over the iterations the simulation runs (fewer for an unrolled
 // copy), and can come out a little under them: 8 accumulators on a dot product on SKL gave 63.75 cycles per 8 original
-// iterations under its Ports limit of 64 (64.00 with minCycles 20000). Such a variant is shown at the limit, marked as
-// approximate (≈), with the simulated number kept (simulated). Only within SAMPLING of the limit: uiCA's own results
+// iterations under its Ports limit of 64 (64.00 with minCycles 20000). The data keeps the simulated number (tp) and says
+// so (approx: {limit, shown}: the limit per original iteration); the text, the Markdown and the page show such a variant
+// at the limit, marked as approximate (≈; ~ in plain text): shownOutcome. Only within SAMPLING of the limit: uiCA's own results
 // are under these limits too, by more (of 21,184 fixture responses, 278 under Ports, by up to 10%, and 68 under Issue,
 // by up to 1.7%: its model, not sampling), and the loop-carried chain's limit is no floor at all (156, up to 86%).
 const HARD_LIMITS = ['Ports', 'Issue'];
@@ -109,17 +110,24 @@ export function hardLimit(limits) {
   }
   return best;
 }
-// a variant's cycles per original iteration (r: its analysis, with limits): {tp, approx?: {limit, simulated}}
+// a variant's cycles per original iteration (r: its analysis, with limits): {tp (simulated), approx?: {limit, shown}}
 function perOriginal(r, per) {
   const tp = Number(r.tp) / per, hard = hardLimit(r.limits);
   if (!hard) return { tp };
   const floor = hard.tp / per;
   if (!(tp < floor - 0.005) || floor - tp > SAMPLING * floor) return { tp };
-  return { tp: floor, approx: { limit: hard.name, simulated: tp } };
+  return { tp, approx: { limit: hard.name, shown: floor } };
+}
+// What a display shows for a variant ({tp, delta, speedup, approx?}) against the base's cycles: at its limit when approx.
+/** @param {any} v @param {number} baseTp @returns {{tp: number, delta: number, speedup: number | null}} */
+export function shownOutcome(v, baseTp) {
+  if (!v.approx) return { tp: v.tp, delta: v.delta, speedup: v.speedup };
+  const tp = v.approx.shown;
+  return { tp, delta: tp - baseTp, speedup: tp > 0 ? baseTp / tp : null };
 }
 
-// One result line of the page: {tp (per original iteration), delta, speedup, comparable, approx?} from a summary ({tp,
-// mode, limits} or {error}).
+// One result line of the page: {tp (per original iteration, simulated), delta, speedup, comparable, approx?} from a
+// summary ({tp, mode, limits} or {error}).
 /** @returns {any} */
 export function outcome(base, exp, r) {
   if (exp.error) return { error: exp.error };
@@ -144,7 +152,7 @@ export function bestOf(baseTp, exps, results) {
   for (const x of exps) {
     if (!/^acc\d+$/.test(x.id)) continue;
     const r = results.get(x.id);
-    if (r && !r.error && Number.isFinite(r.tp)) tps.set(x.per, perOriginal(r, x.per).tp);
+    if (r && !r.error && Number.isFinite(r.tp)) { const p = perOriginal(r, x.per); tps.set(x.per, p.approx?.shown ?? p.tp); } // (as shown)
   }
   return tps.size > 1 ? bestAccumulators(tps) : null;
 }
@@ -178,7 +186,7 @@ export function toolOutcome(base, exp, r) {
   else {
     const p = perOriginal(r, exp.per);
     tp = p.tp; row.bottlenecks = r.bottlenecks;
-    if (p.approx) row.approx = { limit: p.approx.limit, simulated: round(p.approx.simulated) };
+    if (p.approx) row.approx = { limit: p.approx.limit, shown: round(p.approx.shown) };
   }
   return { ...row, tp: round(tp), delta: round(tp - base.tp), speedup: tp > 0 ? round(base.tp / tp) : null };
 }
@@ -294,8 +302,9 @@ export function whatIfText(x) {
   if (x.code) return `What if (${x.arch ?? ''}): ${x.error}\n`;
   const per = x.elementsPerIteration;
   const f = per ? (v) => fmtEl(v / per) : fmt2;
-  const rows = x.variants.map((v) => (v.error ? `  ${v.label.padEnd(VARIANT_W)} ${'-'.padStart(8)}  ${v.error}`
-    : `  ${v.label.padEnd(VARIANT_W)} ${`${v.estimate ? '>=' : v.approx ? '~' : ''}${f(v.tp)}`.padStart(8)} ${`${v.delta > 0 ? '+' : ''}${f(v.delta)}`.padStart(8)} ${`${fmt2(v.speedup ?? 0)}x`.padStart(7)}${v.approx ? `  at its ${v.approx.limit} limit (simulated ${per ? Number(v.approx.simulated / per).toPrecision(3) : fmt2(v.approx.simulated)})` : ''}`));
+  const rows = x.variants.map((v) => { if (v.error) return `  ${v.label.padEnd(VARIANT_W)} ${'-'.padStart(8)}  ${v.error}`;
+    const s = shownOutcome(v, x.tp);
+    return `  ${v.label.padEnd(VARIANT_W)} ${`${v.estimate ? '>=' : v.approx ? '~' : ''}${f(s.tp)}`.padStart(8)} ${`${s.delta > 0 ? '+' : ''}${f(s.delta)}`.padStart(8)} ${`${fmt2(s.speedup ?? 0)}x`.padStart(7)}${v.approx ? `  at its ${v.approx.limit} limit (simulated ${per ? Number(v.tp / per).toPrecision(3) : fmt2(v.tp)})` : ''}`; });
   return [per ? `What if (${x.arch}), cycles per element (${per} per original iteration; base ${fmtEl(x.tp / per)}):` : `What if (${x.arch}), cycles per original iteration (base ${fmt2(x.tp)}):`,
     `  ${'variant'.padEnd(VARIANT_W)} ${'cycles'.padStart(8)} ${'delta'.padStart(8)} ${'speedup'.padStart(7)}`, ...rows,
     ...(x.accumulators ? [`  best number of accumulators: ${x.accumulators.best}${x.accumulators.best === 1 ? ' (as it is)' : ''}`] : []),

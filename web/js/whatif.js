@@ -12,7 +12,7 @@ import { h, sideTag } from './render.js';
 import { makeRequest } from './engine.js';
 import { summarize, resultKey, ResultCache, latestWins } from './compare.js';
 import { encodeState } from './url-state.js';
-import { experiments, outcome, weight, bestOf } from './whatif-core.js';
+import { experiments, outcome, weight, bestOf, shownOutcome } from './whatif-core.js';
 import { toHex } from './hex-input.js';
 import { setCopy } from './copy-view.js';
 import { whatIf as whatIfText } from './markdown.js';
@@ -176,10 +176,11 @@ export function createWhatIf(env) {
     const best = bestOf(base.tp, exps, results);
     const done = exps.filter((x) => /^acc\d+$/.test(x.id) && !x.error).every((x) => results.has(x.id));
     const lines = exps.map((x) => {
-      const o = outcome(base, x, results.get(x.id));
+      const r0 = outcome(base, x, results.get(x.id));
+      const o = r0 && !r0.error ? { ...r0, ...shownOutcome(r0, base.tp) } : r0; // (as shown: at its limit when approx)
       const cells = !o ? [h('td', { class: 'wi-tp hint', text: '…' }), h('td'), h('td')]
         : o.error ? [h('td', { class: 'wi-tp hint', title: o.error, text: '—' }), h('td'), h('td')]
-          : [h('td', { class: 'wi-tp', title: o.approx ? `simulated ${f2(o.approx.simulated)}, under its ${o.approx.limit} limit (a short steady state): shown at the limit` : null, text: `${o.estimate ? '≥' : o.approx ? '≈' : ''}${f2(o.tp)}` }),
+          : [h('td', { class: 'wi-tp', title: o.approx ? `simulated ${f2(r0.tp)}, under its ${o.approx.limit} limit (a short steady state): shown at the limit` : null, text: `${o.estimate ? '≥' : o.approx ? '≈' : ''}${f2(o.tp)}` }),
             h('td', { class: `wi-d ${o.delta < -0.005 ? 'neg' : o.delta > 0.005 ? 'pos' : ''}`, text: formatDelta(o.delta) }),
             h('td', { class: `wi-x ${o.speedup > 1.005 ? 'neg' : o.speedup < 0.995 ? 'pos' : ''}`, text: `${o.estimate ? '≤' : ''}${formatSpeedup(o.speedup)}` })];
       const isBest = done && best && best.n > 1 && x.id === `acc${best.n}`;
