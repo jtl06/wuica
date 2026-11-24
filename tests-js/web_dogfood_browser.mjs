@@ -226,6 +226,24 @@ try {
     await page.close();
   }
 
+  // ---- swap carries the loop picks: A's to B, B's to A -----------------------------------------------------------------
+  {
+    const page = await fresh();
+    const r = await page.eval(`${W}
+      const loops = () => [$('loop-chip')?.selectedOptions[0]?.textContent, $('loop-chip-b')?.selectedOptions[0]?.textContent];
+      pasteInto($('code'), ${js(fx('saxpy.s'))}); await settle();
+      pick('loop-chip', optionOf('loop-chip', /\\.LBB0_8\\b/)); await settle();
+      $('cmp-ab').click(); await settle(); $('ab-copy').click(); await settle();
+      pick('loop-chip-b', optionOf('loop-chip-b', /\\.LBB0_16\\b/)); await settle();
+      const before = loops();
+      $('ab-swap').click(); await settle();
+      return { before, after: loops(), hash: location.hash };`, { timeout: 200000 });
+    check(/\.LBB0_8\b/.test(r.before[0]) && /\.LBB0_16\b/.test(r.before[1]), 'swap: before, A .LBB0_8 and B .LBB0_16', js(r.before));
+    check(/\.LBB0_16\b/.test(r.after[0]) && /\.LBB0_8\b/.test(r.after[1]), 'swap: the loop picks change sides (A .LBB0_16, B .LBB0_8)', js(r.after));
+    check(page.take().length === 0, 'swap: no errors', '');
+    await page.close();
+  }
+
   // ---- B8: a try variant opened with ↗ keeps its unit: elems = the original's × the unroll -----------------------------
   {
     const page = await fresh();
