@@ -221,7 +221,8 @@ Where the format differs:
   }
   ```
 
-- **VS Code** with GitHub Copilot (`~/.copilot/mcp-config.json`, or `.mcp.json` at the workspace root):
+- **VS Code** with GitHub Copilot (`~/.copilot/mcp-config.json`; `.mcp.json` at the workspace root is behind an
+  experimental setting):
 
   ```json
   {
