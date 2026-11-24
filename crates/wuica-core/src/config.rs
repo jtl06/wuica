@@ -174,6 +174,10 @@ pub struct UArchConfig {
     pub fp_scheduler_size: i64,
     #[serde(rename = "fpSchedulerPorts", default)]
     pub fp_scheduler_ports: String,
+    /// if > 0: additional latency when a vector instruction reads a value written by an instruction of another vector domain
+    /// (integer, floating point, lane-crossing permutes; `domainBypassDelay`, 0 in data exported before the field existed)
+    #[serde(rename = "domainBypassDelay", default)]
+    pub domain_bypass_delay: i64,
 }
 
 impl UArchConfig {

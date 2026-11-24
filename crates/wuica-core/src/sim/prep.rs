@@ -213,6 +213,33 @@ pub(crate) mod inf {
     pub const WRITES_RSP: u32 = 1 << 15;
     pub const HAS_INPUT_MEM: u32 = 1 << 16;
     pub const HAS_OUTPUT_MEM: u32 = 1 << 17;
+    /// `vectorDomain(instrStr)` (see `domainBypassDelay`): 'int', 'fp' or 'xlane' (none of them: no domain)
+    pub const DOMAIN_INT: u32 = 1 << 18;
+    pub const DOMAIN_FP: u32 = 1 << 19;
+    pub const DOMAIN_XLANE: u32 = 1 << 20;
+    pub const DOMAINS: u32 = DOMAIN_INT | DOMAIN_FP | DOMAIN_XLANE;
+}
+
+/// `vectorDomain`: the domain of a vector instruction for the bypass delay (`domainBypassDelay`): XLANE for VPERM2I128/VPERM2F128,
+/// INT for vector integer instructions (P..., VP...), FP for floating-point operations (...PS/PD/SS/SD, FMA); 0 for others (moves,
+/// broadcasts, extracts, inserts, conversions, and instructions without XMM/YMM operands)
+pub(crate) fn vector_domain(instr_str: &str) -> u32 {
+    if !(has(instr_str, "XMM") || has(instr_str, "YMM")) {
+        return 0;
+    }
+    let m = instr_str.split(' ').next().unwrap_or("");
+    let m = m.strip_prefix('V').unwrap_or(m);
+    if ["MOV", "BROADCAST", "EXTRACT", "INSERT", "CVT"].iter().any(|p| m.starts_with(p)) {
+        0
+    } else if m.starts_with("PERM2") {
+        inf::DOMAIN_XLANE
+    } else if m.starts_with('P') {
+        inf::DOMAIN_INT
+    } else if ["PS", "PD", "SS", "SD"].iter().any(|s| m.ends_with(s)) || ["FMADD", "FMSUB", "FNMADD", "FNMSUB"].iter().any(|p| m.starts_with(p)) {
+        inf::DOMAIN_FP
+    } else {
+        0
+    }
 }
 
 pub(crate) struct InstrInfo {
@@ -781,6 +808,7 @@ impl Prep {
                     flags |= f;
                 }
             }
+            flags |= vector_domain(s);
             let out_regs_start = out_reg_list.len() as u32;
             out_reg_list.extend(out_regs.iter().map(|r| (r.0, r.1)));
             let in_regs_start = in_reg_list.len() as u32;

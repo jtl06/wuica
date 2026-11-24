@@ -1,6 +1,6 @@
 //! `Scheduler`: port assignment, dispatch, and the tracking of when uops become ready and finish.
 
-use super::prep::{pf, PortList, Prep, NONE};
+use super::prep::{inf, pf, PortList, Prep, NONE};
 use super::{crash, opt, Sim, SimError, NO_PORT};
 use crate::config::UArchConfig;
 use std::cmp::Reverse;
@@ -910,6 +910,19 @@ impl<'a> Sim<'a> {
                 Some(mut c) => {
                     if folded_in & (1u32.checked_shl(j - ren_start).unwrap_or(0)) != 0 {
                         c += fold_delay;
+                    }
+                    if self.cfg.domain_bypass_delay != 0 {
+                        // an input from an instruction of another vector domain (see domainBypassDelay)
+                        let producer = self.ren_ops[r as usize].uop;
+                        let cons = &self.prep.props[self.uops[u as usize].prop as usize];
+                        if producer != NONE && !cons.has(pf::STORE_DATA) {
+                            let prod = &self.prep.props[self.uops[producer as usize].prop as usize];
+                            let dp = self.prep.info[prod.instr as usize].flags & inf::DOMAINS;
+                            let dc = self.prep.info[cons.instr as usize].flags & inf::DOMAINS;
+                            if !prod.has(pf::LOAD) && dp != 0 && dc != 0 && dp != dc {
+                                c += self.cfg.domain_bypass_delay;
+                            }
+                        }
                     }
                     if c > op_ready_cycle {
                         op_ready_cycle = c;
