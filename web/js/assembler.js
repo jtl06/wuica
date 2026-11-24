@@ -64,10 +64,11 @@ export function withoutLineTable(text) {
 
 // Removes GNU as's {load} / {store} pseudo-prefixes at the start of a line (LLVM 22 says "unknown prefix"), and reads
 // directives of newer compilers that the bundled LLVM 22 does not know: clang 23's `.prefalign LOG2, END, FILL` (a
-// function's preferred alignment) as `.p2align LOG2`, the alignment clang 22 wrote there. Lines stay where they are.
+// function's preferred alignment) as `.p2align LOG2`, the alignment clang 22 wrote there (after labels, in any case, up to
+// a ';' or '#': what follows stays). Lines stay where they are.
 export function stripHints(text) {
   return text.replace(/^([ \t]*)\{(?:load|store)\}[ \t]*/gm, '$1')
-    .replace(/^([ \t]*)\.prefalign[ \t]+(\d+)[^\n#]*/gm, '$1.p2align $2');
+    .replace(/^([ \t]*(?:[\w.$@]+:[ \t]*)*)\.prefalign[ \t]+(\d+)[^\n#;]*/gim, '$1.p2align $2');
 }
 
 // LLVM (like GNU as) reads ';' as a separator between statements, not as a comment, so "add rax, 1 ; note" fails with

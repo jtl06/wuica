@@ -272,6 +272,15 @@ test('clang 23 -S output as is: .prefalign is read as the .p2align clang 22 wrot
   assert.equal(r.tp, p2.tp);
   assert.equal(r.hex, p2.hex);
   assert.equal((await w.assemble(s)).code, 0);
+  // what follows a ';' stays; after a label; in upper case
+  const { stripHints } = await import('../lib/web/assembler.js');
+  assert.equal(stripHints('.prefalign 4, .Lend, nop; add rax, 1\n'), '.p2align 4; add rax, 1\n');
+  assert.equal(stripHints('x: .prefalign 4, .Lend, nop # c\n'), 'x: .p2align 4# c\n');
+  assert.equal(stripHints('\t.PREFALIGN\t5, .Lend, nop\n'), '\t.p2align 5\n');
+  const kept = await w.assemble('nop\n.prefalign 4, .Lend, nop; add rax, 1\n.Lend:\n');
+  assert.equal(kept.hex, (await w.assemble('nop\n.p2align 4; add rax, 1\n')).hex);
+  assert.match(kept.hex, /4883c001$/, 'the add is assembled');
+  assert.equal((await w.assemble('nop\nx: .PREFALIGN 4, .Lend, nop\n add rax, 1\n.Lend:\n')).hex, (await w.assemble('nop\nx: .p2align 4\n add rax, 1\n')).hex);
 });
 
 test('what-if carries the base\'s decode errors and warnings (also with align)', async () => {
