@@ -355,7 +355,7 @@ try {
   {
     const page = await openPage();
     const asm = '.LBB0_4:\n  cmpb %sil, (%rax)\n  je .LBB0_2\n  callq sink@PLT\n  incq %rax\n  decq %rdx\n  jne .LBB0_4\n.LBB0_1:\n  xorl %eax, %eax\n.LBB0_2:\n  retq\n';
-    await page.goto(`${origin}/?nosw=1#v=1&a=${ARCH}&deps=1&m=asm&s=att&c=${b64(asm)}`);
+    await page.goto(`${origin}/?nosw=1#v=1&a=${ARCH}&deps=1&codemap=1&m=asm&s=att&c=${b64(asm)}`);
     const k = await page.eval(`${HELPERS}
       await until(() => document.querySelector('.tp .value'), 60000);
       const table = [...document.querySelectorAll('table.uops tbody tr:not(.extra)')].map((tr) => tr.cells[0]?.textContent.trim());
@@ -365,11 +365,15 @@ try {
       await until(() => document.querySelector('.trace-viewer'), 60000); await wait(100);
       await until(() => document.querySelector('#deps .dp-body')?.dataset.state === 'done', 60000);
       const deps = [...document.querySelectorAll('.dp-node')].map((n) => n.getAttribute('aria-label'));
-      return { table, listing, labels: viewer().model.labels, deps };`);
+      [...document.querySelectorAll('.view-tab')].find((b) => b.dataset.tab === 'bytes')?.click();
+      await until(() => document.querySelector('.ly-map'), 20000);
+      const bytes = [...document.querySelectorAll('.ly-map [role=option]')].map((n) => n.getAttribute('aria-label'));
+      return { table, listing, labels: viewer().model.labels, deps, bytes };`);
     const want = ['jz .LBB0_2', 'call sink@PLT', 'jnz .LBB0_4'];
     check(want.every((x) => k.table.includes(x)), 'branch targets: the uop table names the exit and the call as written', JSON.stringify(k.table));
     check(/ 74 0[0-9a-f] +jz \.LBB0_2\n/.test(k.listing) && /e8 00 00 00 00 +call sink@PLT\n/.test(k.listing) && /jnz 0x0 <\.LBB0_4>\n/.test(k.listing) && !/0x[0-9a-f]{9,}/.test(k.listing), 'branch targets: the listing (the loop branch at its real target and label)', k.listing);
     check(want.every((x) => k.labels.includes(x)) && !k.labels.some((l) => /0x[0-9a-f]{9,}|call 0x/.test(l)), 'branch targets: the rows of the trace as in the uop table', JSON.stringify(k.labels));
+    check(want.every((x) => k.bytes.some((l) => l.startsWith(x + ' · '))) && !k.bytes.some((l) => /0x[0-9a-f]{9,}|call 0x/.test(l)), 'branch targets: the bytes view as in the uop table', JSON.stringify(k.bytes));
     check(want.every((x) => k.deps.some((l) => l.startsWith(x))) && !k.deps.some((l) => /0x[0-9a-f]{9,}|call 0x/.test(l)), 'branch targets: the dependency arcs\' rows as in the uop table', JSON.stringify(k.deps));
     check(page.problems.length === 0, 'no console errors (branch targets)', page.problems.join('\n'));
     await page.cmd('Page.close');

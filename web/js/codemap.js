@@ -170,11 +170,13 @@ export function createCodeMap(env = {}) {
     const m = model;
     const shown = view?.shown ?? null;
     setCopy('bytes', m ? { what: 'the bytes', md: () => bytesText(m, { shown }) } : null);
+    // (instructions as the uop table shows them: branch targets, branch-label.js)
+    if (m && shown) for (const ins of m.instrs) ins.label = shown[ins.row] ?? ins.label;
     if (!model) { body.replaceChildren(); return; }
     const n = model.lines.length;
     hint.textContent = ` · ${model.bytes} B, ${n} line${n === 1 ? '' : 's'}`;
     if (!open) { body.replaceChildren(); body.dataset.state = 'closed'; return; }
-    const k = `${view.hex}|${model.offset}|${r.rows.map((x) => x.notes).join('')}`;
+    const k = `${view.hex}|${model.offset}|${r.rows.map((x) => x.notes).join('')}|${model.instrs.map((x) => x.label).join('\n')}`;
     if (k === key && body.firstChild) return;
     if (k.split('|')[0] !== key.split('|')[0]) sel = 0;
     sel = Math.min(sel, model.instrs.length - 1);
