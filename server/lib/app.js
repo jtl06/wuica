@@ -14,7 +14,7 @@
 
 import http from 'node:http';
 import { createWuica, ARCH_FIELDS, detailInsights } from 'wuica';
-import { createServer as createMcpServer } from 'wuica/mcp';
+import { createMcpServer } from './mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { resolveConfig } from './config.js';
 import { Pool } from './pool.js';

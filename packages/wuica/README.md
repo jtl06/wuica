@@ -16,7 +16,8 @@ experimental models of the fork [jtl06/uiCA](https://github.com/jtl06/uiCA): **A
 
 Everything runs offline. The two WebAssembly modules (the analyzer, and LLVM's x86 assembler for assembly input) and the
 instruction tables are shipped brotli-compressed. A table is loaded the first time its microarchitecture is used.
-Requirements: Node.js 20 or later.
+Requirements: Node.js 20 or later. **No dependencies**: `npm install wuica` (or `npx wuica`) adds this one package,
+2.3 MB unpacked; the MCP server is part of it.
 
 ## The CLI in five minutes
 
@@ -135,7 +136,14 @@ Diagnostics go to stderr. The exit status is the result code: 0 ok, 1 bad reques
 
 ## MCP server
 
-`wuica mcp` (or the `wuica-mcp` binary) is a Model Context Protocol server on stdio. It has five tools:
+`wuica mcp` (or the `wuica-mcp` binary) is a Model Context Protocol server on stdio, written without an MCP library:
+newline-delimited JSON-RPC 2.0 with the `initialize` handshake of the protocol revisions 2025-11-25, 2025-06-18,
+2025-03-26 and 2024-11-05 (the client's revision if it is one of these, else 2025-11-25; batches only under 2025-03-26),
+`ping`, `tools/list` and `tools/call`. Arguments are checked against the tools' JSON Schemas; a mismatch is a tool error
+(`isError`) that says what is wrong, an unknown tool a JSON-RPC error. The server ends with its stdin, and writes only
+protocol messages to stdout. `wuica mcp --help` prints the usage. The tool table itself (names, descriptions, JSON
+Schemas, handlers) is exported as `mcpTools(w)` from `wuica/mcp`, with `callTool` and `validate`; the remote server
+(`server/`) serves the same table over HTTP. It has five tools:
 
 | Tool | What it does |
 |---|---|
