@@ -103,6 +103,9 @@ have caught the uncompressed tables of 0.1.9; also that the analyzer, the assemb
 (`/healthz`, `/api/version` for the package and the server, one analyze, one compare, MCP `tools/list` and one `what_if`).
 `--site URL` and `--api URL` point it elsewhere (a staging host, a local server), `--no-site`/`--no-api` skip a part.
 
+Before a release, on the reference machine: `tools/fuzz/run.sh --cases 100000 --seed <new seed>` (under a shared lease; see
+"Differential fuzzer"); every case must be `same`, or its finding explained.
+
 ## Speed
 
 - `cargo run --release -p wuica --example phases -- ARCH N HEXFILE...`: the time and the allocations of each phase (native).
@@ -303,6 +306,38 @@ blocks; of the tables only `uarch.json` changed (the new field `domainBypassDela
 
 The decoded records of a case are found in the decode fixtures by `file` and the chip `configs[arch].XEDName`.
 Compare JSON with `wuica_core::jsoncmp::diff` (numbers by value, object key order ignored).
+
+## Differential fuzzer
+
+`tools/fuzz/run.sh --cases N --seed S [--arch X] [--jobs J] [--out DIR]` runs random blocks through the Python reference and through
+the native binary and compares throughput, report text and `-json` output field by field (as the fixture tests do). It runs on
+the reference machine (`UICA_DIR`, default `/data/projects/wuica-fuzz/uica`: a worktree of the fork at the reference commit with
+`instrData/` and the `xed` module copied from the reference tree; `PYTHON`); on aethia under `perfq ssh aethia --mode shared
+--resumable`. A rerun with the same arguments skips the chunks already done.
+
+- Pool (`fuzz.py pool`, built once, in the parent of the output directory): the encodings of the decode fixtures, random changes of their register
+  fields, REX/VEX bits and immediates, and the instances of `tools/fuzz/templates.py` assembled with GNU `as`; each checked with
+  the reference's decoder and tables for each CPU (forms it decodes, with and without data), without branches, system
+  instructions and forms of more than 200 uops.
+- Blocks (`fuzz.py gen`): 1 to 64 instructions of the forms the CPU supports (2 % without data), drawn uniformly or with a bias to
+  a few themes (shuffles, lane-crossing ymm, MUL, rotates, narrow stores, SSE/AVX, high-8 registers, rip-relative operands, LCP,
+  zero idioms, eliminable moves, stack instructions, microcode); 80 % end in a branch to the start (macro-fusible pair, jcc, jmp,
+  rel8 or rel32). Case `i` of seed `S` depends only on `(S, i)`, the pool and `--arch`.
+- Options: a quarter of the cases with the defaults, the others from a pairwise covering array (960 rows) of CPU ×
+  `alignmentOffset` 0..63 × `initPolicy` × `simpleFrontEnd` × `noMicroFusion` × `noMacroFusion` × 11 `minIterations`/`minCycles`
+  pairs (0 and negative values among them).
+- Reference: worker processes (as the exporter), an alarm per case (120 s), a fork per case with ZMM registers (the reference
+  changes its tables in place for them). `fuzz.py calibrate UICA_DIR FIXTURES N` checks that the runner reproduces the fixture lines
+  (all fields, compared as values). A `-json` output above 4 MB (about one case in ten: long simulations of large blocks) is not compared (counted as such; throughput and text still are).
+- wuica: `wuica -compare FILE|-` (crates/wuica-cli/src/compare.rs) reads the reference's lines and prints one verdict per case:
+  `same`, `differs` (TP, stdout, json or the input error), `wuica-error`, `wuica-panic`, `ref-crash`, `ref-timeout`.
+- Each kind of difference: run again with the reference in a new process, minimized (ddmin over the instructions, then the
+  options and the end of the block), classified (port divergence, reference crash or hang, or a deviation of
+  `docs/DEVIATIONS.md`) and written to `DIR/findings/<class>-<CPU>-<hash>.json`; `DIR/summary.json` has the verdicts per CPU.
+  `fuzz.py replay FINDING.json` runs a finding again.
+- Checked against two deliberate changes of `sim/frontend.rs` (3,000 cases each, seed 1): 2 predecoder stall cycles per LCP
+  instead of 3 (204 cases differ, minimized to `sub ax, 0xae` on TGL), and the DSB rule for 16-byte blocks with LCP and
+  macro-fusible instructions at 3 instead of 2 (2 cases, minimized to 6 such instructions and a `jp` on ICL).
 
 ## Shared code
 
