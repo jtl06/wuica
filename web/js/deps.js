@@ -169,7 +169,9 @@ export function createDeps(env) {
     if (view && keyOf(view) === key) { sel = 0; paint(); }
   }
 
-  function draw(g) {
+  // shown: the label of each row of the response as the uop table shows it (branch targets: branch-label.js), or null
+  function draw(g, shown = null) {
+    const lab = (i) => shown?.[g.nodes[i].row] ?? g.nodes[i].label;
     const n = g.nodes.length;
     const lane = g.lanes > 40 ? Math.max(2, 240 / g.lanes) : 6;
     const X0 = LABEL * CH + SL + PAD;
@@ -186,12 +188,12 @@ export function createDeps(env) {
     svg.append(defs);
     const labels = g.nodes.map((nd, i) => {
       const sv = slack ? fmtSlack(slack[i]) : '';
-      const gEl = s('g', { id: `dp-i${i}`, class: 'dp-node' + (onChain.has(i) ? ' crit' : ''), role: 'option', 'aria-selected': String(i === sel), 'data-i': i, 'aria-label': `${nd.label}${sv ? `, slack ${sv}` : ''}` },
+      const gEl = s('g', { id: `dp-i${i}`, class: 'dp-node' + (onChain.has(i) ? ' crit' : ''), role: 'option', 'aria-selected': String(i === sel), 'data-i': i, 'aria-label': `${lab(i)}${sv ? `, slack ${sv}` : ''}` },
         s('rect', { class: 'dp-hit', x: 0, y: i * ROW + 2, width: X0, height: ROW }),
-        s('text', { x: 4, y: y(i) + 4 }, document.createTextNode(short(nd.label))));
+        s('text', { x: 4, y: y(i) + 4 }, document.createTextNode(short(lab(i)))));
       return gEl;
     });
-    const arcTitle = (e) => s('title', null, document.createTextNode(`${g.nodes[e.a].label} → ${g.nodes[e.b].label}${e.mem ? ' (through memory)' : ''}${e.dist ? ` (${e.dist === 1 ? 'next iteration' : e.dist + ' iterations later'})` : ''}${latText(e) ? ` · ${e.critical ? '' : '≈'}${latText(e)} cycles` : ''}${e.critical ? ' · critical chain' : ''}`));
+    const arcTitle = (e) => s('title', null, document.createTextNode(`${lab(e.a)} → ${lab(e.b)}${e.mem ? ' (through memory)' : ''}${e.dist ? ` (${e.dist === 1 ? 'next iteration' : e.dist + ' iterations later'})` : ''}${latText(e) ? ` · ${e.critical ? '' : '≈'}${latText(e)} cycles` : ''}${e.critical ? ' · critical chain' : ''}`));
     const lazyTitles = n > 500; // a large graph: an arc gets its tooltip when the pointer first comes over it
     const arcs = g.edges.map((e, k) => {
       const x = X0 + (e.lane + 1) * lane;
@@ -241,9 +243,9 @@ export function createDeps(env) {
     const info = h('p', { class: 'dp-info' });
     const describe = (i) => {
       const nb = neighbours(g, i);
-      const name = (x) => `${short(g.nodes[x.node].label, 28)}${x.dist ? ' ↻' : ''}`;
+      const name = (x) => `${short(lab(x.node), 28)}${x.dist ? ' ↻' : ''}`;
       const sv = slack ? fmtSlack(slack[i]) : '';
-      info.replaceChildren(...[h('span', { class: 'code', text: g.nodes[i].label }),
+      info.replaceChildren(...[h('span', { class: 'code', text: lab(i) }),
         sv ? h('span', { class: 'dp-s', title: 'slack: cycles it could be delayed in every iteration without lengthening the chain', text: ` slack ${sv}` }) : null,
         nb.reads.length ? h('span', { class: 'dp-r' }, ' ← ', nb.reads.map(name).join(', ')) : null,
         nb.feeds.length ? h('span', { class: 'dp-f' }, ' → ', nb.feeds.map(name).join(', ')) : null].filter(Boolean)); // (replaceChildren writes a null as "null")
@@ -304,7 +306,7 @@ export function createDeps(env) {
     setCopy('deps', { what: 'the dependencies', md: () => depsText(graph, { shown, slack: graph.slack?.slack ? graph.nodes.map((_, i) => fmtSlack(graph.slack.slack[i])) : null }) });
     const c = graph.edges.filter((e) => e.dist).length;
     hint.textContent = ` · ${graph.edges.length} edge${graph.edges.length === 1 ? '' : 's'}, ${c} ↻`;
-    draw(graph);
+    draw(graph, shown);
     body.dataset.state = 'done';
   }
 
