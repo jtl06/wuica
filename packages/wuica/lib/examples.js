@@ -4,6 +4,7 @@
 
 import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES } from './web/examples.js';
 
+/** @type {['basics' | 'classic' | 'showcase', any[]][]} */
 const GROUPS = [['basics', EXAMPLES], ['classic', CLASSIC_EXAMPLES], ['showcase', SHOWCASE_EXAMPLES]];
 
 // [{name, title, group, arch, instructions, hex, intel?, att?}]: arch is the CPU the page shows it on first; intel and

@@ -113,7 +113,10 @@ const FLAGS = {
   nomicrofusion: ['noMicroFusion'], nomacrofusion: ['noMacroFusion'], miniterations: ['minIterations', 1], mincycles: ['minCycles', 1],
 };
 
+/** @typedef {Record<string, any> & {arch: string, options: Record<string, any>, input: string | null, inputs: string[], syntax: string}} CliOptions */
+/** @param {string[]} argv @returns {CliOptions} */
 export function parseArgs(argv) {
+  /** @type {CliOptions} */
   const o = { arch: 'SKL', options: {}, input: null, inputs: [], syntax: 'auto' };
   const int = (s, name) => {
     if (!/^-?\d+$/.test(s)) throw new UsageError(`-${name}: not an integer: ${s}`);
@@ -128,6 +131,7 @@ export function parseArgs(argv) {
       continue;
     }
     const m = /^--?([^=]+)(?:=(.*))?$/.exec(a);
+    if (!m) throw new UsageError(`unknown option ${a}`); // "-=x"
     const f = FLAGS[m[1].toLowerCase()];
     if (!f) throw new UsageError(`unknown option ${a}`);
     const [name, takes] = f;
@@ -188,6 +192,7 @@ function readFile(file) {
 }
 
 // {request: {hex} | {source, syntax}, name: what the diagnostics call it, notes: [stderr lines]}
+/** @param {CliOptions} o @param {any} io @param {any} [w] @returns {Promise<any>} */
 async function readInput(o, io, w = null) {
   const notes = [];
   if (o.example !== undefined) {
@@ -222,7 +227,7 @@ async function readInput(o, io, w = null) {
     }
     text = b.toString('utf8');
   } else if (normalizeHex(o.input) !== null) {
-    const n = normalizeHex(o.input).length / 2;
+    const n = String(normalizeHex(o.input)).length / 2;
     notes.push(`analyzed: ${n} byte${n === 1 ? '' : 's'} of machine code from the argument "${o.input}" (not a file)`);
     return { request: { hex: o.input }, name: 'the argument', notes };
   } else {
@@ -388,7 +393,8 @@ function analyzedCode(req, r) {
 // `code` (0 ok, 1 bad request or usage, 2 assembler error, 3 analysis error).
 export async function main(argv, io = { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr }) {
   const { stdout: out, stderr: err } = io;
-  let o = null;
+  /** @type {CliOptions} */
+  let o = /** @type {any} */ (null); // set by parseArgs, first thing (fail() before that: o?.json)
   const fail = (code, msg) => {
     if (o?.json) out.write(JSON.stringify({ code, error: msg, stderr: [{ text: msg }] }) + '\n');
     else err.write(`${msg}\n`);

@@ -310,7 +310,7 @@ export async function createApp(options = {}) {
     const ctx = {};
     let url;
     try {
-      url = new URL(req.url, 'http://localhost');
+      url = new URL(req.url ?? '/', 'http://localhost');
     } catch {
       url = new URL('http://localhost/');
     }

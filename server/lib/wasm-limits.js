@@ -67,8 +67,10 @@ export function capMemory(bytes, maxPages) {
 }
 
 const current = new Map(); // module -> memory of its most recent instance (the one the library uses)
+/** @type {WebAssembly.Module | null} */
 let analyzerModule = null;
 
+/** @type {(() => void) | null} */
 let gc = null;
 try {
   v8.setFlagsFromString('--expose-gc');
@@ -82,7 +84,7 @@ export const RawInstance = WebAssembly.Instance;
 export function installWasmLimits(analyzerMaxBytes) {
   const maxPages = Math.max(1, Math.floor(analyzerMaxBytes / PAGE));
   const compile = WebAssembly.compile;
-  WebAssembly.compile = async function (source) {
+  /** @type {any} */ (WebAssembly).compile = async function (/** @type {any} */ source) {
     const bytes = source instanceof Uint8Array ? source : new Uint8Array(source);
     const probe = await compile.call(WebAssembly, bytes);
     if (!WebAssembly.Module.exports(probe).some((e) => e.name === 'wuica_analyze')) return probe;
@@ -90,14 +92,14 @@ export function installWasmLimits(analyzerMaxBytes) {
     return analyzerModule;
   };
   const Instance = WebAssembly.Instance;
-  WebAssembly.Instance = new Proxy(Instance, {
-    construct(target, args) {
+  /** @type {any} */ (WebAssembly).Instance = new Proxy(Instance, {
+    construct(target, /** @type {any[]} */ args) {
       const module = args[0];
       if (module === analyzerModule && current.has(module)) {
         current.delete(module); // the previous instance trapped and was dropped by the library: release its memory
         gc?.();
       }
-      const inst = new target(...args);
+      const inst = new target(.../** @type {[WebAssembly.Module, any]} */ (args));
       if (inst.exports.memory instanceof WebAssembly.Memory) current.set(module, inst.exports.memory);
       return inst;
     },

@@ -50,9 +50,14 @@ export function fromEnv(env = process.env) {
   return out;
 }
 
+/**
+ * @param {Record<string, any>} [options]
+ * @returns {Record<string, any>}
+ */
 export function resolveConfig(options = {}) {
   const unknown = Object.keys(options).filter((k) => !Object.hasOwn(DEFAULTS, k) && k !== 'dataDir');
   if (unknown.length) throw new Error(`unknown server option(s): ${unknown.join(', ')}`);
+  /** @type {Record<string, any>} */
   const c = { ...DEFAULTS, ...options };
   if (!c.workers) c.workers = os.availableParallelism();
   return c;

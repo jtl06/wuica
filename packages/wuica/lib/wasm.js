@@ -9,8 +9,11 @@ const enc = new TextEncoder();
 const dec = new TextDecoder();
 
 export class Analyzer {
+  /** @type {any} */
   #module;
+  /** @type {any} */
   #x = null;
+  /** @type {Uint8Array | Buffer | null} */
   #uarch = null;          // bytes of uarch.json, kept to reload after a trap
   #tables = new Map();    // table name -> its bytes, or a function that reads them again (for a reload after a trap)
   #binary = false;        // the module reads binary tables (wuica_load_arch_bin)
@@ -68,6 +71,7 @@ export class Analyzer {
 
   // bytes: the binary form of the table (data/arch/<name>.bin, see crates/wuica-core/src/table_bin.rs) or its JSON.
   // reload: a function that returns the bytes again (then they are not kept: they are only needed after a trap)
+  /** @param {string} name @param {Uint8Array} bytes @param {(() => Uint8Array) | null} [reload] */
   loadArch(name, bytes, reload = null) {
     this.#live();
     this.#loadTable(name, bytes);
@@ -199,7 +203,9 @@ const OUT_CAP = 1 << 20;
 const ERR_CAP = 1 << 16;
 
 export class Assembler {
+  /** @type {any} */
   #module;
+  /** @type {any} */
   #x = null;
 
   constructor(module) {
@@ -212,7 +218,7 @@ export class Assembler {
 
   #live() {
     if (this.#x) return;
-    const x = new WebAssembly.Instance(this.#module, {}).exports;
+    const x = /** @type {any} */ (new WebAssembly.Instance(this.#module, {}).exports);
     x._initialize?.();
     this.#x = x;
   }

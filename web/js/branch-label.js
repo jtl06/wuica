@@ -51,6 +51,7 @@ export function codeStatements(text, from = 1, to = Infinity) {
 
 // The shown label of each row (an array as long as rows): a branch with its target shown as above, else null (the row's
 // own label). src: {text, from, to} (assembly; the lines of the analyzed code) or null (machine code).
+/** @param {{text: string, from?: number, to?: number} | null} [src] */
 export function branchLabels(rows, src = null) {
   const list = Array.isArray(rows) ? rows : [];
   const out = new Array(list.length).fill(null);

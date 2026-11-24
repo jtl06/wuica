@@ -250,7 +250,7 @@ function errorRanges(line, diags) {
     if (!(col >= 1)) continue;
     const a = Math.min(col - 1, line.length);
     let b = Number(d.endColumn) > col ? Number(d.endColumn) - 1 : -1;
-    if (b < 0) { const m = /^\S*/.exec(line.slice(a, a + 256)); b = a + Math.max(1, m[0].length); }
+    if (b < 0) b = a + Math.max(1, (/^\S*/.exec(line.slice(a, a + 256))?.[0] ?? '').length);
     out.push([a, Math.min(b, Math.max(line.length, a + 1))]);
   }
   return out.filter(([a, b]) => b > a && a < line.length);

@@ -79,8 +79,10 @@ export function isWasm(bytes) {
 }
 
 export class WasmAssembler {
-  #module;
-  #x = null;
+  /** @type {any} */
+  #module; // a WebAssembly.Module, or a function that makes the exports (create())
+  /** @type {any} */
+  #x = null; // the instance's exports
 
   // source: the bytes of wuica_asm.wasm, a WebAssembly.Module, or (tests) a function that returns a fresh object with
   // the exports.
@@ -114,7 +116,7 @@ export class WasmAssembler {
         if (i.kind !== 'function') throw new Error(`wuica_asm.wasm: unsupported import ${i.module}.${i.name}`);
         (imports[i.module] ??= {})[i.name] = () => 52;
       }
-      x = (await WebAssembly.instantiate(this.#module, imports)).exports;
+      x = (await WebAssembly.instantiate(/** @type {WebAssembly.Module} */ (this.#module), imports)).exports;
     }
     for (const name of ['memory', 'malloc', 'free', 'wuica_assemble']) {
       if (!x[name]) throw new Error(`wuica_asm.wasm: export "${name}" is missing`);

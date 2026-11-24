@@ -5,6 +5,11 @@
 export const CODES = Object.freeze({ OK: 0, REQUEST: 1, ASSEMBLER: 2, ANALYSIS: 3 });
 
 // A failed call: {code, error, stderr}, stderr as in Compiler Explorer (one entry per line, `tag` on positioned ones).
+/**
+ * A failure of the contract ({code, error, stderr}: index.d.ts Failure), typed loosely so that a result-or-failure
+ * union narrows by its `code` at the call sites.
+ * @returns {any}
+ */
 export function failure(code, error, stderr = [{ text: error }], extra = {}) {
   return { code, error, stderr, ...extra };
 }

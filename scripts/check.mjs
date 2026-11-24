@@ -8,7 +8,8 @@
 //   (web/build.sh) and the npm package's dist/ (packages/wuica/build.sh).
 // - Suites: every Rust test binary of the workspace (unit tests together as one suite), tests-js/analyze_fixtures.mjs,
 //   tests-js/decode_fixtures.mjs, every tests-js/web_*.mjs (found by glob; those that start Chrome are "browser" suites, at
-//   most --chrome-jobs of them at a time), the npm package's and the API server's tests, and tests-js/interfaces.mjs.
+//   most --chrome-jobs of them at a time), the npm package's and the API server's tests, tests-js/interfaces.mjs, and the
+//   type check (scripts/typecheck.mjs).
 // - quick: the simulation fixtures only for a few configurations, analyze_fixtures on every 7th case, web_trace on every 16th
 //   case, browser suites only if their last run took at most 10 s, no npm package or server, no doc tests. full: everything,
 //   including the simulation fixtures of the set 'more' (fixtures/generated/more_sim_fixtures.jsonl.gz) if present.
@@ -297,6 +298,20 @@ if (!QUICK) {
     run: async (log) => {
       const code = await exec('node', ['--test', '--test-concurrency=1', ...fs.readdirSync(path.join(SERVER, 'test')).filter((f) => f.endsWith('.test.mjs')).sort().map((f) => `test/${f}`)], { cwd: SERVER, log });
       return { status: code ? 'fail' : 'pass', count: nodeTestCount(fs.readFileSync(log, 'utf8')) };
+    },
+  });
+  // tsc --noEmit --checkJs over the package, the server and the shared page modules (TypeScript: a development
+  // dependency of the package; build:server for the server's imports)
+  task({
+    name: 'typecheck', kind: 'js', deps: ['build:npm', 'build:server'],
+    run: async (log) => {
+      if (!exists(path.join(PKG, 'node_modules/typescript'))) {
+        const ci = await exec('npm', ['ci', '--no-audit', '--no-fund'], { cwd: PKG, log });
+        if (ci) return { status: 'fail', count: `npm ci: exit ${ci}` };
+      }
+      const code = await exec('node', ['scripts/typecheck.mjs'], { log });
+      const m = /(\d+ files type-checked, \d+ errors)/.exec(fs.readFileSync(log, 'utf8'));
+      return { status: code ? 'fail' : 'pass', count: m ? m[1] : `exit ${code}` };
     },
   });
   // the same random requests through the library, the native and npm tools, the server's REST and MCP, the stdio MCP

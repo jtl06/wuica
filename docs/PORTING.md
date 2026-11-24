@@ -21,6 +21,12 @@ expression) runs some of them and the builds they need.
 - `scripts/check.sh` (= `quick`, about a minute): the simulation fixtures only for SKL and ZEN3, `analyze_fixtures.mjs 7`,
   `web_trace.mjs 16`, browser suites only if their last run took at most 10 s; no npm package, no doc tests. While working.
 - `scripts/check.sh full`: everything (`analyze_fixtures.mjs 1` in 4 shards). The gate before a commit to main or a deploy.
+- `typecheck` (in `full`): `scripts/typecheck.mjs`, `tsc --noEmit --checkJs` with the root `tsconfig.json` (strict, without
+  `noImplicitAny`) over `packages/wuica/lib` and `bin`, `server/lib`, the page modules `packages/wuica/web-modules.json` lists,
+  and `packages/wuica/typecheck/api.ts`, which uses the public API as the README does through `index.d.ts` and checks that
+  `lib/index.js` has every declared export and method, accepting the declared arguments. TypeScript and `@types/node` (20, the
+  package's oldest Node) are development dependencies of `packages/wuica`; nothing of them is shipped. The page's UI modules
+  are not checked yet.
 - `scripts/check.sh full --remote aethia`: the same on aethia, under a perfq lease (shared) taken from the Mac. The tree is
   copied to `~/wuica-check/` with rsync (`data/` and `fixtures/generated/` are linked to `~/wuica/`), with the WebAssembly
   module built on the Mac (aethia has no wasm32 target). aethia has no Chrome: the browser suites are skipped there.

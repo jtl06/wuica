@@ -27,6 +27,7 @@ export { detectSyntax };
 
 // The loops of assembly text, as `loop` and `func` choose among them: [{index, label, function, line, endLine,
 // instructions, depth, auto}] (auto: the one "auto" analyzes) or {error}. No assembling.
+/** @param {string} source @param {{func?: string | null}} [opts] @returns {any} (index.d.ts: LoopListing[] | {error}) */
 export function listLoops(source, { func = null } = {}) {
   const p = preparePaste(normalizeText(source), { loop: 'auto', func });
   if (p.error) return { error: p.error };
@@ -122,7 +123,7 @@ export function stderrLines(message) {
 const REQUEST_KEYS = ['source', 'asm', 'hex', 'syntax', 'loop', 'func', 'options'];
 
 // `loop` of a request: what of the source is analyzed (web/js/loop-find.js). null if it is not one of these.
-export const LOOP_CHOICES = Object.freeze(['auto', 'whole']);
+export const LOOP_CHOICES = /** @type {readonly ['auto', 'whole']} */ (Object.freeze(['auto', 'whole']));
 // (a string other than these is a loop's label: ".LBB0_12", "0x10")
 const loopChoice = (v) => (v === undefined || v === null ? 'auto' : LOOP_CHOICES.includes(v) || (Number.isSafeInteger(v) && v >= 0) || (typeof v === 'string' && v.trim() !== '') ? v : null);
 const LOOP_ERROR = '`loop` must be "auto", "whole", the index of a loop (0-based) or its label';
@@ -174,12 +175,14 @@ class Wuica {
   #archs;
   #dataDir;
   #asmWasm;
+  /** @type {Promise<any> | null} */
   #assembler = null;    // promise of an Assembler
   #loading = new Map(); // table name -> promise
   #wasm;                // bytes of the analyzer module (the threads compile it with a memory limit of their own)
   #uarch;               // bytes of uarch.json
   #threads;             // the most threads compare() uses (1: none)
   #threadsAuto;         // no number given: at most one thread per two microarchitectures (threads.js, threadsFor)
+  /** @type {import('./threads.js').ThreadPool | null} */
   #pool = null;         // ThreadPool, started by the first compare() that uses threads
 
   constructor(analyzer, configs, dataDir, asmWasm, { wasm, uarch, threads, threadsAuto }) {
@@ -241,6 +244,7 @@ class Wuica {
   }
 
   // POST /api/assemble {source, syntax}
+  /** @param {string} source @param {string} [syntax] @returns {Promise<any>} */
   async assemble(source, syntax = 'auto') {
     if (typeof source !== 'string') return failure(CODES.REQUEST, '`source` must be a string');
     if (syntaxCode(syntax) < 0) return failure(CODES.REQUEST, SYNTAX_ERROR(syntax));
@@ -275,6 +279,7 @@ class Wuica {
   // lines, exits as not taken, ';' comments, a marked region (web/js/loop-find.js, asm-regions.js). loop: 'auto',
   // 'whole', a loop's index or its label; func: the function whose loops count (or null).
   // -> {code: 0, hex, bytes, stderr, loop, syntax} (loop: what was picked, or null; syntax: {name, detected}) or a failure.
+  /** @param {string} source @param {string} [syntax] @param {string | number} [loop] @param {string | null} [func] @returns {Promise<any>} */
   async machineCode(source, syntax = 'auto', loop = 'auto', func = null) {
     if (typeof source !== 'string') return failure(CODES.REQUEST, '`source` must be a string');
     if (syntaxCode(syntax) < 0) return failure(CODES.REQUEST, SYNTAX_ERROR(syntax));
@@ -390,6 +395,7 @@ class Wuica {
   // Several blocks on several microarchitectures: [request] -> [compare() result] in the same order (each exactly what
   // compare(request) returns; `archs` is that of each request, else of the call, else all). Every block x CPU is one
   // job for the threads.
+  /** @param {any[]} requests @param {{archs?: string[]}} [opts] */
   async compareMany(requests, { archs } = {}) {
     if (!Array.isArray(requests)) return failure(CODES.REQUEST, '`requests` must be an array');
     const prepared = await this.#prepare(requests, ['archs']);
@@ -468,6 +474,7 @@ class Wuica {
   }
 
   // POST /api/compare {source | hex, syntax, archs?, options}: one block on several microarchitectures (default: all).
+  /** @param {any} [request] @returns {Promise<any>} */
   async compare(request = {}) {
     const opts = pickOptions(request, ['archs']);
     if (opts.error) return failure(CODES.REQUEST, opts.error);
@@ -537,6 +544,7 @@ class Wuica {
   // compare() read as `source` (the objdump path: the loop at its address, exits stubbed, the alignment from it).
   // -> {code: 0, text, format, functions: [{name, section, address, size}]} or a failure (another architecture says how
   // to compile for x86-64). `func`: also resolves a -func name (exact, without Mach-O's "_", or a unique part): `func`.
+  /** @param {Uint8Array} bytes @param {{name?: string, func?: string | null}} [opts] @returns {any} */
   disassemble(bytes, { name = 'input', func = null } = {}) {
     const obj = readObject(bytes);
     if (obj.error) return failure(CODES.REQUEST, obj.error);
@@ -564,6 +572,7 @@ class Wuica {
 // options.threads: the most worker threads compare() uses, one per microarchitecture (default: the environment variable
 // WUICA_THREADS, else "auto": os.availableParallelism(), and one thread per two microarchitectures; 1 = none, every
 // microarchitecture one after another on this thread).
+/** @param {import('../index.d.ts').CreateOptions} [options] */
 export async function createWuica(options = {}) {
   const threads = threadLimit(options.threads);
   const threadsAuto = threadOption(options.threads) === 'auto';
