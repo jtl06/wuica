@@ -151,14 +151,15 @@ try {
       const [wa, wb] = [...document.querySelectorAll('#ab-main .ab-col > .table-wrap')];
       const ta = wa.querySelector('table.uops'), tb = wb.querySelector('table.uops');
       const out = { rows: [ta.vr.count, tb.vr.count], windowed: [ta.vr.windowed, tb.vr.windowed], gaps: [] };
+      await until(() => wa.scrollHeight > wa.clientHeight + 100 && wb.scrollHeight > wb.clientHeight + 100, 10000).catch(() => {}); // (fitted)
+      // A's row k and B's row k + 40 (the same instruction): how far apart in height in their boxes
+      const gap = (k) => (tb.vr.el(k + 40).getBoundingClientRect().top - wb.getBoundingClientRect().top) - (ta.vr.el(k).getBoundingClientRect().top - wa.getBoundingClientRect().top);
       for (const k of [60, 100, 130]) {
-        const tr = ta.vr.el(k);
-        wa.scrollTop = tr.getBoundingClientRect().top - ta.vr.el(0).getBoundingClientRect().top + 5;
-        await frames(4); await wait(50);
-        // A's row k and B's row k + 40 (the same instruction) at the same height in their boxes
-        const ya = ta.vr.el(k).getBoundingClientRect().top - wa.getBoundingClientRect().top;
-        const yb = tb.vr.el(k + 40)?.getBoundingClientRect().top - wb.getBoundingClientRect().top;
-        out.gaps.push(Math.round((yb - ya) * 10) / 10);
+        const b0 = wb.scrollTop;
+        wa.scrollTop = ta.vr.el(k).getBoundingClientRect().top - ta.vr.el(0).getBoundingClientRect().top + 5;
+        await until(() => wb.scrollTop !== b0, 3000).catch(() => {}); // (B follows on A's scroll event)
+        await frames(2);
+        out.gaps.push(Math.round(gap(k) * 10) / 10);
       }
       return out;`, { timeout: 300000 });
     check(r.rows[0] <= 300 && r.rows[1] <= 300 && !r.windowed[0] && !r.windowed[1] && r.gaps.every((g) => Math.abs(g) < 1.5), 'A–B: short tables scroll in step (the same instruction at the same height in both)', JSON.stringify(r));
