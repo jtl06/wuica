@@ -80,6 +80,28 @@ try {
     }
     await browser.send('Target.disposeBrowserContext', { browserContextId: ctx });
   }
+  // ---- a page opened on the first visit (it started without a worker): a later deploy still takes it into the new build
+  // (it ignored every change of worker, taking the first one, its own build's, for the only one)
+  {
+    root = A;
+    const { browserContextId: ctx } = await browser.send('Target.createBrowserContext');
+    const f = await open(ctx);
+    await f.goto(`${origin}/`);
+    await f.ready();
+    await f.waitFor(`navigator.serviceWorker.controller && (await caches.keys()).length === 1`, 'the worker of A in control', 60000);
+    const quiet = await f.read(`return { note: !document.getElementById('update-note').hidden, mark: sessionStorage.getItem('wuica-update-reload') };`);
+    check(!quiet.note && quiet.mark === null, 'a first visit: its own worker taking the page is no update (no note, no reload)', JSON.stringify(quiet));
+    root = B;
+    await f.eval(`await (await navigator.serviceWorker.getRegistration()).update().catch(() => {}); return 1;`);
+    let s1 = null;
+    for (let k = 0; k < 120 && !(s1 && s1.html === vB); k++) {
+      await sleep(250);
+      try { s1 = await f.read(`return { html: document.querySelector('meta[name="wuica-build"]').content, note: !document.getElementById('update-note').hidden };`, { ready: `document.getElementById('run')?.disabled === false && document.getElementById('update-note')`, ms: 5000 }); } catch { /* reloading */ }
+    }
+    check(s1?.html === vB, 'a page of a first visit: a later deploy takes it into the new build', JSON.stringify({ ...s1, html: name(s1?.html) }));
+    await browser.send('Target.disposeBrowserContext', { browserContextId: ctx });
+  }
+
 } catch (e) {
   check(false, 'the test ran to the end', e?.stack ?? String(e));
 } finally {

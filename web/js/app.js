@@ -1283,9 +1283,10 @@ async function registerServiceWorker() {
   if (!swUsable()) return;
   const hadController = !!navigator.serviceWorker.controller;
   for (const type of ['keydown', 'input', 'change']) document.addEventListener(type, () => { lastInput = performance.now(); }, { capture: true, passive: true });
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (hadController) updated(); // a new deploy took over while this page was open
-  });
+  // another worker took the page: a new deploy, or (a first visit, a page loaded past its worker) this build's own:
+  // updated() tells them apart by the build the new worker answers with. (Only for pages that started controlled, a
+  // first visit's page never noticed a later deploy.)
+  navigator.serviceWorker.addEventListener('controllerchange', () => { updated(); });
   // A new deploy's worker that took over while this page started (another tab's update check, a slow start) answered
   // its manifest, and no controllerchange comes any more: the manifest is not this page's build
   if (hadController && PAGE_BUILD && manifest.version !== PAGE_BUILD) updated();
@@ -1308,10 +1309,10 @@ let updating = false;
 async function updated() {
   if (updating) return;
   updating = true;
-  el.updateNote.hidden = false;
   let next = null; // the new build's version: its worker answers from its own cache
   try { next = (await (await fetch('manifest.json', { cache: 'no-store' })).json())?.version ?? null; } catch { /* unknown */ }
-  if (next === (PAGE_BUILD || manifest.version)) { el.updateNote.hidden = true; updating = false; return; } // the same build again
+  if (next === (PAGE_BUILD || manifest.version)) { updating = false; return; } // the same build again
+  el.updateNote.hidden = false;
   const mark = typeof next === 'string' ? next : `after ${PAGE_BUILD || manifest.version}`;
   try { if (sessionStorage.getItem(UPDATE_KEY) === mark) return; } catch { return; }
   while (!ready || busy || pool?.busy || performance.now() - lastInput < UPDATE_QUIET_MS) await sleep(250);
