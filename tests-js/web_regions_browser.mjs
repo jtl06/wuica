@@ -139,7 +139,9 @@ const HELPERS = `
   const instrRows = () => [...document.querySelectorAll('table.uops tbody tr:not(.extra)')];
   const chip = () => { const c = $('region-chip'); return c && !c.hidden ? c.textContent : null; };
   const setCode = (v) => { const c = $('code'); c.value = v; c.dispatchEvent(new Event('input', { bubbles: true })); };
-  const loopChip = () => { const c = $('loop-chip'); return c && !c.hidden ? c.options[c.selectedIndex]?.text ?? null : null; };
+  // a loop chip's option as "loop LABEL" ('whole', 'body'): the menu shows "LABEL · function · N instr" (region-chip.js)
+  const loopName = (o) => (!o ? null : o.value === 'whole' || o.value === 'body' ? o.text : 'loop ' + o.text.split(' · ')[0]);
+  const loopChip = () => { const c = $('loop-chip'); return c && !c.hidden ? loopName(c.options[c.selectedIndex]) : null; };
   const pickLoop = (v) => { const c = $('loop-chip'); c.value = v; c.dispatchEvent(new Event('change', { bubbles: true })); };
 `;
 const b64 = (s) => Buffer.from(s).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
@@ -160,7 +162,7 @@ try {
       // the markers removed: the loop is found (the loop chip); the chip picks the whole listing, and back
       setCode(c.value.replace(/^# LLVM-MCA-.*$/gm, ''));
       await done(() => $('run').click());
-      out.after = { rows: instrRows().length, chip: chip(), loop: loopChip(), options: [...$('loop-chip').options].map((o) => o.text) };
+      out.after = { rows: instrRows().length, chip: chip(), loop: loopChip(), options: [...$('loop-chip').options].map(loopName) };
       // where it is: in a row of controls when that row has room for it (the row is no taller with it: the editor keeps
       // its height), else under the editor
       { const lc = $('loop-chip'), row = lc.parentElement, h1 = row.getBoundingClientRect().height;
@@ -378,7 +380,7 @@ try {
     const B = Buffer.from(FN2).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
     await page.goto(`${origin}/?nosw=1#v=1&m=asm&c=${b64(PLAIN)}&ab=1&bm=asm&bc=${B}`);
     const rb = await page.eval(`${HELPERS}
-      const chipB = () => { const c = $('loop-chip-b'); return c && !c.hidden ? c.options[c.selectedIndex]?.text ?? null : null; };
+      const chipB = () => { const c = $('loop-chip-b'); return c && !c.hidden ? loopName(c.options[c.selectedIndex]) : null; };
       await until(() => chipB());
       const out = { start: [chipB(), loopChip()] };
       const c = $('loop-chip-b'); c.focus(); c.value = '1'; c.dispatchEvent(new Event('change', { bubbles: true }));

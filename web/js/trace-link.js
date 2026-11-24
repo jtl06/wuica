@@ -216,6 +216,22 @@ export function createTraceLink(env) {
     return td;
   }
 
+  // The table's scroller is its way in: Tab onto it moves on to the row in the tab order (drawn and scrolled to: a long
+  // table draws only the rows near the view, so that row may not be there); while the focus is in the table the scroller
+  // is out of the tab order, so Shift+Tab from the row leaves the table. (A click on it does not move the focus.)
+  const entries = new WeakSet();
+  function entry(wrap) {
+    if (!wrap || entries.has(wrap)) return;
+    entries.add(wrap);
+    wrap.setAttribute('tabindex', '0');
+    wrap.addEventListener('focus', (e) => {
+      if (e.target !== wrap || wrap.contains(/** @type {Node | null} */ (e.relatedTarget)) || !wrap.matches(':focus-visible')) return;
+      /** @type {HTMLElement | null} */ (vr()?.reveal(roveRow) ?? null)?.focus({ preventScroll: true });
+    });
+    wrap.addEventListener('focusin', (e) => { if (e.target !== wrap) wrap.setAttribute('tabindex', '-1'); });
+    wrap.addEventListener('focusout', (e) => { if (!wrap.contains(/** @type {Node | null} */ (e.relatedTarget))) wrap.setAttribute('tabindex', '0'); });
+  }
+
   // ---- decorate --------------------------------------------------------------------------------------------------------
   /** @param {Element} target @param {any} v @param {{onUi?: (name: string, value: unknown) => void}} [opts] */
   function decorate(target, v, { onUi: f } = {}) {
@@ -233,8 +249,7 @@ export function createTraceLink(env) {
     groups = rowGroups(v.response.rows);
     t.classList.add('tl-linkable');
     t.vr?.decorate('tl', paintRow);
-    // (the rows are the table's stop: its scroller is not one more; a row's arrows and focus scroll it)
-    t.closest('.table-wrap')?.setAttribute('tabindex', '-1');
+    entry(t.closest('.table-wrap'));
     // a selection beyond the rows of this result (e.g. from a link to another block) is dropped
     let sel = env.getSel();
     if (sel >= groups.length) { env.setSel(-1); sel = -1; }

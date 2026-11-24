@@ -149,14 +149,28 @@ try {
       // B's loop picked other than A's: said in the headline (the same text)
       pick('loop-chip-b', optionOf('loop-chip-b', /\\.LBB0_16\\b/)); await settle();
       out.other = { odd: odd(), title: document.querySelector('#result-body .ab-odd')?.title ?? '', speed: speed() };
+      return out;`, { timeout: 200000 });
+    await page.size(1200, 700);
+    r.narrow = await page.eval(`${W} await wait(500); const d = document.querySelector('#result-body .ab-delta'), o = document.querySelector('#result-body .ab-odd');
+      return { second: !!o?.closest('.ab-meta'), first: !!document.querySelector('#result-body .ab-tp .ab-odd, #result-body .ab-tp .align-tag'), text: d.textContent };`);
+    await page.size(1440, 900);
+    Object.assign(r, await page.eval(`${W}
+      const odd = () => document.querySelector('#result-body .ab-odd')?.textContent ?? '';
+      const out = {};
       pick('loop-chip-b', optionOf('loop-chip-b', /\\.LBB0_8\\b/)); await settle();
       // an edit of B keeps its loop (A → B's text is B's own)
       $('code-b').focus(); $('code-b').setSelectionRange(0, 0); document.execCommand('insertText', false, '# edited\\n'); await settle();
       out.edited = $('loop-chip-b')?.selectedOptions[0]?.textContent;
       // the link keeps B's loop
       $('copy-link').click(); await wait(200); out.hash = location.hash;
-      return out;`, { timeout: 200000 });
+      // both sides as machine code of one text: no loops to tell apart (no pick left from B's assembly)
+      $('mode-hex').click(); await until(() => !$('code').readOnly && $('code').getAttribute('aria-label') === 'Machine code (hex)'); await settle();
+      $('ab-copy').click(); await settle();
+      out.hex = { odd: odd(), bHex: $('b-mode-hex').checked };
+      return out;`, { timeout: 200000 }));
     check(/\.LBB0_8\b/.test(r.copy.bLoop) && r.copy.bWork === '32', 'B7: A → B copies the loop picked and the elems', js(r.copy));
+    check(r.narrow.second && !r.narrow.first, 'B7: at 1200 × 700 the tag is on the second line (the verdict keeps its room on the first)', js(r.narrow));
+    check(r.hex.bHex && r.hex.odd === '', 'B7: both sides machine code of one text: no "other loops"', js(r.hex));
     check(r.copy.speed === '1.50 faster' && r.copy.odd === '', 'B7: B on ICL: 1.50× faster (not 4.51×), nothing odd', js(r.copy));
     check(/\.LBB0_8\b/.test(r.edited), 'B7: an edit of B keeps its loop', r.edited);
     check(/[&#]blp=\d/.test(r.hash), 'B7: the link has B\'s loop (blp)', r.hash);
@@ -214,7 +228,23 @@ try {
       $('mode-hex').click(); await until(() => /^[0-9a-f ]+/i.test($('code').value.trim()) && !$('code').readOnly); await settle();
       out.hex = field().value;
       pasteInto($('code'), '48 83 c0 01 49 ff cf 75 f7'); await settle(); out.hexPasted = field().value;
-      return out;`, { timeout: 120000 });
+      // B: a format switch (the same machine code) is not other code: a keystroke after it keeps the count, marked
+      $('cmp-ab').click(); await settle();
+      pasteInto($('code-b'), ${js(fx('fnv.s'))}); await settle(); pick('b-syntax', 'att'); await settle();
+      set($('b-work'), '8'); await settle();
+      $('b-mode-hex').click(); await until(() => !$('code-b').readOnly && /machine code/.test($('code-b').getAttribute('aria-label'))); await settle();
+      $('code-b').focus(); $('code-b').setSelectionRange(0, 0); document.execCommand('insertText', false, ' '); await settle();
+      out.bSwitch = [$('b-work').value, $('b-work').closest('label').classList.contains('flag')];
+      // A: an untouched example in the other syntax is the same code
+      $('cmp-single').click(); await settle();
+      const s = $('examples'); s.value = 'dot1'; s.dispatchEvent(new Event('change', { bubbles: true })); await settle();
+      set($('a-work'), '8'); await settle();
+      pick('syntax', 'att'); await settle();
+      $('code').focus(); $('code').setSelectionRange(0, 0); document.execCommand('insertText', false, ' '); await settle();
+      out.aSyntax = [field().value, field().flag];
+      return out;`, { timeout: 200000 });
+    check(r.bSwitch[0] === '8' && r.bSwitch[1], 'elems: B: after asm → hex, a keystroke keeps the count (marked)', js(r.bSwitch));
+    check(r.aSyntax[0] === '8' && r.aSyntax[1], 'elems: A: after an example\'s syntax switch, a keystroke keeps the count (marked)', js(r.aSyntax));
     check(r.set[0].value === '8' && r.set[1] === 'cycles/element', 'elems: set', js(r.set));
     check(r.pasted[0].value === '1' && !r.pasted[0].flag && r.pasted[1] === 'cycles/iteration', 'elems: other code pasted: back to 1, no mark', js(r.pasted));
     check(r.edited[0].value === '8' && r.edited[0].flag && r.edited[1] === 'cycles/element?' && /The code changed/.test(r.edited[0].title) && !/A's/.test(r.edited[0].title), 'elems: an edit keeps it, marked (single mode: not "A\'s code")', js(r.edited));
@@ -234,14 +264,15 @@ try {
   {
     const page = await fresh();
     const r = await page.eval(`${W}
-      const opts = () => [...$('loop-chip').options].map((o) => ({ label: o.label, text: o.text, value: o.value, on: o.selected }));
+      // (the option's own text: every browser shows it, closed and open; no label attribute)
+      const opts = () => [...$('loop-chip').options].map((o) => ({ label: o.text, attr: o.hasAttribute('label'), value: o.value, on: o.selected }));
       pasteInto($('code'), ${js(fx('multi.s'))}); await settle();
       const multi = opts();
       pasteInto($('code'), ${js(fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/cli/count_u8.hsw.s'), 'utf8'))}); await settle();
       return { multi, nested: opts(), width: $('loop-chip').getBoundingClientRect().width };`);
     const m = r.multi;
     check(m.length === 10 && m[0].label === '.LBB0_9 · sum · 11 instr' && m[5].label === '.LBB2_8 · popc · 43 instr' && m[9].label === 'whole', 'picker: label, function and size of each loop (4 functions)', js(m.map((o) => o.label)));
-    check(m[0].on && m[0].value === '0' && m[0].text === 'loop .LBB0_9' && m.every((o, k) => o.value === (k < 9 ? String(k) : 'whole')), 'picker: the order, the values and the default as before', js(m.map((o) => [o.value, o.on])));
+    check(m[0].on && m[0].value === '0' && !m.some((o) => o.attr) && m.every((o, k) => o.value === (k < 9 ? String(k) : 'whole')), 'picker: the order, the values and the default as before', js(m.map((o) => [o.value, o.on])));
     check(r.nested[0].label === '.LBB0_12 · 11 instr · depth 2' && r.nested[3].label === '.LBB0_4 · 79 instr' && r.nested[0].on, 'picker: one function: no name; nested loops: their depth', js(r.nested.map((o) => o.label)));
     check(r.width < 200, 'picker: the closed menu stays narrow (the toolbar keeps its height)', String(r.width));
     await page.close();
@@ -265,11 +296,20 @@ try {
     const tab2 = await where();
     await page.key('Tab', { keyCode: 9, modifiers: 8 }); // Shift+Tab: back to the row's link
     const back = await where();
+    // the table scrolled far from its row (not drawn: a long table draws the rows near the view), Tab from before it
+    await page.eval(`${W} const w = document.querySelector('#result-body .table-wrap'); w.scrollTop = w.scrollHeight; await wait(300);
+      [...document.querySelectorAll('#result-body .table-tools input[type="checkbox"]')].at(-1).focus(); return 1;`);
+    await page.key('Tab', { keyCode: 9 });
+    const into = await where();
+    await page.key('Tab', { keyCode: 9, modifiers: 8 });
+    const outOf = await where();
     check(j3.inTable && j3.row === 2 && down.row === 3, 'keys: j/k and ↓ move the focused row', js([j3, down]));
     check(down.stops === 2, 'keys: the table has two stops in the tab order (the focused row and its link), not one per instruction', js(down));
     check(tab1.link && tab1.row === 3, 'keys: Tab from the row: its uops.info link', js(tab1));
     check(!tab2.inTable, 'keys: Tab again leaves the table', js(tab2));
     check(back.link && back.row === 3, 'keys: Shift+Tab comes back to the row\'s link', js(back));
+    check(into.inTable && into.row === 3 && !into.link, 'keys: Tab into the table scrolled away: its row (drawn again), not nothing', js(into));
+    check(!outOf.inTable && outOf.tag === 'INPUT', 'keys: Shift+Tab from the row leaves the table (the scroller is no stop then)', js(outOf));
     check(page.take().length === 0, 'keys: no errors', '');
     await page.close();
   }
@@ -308,15 +348,16 @@ try {
       await settle();
       const after = { top: top(), tb: tbh(), tag: tag()?.textContent ?? null, tp: tp(), align: $('opt-align').value, summary: $('advanced-summary').textContent };
       $('cmp-ab').click(); await settle();
-      const ab = document.querySelector('#result-body .ab-tp .align-tag')?.textContent ?? null;
+      const ab = document.querySelector('#result-body .ab-meta .align-tag')?.textContent ?? null;
       $('cmp-single').click(); await settle();
       tag().click(); await settle();
-      const reset = { tag: !!tag(), align: $('opt-align').value, tp: tp(), summary: $('advanced-summary').textContent };
+      await until(() => $('cmp-sweep').dataset.state === 'done', 60000).catch(() => {});
+      const reset = { tag: !!tag(), align: $('opt-align').value, tp: tp(), summary: $('advanced-summary').textContent, cursor: document.querySelector('#cmp-sweep .at')?.textContent ?? '' };
       return { before, after, ab, reset };`, { timeout: 200000 });
     check(!r.before.tag && r.after.tag === 'offset 30 ×' && r.after.align === '30' && r.after.tp !== r.before.tp, 'sweep click: the headline says "offset 30" (its number changed)', js(r));
     check(r.after.top === r.before.top && r.after.tb === r.before.tb && r.after.summary === ' · 1 changed', 'sweep click: the toolbar keeps its height, the editor does not move (the options\' count for screen readers)', js([r.before, r.after]));
     check(r.ab === 'offset 30 ×', 'sweep click: A–B shows the offset too', String(r.ab));
-    check(!r.reset.tag && r.reset.align === '0' && r.reset.tp === r.before.tp && r.reset.summary === '', 'the tag sets the offset back to 0', js(r.reset));
+    check(!r.reset.tag && r.reset.align === '0' && r.reset.tp === r.before.tp && r.reset.summary === '' && /^offset 0:/.test(r.reset.cursor), 'the tag sets the offset back to 0 (the sweep\'s cursor too)', js(r.reset));
     check(page.take().length === 0, 'sweep: no errors', '');
     await page.close();
   }

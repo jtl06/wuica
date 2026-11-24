@@ -1009,6 +1009,7 @@ async function runCompare(id, key, { auto = false, ctrl = null, snap = () => nul
   const opts = options();
   let input;
   inflight = { id, key };
+  picks.b = null; // (set again by B's assembly: hex has none)
   if (state.mode === 'asm' || state.bMode === 'asm') setBusy(true, { defer: true }); // a long assembly can be cancelled
   try {
     input = await ab.inputs(id, current);
@@ -1269,6 +1270,7 @@ function setupFeatures() {
     state, el: { code: el.code, body: el.body, toolbar: el.toolbar }, archItems: () => archItems, archTitle, ensureAssembler: assemblerForRun, ensureTable,
     machineCodeA: machineCode, changed, writeControls, alignTag,
     picks: () => picks,
+    bTextSet() { textB = state.bText; }, // B's text set by the page (a format switch, a link, an import): not other code
     // A → B: B analyzes what A does (its loop too); swap: the picks change sides. B's text is B's own now (an edit is
     // an edit, not a new text that starts with its first loop)
     copiedA() { state.bLoop = state.loop; textB = state.bText; bLoopChip?.sync(null); },
@@ -1432,7 +1434,7 @@ function bind() {
     state.syntax = el.syntax.value === 'att' ? 'att' : 'intel';
     // an untouched example follows the syntax
     const ex = ALL_EXAMPLES.find((e) => e.text[old] === el.code.value);
-    if (ex && state.mode === 'asm') el.code.value = buffers.asm = ex.text[state.syntax];
+    if (ex && state.mode === 'asm') { el.code.value = buffers.asm = ex.text[state.syntax]; textA = el.code.value; } // (the same example: not other code)
     changed();
   });
   el.examples.addEventListener('change', () => {

@@ -173,7 +173,7 @@ export function createAB(api) {
     bHex.checked = state.bMode === 'hex';
     bSyntax.value = state.bSyntax;
     bSyntaxWrap.hidden = state.bMode !== 'asm';
-    if (bCode.value !== state.bText) bCode.value = state.bText;
+    if (bCode.value !== state.bText) { bCode.value = state.bText; api.bTextSet?.(); } // (by the page: not an edit)
     buffers[state.bMode] = state.bText;
     bCode.placeholder = PLACEHOLDERS[state.bMode];
     bCode.setAttribute('aria-label', `B: ${state.bMode === 'asm' ? 'assembly code' : 'machine code (hex)'}`);
@@ -189,7 +189,7 @@ export function createAB(api) {
     if (syntax) state.bSyntax = syntax === 'att' ? 'att' : 'intel';
     state.bText = text;
     buffers[state.bMode] = text;
-    if (bCode.value !== text) bCode.value = text;
+    if (bCode.value !== text) { bCode.value = text; api.bTextSet?.(); }
     state.bWork = work; // other code: its own count (1 until given)
     settle('b');
     clearB();
@@ -504,11 +504,11 @@ export function createAB(api) {
     // A and B analyze other loops of the same text, or blocks of other sizes counted with the same elements per iteration:
     // said, as that is rarely what is meant (A → B of a file, then B's loop picked by default)
     const odd = mismatch(view);
-    if (odd) line.insertBefore(h('span', { class: 'ab-odd caveat', title: odd.title, text: odd.text }), line.querySelector('.ab-delta'));
     const at = alignButton(api.alignTag?.() ?? null); // (the offset, when not the default: both sides run at it)
-    if (at) line.insertBefore(at, line.querySelector('.ab-delta'));
     line.append(copyAllButton());
-    const meta = h('div', { class: 'meta ab-meta' }, sideMeta('A', a), sep(), sideMeta('B', b), cmp.okA && cmp.okB ? [sep(), bottlenecks(view), notModelled(view)] : null);
+    // (the tags start the second line: the first keeps its room for the verdict)
+    const tags = [odd ? h('span', { class: 'ab-odd caveat', title: odd.title, text: odd.text }) : null, at].filter(Boolean).flatMap((t) => [t, ' ']);
+    const meta = h('div', { class: 'meta ab-meta' }, ...tags, sideMeta('A', a), sep(), sideMeta('B', b), cmp.okA && cmp.okB ? [sep(), bottlenecks(view), notModelled(view)] : null);
     meta.title = meta.textContent; // (one line on wider screens, cut with …: the whole of it here)
     // the same in one line, for screen readers and for copying
     const sr = t ? h('p', { class: 'ab-sr', text: `A: ${two(t.a)} cycles, B: ${two(t.b)} cycles${per ? ' per element' : ''}, ${bad.length ? 'not comparable' : `Δ = ${t.verdict === 'same' ? '0' : `${sign2(t.delta)} (${percent(t.pct)})`}`}` }) : null;
