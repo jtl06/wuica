@@ -307,7 +307,7 @@ the reference machine (`UICA_DIR`, default `/data/projects/wuica-fuzz/uica`: a w
 `instrData/` and the `xed` module copied from the reference tree; `PYTHON`); on aethia under `perfq ssh aethia --mode shared
 --resumable`. A rerun with the same arguments skips the chunks already done.
 
-- Pool (`fuzz.py pool`, once per output directory): the encodings of the decode fixtures, random changes of their register
+- Pool (`fuzz.py pool`, built once, in the parent of the output directory): the encodings of the decode fixtures, random changes of their register
   fields, REX/VEX bits and immediates, and the instances of `tools/fuzz/templates.py` assembled with GNU `as`; each checked with
   the reference's decoder and tables for each CPU (forms it decodes, with and without data), without branches, system
   instructions and forms of more than 200 uops.
@@ -319,8 +319,8 @@ the reference machine (`UICA_DIR`, default `/data/projects/wuica-fuzz/uica`: a w
   `alignmentOffset` 0..63 × `initPolicy` × `simpleFrontEnd` × `noMicroFusion` × `noMacroFusion` × 11 `minIterations`/`minCycles`
   pairs (0 and negative values among them).
 - Reference: worker processes (as the exporter), an alarm per case (120 s), a fork per case with ZMM registers (the reference
-  changes its tables in place for them). `fuzz.py calibrate UICA_DIR FIXTURES N` checks that the runner reproduces fixture lines
-  byte for byte. A `-json` output above 4 MB (about one case in ten: long simulations of large blocks) is not compared (counted as such; throughput and text still are).
+  changes its tables in place for them). `fuzz.py calibrate UICA_DIR FIXTURES N` checks that the runner reproduces the fixture lines
+  (all fields, compared as values). A `-json` output above 4 MB (about one case in ten: long simulations of large blocks) is not compared (counted as such; throughput and text still are).
 - wuica: `wuica -compare FILE|-` (crates/wuica-cli/src/compare.rs) reads the reference's lines and prints one verdict per case:
   `same`, `differs` (TP, stdout, json or the input error), `wuica-error`, `wuica-panic`, `ref-crash`, `ref-timeout`.
 - Each kind of difference: run again with the reference in a new process, minimized (ddmin over the instructions, then the
