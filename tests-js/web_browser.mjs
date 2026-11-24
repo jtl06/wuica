@@ -141,6 +141,7 @@ fs.cpSync(dist, siteB, { recursive: true });
 const versionB = 'feedfacecafe';
 fs.writeFileSync(path.join(siteB, 'manifest.json'), fs.readFileSync(path.join(siteB, 'manifest.json'), 'utf8').replace(manifest.version, versionB));
 fs.writeFileSync(path.join(siteB, 'sw.js'), fs.readFileSync(path.join(siteB, 'sw.js'), 'utf8').replace(manifest.version, versionB));
+fs.writeFileSync(path.join(siteB, 'index.html'), fs.readFileSync(path.join(siteB, 'index.html'), 'utf8').replace(`content="${manifest.version}"`, `content="${versionB}"`)); // (the page's own build: app.js PAGE_BUILD)
 
 root = siteA;
 await listen();
@@ -599,14 +600,17 @@ try {
     await page.goto('about:blank');
     await page.goto(`${origin}/`);
     await page.ready();
+    // (the page's own build, app.js PAGE_BUILD; B already only if B's worker took over while it started and it reloaded
+    // itself, marked: web_sw_update_browser.mjs)
     const first = await page.eval(`${HELPERS} return $('build-id').textContent;`);
+    const firstMark = await page.eval(`return sessionStorage.getItem('wuica-update-reload');`);
     // The page shows the note, then reloads itself once it is idle (app.js updated(): at most once per build, marked in
     // session storage before the reload). Wait for that state, not for the note: under load it can be gone again
     // before a look at it (the new worker first caches the whole new build).
     await page.waitFor(`!document.getElementById('update-note').hidden || sessionStorage.getItem('wuica-update-reload') === ${JSON.stringify(versionB)}`, 'the update note (or the reload after it)', 120000);
     await page.waitFor(`(await caches.keys()).join() === ${JSON.stringify(`wuica-${versionB}`)}`, 'the new build\'s cache, alone', 60000);
     const upd = await page.eval(`${HELPERS} return { keys: await caches.keys(), note: $('update-note').hidden ? null : $('update-note').innerText, build: $('build-id').textContent, mark: sessionStorage.getItem('wuica-update-reload') };`);
-    check(first === manifest.version, 'deploy: the open page is still the cached build', first);
+    check(first === manifest.version || (first === versionB && firstMark === versionB), 'deploy: the open page is still the cached build (or reloaded itself into the new one already)', JSON.stringify([first, firstMark]));
     check(JSON.stringify(upd.keys) === JSON.stringify([`wuica-${versionB}`]) && (/new version/.test(upd.note ?? '') || upd.mark === versionB),
       'deploy: the new worker replaces the cache and the page says so (or, idle, reloads itself)', JSON.stringify(upd));
     // The page marked its own reload (session storage): then it must come back as the new build by itself (no reload by

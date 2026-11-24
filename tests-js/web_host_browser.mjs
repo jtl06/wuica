@@ -40,7 +40,7 @@ function build(tag) {
   const dir = path.join(tmpBuilds, tag);
   fs.mkdirSync(dir);
   for (const f of fs.readdirSync(dist)) {
-    if (f === 'manifest.json' || f === 'sw.js') fs.writeFileSync(path.join(dir, f), fs.readFileSync(path.join(dist, f), 'utf8').replaceAll(versionA, version));
+    if (f === 'manifest.json' || f === 'sw.js' || f === 'index.html') fs.writeFileSync(path.join(dir, f), fs.readFileSync(path.join(dist, f), 'utf8').replaceAll(versionA, version));
     else fs.symlinkSync(path.join(dist, f), path.join(dir, f));
   }
   return { dir, version };

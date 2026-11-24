@@ -84,6 +84,11 @@ version="$( { echo "$files" | while IFS= read -r f; do sha "$f"; done; sha "$her
 
 sed "s/__WUICA_VERSION__/$version/" "$here/sw.js" > sw.js
 grep -q "'$version'" sw.js || die "could not stamp the version into sw.js"
+# the page's own build, in its HTML (app.js PAGE_BUILD): stamped after the hash and the sizes, over a placeholder as long
+# as the version (the size in manifest.json stays right)
+[ ${#version} -eq 12 ] || die "the version is not 12 characters: $version"
+sed "s/__WUICABLD__/$version/" index.html > index.html.tmp && mv index.html.tmp index.html
+grep -q "name=\"wuica-build\" content=\"$version\"" index.html || die "could not stamp the version into index.html"
 
 total="$(find . -type f -exec cat {} + | wc -c | tr -d ' ')"
 echo "web/dist: version $version, $(echo "$files" | wc -l | tr -d ' ') files, $((total / 1024)) KiB; assembler: $assembler; llvm-mca: $mcafound"

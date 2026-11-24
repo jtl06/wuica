@@ -135,6 +135,10 @@ The reference commit whose model and data are shipped is recorded once, in `ci/d
   into `sw.js`. The service worker precaches everything except the tables, the assembler, llvm-mca and the showcase's
   assembly, serves cache-first, and fetches and caches lazy files on use; a new deploy is a new cache. After the first result
   the page prefetches all tables and the assembler when idle, unless Save-Data is set (`web/js/app.js`, `prefetchTables`).
+  The build is also stamped into `index.html` (after the hash, over a placeholder of the same length): the page knows its
+  own build (`PAGE_BUILD`), so a newer build's worker that takes over while the page starts (another tab's update check,
+  a slow start), and then answers its `manifest.json`, still makes it reload itself or show the note
+  (`tests-js/web_sw_update_browser.mjs`).
 - A built-in example's assembly is answered from its machine code until the assembler has loaded (`web/js/asm-shipped.js`;
   the same result as assembling it, `tests-js/web_asm_shipped.mjs`), so a fresh visit's first result needs only the
   analyzer and one table. The assembler is fetched after that result, at once when a link holds other assembly, or on the

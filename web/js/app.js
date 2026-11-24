@@ -44,6 +44,10 @@ const MOCK = query.get('mock') === '1';       // ?mock=1: do not load the analyz
 const NO_SW = query.get('nosw') === '1';      // ?nosw=1: do not register the service worker
 // ?pool=N: N workers for the compare panels and the cost column (0: none, they share the main analyzer's worker)
 const POOL_SIZE = query.has('pool') ? Math.max(0, Math.min(16, Number.parseInt(query.get('pool'), 10) || 0)) : poolSize();
+// the build of this page's own HTML and code (build.sh stamps it into index.html; '' when not built): what the page is,
+// whichever worker answers its later requests (manifest.json among them)
+const PAGE_BUILD = /^[0-9a-f]{12}$/.test(document.querySelector('meta[name="wuica-build"]')?.getAttribute('content') ?? '')
+  ? document.querySelector('meta[name="wuica-build"]').getAttribute('content') : '';
 const VERSION = '0.1.9';                  // the page's version (footer); bump it with packages/wuica and server (tests-js/web_version.mjs)
 
 const el = {
@@ -1282,6 +1286,9 @@ async function registerServiceWorker() {
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (hadController) updated(); // a new deploy took over while this page was open
   });
+  // A new deploy's worker that took over while this page started (another tab's update check, a slow start) answered
+  // its manifest, and no controllerchange comes any more: the manifest is not this page's build
+  if (hadController && PAGE_BUILD && manifest.version !== PAGE_BUILD) updated();
   try {
     await navigator.serviceWorker.register('sw.js');
   } catch { /* the page works without it, just not offline */ }
@@ -1304,8 +1311,8 @@ async function updated() {
   el.updateNote.hidden = false;
   let next = null; // the new build's version: its worker answers from its own cache
   try { next = (await (await fetch('manifest.json', { cache: 'no-store' })).json())?.version ?? null; } catch { /* unknown */ }
-  if (next === manifest.version) { el.updateNote.hidden = true; updating = false; return; } // the same build again
-  const mark = typeof next === 'string' ? next : `after ${manifest.version}`;
+  if (next === (PAGE_BUILD || manifest.version)) { el.updateNote.hidden = true; updating = false; return; } // the same build again
+  const mark = typeof next === 'string' ? next : `after ${PAGE_BUILD || manifest.version}`;
   try { if (sessionStorage.getItem(UPDATE_KEY) === mark) return; } catch { return; }
   while (!ready || busy || pool?.busy || performance.now() - lastInput < UPDATE_QUIET_MS) await sleep(250);
   syncUrl(true);
@@ -1493,7 +1500,7 @@ async function start() {
   setupFeatures();
 
   manifest = await fetchManifest();
-  el.buildId.textContent = manifest.version;
+  el.buildId.textContent = PAGE_BUILD || manifest.version;
   registerServiceWorker();
   // other code in the link: the assembler loads while the analyzer does (the first result needs both); a built-in
   // example's needs only the analyzer, and the assembler follows it (assemblerSoon, below)
