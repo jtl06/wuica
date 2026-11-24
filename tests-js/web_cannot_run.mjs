@@ -124,6 +124,11 @@ if (!fs.existsSync(asmPath) || !fs.existsSync(wasmPath)) {
   // the package's diff text (block-diff.js): no verdict
   const dt = diffText(diffResult({ ...out.ZEN3, unsupported: zen.reason }, out.ZEN3));
   check(/not comparable: A needs AVX-512/.test(dt) && !/speedup/.test(dt.split('\n')[0]), 'diff text: not comparable', dt.split('\n')[0]);
+  // the diff's data says the same: no verdict of better/worse/same, no delta, no speedup (per element too)
+  const dj = diffResult({ ...out.ZEN3, unsupported: zen.reason }, out.ZEN3, { per: [4, 4] });
+  check(dj.verdict === 'not comparable' && !('delta' in dj) && !('speedup' in dj) && dj.perElement.verdict === 'not comparable' && !('speedup' in dj.perElement) && !('delta' in dj.perElement), 'diff data: verdict "not comparable", no delta or speedup', j({ verdict: dj.verdict, delta: dj.delta, speedup: dj.speedup, pe: dj.perElement }));
+  const ok2 = diffResult(out.ICL, out.ICL);
+  check(ok2.verdict === 'same' && ok2.speedup === 1 && ok2.delta === 0, 'diff data of two results: as before');
   // FMA on SNB (the classic GEMM and saxpy): named
   for (const id of ['gemm', 'saxpy']) {
     const ex = CLASSIC_EXAMPLES.find((x) => x.id === id);

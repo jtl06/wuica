@@ -34,11 +34,14 @@ export function diffResult(ra, rb, { per = null, sourceA = null, sourceB = null 
   const [pa, pb] = per ?? [null, null];
   const cmp = compareResponses(ra, rb);
   const t = cmp.tp;
+  // a side the CPU cannot run (unsupported, caveats.js cannotRun): its number is no result, so neither are the change
+  // and the speedup: verdict "not comparable", no delta, no speedup, in every form
+  const no = !!(ra.unsupported || rb.unsupported);
   /** @type {any} */
-  const out = { code: 0, arch: ra.arch, a: side(ra, pa), b: side(rb, pb), delta: r2(t.delta), speedup: r2(t.speedup), verdict: t.verdict };
+  const out = { code: 0, arch: ra.arch, a: side(ra, pa), b: side(rb, pb), ...(no ? { verdict: 'not comparable' } : { delta: r2(t.delta), speedup: r2(t.speedup), verdict: t.verdict }) };
   if (pa && pb) {
     const pe = compareResponses(ra, rb, { workA: pa, workB: pb }).tp;
-    out.perElement = { a: ra.tp / pa, b: rb.tp / pb, delta: pe.delta, speedup: r2(pe.speedup), verdict: pe.verdict };
+    out.perElement = { a: ra.tp / pa, b: rb.tp / pb, ...(no ? { verdict: 'not comparable' } : { delta: pe.delta, speedup: r2(pe.speedup), verdict: pe.verdict }) };
   }
   out.bottlenecks = { a: cmp.bottlenecks.a, b: cmp.bottlenecks.b, gone: cmp.bottlenecks.gone, new: cmp.bottlenecks.new };
   out.limits = cmp.limits.map((l) => ({ name: l.name, a: l.a, b: l.b, delta: r2(l.delta) }));

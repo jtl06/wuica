@@ -462,10 +462,11 @@ export interface DiffResult {
   arch: string;
   a: DiffSide;
   b: DiffSide;
-  delta: number;
-  speedup: number | null;
-  verdict: 'better' | 'worse' | 'same';
-  perElement?: { a: number; b: number; delta: number; speedup: number | null; verdict: 'better' | 'worse' | 'same' };
+  /** Not when a side's CPU cannot run its code (a side with `unsupported`): the verdict is then "not comparable". */
+  delta?: number;
+  speedup?: number | null;
+  verdict: 'better' | 'worse' | 'same' | 'not comparable';
+  perElement?: { a: number; b: number; delta?: number; speedup?: number | null; verdict: 'better' | 'worse' | 'same' | 'not comparable' };
   /** The warnings of both sides (decode errors, assembler warnings), each starting with "A: " or "B: ". */
   stderr?: StderrLine[];
   bottlenecks: { a: string[]; b: string[]; gone: string[]; new: string[] };

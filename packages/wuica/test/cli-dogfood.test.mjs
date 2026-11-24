@@ -92,6 +92,8 @@ test('3b. code a CPU cannot run (AVX-512 on SKL, ZEN3): not a result in text, Ma
   const lj = JSON.parse(run([ld, '-arch', 'SKL,ZEN3', '-json']).out);
   assert.deepEqual(lj.results.map((r) => [r.arch, r.unsupported ?? null, r.noData ?? null, 'xOps' in r]), [['SKL', null, 2, false], ['ZEN3', null, 2, false]]);
   assert.match(run([ld, '-arch', 'SKL']).out, /^2 instructions without data \(not in the instruction tables\): the throughput leaves their cost out$/m);
+  const dj = JSON.parse(run(['diff', avx, avx, '-arch', 'SKL', '-json']).out);
+  assert.deepEqual([dj.verdict, 'speedup' in dj, 'delta' in dj], ['not comparable', false, false]);
   const d = run(['diff', avx, avx, '-arch', 'SKL']);
   assert.match(d.out, /^SKL: A 38\.00 {2}B 38\.00 cycles per iteration {2}\(not comparable: A needs AVX-512, B needs AVX-512\)$/m);
 });
