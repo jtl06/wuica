@@ -353,8 +353,9 @@ class Wuica {
     const loopInfo = picked && { index: picked.index, count: picked.count, name: picked.name, line: picked.line, endLine: picked.endLine, ...(picked.lines ? { lines: picked.lines } : {}),
       ...(info ? { function: info.function, depth: info.depth, instructions: info.instructions } : {}),
       ...(picked.address !== null && picked.address !== undefined ? { address: picked.address } : {}), ...(r.alignment !== null ? { alignmentOffset: r.alignment } : {}) };
-    // the other loops of the text, when it has more than one (what -loop N or LABEL can pick instead)
-    const otherLoops = r.loops.length > 1 ? loopListing(r.loops, null).filter((l) => l.index !== picked?.index).map(({ auto, ...l }) => l) : null;
+    // the other loops of the text, when it has more than one and one of them was analyzed (with -loop whole every loop
+    // is in the analyzed code; a marked region has none)
+    const otherLoops = r.loops.length > 1 && Number.isInteger(picked?.index) ? loopListing(r.loops, null).filter((l) => l.index !== picked?.index).map(({ auto, ...l }) => l) : null;
     // where each instruction came from: its line of the text (the loop finder's), and its .loc line (the assembler's)
     const sourceLines = { lines: r.lines ?? null, loc: r.source ?? null, info: r.lineInfo ?? null };
     return { code: CODES.OK, hex: Buffer.from(r.bytes).toString('hex'), bytes: r.bytes, stderr: diagnosticLines(r.diagnostics), loop: loopInfo, syntax: { name: syn.name, detected: syn.detected }, ...(otherLoops ? { otherLoops } : {}), sourceLines };

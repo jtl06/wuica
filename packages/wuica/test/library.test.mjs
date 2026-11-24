@@ -100,6 +100,7 @@ test('otherLoops: the loops not analyzed when the text has more than one (listLo
   assert.deepEqual(r.otherLoops, all.filter((l) => l.index !== 0).map(({ auto, ...l }) => l));
   assert.deepEqual(r.otherLoops, [{ index: 1, label: '.L2', function: 'f', line: 6, endLine: 9, instructions: 3, depth: 1 }]);
   assert.deepEqual((await w.analyze('SKL', { source: src, loop: 1 })).otherLoops.map((l) => l.label), ['.L1']);
+  assert.equal((await w.analyze('SKL', { source: src, loop: 'whole' })).otherLoops, undefined, 'whole: every loop is analyzed');
   assert.deepEqual(w.summarize(r).otherLoops, r.otherLoops);
   assert.deepEqual((await w.compare({ source: src, archs: ['SKL'] })).otherLoops, r.otherLoops);
   // one loop, or machine code: none
