@@ -21,7 +21,10 @@ CPUS = ['SKL', 'SKX', 'KBL', 'CFL', 'CLX', 'HSW', 'BDW', 'IVB', 'SNB', 'ICL', 'T
 BIAS_TAGS = ['shuffle', 'lanecross', 'mul', 'rotate', 'narrowstore', 'sse', 'avx', 'high8', 'rip', 'lcp', 'zeroidiom', 'moveelim',
              'stack', 'micro']
 # minIterations, minCycles: the default, extremes, and ordinary values
-ITER_LEVELS = [(10, 500), (1, 0), (0, 0), (0, 200), (1, 1), (2, 30), (25, 100), (-3, 700), (100, 3000), (1, 12000), (500, 0)]
+ITER_LEVELS = [(10, 500), (1, 0), (0, 0), (0, 200), (1, 1), (2, 30), (25, 100), (-3, 700), (60, 2000), (1, 5000), (150, 0)]
+# the -json output is compared when the reference's is at most this large (bytes); larger ones (long simulations of large
+# blocks) are counted, and their throughput and report text are still compared
+MAX_TRACE = 16 << 20
 DEFAULT_TIMEOUT = 120
 
 # ---------------------------------------------------------------------------------------------------------------------------
@@ -86,6 +89,9 @@ def run_ref(case, timeout):
       signal.alarm(0)
       if os.path.exists(jf):
          os.remove(jf)
+   if raw and len(raw) > MAX_TRACE:
+      r['jsonNotCompared'] = len(raw)
+      raw = None
    line = json.dumps(dict(case_base(case), **r))
    if raw:
       line = line[:-1] + ', "json": ' + raw + '}'
@@ -446,7 +452,9 @@ def pairwise_rows(arch=None):
          for b in range(a + 1, k):
             uncovered.discard((a, best[a], b, best[b]))
       rows.append(best)
-   return [tuple(factors[f][v] for f, v in enumerate(row)) for row in rows]
+   rows = [tuple(factors[f][v] for f, v in enumerate(row)) for row in rows]
+   r.shuffle(rows)  # so that every stretch of cases has all CPUs and options
+   return rows
 
 
 # ---------------------------------------------------------------------------------------------------------------------------
@@ -588,6 +596,8 @@ def run(a):
    say('seed %d, %d cases, arch %s, %d option rows, %d jobs, chunks of %d' % (a.seed, a.cases, a.arch or 'all', len(gen.rows), a.jobs, a.chunk))
    pool = Pool(a.jobs, initializer=init_ref, initargs=(uica_dir,))
    t_start = time.time()
+   pending = None
+   finalize = lambda *x: finalize_chunk(a, say, t_start, *x)
    for start in range(0, a.cases, a.chunk):
       done = os.path.join(a.out, 'chunks', '%08d.json' % start)
       if os.path.exists(done):
@@ -601,11 +611,26 @@ def run(a):
             f.write(line + '\n')
             times.append(t)
       t1 = time.time()
-      p = subprocess.run([a.wuica, '-data', a.data, '-compare', ref_file], capture_output=True, text=True)
-      verdicts = [json.loads(l) for l in p.stdout.splitlines()]
-      if p.returncode != 0 or len(verdicts) != len(cases):
-         raise SystemExit('wuica -compare failed: %s' % p.stderr[-500:])
+      if pending:
+         finalize(*pending)
+      # wuica compares this chunk while the reference runs the next one
+      proc = subprocess.Popen([a.wuica, '-data', a.data, '-compare', ref_file], stdout=open(ref_file + '.v', 'w'), stderr=subprocess.PIPE,
+                              text=True)
+      pending = (start, done, cases, ref_file, proc, t0, t1, times)
+   if pending:
+      finalize(*pending)
+   pool.close()
+   pool.join()
+   finish(a, say)
+
+
+def finalize_chunk(a, say, t_start, start, done, cases, ref_file, proc, t0, t1, times):
+      err = proc.stderr.read()
+      proc.wait()
       t2 = time.time()
+      verdicts = [json.loads(l) for l in open(ref_file + '.v')]
+      if proc.returncode != 0 or len(verdicts) != len(cases):
+         raise SystemExit('wuica -compare failed: %s' % err[-500:])
       counts = collections.Counter()
       feats = collections.Counter()
       odd = []
@@ -616,6 +641,7 @@ def run(a):
             feats['40+ instructions'] += n >= 40
             feats['loop' if c['end']['kind'] != 'none' else 'no branch'] += 1
             feats['options: defaults'] += not c['options']
+            feats['trace compared'] += ', "json": ' in line  # the -json output comes last (a string value cannot contain this)
             for t in c['tags']:
                feats[t] += 1
             if v['verdict'] != 'same':
@@ -624,14 +650,15 @@ def run(a):
                odd.append({'case': strip_case(c), 'verdict': v, 'ref': {k: ref.get(k) for k in ['TP', 'error', 'timeout']}})
             elif 'error' in line[-400:] and '"error": "InputError' in line:
                counts[c['arch'] + ' same-input-error'] += 1
-      os.remove(ref_file)
-      write_atomic(done, json.dumps({'start': start, 'n': len(cases), 'counts': counts, 'features': feats, 'odd': odd,
-                                     'ref_seconds': t1 - t0, 'wuica_seconds': t2 - t1, 'ref_case_seconds': sum(times)}))
-      say('[%.0f s] cases %d..%d: reference %.1f s, wuica %.1f s, %d not same' % (time.time() - t_start, start, start + len(cases),
-                                                                                t1 - t0, t2 - t1, len(odd)))
-   pool.close()
-   pool.join()
-   finish(a, say)
+      if not os.environ.get('FUZZ_KEEP'):
+         os.remove(ref_file)
+         os.remove(ref_file + '.v')
+      slow = sorted(((v['ms'], c['file'], c['arch'], c['options'], len(c['body'])) for c, v in zip(cases, verdicts)), reverse=True)[:3]
+      write_atomic(done, json.dumps({'start': start, 'n': len(cases), 'counts': counts, 'features': feats, 'odd': odd, 'slowest_wuica': slow,
+                                     'ref_seconds': t1 - t0, 'wuica_seconds': t2 - t1, 'ref_case_seconds': sum(times), 'started': t0,
+                                     'finished': time.time()}))
+      say('[%.0f s] cases %d..%d: reference %.1f s, wuica %.1f s after it, %d not same' % (time.time() - t_start, start, start + len(cases),
+                                                                                         t1 - t0, t2 - t1, len(odd)))
 
 
 def finish(a, say):
@@ -651,7 +678,10 @@ def finish(a, say):
    for k, v in sorted(counts.items()):
       cpu, verdict = k.split(' ')
       summary['per_cpu'].setdefault(cpu, {})[verdict] = v
-   say('%d cases, %.0f cases per minute (reference %.0f s, wuica %.0f s)' % (n, n / max(1, ref_s + w_s) * 60, ref_s, w_s))
+   wall = max(c['finished'] for c in chunks) - min(c['started'] for c in chunks) if chunks else 0
+   summary['wall_seconds'] = wall
+   say('%d cases in %.0f s, %.0f cases per minute (the reference %.0f s of it; wuica after the reference %.0f s)' % (
+      n, wall, n / max(1, wall) * 60, ref_s, w_s))
    for cpu in CPUS:
       if cpu in summary['per_cpu']:
          say('  %-6s %s' % (cpu, ' '.join('%s %d' % kv for kv in sorted(summary['per_cpu'][cpu].items()))))

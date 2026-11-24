@@ -3,11 +3,12 @@
 //! `json`, the reference's `-json` output, when it was written), or `error` (an exception of the reference), or `timeout` (the
 //! reference did not finish in that many seconds). wuica analyzes each case and prints one JSON line per case, in input order:
 //!
-//!     {"file", "verdict", "field"?, "detail"?, "wuica"?}
+//!     {"file", "verdict", "field"?, "detail"?, "wuica"?, "ms"}
 //!
 //! verdict: `same` (throughput, report text and trace equal; or the same input error), `differs` (`field`: TP, stdout, json or
 //! error), `wuica-error` (the reference has a result, wuica an error), `wuica-panic`, `ref-crash` (an exception that is not
-//! an `InputError`), `ref-timeout`. `wuica` says what wuica did where the reference had no result. With `-`, lines are read
+//! an `InputError`), `ref-timeout`. `wuica` says what wuica did where the reference had no result; `ms` is the time of the
+//! analysis and the comparison. With `-`, lines are read
 //! from stdin and each verdict is printed as soon as it is known (for the minimizer); with a file, the cases run on all cores.
 
 use serde_json::{json, Value};
@@ -46,6 +47,13 @@ fn first_text_difference(a: &str, b: &str) -> String {
 
 /// The verdict for one input line.
 pub fn verdict(engine: &Engine, line: &str) -> Value {
+    let t0 = std::time::Instant::now();
+    let mut v = verdict_of(engine, line);
+    v["ms"] = json!((t0.elapsed().as_secs_f64() * 1e4).round() / 10.0);
+    v
+}
+
+fn verdict_of(engine: &Engine, line: &str) -> Value {
     let case: Value = match serde_json::from_str(line) {
         Ok(v) => v,
         Err(e) => return json!({"verdict": "bad-input", "detail": e.to_string()}),
