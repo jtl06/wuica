@@ -110,12 +110,13 @@ export class Facade {
     const sizeArch = Array.isArray(request.archs) && request.archs.length ? request.archs[0] : undefined;
     const ctxs = parts.map(() => /** @type {Record<string, any>} */ ({}));
     const out = new Array(parts.length).fill(null);
-    const deadline = performance.now() + this.#cfg.timeoutMs; // one job's budget for all parts
+    const now = this.#cfg.now ?? (() => performance.now()); // (cfg.now: the tests' clock, as in #session)
+    const deadline = now() + this.#cfg.timeoutMs; // one job's budget for all parts
     let next = 0;
     await Promise.all(Array.from({ length: lanes }, async () => {
       while (next < parts.length && !out.some((r) => r && r.code !== 0)) {
         const i = next++;
-        const left = deadline - performance.now();
+        const left = deadline - now();
         if (left <= 0) { out[i] = timeoutFailure(this.#cfg.timeoutMs); ctxs[i].timedOut = true; break; }
         out[i] = await this.#run('compare', { req: { ...request, archs: parts[i] }, sizeArch }, ctxs[i], { timeoutMs: left });
       }

@@ -4,7 +4,9 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { createWuica } from 'wuica';
 import { start, post, HEX, ASM, plain } from './helpers.mjs';
-import { PART_ARCHS } from '../lib/facade.js';
+import { PART_ARCHS, Facade } from '../lib/facade.js';
+import { resolveConfig } from '../lib/config.js';
+import { timeoutFailure } from '../lib/pool.js';
 
 let s, w;
 before(async () => { [s, w] = await Promise.all([start({ workers: 2 }), createWuica({ threads: 1 })]); });
@@ -56,17 +58,50 @@ test('a busy worker: the compare is one job', async () => {
   assert.equal(jobs() - n, 2); // the analysis and the compare in one job
 });
 
+test('the parts share one time budget (a clock of the test\'s own): no part starts after it', async () => {
+  // 4 idle workers: 2 lanes; 15 microarchitectures: 8 parts; each part takes 300 ms of the clock, in parallel on the
+  // lanes (a part's result written by the test: no real work between the steps); the budget 400 ms: the first two parts
+  // finish (300), the next two get the 100 ms left and time out, and nothing starts after them: 4 of the 8 parts (one
+  // budget for all, not one per part)
+  const local = await createWuica({ threads: 1 });
+  const clock = { t: 0 };
+  const started = [];
+  const pool = {
+    size: 4, idle: 4, queued: 0,
+    async run(op, args, { timeoutMs: left }) {
+      const t0 = clock.t;
+      started.push(args.req.archs);
+      await new Promise((r) => setImmediate(r)); // the other lane starts at the same time
+      if (left < 300) { clock.t = Math.max(clock.t, t0 + left); return { result: timeoutFailure(400), timedOut: true, queueMs: 0, runMs: left, meta: {} }; }
+      clock.t = Math.max(clock.t, t0 + 300);
+      return { result: { code: 0, results: args.req.archs.map((arch) => ({ code: 0, arch, tp: 1 })) }, queueMs: 0, runMs: 300, meta: {} };
+    },
+  };
+  const f = new Facade(local, pool, { ...resolveConfig({ timeoutMs: 400 }), now: () => clock.t });
+  const ctx = {};
+  const r = /** @type {any} */ (await f.compare({ hex: HEX }, ctx));
+  assert.equal(r.code, 3);
+  assert.equal(r.timedOut, true);
+  assert.equal(started.length, 4, JSON.stringify(started));
+  assert.equal(ctx.parts, 4);
+  assert.equal(ctx.timedOut, true);
+  // a budget for all of them: every part, one result per microarchitecture
+  clock.t = 0; started.length = 0;
+  const g = new Facade(local, pool, { ...resolveConfig({ timeoutMs: 100_000 }), now: () => clock.t });
+  const all = /** @type {any} */ (await g.compare({ hex: HEX }, {}));
+  assert.equal(all.code, 0, all.error);
+  assert.equal(started.length, 8);
+  assert.deepEqual(all.results.map((x) => x.arch), local.archs().map((a) => a.id));
+});
+
 test('the parts share one time budget; splitCompare: false makes a compare one job', async () => {
   // a block whose compare takes far longer than the budget in total, and several times one part's share of it
   const heavy = { hex: '4801d84801c3c5fc100c87c4e27da80c86f3480fb80cc7'.repeat(200) + '49ffcf75f5', options: { minIterations: 400 } }; // a part: ~200 ms, all: ~1.6 s
   const t = await start({ workers: 2, timeoutMs: 400 });
   try {
-    const t0 = performance.now();
     const r = await post(t.base, '/api/compare', heavy);
-    const ms = performance.now() - t0;
     assert.equal(r.json.code, 3);
     assert.match(r.json.error, /took longer than 0\.4 s, the limit of this server/);
-    assert.ok(ms < 400 * 2.5, `${ms} ms`); // one budget (and the start of the replaced worker), not one per part
   } finally { await t.close(); }
   const u = await start({ workers: 2, splitCompare: false });
   try {
