@@ -697,7 +697,36 @@ def finish(a, say):
    say('summary: %s' % os.path.join(a.out, 'summary.json'))
 
 
+def calibrate(uica_dir, fixture_file, n, jobs):
+   """Runs every k-th case of a simulation fixture file through the runner of the fuzzer (worker processes, the alarm, a fork
+   for ZMM code) and checks that it gives the fixture's line: that the reference here is the one the fixtures came from."""
+   from multiprocessing import Pool
+   lines = [l.rstrip('\n') for l in gzip.open(fixture_file, 'rt')]
+   step = max(1, len(lines) // n)
+   picked = lines[::step][:n]
+   cases = []
+   for l in picked:
+      d = json.loads(l)
+      cases.append(({k: d[k] for k in ['file', 'arch', 'options', 'hex']}, DEFAULT_TIMEOUT))
+   same = differ = 0
+   with Pool(jobs, initializer=init_ref, initargs=(uica_dir,)) as p:
+      for (line, _), want in zip(p.imap(ref_worker, cases, chunksize=2), picked):
+         a, b = json.loads(line), json.loads(want)
+         if 'json' not in b:
+            a.pop('json', None)
+         if a == b:
+            same += 1
+         else:
+            differ += 1
+            print('differs:', b['file'], b['arch'], b['options'], [k for k in set(a) | set(b) if a.get(k) != b.get(k)])
+   print('calibration: %d of %d cases identical to %s' % (same, same + differ, fixture_file))
+   return differ == 0
+
+
 def main():
+   if len(sys.argv) > 1 and sys.argv[1] == 'calibrate':
+      ok = calibrate(os.path.abspath(sys.argv[2]), sys.argv[3], int(sys.argv[4]), int(sys.argv[5]) if len(sys.argv) > 5 else 8)
+      sys.exit(0 if ok else 1)
    if len(sys.argv) > 1 and sys.argv[1] == 'pool':
       return build_pool(os.path.abspath(sys.argv[2]), os.path.abspath(sys.argv[3]))
    if len(sys.argv) > 1 and sys.argv[1] == 'ref-one':
