@@ -327,7 +327,8 @@ const chrome = findChrome();
 const jsSuites = ['analyze_fixtures', 'decode_fixtures', ...fs.readdirSync(path.join(ROOT, 'tests-js')).filter((f) => /^web_.*\.mjs$/.test(f)).sort().map((f) => f.slice(0, -4))];
 for (const name of jsSuites) {
   const file = path.join(ROOT, 'tests-js', `${name}.mjs`);
-  const browser = /remote-debugging-port|--headless/.test(fs.readFileSync(file, 'utf8'));
+  // (a browser suite by its name too: the newer ones start Chrome through tests-js/cdp.mjs and name no flag)
+  const browser = /_browser$/.test(name) || /remote-debugging-port|--headless/.test(fs.readFileSync(file, 'utf8'));
   const args = ARGS[opts.mode][name] ?? [];
   for (const v of variants(name)) {
     const full = v.tag ? `${name}[${v.tag}]` : name;
