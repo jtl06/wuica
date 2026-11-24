@@ -65,7 +65,7 @@ prototype models (from the fork jtl06/uiCA), less validated than the Intel model
 export const MCP_USAGE = `Usage: wuica-mcp   (or: wuica mcp)
 
 The wuica MCP server on stdio (JSON-RPC): tools list_archs, analyze, what_if, compare_archs, assemble.
-Configure it in an MCP client as the command "wuica-mcp" (or "npx -y wuica mcp"). Options: --help, --version.
+Configure it in an MCP client as the command "wuica-mcp" (or "npx -y @jtl06/wuica mcp"). Options: --help, --version.
 `;
 
 class UsageError extends Error {}

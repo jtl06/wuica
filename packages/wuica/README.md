@@ -4,9 +4,9 @@ Throughput prediction for x86-64 basic blocks, running locally in Node. **wuica*
 Rust/WebAssembly port of [uiCA](https://github.com/andreas-abel/uiCA). Its reports are bit-identical to the Python uiCA on the
 port's test corpus. The package contains:
 
-- a **library**: `import { createWuica } from 'wuica'`
-- a **command-line tool**: `npx wuica loop.s -arch SKL`
-- a local **MCP server** (stdio) for AI agents: `npx wuica mcp`
+- a **library**: `import { createWuica } from '@jtl06/wuica'`
+- a **command-line tool**: `npx @jtl06/wuica loop.s -arch SKL`
+- a local **MCP server** (stdio) for AI agents: `npx @jtl06/wuica mcp`
 
 This is **not the official uiCA** (that is [uiCA.uops.info](https://uiCA.uops.info) and the
 [uiCA repository](https://github.com/andreas-abel/uiCA)). The instruction data (latencies, throughputs, port usage) comes
@@ -16,19 +16,22 @@ experimental models of the fork [jtl06/uiCA](https://github.com/jtl06/uiCA): **A
 
 Everything runs offline. The two WebAssembly modules (the analyzer, and LLVM's x86 assembler for assembly input) and the
 instruction tables are shipped brotli-compressed. A table is loaded the first time its microarchitecture is used.
-Requirements: Node.js 20 or later. **No dependencies**: `npm install wuica` (or `npx wuica`) adds this one package,
-2.3 MB unpacked; the MCP server is part of it.
+Requirements: Node.js 20 or later. **No dependencies**: `npm install @jtl06/wuica` (or `npx @jtl06/wuica`) adds this one
+package, 2.3 MB unpacked; the MCP server is part of it.
+
+The commands are `wuica` and `wuica-mcp`. Install them with `npm install -g @jtl06/wuica`, or run without installing
+with `npx @jtl06/wuica ...`. The examples below write `wuica`.
 
 ## The CLI in five minutes
 
 ```
 clang -O3 -march=haswell -S dot.c -o dot.s     # AT&T, as clang and gcc write it: detected, no flag needed
-npx wuica dot.s                                # uiCA's report for SKL, of the loop wuica picked
-npx wuica dot.s -arch SKL,ZEN3,ADL-P           # one table for several CPUs ("all": every one)
-npx wuica dot.s -per 8                         # the loop does 8 elements per iteration: cycles per element too
-npx wuica dot.s -loops                         # the loops in the file; -loop N or -loop .LBB0_12 picks one
-npx wuica dot.s -whatif                        # unrolled, N accumulators, front end and fusion variants
-objdump -d dot.o | npx wuica                   # objdump output: the loop's real alignment from its address
+wuica dot.s                                    # uiCA's report for SKL, of the loop wuica picked
+wuica dot.s -arch SKL,ZEN3,ADL-P               # one table for several CPUs ("all": every one)
+wuica dot.s -per 8                             # the loop does 8 elements per iteration: cycles per element too
+wuica dot.s -loops                             # the loops in the file; -loop N or -loop .LBB0_12 picks one
+wuica dot.s -whatif                            # unrolled, N accumulators, front end and fusion variants
+objdump -d dot.o | wuica                       # objdump output: the loop's real alignment from its address
 ```
 
 - **Syntax.** Intel (noprefix) or AT&T is detected from the text (`%rdx`, `$8`, `(%rdi,%rcx,4)` are AT&T);
@@ -88,7 +91,7 @@ Decoder or DSB. `limits` gives the throughput each component alone would allow. 
 ## Library
 
 ```js
-import { createWuica } from 'wuica';
+import { createWuica } from '@jtl06/wuica';
 
 const w = await createWuica();
 const r = await w.analyze('SKL', { source: 'loop:\n add rax, [rsi]\n add rsi, 8\n dec rcx\n jnz loop\n' });
@@ -127,21 +130,21 @@ Inputs on which the original uiCA fails can make the WebAssembly module trap. In
 ## Command line
 
 ```
-npx wuica loop.s                     # assembly file (syntax detected), uiCA's report for SKL
-npx wuica loop.s -arch ICL -TPonly   # only the throughput
-cat loop.s | npx wuica -arch ZEN3    # stdin (or "-")
-npx wuica -att loop_att.s            # AT&T syntax, forced (-intel forces Intel)
-npx wuica 4801d84801c349ffcf75f5     # a hex argument (as in the Rust CLI)
-npx wuica -hex code.txt              # hex from a file or stdin ("48 01 d8", "0x48,0x01" are fine)
-npx wuica -raw code.bin              # raw machine code
-npx wuica loop.s -arch all           # throughput table for every microarchitecture (in parallel)
-npx wuica loop.s -arch SKL,ICL,ZEN3  # throughput table for these
-npx wuica -list                      # the microarchitectures
-npx wuica loop.s -json               # the JSON result (the contract's analyze response)
-npx wuica psum.s -loop whole         # the whole text, not the loop found in it (-loop auto, the default, or -loop N)
-npx wuica psum.s -loops              # list the loops; -loop .LBB0_12 or -func psum to choose
-npx wuica psum.s -whatif -per 8      # what-if variants; cycles per element (8 elements per iteration)
-npx wuica --version
+wuica loop.s                         # assembly file (syntax detected), uiCA's report for SKL
+wuica loop.s -arch ICL -TPonly       # only the throughput
+cat loop.s | wuica -arch ZEN3        # stdin (or "-")
+wuica -att loop_att.s                # AT&T syntax, forced (-intel forces Intel)
+wuica 4801d84801c349ffcf75f5         # a hex argument (as in the Rust CLI)
+wuica -hex code.txt                  # hex from a file or stdin ("48 01 d8", "0x48,0x01" are fine)
+wuica -raw code.bin                  # raw machine code
+wuica loop.s -arch all               # throughput table for every microarchitecture (in parallel)
+wuica loop.s -arch SKL,ICL,ZEN3      # throughput table for these
+wuica -list                          # the microarchitectures
+wuica loop.s -json                   # the JSON result (the contract's analyze response)
+wuica psum.s -loop whole             # the whole text, not the loop found in it (-loop auto, the default, or -loop N)
+wuica psum.s -loops                  # list the loops; -loop .LBB0_12 or -func psum to choose
+wuica psum.s -whatif -per 8          # what-if variants; cycles per element (8 elements per iteration)
+wuica --version
 ```
 
 The simulation options are uiCA's: `-alignmentOffset N`, `-initPolicy diff|same|stack`, `-simpleFrontEnd`,
@@ -149,7 +152,7 @@ The simulation options are uiCA's: `-alignmentOffset N`, `-initPolicy diff|same|
 takes `--flag` and `--flag=value`, in any case (`--tponly`, `--arch=zen3`). With several
 microarchitectures, `-threads N` analyzes them on at most N threads at a time (`-threads 1`: one after another).
 Diagnostics go to stderr. The exit status is the result code: 0 ok, 1 bad request or usage, 2 assembler error, 3 analysis failed.
-`npx wuica -h` lists everything.
+`wuica -h` lists everything.
 
 ## MCP server
 
@@ -179,7 +182,7 @@ claude mcp add wuica -- node /absolute/path/to/packages/wuica/bin/wuica.js mcp
 Once the package is published on npm:
 
 ```
-claude mcp add wuica -- npx -y wuica mcp
+claude mcp add wuica -- npx -y @jtl06/wuica mcp
 ```
 
 Other MCP clients (Claude Desktop, Cursor, VS Code, ...) use the same command in their JSON configuration:
