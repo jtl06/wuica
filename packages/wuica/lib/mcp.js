@@ -241,13 +241,20 @@ export const toolListing = ({ handler, ...t }) => t;
 // got \"many\""), or null.
 const kind = (v) => (v === null ? 'null' : Array.isArray(v) ? 'an array' : typeof v === 'object' ? 'an object' : typeof v === 'string' ? 'a string' : typeof v === 'boolean' ? 'a boolean' : typeof v === 'number' ? (Number.isInteger(v) ? 'an integer' : 'a number') : typeof v);
 const show = (v) => JSON.stringify(v)?.slice(0, 60) ?? String(v);
+// what a schema of anyOf allows, in words: "an integer >= 0", "a non-empty string", "an array of 2 numbers > 0"
+function describe(s, plural = false) {
+  if (s.enum) return s.enum.map((x) => JSON.stringify(x)).join(' or ');
+  const noun = s.type === 'string' && s.minLength ? 'non-empty string' : s.type === 'array' ? 'array' : String(s.type);
+  const bounds = `${s.minimum !== undefined ? ` >= ${s.minimum}` : ''}${s.exclusiveMinimum !== undefined ? ` > ${s.exclusiveMinimum}` : ''}`;
+  const of = s.type === 'array' && s.items ? ` of ${s.minItems !== undefined && s.minItems === s.maxItems ? `${s.minItems} ` : ''}${describe(s.items, true)}` : '';
+  return `${plural ? `${noun}s` : `${/^[aeiou]/.test(noun) ? 'an' : 'a'} ${noun}`}${of}${bounds}`;
+}
 export function validate(schema, value, at = '') {
   const where = at || 'arguments';
   if (schema.anyOf) {
     const errs = schema.anyOf.map((s) => validate(s, value, at));
     if (errs.some((e) => e === null)) return null;
-    const allowed = schema.anyOf.map((s) => (s.enum ? s.enum.map((x) => JSON.stringify(x)).join(' or ') : s.type === 'integer' ? `an integer${s.minimum !== undefined ? ` >= ${s.minimum}` : ''}` : s.minLength ? 'a non-empty string' : `a ${s.type}`));
-    return `${where}: expected ${allowed.join(', or ')}, got ${show(value)}`;
+    return `${where}: expected ${schema.anyOf.map((s) => describe(s)).join(', or ')}, got ${show(value)}`;
   }
   switch (schema.type) {
     case 'object': {

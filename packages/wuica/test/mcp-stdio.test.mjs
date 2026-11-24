@@ -109,4 +109,9 @@ test('the validator: the keywords of the schemas', () => {
   assert.equal(validate(s, { n: 1, u: -1 }), 'u: expected "auto", or an integer >= 0, got -1');
   assert.equal(validate(s, { n: 1, b: 'yes' }), 'b: expected true or false, got "yes"');
   assert.equal(validate(s, [1]), 'arguments: expected an object, got an array');
+  // anyOf in words, with the article each type takes: diff_blocks' per
+  const per = { anyOf: [{ type: 'number', exclusiveMinimum: 0 }, { type: 'array', items: { type: 'number', exclusiveMinimum: 0 }, minItems: 2, maxItems: 2 }] };
+  assert.equal(validate(per, 'x', 'per'), 'per: expected a number > 0, or an array of 2 numbers > 0, got "x"');
+  assert.equal(validate({ anyOf: [{ type: 'object' }, { type: 'integer' }] }, 'x', 'o'), 'o: expected an object, or an integer, got "x"');
+  assert.equal(validate({ anyOf: [{ type: 'string', minLength: 1 }, { type: 'boolean' }] }, 3, 'z'), 'z: expected a non-empty string, or a boolean, got 3');
 });
