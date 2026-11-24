@@ -1,7 +1,7 @@
 // Every REST endpoint, as JSON and as text, against the library's own results.
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { createWuica } from 'wuica';
+import { createWuica, markdown } from 'wuica';
 import fs from 'node:fs';
 import path from 'node:path';
 import { start, post, get, HEX, ASM, ROOT, plain, rest } from './helpers.mjs';
@@ -85,6 +85,30 @@ test('POST /api/analyze/<arch>: text/plain is uiCA\'s report', async () => {
   assert.match(r.headers.get('content-type'), /^text\/plain/);
   assert.equal(r.text, (await w.analyze('SKL', { hex: HEX })).text);
   assert.match(r.text, /^Throughput \(in cycles per iteration\): /);
+});
+
+test('Accept: text/markdown: the package\'s Markdown for analyze and compare', async () => {
+  const src = 'loop:\n  add rax, 1\n  add rax, 1\n  dec r15\n  jnz loop\n';
+  const r = await post(s.base, '/api/analyze/SKL', { source: src }, { Accept: 'text/markdown' });
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get('content-type'), /^text\/markdown; charset=utf-8/);
+  const lib = await w.analyze('SKL', { source: src });
+  assert.equal(r.text, markdown.report(lib, { arch: 'SKL · Skylake (2015)', insights: w.insights(lib), source: src }));
+  assert.match(r.text, /^\*\*2\.00 cycles\/iteration\*\* · SKL · Skylake \(2015\)/);
+  assert.match(r.text, /\| `jnz loop` +\|/, 'the branch target as the label in the source');
+  const c = await post(s.base, '/api/compare', { hex: HEX, archs: ['SKL', 'ZEN3'] }, { Accept: 'text/markdown' });
+  assert.equal(c.status, 200);
+  assert.match(c.headers.get('content-type'), /^text\/markdown/);
+  assert.equal(c.text, markdown.cpuTable(await w.compare({ hex: HEX, archs: ['SKL', 'ZEN3'] })));
+  // failures: the status as for JSON, the error as Markdown; JSON still wins when both are accepted
+  const bad = await post(s.base, '/api/analyze/SKL', { source: 'frobnicate rax' }, { Accept: 'text/markdown' });
+  assert.equal(bad.status, 200);
+  assert.match(bad.text, /^\*\*analysis failed:\*\* assembly failed/);
+  const unknown = await post(s.base, '/api/analyze/NOPE', { hex: HEX }, { Accept: 'text/markdown' });
+  assert.equal(unknown.status, 404);
+  assert.match(unknown.text, /^\*\*analysis failed:\*\* unknown microarchitecture/);
+  const both = await post(s.base, '/api/analyze/SKL', { hex: HEX }, { Accept: 'text/markdown, application/json' });
+  assert.equal(both.json?.code, 0);
 });
 
 test('analyze failures: status codes and the contract\'s {code, error, stderr}', async () => {

@@ -11,7 +11,7 @@ import { h } from './render.js';
 import { jumpToRow } from './rowjump.js';
 import { annotateLatencies, slackOfAsync, fmtSlack } from './deps-slack.js'; // latency per arc, slack per instruction
 import { setCopy } from './copy-view.js';
-import { depsMd } from './md-views.js';
+import { deps as depsText } from './markdown.js';
 
 // as the trace view (trace.js): a trace grows with instructions × iterations; above this many uops it waits for a click
 const TRACE_LIMIT = 20000;
@@ -289,7 +289,7 @@ export function createDeps(env) {
     const { graph, error } = cache;
     if (error) { body.replaceChildren(h('p', { class: 'caveat', text: `no dependencies: ${error}` })); body.dataset.state = 'error'; return; }
     if (!graph) return;
-    setCopy('deps', { what: 'the dependencies', md: () => depsMd(graph) });
+    setCopy('deps', { what: 'the dependencies', md: () => depsText(graph, { slack: graph.slack?.slack ? graph.nodes.map((_, i) => fmtSlack(graph.slack.slack[i])) : null }) });
     const c = graph.edges.filter((e) => e.dist).length;
     hint.textContent = ` · ${graph.edges.length} edge${graph.edges.length === 1 ? '' : 's'}, ${c} ↻`;
     draw(graph);

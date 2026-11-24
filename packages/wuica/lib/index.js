@@ -36,6 +36,7 @@ export function listLoops(source, { func = null } = {}) {
 export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, CODES, WARM_HEX, parseDiagnostics, insights };
 export { whatIf, VARIANTS as WHAT_IF_VARIANTS } from './web/whatif-core.js';
 export { examples, findExample } from './examples.js';
+export * as markdown from './web/markdown.js';
 export { objectKind } from './objfile.js';
 
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');

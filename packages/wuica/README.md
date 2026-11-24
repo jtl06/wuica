@@ -32,6 +32,7 @@ wuica dot.s -arch SKL,ZEN3,ADL-P               # one table for several CPUs ("al
 wuica dot.s -per 8                             # the loop does 8 elements per iteration: cycles per element too
 wuica dot.s -loops                             # the loops in the file; -loop N or -loop .LBB0_12 picks one
 wuica dot.s -whatif                            # unrolled, N accumulators, front end and fusion variants
+wuica dot.s -arch SKL,ZEN3 -md                 # Markdown to paste in an issue or a chat (any mode)
 clang -O3 -c dot.c && wuica dot.o -func dot    # an object file (ELF or Mach-O, x86-64): no objdump needed
 wuica *.s -arch SKL,ZEN3                       # several files in one run: one table (-files LIST for long lists)
 objdump -d dot.o | wuica                       # objdump output: the loop's real alignment from its address
@@ -80,6 +81,12 @@ objdump -d dot.o | wuica                       # objdump output: the loop's real
 - **What if** (`-whatif`): a table per CPU, in cycles per original iteration, or per element with `-per N`. With
   `-TPonly`, one `variant cycles` line per variant after the throughput (`acc2 16.00`; with `-per`, `acc2 16.00
   2.00`; with several CPUs, each line starts with the CPU). Estimates (`>=` in the table) are printed as plain numbers.
+- **Markdown** (`-md`): GitHub-flavoured Markdown on stdout instead of the text report, for an issue, a review or a
+  chat: one CPU gives the headline (cycles per iteration, or per element with `-per N`; the CPU; the bottleneck or
+  `unknown · nearest X`), the limits, the next limit, the `not modelled` caveats, the critical chain, the uop table
+  (branch targets as the labels in the text) and the analyzed code; `-arch A,B,C` the CPU table; several files the
+  files × CPUs table (`-report`: each file's report); `-whatif` and `-loops` their tables. Columns are padded to read
+  in a monospace font. Not with `-json` or `-TPonly`; diagnostics and the exit status are as without it.
 - **JSON** (`-json`): one CPU gives the analyze response (`tp`, `bottlenecks`, `limits`, `rows`, `criticalPath`,
   `insights`, `loop`, `syntax`, and `perElement` / `whatIf` when asked); several give `{code, hex, loop, stderr,
   results: [{arch, tp, bottlenecks, limits, decodeErrors, perElement?, caveats?}]}`. The shapes are the same for one
@@ -90,7 +97,7 @@ objdump -d dot.o | wuica                       # objdump output: the loop's real
   {repository, commit, branch}, node}`: the uiCA commit whose data and model the package has.
 - **Syntax mistakes.** When the assembler fails, a `hint:` line names a line with the other syntax's operands (mixed
   AT&T and Intel lines, a `.intel_syntax` directive over AT&T code, `mov rdx, $8` in Intel code) and the flag to try.
-- No colours and no links, on a terminal or not.
+- No colours and no links, on a terminal or not (`-md` is plain text too).
 
 ## What the numbers mean
 
@@ -107,7 +114,7 @@ Decoder or DSB. `limits` gives the throughput each component alone would allow. 
 ## Library
 
 ```js
-import { createWuica } from 'wuica-cli';
+import { createWuica, markdown } from 'wuica-cli';
 
 const w = await createWuica();
 const r = await w.analyze('SKL', { source: 'loop:\n add rax, [rsi]\n add rsi, 8\n dec rcx\n jnz loop\n' });
@@ -126,6 +133,7 @@ w.archs();                                                // [{id, name, year, p
 await w.assemble('vaddps zmm0, zmm1, zmm2');              // {code: 0, hex, length, bytes, stderr}
 w.summarize(r);                                           // compact form (the MCP analyze result)
 w.insights(r);                                            // the diagnosis alone (REST's insights)
+markdown.report(r, { insights: w.insights(r) });          // Markdown, as wuica -md (also cpuTable, whatIf, loops, compare)
 ```
 
 Methods never throw for bad input: they resolve to a failure `{code, error, stderr}` (see the contract below).
@@ -161,6 +169,7 @@ wuica loop.s -arch all               # throughput table for every microarchitect
 wuica loop.s -arch SKL,ICL,ZEN3      # throughput table for these
 wuica -list                          # the microarchitectures
 wuica loop.s -json                   # the JSON result (the contract's analyze response)
+wuica loop.s -arch SKL,ZEN3 -md      # Markdown (an issue, a review, a chat); with -whatif, -loops, several files
 wuica psum.s -loop whole             # the whole text, not the loop found in it (-loop auto, the default, or -loop N)
 wuica psum.s -loops                  # list the loops; -loop .LBB0_12 or -func psum to choose
 wuica psum.s -whatif -per 8          # what-if variants; cycles per element (8 elements per iteration)
@@ -438,6 +447,8 @@ does not have it, `w.insights(r)` computes it) is the diagnosis described under 
 and `issueSlots` when `options.details` is true.
 
 **Plain text** (CE's `Accept: text/plain`): the response is `text` (uiCA's report), or the `stderr` lines on failure.
+
+**Markdown** (`Accept: text/markdown`, analyze and compare): what `wuica -md` prints (`markdown.report`, `markdown.cpuTable`), with the same status codes.
 In the library this is `r.text`; the MCP tool takes `format: "text"`.
 
 **Compact form** (the MCP `analyze` JSON, `w.summarize(r)`): `{code, arch, name, year, prototype, tp, unit, mode,

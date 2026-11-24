@@ -12,7 +12,7 @@ import { slotsLine } from './slots.js';
 import { rangeGroup, onRange } from './trace-range-view.js'; // a cycle range of the trace replaces the steady state
 import { boundModel, blame, topRows, defaultResource } from './bound-core.js';
 import { setCopy } from './copy-view.js';
-import { boundMd } from './md-views.js';
+import { bound as boundText } from './markdown.js';
 
 export { shortPort, boundModel, blame, topRows, defaultResource } from './bound-core.js';
 
@@ -104,7 +104,7 @@ export function createBound(env = {}) {
     const r = view?.response;
     const m = r && !r.error ? boundModel(r) : null;
     row.hidden = !m;
-    setCopy('bound', m ? { what: 'the bound view', md: () => boundMd(r, selected) } : null);
+    setCopy('bound', m ? { what: 'the bound view', md: () => boundText(r, selected) } : null);
     if (!m) { clean(); return; }
     hint.textContent = m.next ? ` · next ${m.next.name} ≤×${m.next.speedup.toFixed(1)}` : '';
     hint.title = m.next ? `without the bottleneck, at best ${f2(m.next.tp)} cycles/iteration (the next limit): up to ${m.next.speedup.toFixed(2)}× faster` : '';

@@ -8,7 +8,7 @@
 import { h, cyc } from './render.js';
 import { makeRequest } from './engine.js';
 import { setCopy } from './copy-view.js';
-import { sweepMd } from './md-views.js';
+import { sweep as sweepText } from './markdown.js';
 import { ARCH_INFO, PROTOTYPE } from './archs.js';
 import {
   summarize, compareRows, sweepData, sweepLayout, compareKey, sweepKey, resultKey, ResultCache, latestWins, SWEEP_OFFSETS,
@@ -296,7 +296,7 @@ export function createComparePanels(env) {
     const points = Array.from({ length: SWEEP_OFFSETS }, (_, k) => p.results.get(k));
     const d = sweepData(points);
     const arch = input?.arch ?? '';
-    setCopy('sweep', { what: 'the sweep', md: () => sweepMd(d, arch), csv: () => `offset,cycles\r\n${d.values.map((v, i) => `${i},${v === null ? '' : v}`).join('\r\n')}\r\n` });
+    setCopy('sweep', { what: 'the sweep', md: () => sweepText(d, arch), csv: () => `offset,cycles\r\n${d.values.map((v, i) => `${i},${v === null ? '' : v}`).join('\r\n')}\r\n` });
     const cur = cursor ?? input?.options.alignmentOffset ?? 0;
     const width = Math.max(240, Math.round((p.body.clientWidth || 602) - 2)); // inside the 1px border
     const height = 120;
@@ -405,6 +405,16 @@ export function createComparePanels(env) {
     // the checked CPUs changed (or single / A–B): show or hide the table; it computes what is missing
     // the elements per iteration changed: the table again (no new analysis)
     redrawCpus() { if (showCpus() && input) cpus.redraw(); },
+    // the table of the checked CPUs as markdown.js cpuTable takes it (null: one CPU); a CPU not analyzed yet says so
+    cpuResults() {
+      if (!env.multi() || !input) return null;
+      return env.checked().map((it) => {
+        const r = cpus.results.get(it.key);
+        const name = String(it.title ?? '').replace(/^\S+ · /, '');
+        if (!r || r.error) return { arch: it.key, name, code: 1, error: r?.error ?? 'not analyzed yet' };
+        return { arch: it.key, name, tp: r.tp, bottlenecks: r.bottlenecks, decodeErrors: r.decodeErrors, ...(it.experimental ? { prototype: true } : {}) };
+      });
+    },
     refreshCpus() {
       if (!showCpus()) return;
       if (input) cpus.update(false); else env.wantResult();

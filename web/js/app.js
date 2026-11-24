@@ -25,7 +25,8 @@ import { createABSlots } from './ab-slots.js';     // A–B: the issue slots of 
 import { createCmpSlots } from './cmp-slots.js';   // the issue slots per CPU in the CPU table (bound view open)
 import { withRegions } from './asm-regions.js';     // marked regions and .loc lines of pasted assembly
 import { createShipped, NOT_AS_ASSEMBLED } from './asm-shipped.js';    // the examples' machine code: their results before the assembler loads
-import { createCopy } from './copy-view.js';          // copying a view, or the whole result, as text
+import { createCopy, setCopy } from './copy-view.js';
+import { report, cpuTable, compare } from './markdown.js';          // copying a view, or the whole result, as text
 import { createRegionChip, createLoopChip } from './region-chip.js';
 import { replacesText, detectSyntax } from './loop-find.js';
 import { createKeys } from './keys.js';           // keyboard shortcuts, the ? overlay
@@ -740,9 +741,10 @@ function showTrace(panel) {
 
 function draw() {
   paintSideEmpty(false);
-  if (!lastView) { showTrace(null); return; }
+  if (!lastView) { showTrace(null); setCopy('all', null); setCopy('diff', null); return; }
   if (lastView.ab) {
     ab.draw(lastView.ab);
+    copyAB(lastView.ab);
     abTracePanel.setOpen(state.trace);
     showTrace(abTracePanel.update(lastView.ab));
     // the page's views show one side (abSide; the other if it has no result)
@@ -758,6 +760,7 @@ function draw() {
   const onUi = (k, v) => { ui[k] = v; if (k === 'hideEmpty') draw(); };
   renderResult(el.body, { ...lastView, config: uarch?.configs?.[lastView.archKey], ui, onUi, work: state.aWork, workFlag: !!ab?.flagged?.('a') && state.aWork !== 1 });
   showTrace(trace);
+  copySingle(lastView);
   insight.decorate(el.body, lastView);
   traceLink.decorate(el.body, lastView, { onUi });
   views.decorate(el.body, lastView);
@@ -1037,6 +1040,33 @@ function paintSideEmpty(empty) {
 const bOwnCpu = () => !!state.bArch && state.bArch !== state.arch && archItems.has(state.bArch);
 // the table of A and B per checked CPU (ab-cpus.js); the results of the comparison itself are reused
 const summaryOf = (r) => ({ tp: Number(r.tp), bottlenecks: r.bottlenecks ?? [], mode: r.mode, decodeErrors: Number(r.decodeErrors) || 0, mock: !!r.mock });
+// Copying the whole result as text (copy-view.js; the text: markdown.js): single, the result (report) with the table of
+// the checked CPUs; A–B, the comparison (compare, with A and B per checked CPU), then each side's result. "diff": the
+// comparison of A–B's first tab.
+const linkNow = () => { const f = encodeState(collectState()); return location.origin + location.pathname + (f ? '#' + f : ''); };
+const sideMeta = (s, work) => ({ arch: s.archKey, archTitle: s.archTitle, per: work, config: uarch?.configs?.[s.archKey] ?? null, shown: s.shown ?? null });
+function copySingle(v) {
+  setCopy('diff', null);
+  const r = v.response;
+  if (!r) { setCopy('all', null); return; }
+  const work = state.aWork;
+  setCopy('all', { what: 'the whole result', md: () => {
+    const all = report(r, { ...sideMeta(v, work), link: linkNow() });
+    const cpus = panels.cpuResults();
+    return cpus ? `${all}\n${cpuTable(cpus, { per: work })}` : all;
+  } });
+}
+function copyAB(view) {
+  const meta = { workA: view.workA, workB: view.workB, archA: view.a?.archKey, archB: view.b?.archKey, shownA: view.a?.shown ?? null, shownB: view.b?.shown ?? null };
+  setCopy('diff', view.cmp?.okA && view.cmp?.okB ? { what: 'the A–B comparison', md: () => compare(view.a.response, view.b.response, meta) } : null);
+  setCopy('all', { what: 'the whole A–B result', md: () => [
+    compare(view.a?.response, view.b?.response, { ...meta, cpus: abCpus.rows() }),
+    report(view.a?.response, { title: 'A', ...(view.a ? sideMeta(view.a, view.workA) : {}) }),
+    report(view.b?.response, { title: 'B', ...(view.b ? sideMeta(view.b, view.workB) : {}) }),
+    `[open in wuica](${linkNow()})\n`,
+  ].join('\n') });
+}
+
 function updateABCpus(view, { auto = false } = {}) {
   const seed = new Map();
   for (const s of [view.a, view.b]) if (okSide(s)) seed.set(`${s.side}:${s.archKey}`, summaryOf(s.response));

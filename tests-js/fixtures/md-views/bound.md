@@ -1,7 +1,7 @@
-**bound** · 2.00 cycles/iteration · binding Dependencies · next DSB 1.00 (at most 2.00× faster)
+**bound** · 2.00 cycles/iteration · binding Dependencies · next DSB 1.00 (at most 2.00x faster)
 
-| resource     | group | cycles/iteration | busy | binding |
-|:-------------|:------|-----------------:|-----:|:-------:|
+| Resource     | Group | Cycles/iteration | Busy | Binding |
+|--------------|-------|-----------------:|-----:|:-------:|
 | DSB          | front |             1.00 |  50% |         |
 | Issue        | issue |             0.75 |  38% |         |
 | Ports        | ports |             1.00 |  50% |         |
@@ -13,7 +13,7 @@
 
 top of Dependencies (by cycles):
 
-| instruction    | share |
-|:---------------|------:|
+| Instruction    | Share |
+|----------------|------:|
 | `add rax, 0x1` |   50% |
 | `add rax, 0x1` |   50% |

@@ -14,6 +14,8 @@ import { summarize, resultKey, ResultCache, latestWins } from './compare.js';
 import { encodeState } from './url-state.js';
 import { experiments, outcome, weight, bestOf } from './whatif-core.js';
 import { toHex } from './hex-input.js';
+import { setCopy } from './copy-view.js';
+import { whatIf as whatIfText } from './markdown.js';
 
 export { instrRanges, unrollHex, experiments, outcome, weight, bestOf } from './whatif-core.js';
 
@@ -195,6 +197,21 @@ export function createWhatIf(env) {
       go.addEventListener('click', () => { forcedKey = job.key; body.dataset.state = 'queued'; runner.schedule(0); });
     }
     body.replaceChildren(...(go ? [h('p', { class: 'wi-wait' }, go)] : []), h('div', { class: 'table-wrap' }, table), ...(waiting ? [] : [bestLine()].filter(Boolean)));
+    const j = job;
+    setCopy('try', { what: 'the what-if variants', md: () => whatIfText(textOf(j)) });
+  }
+
+  // the table as markdown.js whatIf takes it (the library's whatIf result): per original iteration, as shown
+  function textOf({ base, exps, results, arch }) {
+    const variants = exps.map((x) => {
+      const o = outcome(base, x, results.get(x.id));
+      if (!o) return { id: x.id, label: x.label, error: 'not computed yet' };
+      if (o.error) return { id: x.id, label: x.label, error: o.error };
+      return { id: x.id, label: x.label, tp: o.tp, delta: o.delta, speedup: Number.isFinite(o.speedup) ? o.speedup : null, ...(o.estimate ? { estimate: true } : {}) };
+    });
+    const done = exps.filter((x) => /^acc\d+$/.test(x.id) && !x.error).every((x) => results.has(x.id));
+    const best = done && exps.some((x) => /^acc\d+$/.test(x.id)) ? bestOf(base.tp, exps, results) : null;
+    return { arch, tp: base.tp, variants, ...(best ? { accumulators: { best: best.n } } : {}) };
   }
 
   function update() {
@@ -202,8 +219,8 @@ export function createWhatIf(env) {
     const r = view?.response;
     const ok = r && !r.error && Array.isArray(r.rows) && !r.mock && view.hex;
     row.hidden = !ok;
-    if (!ok) { job = null; runner.cancel(); return; }
-    if (!open) { body.replaceChildren(); body.dataset.state = 'closed'; runner.cancel(); return; }
+    if (!ok) { job = null; runner.cancel(); setCopy('try', null); return; }
+    if (!open) { body.replaceChildren(); body.dataset.state = 'closed'; runner.cancel(); setCopy('try', null); return; }
     const options = { ...view.request };
     delete options.hex; delete options.arch; delete options.includeTrace;
     // the other checked CPUs (only with the worker pool: their analyses run there)

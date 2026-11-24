@@ -1,5 +1,5 @@
 // Copying as text (web/js/copy-view.js): the control at the end of the tab row copies the shown tab's text, the same text
-// its generator gives (the view's provider: md-views.js and the shared generators), for every tab; Shift+click copies
+// its generator gives (the view's provider: markdown.js), for every tab; Shift+click copies
 // CSV where the view has it; the key c does what the control does; "copy all" copies the whole result; a long block's
 // table is copied with every row (the table draws only some: vrows.js); without a clipboard the status says so and
 // nothing breaks. The clipboard is stubbed. Headless Chrome through tests-js/cdp.mjs; skipped without it.
@@ -7,6 +7,7 @@
 //   node tests-js/web_copy_browser.mjs [--chrome PATH]
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { findChrome, launch, serve, copyDist, Page, HELPERS, checker, ROOT } from './cdp.mjs';
 
 const chrome = findChrome();
@@ -26,6 +27,9 @@ const PRE = `${HELPERS}
     deps: () => ['done', 'error'].includes(document.querySelector('#deps .dp-body')?.dataset.state), mca: () => document.querySelector('.mca-head'),
     sweep: () => document.querySelector('.sweep-head') };`;
 
+const { CLASSIC_EXAMPLES } = await import(pathToFileURL(path.join(ROOT, 'web/js/examples.js')).href);
+const { encodeState } = await import(pathToFileURL(path.join(ROOT, 'web/js/url-state.js')).href);
+const [d1, d4] = ['dot1', 'dot4'].map((id) => CLASSIC_EXAMPLES.find((e) => e.id === id));
 const srv = await serve(copyDist());
 const { browser, close } = await launch(chrome);
 try {
@@ -50,7 +54,8 @@ try {
     document.body.focus();
     out.key = await copied(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', bubbles: true }))) === reg.getCopy('table').md();
     // the whole result
-    out.all = reg.getCopy('all') ? (await copied(() => document.querySelector('.copy-all').click())) === reg.getCopy('all').md() : 'no provider';
+    const all = reg.getCopy('all') ? await copied(() => document.querySelector('.copy-all').click()) : null;
+    out.all = all !== null && all === reg.getCopy('all').md() && /^\\*\\*/.test(all) && /\\[open in wuica\\]/.test(all) ? true : (all ?? 'no provider').slice(0, 200);
     // no clipboard: a message, no error
     navigator.clipboard.writeText = async () => { throw new Error('denied'); };
     document.execCommand = () => false;
@@ -62,7 +67,7 @@ try {
   }
   check(/^instruction,opcode,notes/.test(r.csv), 'the table: Shift+click copies CSV', r.csv);
   check(r.key === true, 'the key c copies the shown tab');
-  check(r.all === true || r.all === 'no provider', '"copy all" copies the whole result', String(r.all));
+  check(r.all === true, '"copy all" copies the whole result', String(r.all));
   check(/copy failed/.test(r.denied[0]) && r.denied[1], 'no clipboard: the status says so, nothing breaks', JSON.stringify(r.denied));
 
   // a long block: every row of the table, whichever rows are drawn
@@ -74,6 +79,24 @@ try {
     const t = document.querySelector('#result-body table.uops');
     return { rows: text.split('\\n').filter((l) => /^\\| /.test(l)).length, count: t.vr.count, drawn: t.querySelectorAll('tbody tr[data-row]').length };`, { timeout: 300000 });
   check(long.rows >= long.count + 2 && long.drawn < 200, 'a long block: the copied table has every row (2 lines more: the head and the total), though few are drawn', JSON.stringify(long));
+  // several CPUs: "copy all" adds their table; A–B: the diff tab and "copy all" (the comparison, then each side)
+  await p.goto(`${srv.origin}/?nosw=1#${encodeState({ mode: 'hex', text: d1.text.hex, arch: 'SKL', cpus: 'SKL,ZEN3' })}`);
+  await p.ready();
+  const cpus = await p.eval(`${PRE}
+    await settle(); await until(() => document.querySelectorAll('#cmp-cpus tbody tr .cmp-tp, #cmp-cpus tbody td').length && reg.getCopy('all')?.md().includes('| ZEN3'), 120000).catch(() => null);
+    const t = await copied(() => document.querySelector('.copy-all').click());
+    return { same: t === reg.getCopy('all').md(), cpus: /\\| CPU +\\| Model/.test(t) && /\\| SKL /.test(t) && /\\| ZEN3 /.test(t) };`, { timeout: 300000 });
+  check(cpus.same && cpus.cpus, 'several CPUs: "copy all" has the table of the checked CPUs', JSON.stringify(cpus));
+  await p.goto(`${srv.origin}/?nosw=1#${encodeState({ mode: 'hex', text: d1.text.hex, ab: true, bMode: 'hex', bText: d4.text.hex, arch: 'SKL' })}`);
+  await p.ready();
+  const ab = await p.eval(`${PRE}
+    await until(() => document.querySelector('#ab-main') && reg.getCopy('diff'), 120000); await settle();
+    tab('diff'); await settle(200);
+    const d = await copied(() => document.querySelector('#result-body .view-tabs .ws-copy').click());
+    const a = await copied(() => document.querySelector('.copy-all').click());
+    return { diff: d === reg.getCopy('diff').md(), head: d.split('\\n')[0], all: a === reg.getCopy('all').md(), sides: /^## A$/m.test(a) && /^## B$/m.test(a) && a.startsWith(d.split('\\n')[0]), status: $('status').textContent };`, { timeout: 300000 });
+  check(ab.diff && /^\*\*A [\d.]+ · B [\d.]+ cycles per iteration\*\*/.test(ab.head), 'A–B: the diff tab copies the comparison (markdown.js compare)', JSON.stringify(ab));
+  check(ab.all && ab.sides && /^copied: the whole A–B result/.test(ab.status), 'A–B: "copy all" copies the comparison, then A and B', JSON.stringify(ab));
   check(p.problems.length === 0, 'no console errors', p.problems.join('\n'));
 } catch (e) {
   check(false, 'the test ran to the end', e?.stack ?? String(e));

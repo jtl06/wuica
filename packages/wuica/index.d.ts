@@ -408,3 +408,47 @@ export interface CliVersionJson { wuica: string; uiCA: { repository: string; com
  * for the accumulator variants, `assemble` (e.g. a Wuica's assemble, bound). */
 export function whatIf(analyze: (arch: string, request: AnalyzeRequest) => Promise<AnalyzeResult | Failure>, arch: string, request: AnalyzeRequest, variants?: readonly WhatIfVariant[],
   tools?: { assemble?: (text: string) => Promise<AssembleResult | Failure> }): Promise<WhatIfResult | Failure>;
+/** Results as GitHub-flavoured Markdown (the page's copy controls and `wuica -md`; lib/web/markdown.js): deterministic
+ * text, columns padded for a monospace font, pipes and backticks escaped, numbers as the CLI prints them. Every
+ * generator returns text that ends with one newline. */
+/** Where the Markdown's branch targets come from (branch-label.js): the labels per row as shown, the analyzed lines of
+ * the assembly ({text, from, to}), or the request's source text; else the offset in the block ("jnz 0x0"). */
+export interface MarkdownLabels { shown?: (string | null)[] | null; src?: { text: string; from?: number; to?: number } | null; source?: string }
+export namespace markdown {
+  /** The whole result: headline, limits, next limit, caveats ("not modelled"), critical chain, uop table, the code
+   * (meta.code) in a fenced block, a link (meta.link). A failure: its error and stderr lines. */
+  function report(result: AnalyzeResult | Failure, meta?: MarkdownLabels & { arch?: string; archTitle?: string; per?: number; insights?: Insights | null;
+    config?: { splitLoadCycles?: number } | null; code?: string; lang?: string; link?: string; title?: string }): string;
+  /** The headline alone (one line, no newline). */
+  function headline(result: AnalyzeResult, meta?: { arch?: string; archTitle?: string; per?: number }): string;
+  /** The uop table: every row, the used columns, the totals (no newline at the end). */
+  function uopTable(result: AnalyzeResult, meta?: MarkdownLabels): string;
+  /** Each row's instruction text with its branch target as a label. */
+  function shownLabels(result: AnalyzeResult, meta?: MarkdownLabels): string[];
+  /** Several CPUs, one row each (a compare result or its rows); or files x CPUs: [{file, result}]. */
+  function cpuTable(input: CompareResult | CliCompareJson | CompareResult['results'] | Failure | { file: string; result: CompareResult | AnalyzeResult | Failure }[],
+    options?: { per?: number }): string;
+  /** The what-if table of one CPU (per element with elementsPerIteration). */
+  function whatIf(result: (WhatIfResult & { elementsPerIteration?: number }) | (Failure & { arch?: string })): string;
+  /** The loops of assembly text (listLoops). */
+  function loops(list: LoopListing[]): string;
+  /** A against B (as the page's A–B view): summary, bottlenecks, limits, the aligned instructions with B − A per column;
+   * meta.cpus adds the A/B/Δ table per CPU. workA, workB: elements per iteration of each side (cycles per element). */
+  function compare(a: AnalyzeResult | Failure, b: AnalyzeResult | Failure, meta?: { workA?: number; workB?: number; archA?: string; archB?: string;
+    cpus?: { arch: string; a: number | null; b: number | null }[];
+    shownA?: (string | null)[]; srcA?: MarkdownLabels['src']; shownB?: (string | null)[]; srcB?: MarkdownLabels['src'] }): string;
+  /** The uop table as CSV (RFC 4180, CRLF). */
+  function toCSV(result: AnalyzeResult): string;
+  /** The request and the response as JSON (without trace and text). */
+  function toJSON(result: AnalyzeResult, request?: unknown): string;
+  /** Building blocks for further generators: a padded GFM table, a code span, escaped text, a fenced block. */
+  function table(head: string[], rows: string[][], align?: ('l' | 'r' | 'c')[]): string;
+  function code(text: string): string;
+  function text(s: unknown): string;
+  function fence(body: string, lang?: string): string;
+  /** A cycle count as the page shows it (two decimals; three significant digits below 0.1); with its sign. */
+  function cycles(v: number): string;
+  function signedCycles(v: number): string;
+  /** A uop-table value as uiCA prints it (up to two decimals, zero blank). */
+  function uopValue(v: number): string;
+}

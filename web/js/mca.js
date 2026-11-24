@@ -10,7 +10,7 @@
 //        spawn() -> Worker, onToggle(open) }
 import { h } from './render.js';
 import { setCopy } from './copy-view.js';
-import { mcaMd } from './md-views.js';
+import { mcaText } from './markdown.js';
 
 // uiCA's microarchitectures -> llvm -mcpu (LLVM has no Kaby Lake or Coffee Lake model: they are Skylake)
 export const MCPU = {
@@ -123,7 +123,7 @@ export function createMca(env = {}) {
       }
       const m = parseMca(res.out);
       const out = res.out;
-      setCopy('mca', { what: "llvm-mca's text", md: () => mcaMd(out, `${m.iterations} iterations`) });
+      setCopy('mca', { what: "llvm-mca's text", md: () => mcaText(out, `${m.iterations} iterations`) });
       const uica = Number(r.tp ?? r.throughput);
       const diff = m.perIteration && uica ? (100 * (m.perIteration - uica)) / uica : null;
       hint.textContent = m.perIteration ? ` · ${fmt(m.perIteration)} cycles/iteration` : '';

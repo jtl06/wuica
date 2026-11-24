@@ -18,7 +18,7 @@
 import { ISSUE_H, issueLog, issueShare, drawIssueStrip, issueText } from './trace-issue.js'; // the issue strip (details)
 import { attachRange } from './trace-range-view.js'; // a cycle range for the bound view (viewer.ext: its hooks)
 import { setCopy } from './copy-view.js';
-import { traceMd } from './md-views.js';
+import { traceRange } from './markdown.js';
 
 // ---- the model (no DOM) ----------------------------------------------------------------------------------------
 
@@ -334,7 +334,7 @@ function copyTrace(viewers) {
   const cap = (v) => `${v.tag ? `${v.tag}: ` : ''}${v.rows.length} uops, cycles ${v.c0}–${v.c1}`;
   setCopy('trace', {
     what: 'the trace (the shown rows)',
-    md: () => live.map((v) => traceMd(TABLE_HEAD, tableRows(v.model, v.rows), cap(v))).join('\n'),
+    md: () => live.map((v) => traceRange(TABLE_HEAD, tableRows(v.model, v.rows), cap(v))).join('\n'),
     csv: () => live.map((v) => csvOf(TABLE_HEAD, tableRows(v.model, v.rows))).join('\r\n'),
   });
 }
