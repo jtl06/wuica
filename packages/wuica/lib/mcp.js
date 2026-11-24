@@ -20,29 +20,17 @@ export const SERVER_INFO = Object.freeze({ name: 'wuica', version: pkg.version }
 export const CAPABILITIES = Object.freeze({ tools: { listChanged: true } });
 
 const ASSUMPTIONS =
-  'The number is the predicted steady-state throughput in core clock cycles per iteration of the block: a block that ends ' +
-  'with a (conditional) branch is simulated as a loop body; any other block as if it were unrolled, i.e. repeated back to ' +
-  'back. Lower is faster. Assumptions: all memory accesses hit the L1 data cache, no branch mispredictions, no ' +
-  'interference from other code or hyperthreads; the result does not depend on register or memory values except through ' +
-  'dependencies. ZEN3, ADL-P and ICX are prototype models (experimental, from the fork jtl06/uiCA), less validated than ' +
-  "uiCA's Intel models (SNB through RKL).";
+  'tp is the predicted steady-state throughput in core cycles per iteration (lower is faster): a block that ends with a ' +
+  'branch is simulated as a loop body, any other as if repeated back to back. Assumes all data in L1, no branch ' +
+  'mispredictions, nothing else on the core. ZEN3, ADL-P and ICX are prototype models (the fork jtl06/uiCA), less ' +
+  "validated than uiCA's Intel models.";
 
 const INPUT_NOTE =
-  'Give the block either as `source` (x86-64 assembly in Intel (noprefix) or AT&T syntax: detected unless `syntax` says; one instruction per ' +
-  'line; labels and directives are allowed, e.g. "loop: add rax, [rsi]\\n dec rcx\\n jnz loop") or as `hex` (machine ' +
-  'code bytes, e.g. "4801d8"). A whole function (gcc -S or clang -S output, objdump -d lines with addresses, with or ' +
-  'without the bytes) is fine: by default (`loop: "auto"`) its innermost loop is analyzed (the first one in the code), ' +
-  'or the body without prologue and epilogue if it is a compiler\'s function without a loop; the deepest loop is ' +
-  'preferred (clang\'s "Inner Loop Header" notes count), among equals the first; branches out of the loop count as not taken (so an exit ' +
-  'to a label that is not in the text assembles); with addresses, the alignment offset is the loop\'s address mod 64 ' +
-  'unless options.alignmentOffset is given. The response\'s `loop` says what was analyzed (index, count, name, lines, ' +
-  'address, function, depth). `loop: "whole"` analyzes the whole text; `loop: N` the N-th loop (0-based: deepest first, ' +
-  'then in code order); `loop: ".LBB0_12"` a loop by its label; `func: "name"` only the loops of that function.';
+  'The block: `source` (x86-64 assembly, Intel or AT&T, detected; a whole function, gcc/clang -S or objdump -d output ' +
+  'is fine: its innermost loop is analyzed; `loop` picks another: "whole", an index or a label; `func` one ' +
+  "function's) or `hex` (machine code).";
 
-const ERRORS_NOTE =
-  'Failures are tool errors whose JSON is {code, error, stderr}: code 1 = bad request (e.g. unknown arch, bad hex), ' +
-  '2 = assembler error (stderr lines as llvm-mc prints them; positioned ones carry tag {line, column, severity, text}), ' +
-  '3 = the analysis failed for this input.';
+const ERRORS_NOTE = 'A failure is a tool error {code, error, stderr}: 1 bad request, 2 assembler error (positioned stderr), 3 analysis failed.';
 
 // ---- the input schemas (JSON Schema, draft-07 as before) ----------------------------------------------------------------
 
@@ -72,8 +60,8 @@ const optionsShape = {
     simpleFrontEnd: bool('model a front end limited only by the issue width (default false)'),
     noMicroFusion: bool('disable micro-fusion (default false)'),
     noMacroFusion: bool('disable macro-fusion (default false)'),
-    minIterations: int('simulate at least this many iterations (default 10; large values take long and much memory; the API server allows at most 1000)', -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
-    minCycles: int('simulate at least this many cycles (default 500; the API server allows at most 20000)', -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
+    minIterations: int('simulate at least this many iterations (default 10; the API server allows at most 1000)', 1, 100000),
+    minCycles: int('simulate at least this many cycles (default 500; the API server allows at most 20000)', 1, 1000000),
   },
   additionalProperties: false,
 };
@@ -99,16 +87,15 @@ const readOnly = { readOnlyHint: true, idempotentHint: true, openWorldHint: fals
 const execution = { taskSupport: 'forbidden' };
 
 // The tools: [{name, title, description, inputSchema, annotations, execution, handler(args) -> CallToolResult}]. w: a
-// wuica instance (createWuica) or anything with its analyze, compare, assemble, archs and summarize.
+// wuica instance (createWuica) or anything with its analyze, compare, whatIf, diff, assemble, archs and summarize.
 export function mcpTools(w) {
   return [
     {
       name: 'list_archs',
       title: 'List microarchitectures',
       description:
-        'Lists the microarchitecture models in order of release: id (to pass as `arch`), name, release year, and ' +
-        '`prototype` (true for the experimental models ZEN3, ADL-P and ICX of the fork jtl06/uiCA, which are less ' +
-        'validated than uiCA\'s Intel models). `fields` selects fields (also available: table, xedChip).',
+        'The microarchitecture models in order of release: id (the `arch` of the other tools), name, year, and `prototype` ' +
+        '(ZEN3, ADL-P, ICX: experimental models of the fork jtl06/uiCA). `fields` selects (also table, xedChip).',
       inputSchema: obj({
         fields: { description: 'fields to return (default: id, name, year, prototype)', type: 'array', items: { type: 'string', enum: ['id', 'name', 'year', 'prototype', 'table', 'xedChip'] } },
       }),
@@ -119,39 +106,22 @@ export function mcpTools(w) {
       name: 'analyze',
       title: 'Predict basic-block throughput (uiCA)',
       description:
-        'Simulates an x86-64 basic block on one microarchitecture with uiCA\'s pipeline model and returns the predicted ' +
-        'throughput, the bottleneck(s), the per-component limits and a per-instruction table. ' + INPUT_NOTE + ' ' +
-        ASSUMPTIONS + '\n\nResult (JSON, format "json" or "both"): `tp` = cycles per iteration; `mode` = "loop" or ' +
-        '"unroll"; `bottlenecks` = the components that limit the throughput (e.g. Dependencies = a loop-carried ' +
-        'dependency chain, Ports = execution-port pressure, Issue/Decoder/Predecoder/DSB/LSD = front end); `limits` = ' +
-        'the throughput that would be achieved if that component were the only bottleneck (the largest is the binding ' +
-        'one); `instructions[]` = per instruction: average uops per iteration issued/executed, `ports` = uops per ' +
-        'iteration on each execution port, `uopSource` = where the uops came from (MITE legacy decoders, DSB uop cache, ' +
-        'LSD loop buffer, MS microcode sequencer), `notes` M = macro-fused with the previous instruction, J = not ' +
-        'cacheable in the DSB because of the JCC erratum, X = instruction not supported by the model (no data: the ' +
-        'result is unreliable); `stderr` = assembler warnings and decode warnings (`decodeErrors` > 0: some bytes could ' +
-        'not be decoded); `insights` = a derived diagnosis: `utilization` (each limit and execution port as a fraction ' +
-        'of tp; 1 = saturated), `binding` (the limiting component: the same as `bottlenecks`; [] when uiCA names none, then ' +
-        '`largest` is the largest limit, the nearest bound, which alone does not reach tp), `next` (the next limit and `maxSpeedup`, an upper ' +
-        'bound of the speedup if the binding component were removed), `unexplained` (cycles no single limit explains), ' +
-        '`chain` (the loop-carried critical dependency chain: `index` into `instructions`, operand, latency, carried ' +
-        'into the next iteration), `hot` (the instructions with the largest share of the binding resource: fix these ' +
-        'first), `caveats` (known blind spots of the model the block meets, not simulated: rmw-index = a read-modify-write ' +
-        'to an indexed address, whose store forwarding between iterations depends on the data; exit = an exit before the ' +
-        'loop\'s branch, whose mispredict is not modelled; split = loads at an offset that is not a multiple of their width, ' +
-        'which may cross a cache line (on ZEN3, ADL-P and ICX, whose models charge crossings, only loads whose address register ' +
-        'is written other than by adding an immediate); `instructions` = indexes into `instructions`). With `details: true`, each instruction also has `allowedPorts` (uops.info notation, e.g. 1*p0156+1*p23), ' +
-        '`uops`, `fusedUops`, `latencies` ("input->output:cycles"), `frontEnd` (length, offset = alignment offset + position in the block, crosses ' +
-        '16/32/64-byte boundaries, lcp = length-changing prefix, microcoded, macro-fusion), and `insights` has `portSet` (the ' +
-        'ports behind the Ports limit and the instructions whose uops can only use them) and `issueSlots` (issue slots per ' +
-        'iteration: issued, or lost to the front end, a full reorder buffer (rob) or scheduler (rs), other). ' +
-        'Format "text" (or the second item of "both") is uiCA\'s complete text report. ' + ERRORS_NOTE,
+        'One x86-64 block on one microarchitecture with uiCA\'s pipeline model. ' + INPUT_NOTE + ' ' + ASSUMPTIONS +
+        '\n\nResult (format "json"): `tp` (cycles per iteration), `mode` (loop or unroll), `bottlenecks` (Dependencies = a ' +
+        'loop-carried chain, Ports, Issue, Decoder, Predecoder, DSB, LSD), `limits` (the tp each component alone would allow), ' +
+        '`loop` (what was analyzed) and `otherLoops`, `instructions[]` (per instruction: uops issued and executed per iteration, ' +
+        '`ports`, `uopSource` MITE/DSB/LSD/MS, `notes` M macro-fused, J JCC erratum, X not modelled; `line`, and `loc`, ' +
+        '`source`, `samples` when the input has them), `stderr`, and `insights`: `utilization` (each limit and port as a ' +
+        'fraction of tp), `binding`, `largest` (when uiCA names no bottleneck), `next` (the next limit, `maxSpeedup`), `chain` ' +
+        '(the critical dependency chain), `hot` (the instructions to fix first), `caveats` (what the model does not simulate: ' +
+        'rmw-index, exit, split, paths). `details: true` adds per instruction allowed ports, latencies and front-end facts, ' +
+        'and the issue slots. Format "text" is uiCA\'s report; "both" (default) gives both. ' + ERRORS_NOTE,
       inputSchema: obj({
         arch: str('microarchitecture id (default "SKL"); see list_archs, e.g. SKL, ICL, TGL, RKL, ADL-P, ZEN3'),
         ...codeShape,
         options: optionsShape,
         format: str('"json" (summary), "text" (uiCA\'s report) or "both" (default)', { enum: ['json', 'text', 'both'] }),
-        details: bool('true: per instruction also its allowed ports, latencies and front-end facts, and in insights the port set behind the Ports limit and the issue slots per cause (a slower analysis; default false)'),
+        details: bool('true: per instruction also its allowed ports, latencies and front-end facts, and the issue slots (slower; default false)'),
       }),
       annotations: readOnly, execution,
       handler: async ({ arch, format, details, ...request }) => {
@@ -167,26 +137,17 @@ export function mcpTools(w) {
       name: 'what_if',
       title: 'What-if experiments on a basic block',
       description:
-        'Re-analyzes an x86-64 basic block with one change each and reports the predicted throughput per ORIGINAL ' +
-        'iteration, the change `delta` (cycles; negative = faster) and `speedup` (base tp / variant tp) against the base: ' +
-        'unroll2/unroll4/unroll8 (n copies of the loop body and its branch once; registers are not renamed, so the ' +
-        'dependencies stay and only the loop overhead goes; loops only), acc2/acc3/acc4/acc8 (N accumulators: unrolled ×N ' +
-        'with the register of the loop-carried chain renamed into a free register in each copy, so the copies form N ' +
-        'independent chains, as N accumulators or N CRC streams written by hand; `renamed` says which registers; the ' +
-        'result\'s `accumulators.best` is the smallest N within 1% of the fastest, 1 = as it is: call it per arch for the ' +
-        'best N per CPU; not possible when the chain goes through memory or flags or an implicit operand), simpleFrontEnd (a front end limited only by the ' +
-        'issue width), noMacroFusion / noMicroFusion (switched; if the base already has the option set, the variant ' +
-        'switches it back), nochain (no analysis: the largest limit other than Dependencies, an estimate of the ' +
-        'throughput without the loop-carried chain; `estimate: true`). A variant that cannot be made or analyzed has ' +
-        '`error`. Only when asked for: align (the block at each of the 64 alignment offsets: `tp` is the median, `alignment` = ' +
-        '{min, median, max, best, worst (offsets), spread, offset (this block\'s)}). Use it to decide whether unrolling, ' +
-        'breaking the chain, front-end work or alignment is worth it. ' + INPUT_NOTE + ' ' +
-        ASSUMPTIONS + ' ' + ERRORS_NOTE,
+        'Re-analyzes a block with one change each; per variant `tp` per ORIGINAL iteration, `delta` (negative = faster), ' +
+        '`speedup`, or `error`: unroll2/4/8 (the body n times, the branch once), acc2/3/4/8 (unrolled with the chain\'s ' +
+        'register renamed in each copy: N independent accumulators; `accumulators.best` = the smallest N within 1% of the ' +
+        'fastest), simpleFrontEnd, noMacroFusion, noMicroFusion, nochain (an estimate without the loop-carried chain). Only ' +
+        'when asked for: align (the 64 alignment offsets, 64 analyses: `tp` the median, `alignment` min, median, max, best, ' +
+        'worst, spread). `per`: also cycles per element. ' + INPUT_NOTE + ' ' + ERRORS_NOTE,
       inputSchema: obj({
         arch: str('microarchitecture id (default "SKL"); see list_archs'),
         ...codeShape,
         options: optionsShape,
-        variants: { description: `the experiments (default: all of ${VARIANTS.join(', ')}; also align: the 64 alignment offsets, 64 analyses, only when asked for)`, type: 'array', items: { type: 'string', enum: [...VARIANTS, ...OPT_IN_VARIANTS] } },
+        variants: { description: `the experiments (default: ${VARIANTS.join(', ')}; also align)`, type: 'array', items: { type: 'string', enum: [...VARIANTS, ...OPT_IN_VARIANTS] } },
         per: PER,
       }),
       annotations: readOnly, execution,
@@ -196,22 +157,19 @@ export function mcpTools(w) {
       name: 'diff_blocks',
       title: 'Compare two versions of a block',
       description:
-        'Analyzes two x86-64 blocks, A (before) and B (after), on one microarchitecture and returns in one result: `a` and ' +
-        '`b` (tp in cycles per iteration, bottlenecks), `delta` (B - A; negative = faster), `speedup` (A / B), `verdict` ' +
-        '(better, worse, same), `perElement` (with `per`: cycles per element of each and their change, for loops that do a ' +
-        'different amount of work per iteration, e.g. after unrolling), `bottlenecks` (a, b, gone, new), `limits` (each ' +
-        'component\'s limit before and after), `ports` (uops per iteration of each execution port before and after) and ' +
-        '`instructions` (counts, and the instructions changed, added or removed, aligned as a diff, with the change of their ' +
-        'uops per port). Each block is given as for analyze; `options` apply to both. ' + INPUT_NOTE + ' ' + ERRORS_NOTE +
-        ' A failure says which side (A: or B:).',
+        'Two blocks, A (before) and B (after), on one microarchitecture, in one result: `a` and `b` (tp, bottlenecks, ' +
+        'decodeErrors), `delta` (B - A), `speedup` (A / B), `verdict`, `perElement` (with `per`), `bottlenecks` (gone, new), ' +
+        '`limits` and `ports` (uops per iteration) before and after, and `instructions` (the ones changed, added or removed, ' +
+        'with the change of their uops). Each block as analyze takes it; `options` apply to both unless a block has its own. ' +
+        'A loop against a block without a branch is not comparable. A failure of one block starts with "A: " or "B: ".',
       inputSchema: obj({
         arch: str('microarchitecture id (default "SKL"); see list_archs'),
-        a: { description: 'block A (before)', type: 'object', properties: codeShape, additionalProperties: false },
-        b: { description: 'block B (after)', type: 'object', properties: codeShape, additionalProperties: false },
+        a: { description: 'block A (before)', type: 'object', properties: { ...codeShape, options: optionsShape }, additionalProperties: false },
+        b: { description: 'block B (after)', type: 'object', properties: { ...codeShape, options: optionsShape }, additionalProperties: false },
         options: optionsShape,
         per: {
           description: 'elements per iteration: a number for both, or [A, B] (e.g. [8, 32] after unrolling ×4): also cycles per element',
-          anyOf: [{ type: 'number', exclusiveMinimum: 0 }, { type: 'array', items: { type: 'number', exclusiveMinimum: 0 } }],
+          anyOf: [{ type: 'number', exclusiveMinimum: 0 }, { type: 'array', items: { type: 'number', exclusiveMinimum: 0 }, minItems: 2, maxItems: 2 }],
         },
       }, ['a', 'b']),
       annotations: readOnly, execution,
@@ -221,10 +179,8 @@ export function mcpTools(w) {
       name: 'compare_archs',
       title: 'Compare a block across microarchitectures',
       description:
-        'Predicts the throughput of one x86-64 basic block on several microarchitectures (default: all) and returns, per ' +
-        'microarchitecture, `tp` in cycles per iteration and the bottleneck(s) (a row with code != 0 failed on that ' +
-        'microarchitecture). Use it to see how a loop behaves on older vs. newer Intel cores or on AMD Zen 3. ' +
-        INPUT_NOTE + ' ' + ASSUMPTIONS + ' ' + ERRORS_NOTE,
+        'One block on several microarchitectures (default: all): per microarchitecture `tp` and `bottlenecks` (a row with ' +
+        'code != 0 failed there); `per`: also cycles per element. ' + INPUT_NOTE + ' ' + ERRORS_NOTE,
       inputSchema: obj({
         ...codeShape,
         archs: { description: 'microarchitecture ids to compare (default: all of list_archs)', type: 'array', items: { type: 'string' } },
@@ -238,10 +194,9 @@ export function mcpTools(w) {
       name: 'list_loops',
       title: 'List the loops of assembly text',
       description:
-        'Lists the loops of x86-64 assembly text (a whole function or file: gcc -S, clang -S, objdump -d lines) without ' +
-        'analyzing it: per loop `index` (what `loop: N` picks), `label` (what `loop: "LABEL"` picks), `function`, `line` ' +
-        'and `endLine`, `instructions`, `depth` (1 = innermost), `auto` (the one analyze picks by default). `func` keeps ' +
-        'one function\'s loops. The analyze result also lists the loops it did not pick as `otherLoops`. ' + ERRORS_NOTE,
+        'The loops of assembly text (a function or file; gcc/clang -S, objdump -d, perf annotate) without analyzing it: ' +
+        '`index` and `label` (what analyze\'s `loop` takes), `function`, `line`, `endLine`, `instructions`, `depth` (1 = ' +
+        'outermost), `auto` (the one analyze picks by default). `func` keeps one function\'s loops.',
       inputSchema: obj({
         source: str('the assembly text'),
         func: codeShape.func,
@@ -249,17 +204,16 @@ export function mcpTools(w) {
       annotations: readOnly, execution,
       handler: async ({ source, func }) => {
         const ls = listLoops(source, { func: func ?? null });
-        return result(Array.isArray(ls) ? { code: 0, loops: ls } : { code: 1, error: ls.error, stderr: [{ text: ls.error }] });
+        if (!Array.isArray(ls)) return result({ code: 1, error: ls.error, stderr: [{ text: ls.error }] });
+        return result({ code: 0, loops: ls, ...(ls.length ? {} : { note: loopsNote(source) }) });
       },
     },
     {
       name: 'assemble',
       title: 'Assemble x86-64 code',
       description:
-        'Assembles x86-64 assembly text with LLVM\'s assembler (LLVM 22, the same bytes as llvm-mc) and returns ' +
-        '{code: 0, hex, length, stderr} (stderr: warnings), or the assembler\'s errors as {code: 2, error, stderr} with ' +
-        'line/column tags. The syntax is detected unless given (Intel noprefix or AT&T); the text may switch with .intel_syntax noprefix / ' +
-        '.att_syntax. Only .text is returned.',
+        'Assembles x86-64 text with LLVM\'s assembler (LLVM 22, the bytes of llvm-mc): {code: 0, hex, length, stderr}, or ' +
+        '{code: 2, error, stderr} with line/column tags. The syntax is detected unless given. Only .text is returned.',
       inputSchema: obj({
         source: { description: 'the assembly text', type: 'string' },
         syntax: codeShape.syntax,
@@ -270,12 +224,20 @@ export function mcpTools(w) {
   ];
 }
 
+// Why a text has no loops to list: a marked region (analyze takes the region, not a loop), or no backward branch.
+function loopsNote(source) {
+  if (/^\s*(?:#|\/\/|;)\s*(?:LLVM-MCA-BEGIN|wuica-begin)(?![\w-])/im.test(source) || /^\s*mov[l]?\s+(?:ebx\s*,\s*111|\$111\s*,\s*%ebx)\s*$/im.test(source)) {
+    return 'the text has a marked region (LLVM-MCA-BEGIN, wuica-begin or IACA markers): analyze takes the region, not a loop';
+  }
+  return 'no backward branch to a label of the text: analyze takes the whole text (or a function\'s body)';
+}
+
 // The tool as tools/list shows it (without the handler).
 export const toolListing = ({ handler, ...t }) => t;
 
 // ---- a validator for the keywords these schemas use ------------------------------------------------------------------------
 // type (object, array, string, integer, number, boolean), properties, required, additionalProperties: false, enum, items,
-// minimum, maximum, exclusiveMinimum, minLength, anyOf. Returns the first problem as text ("options.minIterations: expected an integer,
+// minimum, maximum, exclusiveMinimum, minLength, minItems, maxItems, anyOf. Returns the first problem as text ("options.minIterations: expected an integer,
 // got \"many\""), or null.
 const kind = (v) => (v === null ? 'null' : Array.isArray(v) ? 'an array' : typeof v === 'object' ? 'an object' : typeof v === 'string' ? 'a string' : typeof v === 'boolean' ? 'a boolean' : typeof v === 'number' ? (Number.isInteger(v) ? 'an integer' : 'a number') : typeof v);
 const show = (v) => JSON.stringify(v)?.slice(0, 60) ?? String(v);
@@ -305,6 +267,8 @@ export function validate(schema, value, at = '') {
     }
     case 'array': {
       if (!Array.isArray(value)) return `${where}: expected an array, got ${kind(value)}`;
+      if (schema.minItems !== undefined && value.length < schema.minItems) return `${where}: expected at least ${schema.minItems} items, got ${value.length}`;
+      if (schema.maxItems !== undefined && value.length > schema.maxItems) return `${where}: expected at most ${schema.maxItems} items, got ${value.length}`;
       for (let i = 0; i < value.length; i++) { const e = schema.items ? validate(schema.items, value[i], `${where}[${i}]`) : null; if (e) return e; }
       return null;
     }

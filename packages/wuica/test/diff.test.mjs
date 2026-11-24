@@ -89,11 +89,15 @@ test('the MCP tool diff_blocks gives the library\'s result', async () => {
   assert.deepEqual(JSON.parse(r.content[0].text), await w.diff('SKL', REQ));
   const e = await callTool(tools, 'diff_blocks', { arch: 'SKL', a: { source: DOT1 }, b: { source: 'frob rax' } });
   assert.equal(e.isError, true);
+  // per-side options as the library takes them; per [A, B] exactly two
+  const own = await callTool(tools, 'diff_blocks', { arch: 'SKL', a: { source: DOT1, options: { noMacroFusion: true } }, b: { source: DOT4 } });
+  assert.deepEqual(JSON.parse(own.content[0].text), await w.diff('SKL', { a: { source: DOT1, options: { noMacroFusion: true } }, b: { source: DOT4 } }));
+  assert.match((await callTool(tools, 'diff_blocks', { ...REQ, per: [1, 2, 3] })).content[0].text, /^Invalid arguments for tool diff_blocks: per: expected/);
   const bad = await callTool(tools, 'diff_blocks', { a: { source: DOT1 } });
   assert.match(bad.content[0].text, /^Invalid arguments for tool diff_blocks: b: required/);
 });
 
-test('the MCP tool list_loops: listLoops\' entries, func, errors', async () => {
+test('the MCP tool list_loops: listLoops\' entries, func, errors, why there are none', async () => {
   const { listLoops } = await import('../lib/index.js');
   const tools = mcpTools(w);
   const src = 'f:\n.L1:\n add rax, 1\n dec rcx\n jnz .L1\n.L2:\n add rbx, 1\n dec rdx\n jnz .L2\n ret\n';
@@ -102,6 +106,10 @@ test('the MCP tool list_loops: listLoops\' entries, func, errors', async () => {
   const e = await callTool(tools, 'list_loops', { source: src, func: 'nope' });
   assert.equal(e.isError, true);
   assert.match(JSON.parse(e.content[0].text).error, /^func: "nope" is not a label/);
+  const marked = JSON.parse((await callTool(tools, 'list_loops', { source: '# LLVM-MCA-BEGIN\nl:\n dec rcx\n jnz l\n# LLVM-MCA-END\n' })).content[0].text);
+  assert.deepEqual(marked.loops, []);
+  assert.match(marked.note, /marked region/);
+  assert.match(JSON.parse((await callTool(tools, 'list_loops', { source: 'add rax, 1\n' })).content[0].text).note, /no backward branch/);
 });
 
 test('the MCP tool compare_archs with per', async () => {

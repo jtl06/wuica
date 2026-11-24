@@ -40,6 +40,11 @@ test('the SDK client: initialize, ping, tools/list, every tool, errors', async (
   assert.equal(range.content[0].text, 'Invalid arguments for tool analyze: options.alignmentOffset: expected an integer, got 1.5');
   const far = await client.callTool({ name: 'analyze', arguments: { hex: '4801d8', format: 'json', options: { alignmentOffset: 64 } } });
   assert.equal(JSON.parse(far.content[0].text).tp, 1);
+  // the MCP tools keep caps on the simulation length (README: the third difference)
+  const long = await client.callTool({ name: 'analyze', arguments: { hex: '4801d8', options: { minCycles: 10000000 } } });
+  assert.equal(long.content[0].text, 'Invalid arguments for tool analyze: options.minCycles: expected at most 1000000, got 10000000');
+  const it = await client.callTool({ name: 'analyze', arguments: { hex: '4801d8', options: { minIterations: 100001 } } });
+  assert.match(it.content[0].text, /minIterations: expected at most 100000/);
   const miss = await client.callTool({ name: 'assemble', arguments: {} });
   assert.equal(miss.content[0].text, 'Invalid arguments for tool assemble: source: required');
   // an unknown tool and an unknown method: protocol errors

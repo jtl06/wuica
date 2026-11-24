@@ -29,7 +29,7 @@ test('initialize: server info and instructions', () => {
   assert.deepEqual(remote.getServerVersion(), local.getServerVersion());
 });
 
-test('tools/list: the five tools of the stdio server, same schemas', async () => {
+test('tools/list: the tools of the stdio server, same schemas', async () => {
   const r = await remote.listTools();
   assert.deepEqual(r.tools.map((t) => t.name).sort(), ['analyze', 'assemble', 'compare_archs', 'diff_blocks', 'list_archs', 'list_loops', 'what_if']);
   assert.deepEqual(r, JSON.parse(JSON.stringify(await local.listTools()))); // the in-memory transport keeps `_meta: undefined`

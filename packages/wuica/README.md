@@ -420,15 +420,17 @@ Request:
 
 ### Option ranges per interface
 
-The numeric options have the same range in the library, the CLI, the MCP tools and the REST API: any integer
-(`alignmentOffset`: negative values and values above 63 are simulated as given; the reference binary `crates/wuica-cli`
-refuses beyond ±2^62). A value that is not an integer is refused (code 1, REST 400; the MCP tools' schema rejects it).
+The numeric options have the same range in the library, the CLI, the MCP tools and the REST API: any integer up to
+2^53 - 1 in magnitude (`alignmentOffset`: negative values and values above 63 are simulated as given; the reference
+binary `crates/wuica-cli` refuses beyond ±2^62). Another value is refused (code 1, REST 400; the MCP tools' schema rejects
+it).
 Everywhere, a block of more than 250,000 uops per iteration is refused (a work budget, code 3), and very large values run
 out of memory (code 3). The differences:
 
 | Interface | Limits |
 |---|---|
 | REST API and remote MCP (`server/`) | `minIterations` at most 1000, `minCycles` at most 20000; `source` at most 64 KB, `hex` at most 65536 characters, at most 10,000 instructions |
+| MCP tools (stdio and remote) | `minIterations` 1–100000, `minCycles` 1–1000000 (an agent should not start a 3 GB simulation by accident) |
 | API server, its rate limit | per client, a token bucket (`rateBurst`, `ratePerMinute`); a request costs in proportion to the analyses it can start, a compare of every microarchitecture `compareCost` (3): analyze 1 token, compare of N CPUs `ceil(3N/15)`, what-if `ceil(3(1 + variants)/15)` (3 by default; `align` adds 64 analyses: 13 more), diff 1; at least 1 per request, at most the burst; the same in REST and `/mcp`. What-if and diff run all their analyses within one job's time limit and start none once the client has gone |
 | web page | clamps `alignmentOffset` to 0–63, `minIterations` to 1–10000, `minCycles` to 1–100000; at most 1 MiB of machine code |
 

@@ -72,7 +72,7 @@ test('the work budget: wbinvd (about 10^6 uops) fails at once with code 3; an al
   assert.ok(performance.now() - t0 < 5000, `${Math.round(performance.now() - t0)} ms`);
   const big = await w.analyze('SKL', { hex: HEX, options: { alignmentOffset: 2 ** 62 + 4096 } });
   assert.notEqual(big.code, 0);
-  assert.match(big.error, /alignmentOffset .* out of range|not an integer/);
+  assert.match(big.error, /alignmentOffset\b.* out of range/);
   assert.equal((await w.analyze('SKL', { hex: HEX, options: { alignmentOffset: 2 ** 40 } })).tp, (await w.analyze('SKL', { hex: HEX })).tp);
 });
 
@@ -106,6 +106,7 @@ test('otherLoops: the loops not analyzed when the text has more than one (listLo
   assert.equal((await w.analyze('SKL', { source: 'l:\n dec rcx\n jnz l\n' })).otherLoops, undefined);
   assert.equal((await w.analyze('SKL', { hex: HEX })).otherLoops, undefined);
   assert.equal(listLoops(42).error, '`source` must be assembly text');
+  assert.equal((await w.analyze('SKL', { hex: HEX, options: { minCycles: 2 ** 53 } })).error, 'option minCycles: 9007199254740992 is out of range (at most 2^53 - 1 in magnitude)');
 });
 
 test('compare with per: cycles per element on each row (as the CLI\'s -arch with -per)', async () => {
@@ -204,7 +205,7 @@ test('options are passed through and checked', async () => {
   for (const o of [{ alignmentOffset: '3' }, { alignmentOffset: 1.5 }, { minIterations: 2 ** 60 }, { minCycles: NaN }, { simpleFrontEnd: 'yes' }, { noMicroFusion: 1 }, { includeTrace: 'x' }]) {
     const r = await w.analyze('SKL', { hex: '4801d8', options: o });
     assert.equal(r.code, 1, JSON.stringify(o));
-    assert.match(r.error, /^option \w+: .* is not (an integer|true or false)$/);
+    assert.match(r.error, /^option \w+: .* (is not (an integer|true or false)|is out of range \(at most 2\^53 - 1 in magnitude\))$/);
   }
   assert.equal((await w.compare({ hex: '4801d8', options: { minCycles: 'x' } })).code, 1);
   const typo = await w.analyze('SKL', { hex: '4801d8', options: { minIteration: 5 } });

@@ -392,7 +392,7 @@ Check this table before suggesting an optimization. "Identical results" means ru
   exist only in JavaScript. A Rust user or a future native server gets less than `npx wuica-cli`.
 - The package's `insights.js` and `whatif.js` re-implement the page's `bound.js` and `whatif.js`; agreement is tested on the
   built-in examples only (`tests-js/web_bound.mjs`, `web_whatif.mjs`).
-- The option ranges are the library's everywhere; the servers cap `minIterations` and `minCycles`, the page clamps
+- The option ranges are the library's everywhere; the MCP tools and the servers cap `minIterations` and `minCycles`, the page clamps
   (`packages/wuica/README.md`, "Option ranges per interface").
 
 ### 10.5 Tests

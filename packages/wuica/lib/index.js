@@ -162,6 +162,7 @@ function pickOptions(req, extraKeys) {
     // a value of the wrong kind is a bad request (code 1), like an unknown option, not a failed analysis
     const bad = typeof d === 'number' ? !Number.isSafeInteger(v) : typeof d === 'boolean' ? typeof v !== 'boolean'
       : k === 'initPolicy' && !['diff', 'same', 'stack'].includes(v);
+    if (bad && typeof d === 'number' && Number.isInteger(v)) return { error: `option ${k}: ${v} is out of range (at most 2^53 - 1 in magnitude)` };
     if (bad) return { error: `option ${k}: ${JSON.stringify(v)} is not ${typeof d === 'number' ? 'an integer' : typeof d === 'boolean' ? 'true or false' : 'one of "diff", "same", "stack"'}` };
     out[k] = v;
   }
