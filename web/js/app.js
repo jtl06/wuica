@@ -291,6 +291,7 @@ function writeControls() {
   el.syntax.value = state.syntax;
   el.syntaxWrap.hidden = state.mode !== 'asm';
   el.code.value = buffers[state.mode];
+  textA = el.code.value; // (the text before the next edit: a format switch is not other code)
   el.code.placeholder = PLACEHOLDERS[state.mode];
   el.code.setAttribute('aria-label', state.mode === 'asm' ? 'Assembly code' : 'Machine code (hex)');
   el.codeHint.textContent = HINTS[state.mode];
@@ -1294,6 +1295,7 @@ function setupFeatures() {
     bLoopChip = createLoopChip(document.getElementById('b-arch').closest('label'), (v) => { if (state.bLoop === v) return; state.bLoop = v; changed({ rerun: true }); }, 'loop-chip-b', () => [document.getElementById('b-messages')]); // (in B's row, else under its editor)
     textB = bCode.value;
     bCode.addEventListener('input', () => {
+      if (textB.trim() === '' || replacesText(textB, bCode.value)) ab.replacedB(); // (as for A: other code, elems 1)
       if (replacesText(textB, bCode.value)) newTextB(); else textB = bCode.value;
       if (ce.isLink(bCode.value.trim())) ab.clearMessages(); // (as for A)
       bLoopChip.sync(state.bMode === 'asm' ? bCode.value : null);
@@ -1433,6 +1435,9 @@ function bind() {
   });
   el.code.addEventListener('input', (e) => {
     buffers[state.mode] = el.code.value;
+    // other code in place of the old (a paste or typing over most of it, either format): its elements per iteration start
+    // again at 1 (an edit keeps them, marked: ab.js)
+    if (textA.trim() === '' || replacesText(textA, el.code.value)) ab?.replacedA();
     if (state.mode === 'asm' && (textA.trim() === '' || replacesText(textA, el.code.value))) {
       newTextA();
       // a pasted text in the other syntax (clang -S, objdump: AT&T) switches the select, unless the user chose it

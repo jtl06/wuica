@@ -194,6 +194,42 @@ try {
     await page.close();
   }
 
+  // ---- elems: back to 1 for other code (a paste); an edit marks it; the same value typed again clears the mark ---------
+  {
+    const page = await fresh();
+    const r = await page.eval(`${W}
+      const unit = () => document.querySelector('#result-body .tp .unit')?.textContent;
+      const field = () => ({ value: $('a-work').value, flag: $('a-work').closest('label').classList.contains('flag'), title: $('a-work').closest('label').title });
+      const out = {};
+      set($('a-work'), '8'); await settle(); out.set = [field(), unit()];
+      pasteInto($('code'), ${js(fx('fnv.s'))}); await settle(); out.pasted = [field(), unit()];
+      set($('a-work'), '8'); await settle();
+      $('code').focus(); $('code').setSelectionRange(0, 0); document.execCommand('insertText', false, '# a comment\\n'); await settle();
+      out.edited = [field(), unit(), document.querySelector('#result-body .tp .unit').title];
+      // the same number typed again (no focus event first: as typed into the focused field)
+      $('a-work').value = '8'; $('a-work').dispatchEvent(new Event('input', { bubbles: true })); await wait(100);
+      out.confirmed = [field(), unit()];
+      $('copy-link').click(); await wait(200); out.hash = location.hash;
+      // asm -> hex (the same machine code): kept; other hex pasted: 1
+      $('mode-hex').click(); await until(() => /^[0-9a-f ]+/i.test($('code').value.trim()) && !$('code').readOnly); await settle();
+      out.hex = field().value;
+      pasteInto($('code'), '48 83 c0 01 49 ff cf 75 f7'); await settle(); out.hexPasted = field().value;
+      return out;`, { timeout: 120000 });
+    check(r.set[0].value === '8' && r.set[1] === 'cycles/element', 'elems: set', js(r.set));
+    check(r.pasted[0].value === '1' && !r.pasted[0].flag && r.pasted[1] === 'cycles/iteration', 'elems: other code pasted: back to 1, no mark', js(r.pasted));
+    check(r.edited[0].value === '8' && r.edited[0].flag && r.edited[1] === 'cycles/element?' && /The code changed/.test(r.edited[0].title) && !/A's/.test(r.edited[0].title), 'elems: an edit keeps it, marked (single mode: not "A\'s code")', js(r.edited));
+    check(!r.confirmed[0].flag && r.confirmed[1] === 'cycles/element', 'elems: the same value typed again clears the mark (field and headline)', js(r.confirmed));
+    check(/[&#]aw=8(&|$)/.test(r.hash) && r.hex === '8' && r.hexPasted === '1', 'elems: in the link; kept through asm → hex; other hex pasted: 1', js([r.hash.slice(0, 40), r.hex, r.hexPasted]));
+    const p2 = await Page.open(browser, { width: 1440, height: 900 });
+    await p2.goto(`${srv.origin}/?nosw=1${r.hash}`);
+    await p2.waitFor(`document.getElementById('results').dataset.run && document.querySelector('#result-body .tp .value')`, 'the result', 60000);
+    const back = await p2.eval(`${W} await settle(); return [$('a-work').value, document.querySelector('#result-body .tp .unit').textContent, $('a-work').closest('label').classList.contains('flag')];`);
+    check(back[0] === '8' && back[1] === 'cycles/element' && !back[2], 'elems: a shared link opens with its elems, unmarked', js(back));
+    check(page.take().length === 0 && p2.take().length === 0, 'elems: no errors', '');
+    await p2.close();
+    await page.close();
+  }
+
   // ---- B6: an assembler error of the old code goes when a Compiler Explorer link replaces it (A, and B) ----------------
   {
     const page = await fresh();

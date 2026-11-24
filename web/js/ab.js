@@ -7,8 +7,8 @@
 //
 // Elements per iteration (aWork, bWork): the elements (or bytes) one iteration of each side processes. Given, A and B
 // are compared per element: the headline, the limits and the table per CPU. They apply as they are typed, without a new
-// analysis. Code that replaces a side's code (an import, an example, A → B) resets its count; an edit of the code marks
-// the count (it may no longer be right) until the field is visited.
+// analysis. Code that replaces a side's code (a paste or typing over most of it, an import, an example, A → B) resets its
+// count; an edit of the code marks the count (it may no longer be right) until the field is visited or the count typed.
 //
 // Its state is part of the page's state (url-state.js: ab, bMode, bSyntax, bArch, bText, aWork, bWork), so a link
 // carries both sides. The page (app.js) runs the analyses: inputs() gets the machine code of both sides,
@@ -43,7 +43,8 @@ function percent(p) {
 const sign2 = (v) => (v === 0 ? '0' : signedCycles(v)); // cycle counts (0: the same)
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const ok =(r) => !!r && typeof r === 'object' && !('error' in r) && Array.isArray(r.rows) && Array.isArray(r.columns);
-const WORK_TITLE = 'elements per iteration: the elements (or bytes) one iteration processes; A and B are then compared per element';
+// (per mode: single mode has one count, the page's)
+const workTitle = (ab) => `elements per iteration: the elements (or bytes) one iteration processes; ${ab ? 'A and B are then compared per element' : 'the result is then per element'}`;
 
 // api (from app.js):
 //   state, el: {code, body, toolbar}, archItems() -> Map, archTitle(key, experimental), ensureAssembler(), ensureTable(key),
@@ -71,7 +72,7 @@ export function createAB(api) {
   // elements per iteration: a small number field of each side's row
   const workField = (side) => {
     const input = h('input', { type: 'number', id: `${side}-work`, class: 'ab-work-in', min: 1, max: LIMITS.aWork[1], step: 1, inputmode: 'numeric', value: 1 });
-    const label = h('label', { class: 'inline ab-work', title: WORK_TITLE }, h('span', { class: 'ab-work-k', text: 'elems' }), input);
+    const label = h('label', { class: 'inline ab-work', title: workTitle(state.ab) }, h('span', { class: 'ab-work-k', text: 'elems' }), input);
     return { input, label };
   };
 
@@ -153,7 +154,7 @@ export function createAB(api) {
       const flag = flagged(s);
       x.work.label.classList.toggle('flag', flag);
       x.work.input.setAttribute('aria-invalid', flag ? 'true' : 'false');
-      x.work.label.title = flag ? `${WORK_TITLE}. ${s.toUpperCase()}'s code changed since it was set: check it` : WORK_TITLE;
+      x.work.label.title = flag ? `${workTitle(state.ab)}. ${state.ab ? `${s.toUpperCase()}'s code` : 'The code'} changed since it was set: check it (or confirm it: type it again)` : workTitle(state.ab);
     }
     // a count changed by any route (typed, swap, A → B, a link, an example): the shown comparison is weighed again;
     // in single mode the result (A's count, or its mark)
@@ -223,7 +224,7 @@ export function createAB(api) {
     input.addEventListener('change', () => setWork(s, input.value, { final: true }));
     input.addEventListener('focus', () => { settle(s); paintWork(); }); // visited: the count is confirmed for this code
   }
-  api.el.code.addEventListener('input', () => { if (state.ab) paintWork(); });
+  api.el.code.addEventListener('input', () => paintWork()); // (single mode too: the result's "?" follows the mark)
 
   rSingle.addEventListener('change', () => { if (rSingle.checked) setActive(false); });
   rAB.addEventListener('change', () => { if (rAB.checked) setActive(true); });
@@ -731,6 +732,8 @@ export function createAB(api) {
     setB(code) { setB(code); paint(); api.changed({ now: true }); },
     // side A's code was replaced (an example, an import): its count starts again at 1
     replacedA() { if (state.aWork !== 1) { state.aWork = 1; api.changed(); } settle('a'); paintWork(); },
+    // B's code was replaced by other code (a paste over it): its count starts again at 1
+    replacedB() { if (state.bWork !== 1) { state.bWork = 1; api.changed(); } settle('b'); paintWork(); },
     // a side's code is the same machine code in another form (asm <-> hex), or came with its count (a link): its count
     // stays right
     settleCode(s) { settle(s); paintWork(); },
