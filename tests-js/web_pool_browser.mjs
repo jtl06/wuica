@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { findChrome } from './chrome.mjs';
 import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
 import { DEFAULT_STATE, encodeState } from '../web/js/url-state.js';
+import { stopChrome } from './cdp.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -269,10 +270,8 @@ try {
   check(false, 'the test ran to the end', e?.stack ?? String(e));
 } finally {
   ws.close();
-  proc.kill();
   server.close();
-  await sleep(300);
-  try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch { /* Chrome may still be writing its profile */ }
+  await stopChrome(proc, [tmp]); // (after Chrome's exit: it writes to its profile until then)
 }
 
 console.log(`${count} pool browser checks, ${failed} failed`);

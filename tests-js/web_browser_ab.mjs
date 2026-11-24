@@ -5,7 +5,7 @@
 //    node tests-js/web_browser_ab.mjs [--chrome PATH]
 //
 // Skips (exit 0) if Chrome is not found.
-import { testConditions } from './cdp.mjs';
+import { testConditions, stopChrome } from './cdp.mjs';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -519,10 +519,8 @@ try {
   check(false, 'the test ran to the end', e?.stack ?? String(e));
 } finally {
   browser.close();
-  proc.kill();
   server.close();
-  await sleep(300);
-  try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch { /* Chrome may still be writing its profile */ }
+  await stopChrome(proc, [tmp]); // (after Chrome's exit: it writes to its profile until then)
 }
 
 console.log(`${count} A–B / Compiler Explorer browser checks, ${failed} failed`);

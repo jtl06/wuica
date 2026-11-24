@@ -5,7 +5,7 @@
 //    node tests-js/web_layout_browser.mjs [--chrome PATH]
 //
 // Skips (exit 0) if Chrome is not found.
-import { testConditions } from './cdp.mjs';
+import { testConditions, stopChrome } from './cdp.mjs';
 import { LONG_TASK_MS } from './cdp.mjs'; // (the bound of the long-task checks)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -384,10 +384,8 @@ try {
   check(false, 'the test ran to the end', e?.stack ?? String(e));
 } finally {
   browser.close();
-  proc.kill();
   server.close();
-  await sleep(300);
-  try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch { /* Chrome may still be writing its profile */ }
+  await stopChrome(proc, [profile]); // (after Chrome's exit: it writes to its profile until then)
 }
 
 console.log(`${count} layout checks, ${failed} failed`);

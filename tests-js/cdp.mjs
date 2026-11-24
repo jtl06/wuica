@@ -121,6 +121,23 @@ export class Browser {
   close() { this.#ws.close(); }
 }
 
+/** Stops a Chrome this suite started and removes its profile folder (dirs: the folders the suite made for it). Chrome
+ * writes to its profile until it has exited, so the folder is removed after the exit, not after the kill: a removal
+ * before it leaves a half-written profile in the temp folder on every run. Waits at most a few seconds for the exit
+ * (then SIGKILL). */
+export async function stopChrome(proc, dirs = []) {
+  const exited = () => proc.exitCode !== null || proc.signalCode !== null;
+  const exit = exited() ? Promise.resolve() : new Promise((r) => proc.once('exit', r));
+  if (!exited()) { try { proc.kill(); } catch { /* gone */ } }
+  await Promise.race([exit, sleep(5000)]);
+  if (!exited()) { try { proc.kill('SIGKILL'); } catch { /* gone */ } await Promise.race([exit, sleep(2000)]); }
+  for (const d of dirs) {
+    for (let i = 0; i < 3 && fs.existsSync(d); i++) {
+      try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch { await sleep(300); }
+    }
+  }
+}
+
 /** starts headless Chrome with a fresh profile: { browser, close() } */
 export async function launch(chrome, { extraArgs = [] } = {}) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-chrome-'));
@@ -136,11 +153,11 @@ export async function launch(chrome, { extraArgs = [] } = {}) {
   return {
     browser,
     async close() {
+      const exit = proc.exitCode !== null || proc.signalCode !== null ? Promise.resolve() : new Promise((r) => proc.once('exit', r));
       try { await browser.send('Browser.close'); } catch { /* gone */ }
       browser.close();
-      await Promise.race([new Promise((r) => proc.once('exit', r)), sleep(3000)]);
-      try { proc.kill('SIGKILL'); } catch { /* exited */ }
-      try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch { /* Chrome may still be writing its profile */ }
+      await Promise.race([exit, sleep(3000)]);
+      await stopChrome(proc, [profile]);
     },
   };
 }

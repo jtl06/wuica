@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { findChrome } from './chrome.mjs';
 import { hostHandler, compressedByHost, transferSize } from './static-host.mjs';
 import { BUDGET, SLACK } from './budgets.mjs';
+import { stopChrome } from './cdp.mjs';
 import { DEFAULT_STATE, encodeState, decodeState } from '../web/js/url-state.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -104,7 +105,9 @@ const sizeOf = (p) => { const f = path.join(dist, p.replace(/^\//, '')); try { r
 // ---- 2. the page in Chrome
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-host-test-'));
 const proc = spawn(chrome, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${path.join(tmp, 'profile')}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
-const cleanup = () => { try { proc.kill(); } catch {} for (const d of [tmp, tmpBuilds]) try { fs.rmSync(d, { recursive: true, force: true }); } catch {} };
+// (the folders after Chrome's exit: it writes to its profile until then, and a profile removed before that was left in
+// the temp folder, half written, on every run)
+const cleanup = () => stopChrome(proc, [tmp, tmpBuilds]);
 try {
   const wsUrl = await new Promise((resolve, reject) => {
     let err = '';
@@ -289,8 +292,8 @@ try {
 } catch (e) {
   check(false, 'the test ran', e.stack);
 } finally {
-  cleanup();
   server.close();
+  await cleanup();
 }
 console.log(`${count} host checks, ${failed} failed`);
 process.exit(failed ? 1 : 0);

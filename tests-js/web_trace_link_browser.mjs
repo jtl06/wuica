@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { hostHandler } from './static-host.mjs';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { CLASSIC_EXAMPLES } from '../web/js/examples.js';
+import { stopChrome } from './cdp.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(here, '..', 'web', 'dist');
@@ -526,10 +527,8 @@ try {
   check(false, 'the test ran to the end', e?.stack ?? String(e));
 } finally {
   ws.close();
-  proc.kill();
   server.close();
-  await sleep(300);
-  try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch { /* Chrome may still be writing its profile */ }
+  await stopChrome(proc, [tmp]); // (after Chrome's exit: it writes to its profile until then)
 }
 
 console.log(`${count} trace link checks, ${failed} failed`);
