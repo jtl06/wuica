@@ -11,7 +11,7 @@
 import { h, sideTag } from './render.js';
 import { makeRequest } from './engine.js';
 import { summarize, resultKey, ResultCache, latestWins } from './compare.js';
-import { encodeState } from './url-state.js';
+import { encodeState, LIMITS } from './url-state.js';
 import { experiments, outcome, weight, bestOf, shownOutcome } from './whatif-core.js';
 import { toHex } from './hex-input.js';
 import { setCopy } from './copy-view.js';
@@ -27,13 +27,17 @@ export const formatDelta = (d) => (Math.abs(d) < 0.005 ? '0.00' : `${d < 0 ? '�
 export const formatSpeedup = (s) => (Number.isFinite(s) ? `×${s.toFixed(2)}` : '—');
 
 // The fragment of the page with a variant (machine code without spaces: the fragment takes up to 200,000 characters,
-// enough for 100 kB of code, e.g. SHA-256 unrolled ×8).
-export const variantFragment = (exp, arch) => encodeState({ mode: 'hex', text: exp.hex, arch, cpus: '', ...exp.options });
+// enough for 100 kB of code, e.g. SHA-256 unrolled ×8). work: the elements per iteration of the original; the variant's
+// iteration does exp.per of the original's (unrolled ×4: 4), so its tab counts work × per, and its headline (cycles per
+// element) is the original's unit (an A–B link with the original would not fit SHA-256 ×8).
+export const variantFragment = (exp, arch, work = 1) => encodeState({ mode: 'hex', text: exp.hex, arch, cpus: '', ...exp.options,
+  aWork: Math.min(LIMITS.aWork[1], Math.max(1, Math.round(work)) * (exp.per ?? 1)) });
 
 // ---- the view ----------------------------------------------------------------------------------------------------
 
 // env: { engine(), pool(), onToggle(open), assemble(text) -> promise of the assembler's result (Intel syntax; the
-// accumulator variants) or null, cpus() -> the checked CPUs' keys (the best number of accumulators of each) }
+// accumulator variants) or null, cpus() -> the checked CPUs' keys (the best number of accumulators of each),
+// work(view) -> the elements per iteration of the result shown (the links of the variants carry them) }
 export function createWhatIf(env) {
   const cache = new ResultCache(512);
   const asmCache = new Map(); // accumulator text -> {hex} | {error}
@@ -145,9 +149,12 @@ export function createWhatIf(env) {
   }
 
   function variantLink(x) {
-    const a = h('a', { class: 'wi-open', href: '#', target: '_blank', rel: 'noopener', 'aria-label': `open "${x.label}" in a new tab`, title: 'open this variant in a new tab (as machine code)', text: '↗' });
+    const work = () => Math.max(1, env.work?.(view) ?? 1);
+    const per = () => work() * (x.per ?? 1);
+    const a = h('a', { class: 'wi-open', href: '#', target: '_blank', rel: 'noopener', 'aria-label': `open "${x.label}" in a new tab`,
+      title: `open this variant in a new tab (as machine code${per() > 1 ? `; elems ${per()}${x.per > 1 ? `: unrolled ×${x.per}` : ''}, so its cycles per element compare` : ''})`, text: '↗' });
     const fill = () => {
-      a.href = `${location.pathname}#${variantFragment(x, job.arch)}`;
+      a.href = `${location.pathname}#${variantFragment(x, job.arch, work())}`;
     };
     for (const ev of ['pointerenter', 'focus', 'pointerdown', 'click']) a.addEventListener(ev, fill);
     return a;

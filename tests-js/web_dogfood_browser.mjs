@@ -172,6 +172,28 @@ try {
     await page.close();
   }
 
+  // ---- B8: a try variant opened with ↗ keeps its unit: elems = the original's × the unroll -----------------------------
+  {
+    const page = await fresh();
+    const r = await page.eval(`${W}
+      pasteInto($('code'), ${js(fx('fnv.s'))}); await settle();
+      const base = [tp(), document.querySelector('#result-body .tp .unit').textContent];
+      document.querySelector('.view-tab[data-tab="try"]').click();
+      await until(() => /★/.test($('whatif')?.innerText ?? ''), 60000);
+      const tr = document.querySelector('#whatif tr[data-id="acc4"]');
+      const a = tr.querySelector('a.wi-open'); a.dispatchEvent(new Event('focus'));
+      return { base, shown: tr.querySelector('.wi-tp').textContent, href: a.getAttribute('href'), title: a.title };`, { timeout: 120000 });
+    check(r.base[0] === '32.00' && /^#v=1&/.test(r.href.replace(/^[^#]*/, '')) && /elems 4: unrolled ×4/.test(r.title), 'B8: the link of "4 accumulators" says its elems', js(r));
+    const p2 = await Page.open(browser, { width: 1440, height: 900 });
+    await p2.goto(`${srv.origin}/?nosw=1${r.href.replace(/^[^#]*/, '')}`);
+    await p2.waitFor(`document.getElementById('results').dataset.run && document.querySelector('#result-body .tp .value')`, 'the variant', 60000);
+    const v = await p2.eval(`${W} return { tp: tp(), unit: document.querySelector('#result-body .tp .unit').textContent, elems: $('a-work').value, mode: $('mode-hex').checked };`);
+    check(v.mode && v.elems === '4' && v.unit === 'cycles/element' && Math.abs(Number(v.tp) - Number(r.shown.replace(/[≈~]/, ''))) < 0.06, 'B8: the variant\'s tab: elems 4, its cycles per element as try showed (not 32.00 per iteration)', js([v, r.shown]));
+    check(page.take().length === 0 && p2.take().length === 0, 'B8: no errors', '');
+    await p2.close();
+    await page.close();
+  }
+
   // ---- B6: an assembler error of the old code goes when a Compiler Explorer link replaces it (A, and B) ----------------
   {
     const page = await fresh();

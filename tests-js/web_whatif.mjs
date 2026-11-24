@@ -81,6 +81,10 @@ const OPTS = { alignmentOffset: 0, initPolicy: 'diff', simpleFrontEnd: false, no
   // the link of a variant: a hex fragment the page reads back
   const s = decodeState(variantFragment({ ...exps[0], options: exps[3].options }, 'ZEN3'));
   check(s.mode === 'hex' && s.arch === 'ZEN3' && s.simpleFrontEnd === true && s.text === exps[0].hex, 'link: the variant as a hex fragment', JSON.stringify(s));
+  // its elements per iteration: the original's times the variant's iterations of it (unrolled ×2 of 8 elements: 16)
+  const acc = exps.find((x) => x.per === 2);
+  check(decodeState(variantFragment(acc, 'SKL')).aWork === 2 && decodeState(variantFragment(acc, 'SKL', 8)).aWork === 16
+    && decodeState(variantFragment({ ...acc, per: 1 }, 'SKL')).aWork === 1, 'link: the elements per iteration of the variant (original × unroll)');
   const f = encodeState({ text: 'x', whatif: true });
   check(/(^|&)whatif=1(&|$)/.test(f) && decodeState(f).whatif === true && decodeState(encodeState({ text: 'x' })).whatif === false, 'url: whatif=1');
 }
