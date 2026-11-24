@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Assembles the deployable site in web/dist/: the page, the analyzer (wuica_wasm.wasm), the data (data/) and,
-# if it has been built, the assembler (assembler/dist/wuica_asm.wasm). It only copies: build the analyzer with
-# ./build-wasm.sh and generate data/ with tools/export_data.py first.
+# Assembles the deployable site in web/dist/: the page, the analyzer (wuica_wasm.wasm), the data (data/uarch.json and
+# the instruction tables in their binary form, data/arch/<NAME>.bin, written from data/arch/*.json by
+# tools/encode-tables.sh) and, if it has been built, the assembler (assembler/dist/wuica_asm.wasm). Build the analyzer
+# with ./build-wasm.sh and generate data/ with tools/export_data.py first.
 #
 #   web/build.sh                  then serve web/dist/ with any static file server, e.g.
 #   python3 -m http.server -d web/dist 8000
@@ -37,7 +38,7 @@ cp "$root/LICENSE" "$out/licenses/AGPL-3.0.txt"
 cp "$root/third_party/xed/LICENSE" "$out/licenses/XED-Apache-2.0.txt"
 [ -f "$root/assembler/LICENSE-LLVM.txt" ] && cp "$root/assembler/LICENSE-LLVM.txt" "$out/licenses/LLVM.txt"
 cp "$root/data/uarch.json" "$out/data/"
-cp "$root"/data/arch/*.json "$out/data/arch/"
+"$root/tools/encode-tables.sh" "$root/data/arch" "$out/data/arch"
 cp "$wasm" "$out/wuica_wasm.wasm"
 assembler=false
 if [ -f "$asm" ]; then cp "$asm" "$out/wuica_asm.wasm"; assembler=true; fi
@@ -52,7 +53,7 @@ version="$( { echo "$files" | while IFS= read -r f; do sha "$f"; done; sha "$her
 {
   printf '{\n  "version": "%s",\n  "assembler": %s,\n  "mca": %s,\n  "tables": [' "$version" "$assembler" "$mcafound"
   sep=''
-  for t in data/arch/*.json; do n="$(basename "$t" .json)"; printf '%s"%s"' "$sep" "$n"; sep=', '; done
+  for t in data/arch/*.bin; do n="$(basename "$t" .bin)"; printf '%s"%s"' "$sep" "$n"; sep=', '; done
   printf '],\n  "files": {\n'
   sep=''
   echo "$files" | while IFS= read -r f; do

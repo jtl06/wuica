@@ -267,7 +267,8 @@ if (!QUICK) {
         const code = await exec('npm', ['ci', '--no-audit', '--no-fund'], { cwd: PKG, log });
         if (code) return { status: 'fail', count: `npm ci: exit ${code}` };
       }
-      return stamped('npm', () => hashInputs(['packages/wuica/build.sh', 'data', 'assembler/dist/wuica_asm.wasm', ...LICENSES, WASM]), [path.join(PKG, 'dist/manifest.json')], async (log) => {
+      // (the binary tables come from data/ through tools/encode-tables.sh and the core's table_bin.rs)
+      return stamped('npm', () => hashInputs(['packages/wuica/build.sh', 'data', 'assembler/dist/wuica_asm.wasm', 'tools/encode-tables.sh', 'crates/wuica-core/src', 'crates/wuica-core/examples', ...LICENSES, WASM]), [path.join(PKG, 'dist/manifest.json')], async (log) => {
         const code = await exec('./build.sh', [], { cwd: PKG, env: { WUICA_WASM: WASM }, log });
         return { status: code ? 'fail' : 'pass', count: code ? `exit ${code}` : 'rebuilt' };
       })(log);
@@ -317,7 +318,8 @@ for (const name of jsSuites) {
   for (const v of variants(name)) {
     const full = v.tag ? `${name}[${v.tag}]` : name;
     task({
-      name: full, kind: 'js', browser, weight: browser ? 2 : 1, deps: name.startsWith('web_') ? ['build:web'] : ['build:wasm'],
+      // (analyze_fixtures: on the site's binary tables, web/dist/data/arch/*.bin)
+      name: full, kind: 'js', browser, weight: browser ? 2 : 1, deps: name.startsWith('web_') || name === 'analyze_fixtures' ? ['build:web'] : ['build:wasm'],
       skip: browser && !chrome ? 'no Chrome' : browser && QUICK && previous[full] > QUICK_BROWSER_MAX_S ? `slow (${previous[full].toFixed(0)} s): full only` : null,
       run: async (log) => {
         const code = await exec('node', [rel(file), ...args], { env: v.env, log });

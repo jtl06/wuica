@@ -47,7 +47,7 @@ export const PATHS = Object.freeze({
   assembler: 'wuica_asm.wasm',
   mca: 'wuica_mca.wasm',
   uarch: 'data/uarch.json',
-  table: (name) => `data/arch/${encodeURIComponent(name)}.json`,
+  table: (name) => `data/arch/${encodeURIComponent(name)}.bin`, // the binary form (tools/encode-tables.sh)
 });
 
 export function formatSize(bytes) {

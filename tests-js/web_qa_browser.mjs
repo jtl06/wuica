@@ -29,7 +29,7 @@ await engine.loadUarch(uarchBytes);
 const configs = JSON.parse(uarchBytes).configs;
 async function ref(hex, arch, options = {}) {
   const table = configs[arch].name;
-  if (!engine.hasArch(table)) await engine.loadArch(table, fs.readFileSync(path.join(dir, 'data/arch', `${table}.json`)));
+  if (!engine.hasArch(table)) await engine.loadArch(table, fs.readFileSync(path.join(dir, 'data/arch', `${table}.bin`)));
   return engine.analyze(makeRequest(hex, arch, options));
 }
 const tp2 = (r) => Number(r.tp).toFixed(2);

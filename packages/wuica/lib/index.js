@@ -15,7 +15,7 @@ import { archList, DEFAULT_ARCH, ARCH_INFO, ARCH_ORDER } from './archs.js';
 import { insights } from './insights.js';
 import { instrDetails, detailInsights } from './details.js';
 export { detailInsights };
-import { readMaybeCompressed, readMaybeCompressedSync } from './files.js';
+import { readMaybeCompressed, readMaybeCompressedSync, tableFile } from './files.js';
 import { CODES, WARM_HEX, failure, tableFailure, analysisResult, compareFields } from './core.js';
 import { ThreadPool, threadLimit, threadOption, threadsForWork } from './threads.js';
 // the web page's reading of pasted assembly (copies of web/js in lib/web: tests-js/web_pkg_copies.mjs): the loop of a whole function, objdump lines,
@@ -217,7 +217,7 @@ class Wuica {
     let p = this.#loading.get(name);
     if (!p) {
       p = (async () => {
-        const file = path.join(this.#dataDir, 'arch', `${name}.json`);
+        const file = tableFile(this.#dataDir, name);
         const bytes = await readMaybeCompressed(file);
         if (!this.#analyzer.hasArch(name)) this.#analyzer.loadArch(name, bytes, () => readMaybeCompressedSync(file));
       })();
@@ -433,7 +433,11 @@ class Wuica {
     });
     const threads = this.#threadsAuto ? threadsForWork(known, this.#threads) : Math.min(this.#threads, known.length);
     if (threads > 1) {
-      this.#pool ??= new ThreadPool({ wasm: this.#wasm, uarch: this.#uarch, dataDir: this.#dataDir, limit: this.#threads });
+      if (!this.#pool) {
+        // the pool compiles the module for its threads once; its bytes are dropped after that
+        this.#pool = new ThreadPool({ wasm: this.#wasm, uarch: this.#uarch, dataDir: this.#dataDir, limit: this.#threads });
+        this.#wasm = null;
+      }
       if (!this.#pool.broken) {
         const done = await this.#pool.run(known, threads);
         known.forEach((j, k) => { out[j.i] = done[k]; });

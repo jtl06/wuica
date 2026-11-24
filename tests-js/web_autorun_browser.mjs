@@ -20,7 +20,7 @@ const { EXAMPLES } = await import(pathToFileURL(path.join(ROOT, 'web/js/examples
 const { encodeState } = await import(pathToFileURL(path.join(ROOT, 'web/js/url-state.js')).href);
 const engine = await WasmEngine.create(fs.readFileSync(path.join(dir, 'wuica_wasm.wasm')));
 await engine.loadUarch(fs.readFileSync(path.join(dir, 'data/uarch.json')));
-await engine.loadArch('SKL', fs.readFileSync(path.join(dir, 'data/arch/SKL.json')));
+await engine.loadArch('SKL', fs.readFileSync(path.join(dir, 'data/arch/SKL.bin')));
 const want = Number((await engine.analyze(makeRequest(EXAMPLES[0].hex, 'SKL'))).tp).toFixed(2);
 
 const srv = await serve(dir);

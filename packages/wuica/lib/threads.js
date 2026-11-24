@@ -25,7 +25,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Worker, isMainThread } from 'node:worker_threads';
 import { Analyzer, capMemory } from './wasm.js';
-import { readMaybeCompressed } from './files.js';
+import { readMaybeCompressed, tableFile } from './files.js';
 import { WARM_HEX } from './core.js';
 
 const WORKER = new URL('./thread-worker.js', import.meta.url);
@@ -104,7 +104,9 @@ export class ThreadPool {
     this.#idleTimer = null;
     if (!this.#workerData) {
       const maxBytes = maxMemoryBytes(this.#limit);
+      // (the module's bytes are not needed after this: the threads get the compiled module)
       this.#compiled ??= WebAssembly.compile(capMemory(this.#wasm, maxBytes / (64 * 1024)));
+      this.#wasm = null;
       try {
         const module = await this.#compiled;
         this.#workerData ??= { module, uarch: this.#uarch, dataDir: this.#dataDir, recycleBytes: maxBytes / 2 };
@@ -126,7 +128,7 @@ export class ThreadPool {
 
   // One analysis of WARM_HEX on an instance of the threads' module (see the top); the instance is dropped afterwards.
   async #warmUp({ table, request }) {
-    const bytes = await readMaybeCompressed(path.join(this.#dataDir, 'arch', `${table}.json`));
+    const bytes = await readMaybeCompressed(tableFile(this.#dataDir, table));
     const a = new Analyzer(this.#workerData.module);
     a.loadUarch(this.#uarch);
     a.loadArch(table, bytes);

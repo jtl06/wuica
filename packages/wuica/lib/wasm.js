@@ -13,6 +13,7 @@ export class Analyzer {
   #x = null;
   #uarch = null;          // bytes of uarch.json, kept to reload after a trap
   #tables = new Map();    // table name -> its bytes, or a function that reads them again (for a reload after a trap)
+  #binary = false;        // the module reads binary tables (wuica_load_arch_bin)
   restarts = 0;
 
   constructor(module) {
@@ -21,6 +22,7 @@ export class Analyzer {
     for (const n of ['memory', 'wuica_alloc', 'wuica_free', 'wuica_result_ptr', 'wuica_load_uarch', 'wuica_load_arch', 'wuica_analyze']) {
       if (!this.#x[n]) throw new Error(`not a wuica analyzer module: export "${n}" is missing`);
     }
+    this.#binary = typeof this.#x.wuica_load_arch_bin === 'function';
   }
 
   // Arguments are byte arrays passed as (pointer, length); the result is the text at wuica_result_ptr(). Views of the
@@ -50,7 +52,7 @@ export class Analyzer {
     if (this.#uarch) this.restarts++;
     this.#x = new WebAssembly.Instance(this.#module, {}).exports;
     if (this.#uarch) this.#load('wuica_load_uarch', [this.#uarch], 'uarch.json');
-    for (const [name, t] of this.#tables) this.#load('wuica_load_arch', [enc.encode(name), typeof t === 'function' ? t() : t], `instruction table ${name}`);
+    for (const [name, t] of this.#tables) this.#loadTable(name, typeof t === 'function' ? t() : t);
   }
 
   #load(fn, inputs, what) {
@@ -64,11 +66,18 @@ export class Analyzer {
     this.#uarch = bytes;
   }
 
+  // bytes: the binary form of the table (data/arch/<name>.bin, see crates/wuica-core/src/table_bin.rs) or its JSON.
   // reload: a function that returns the bytes again (then they are not kept: they are only needed after a trap)
   loadArch(name, bytes, reload = null) {
     this.#live();
-    this.#load('wuica_load_arch', [enc.encode(name), bytes], `instruction table ${name}`);
+    this.#loadTable(name, bytes);
     this.#tables.set(name, reload ?? bytes);
+  }
+
+  #loadTable(name, bytes) {
+    if (!isBinaryTable(bytes)) return this.#load('wuica_load_arch', [enc.encode(name), bytes], `instruction table ${name}`);
+    if (!this.#binary) throw new Error(`instruction table ${name}: a binary table, and this analyzer module reads only JSON tables`);
+    this.#load('wuica_load_arch_bin', [enc.encode(name), bytes], `instruction table ${name}`);
   }
 
   hasArch(name) { return this.#tables.has(name); }
@@ -97,6 +106,12 @@ export class Analyzer {
       };
     }
   }
+}
+
+// Whether bytes are the binary form of an instruction table (they start with the magic WUICATBL).
+const MAGIC = [0x57, 0x55, 0x49, 0x43, 0x41, 0x54, 0x42, 0x4c];
+export function isBinaryTable(bytes) {
+  return bytes?.length >= 8 && MAGIC.every((b, i) => bytes[i] === b);
 }
 
 // The module bytes with the maximum of every (32-bit, unshared) memory set to at most `maxPages` (64 KiB each): an

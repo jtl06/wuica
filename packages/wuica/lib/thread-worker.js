@@ -14,7 +14,7 @@
 import path from 'node:path';
 import { parentPort, workerData } from 'node:worker_threads';
 import { Analyzer } from './wasm.js';
-import { readMaybeCompressed, readMaybeCompressedSync } from './files.js';
+import { readMaybeCompressed, readMaybeCompressedSync, tableFile } from './files.js';
 import { analysisResult, compareFields } from './core.js';
 
 const { module, uarch, dataDir, recycleBytes } = workerData;
@@ -30,7 +30,7 @@ if (analyzer) {
   parentPort.on('message', async ({ id, table, request, full }) => {
     if (!analyzer.hasArch(table)) {
       try {
-        const file = path.join(dataDir, 'arch', `${table}.json`);
+        const file = tableFile(dataDir, table);
         analyzer.loadArch(table, await readMaybeCompressed(file), () => readMaybeCompressedSync(file));
       } catch {
         parentPort.postMessage({ id, fields: null, recycle: analyzer.memoryBytes === 0 }); // 0: the module trapped

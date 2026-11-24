@@ -33,7 +33,9 @@ fn reproduces_the_text_output_of_the_reference() {
     for entry in std::fs::read_dir(format!("{}/data/arch", root())).unwrap() {
         let path = entry.unwrap().path();
         let name = path.file_stem().unwrap().to_str().unwrap().to_string();
-        engine.load_arch(&name, &std::fs::read_to_string(&path).unwrap()).unwrap();
+        // the binary form of the table, as the package and the site ship it (src/table_bin.rs of the core)
+        let bin = wuica::ArchData::from_json(&std::fs::read_to_string(&path).unwrap()).unwrap().to_bin();
+        engine.load_arch_bin(&name, &bin).unwrap();
     }
 
     let mut lines: Vec<String> = Vec::new();
