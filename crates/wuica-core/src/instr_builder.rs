@@ -12,7 +12,7 @@
 //!   corresponds to one run of the Python tool: nothing is carried over to the next call).
 
 use crate::config::{UArch, UArchConfig};
-use crate::data::{ArchData, AttrData, InstrEntry, LatData, LatKind, PerfData, PortData};
+use crate::data::{AttrData, InstrEntry, LatData, LatKind, PerfData, PortData, Tables};
 use crate::decoded::{DecodedInstr, MemAddr};
 use crate::model::{Instr, InstrList, OpId, Operand, TpKey, UopProperties};
 use crate::fasthash::FastMap;
@@ -32,7 +32,7 @@ pub fn build_instructions(
     decoded: &[DecodedInstr],
     config: &UArchConfig,
     uarch: &UArch,
-    data: &ArchData,
+    data: &dyn Tables,
     alignment_offset: i64,
     no_micro_fusion: bool,
     no_macro_fusion: bool,
@@ -124,7 +124,7 @@ enum Slot<'a> {
 /// The dict objects that the `portData` attributes refer to during the main loop of `getInstructions`: those of the instruction
 /// table and those created by the code.
 struct PortDicts<'a> {
-    data: &'a ArchData,
+    data: &'a dyn Tables,
     dicts: Vec<Slot<'a>>,
     /// (index of the perfData element, variant) -> index in `dicts`
     table: FastMap<(usize, PortVariant), usize>,
@@ -144,7 +144,7 @@ impl<'a> PortDicts<'a> {
             return Some(id);
         }
         let data = self.data;
-        let perf = &data.perf_data[perf_idx];
+        let perf = data.perf(perf_idx);
         let dict = match variant {
             PortVariant::Base => perf.ports.as_ref(),
             PortVariant::SameReg => perf.ports_sr.as_ref(),
@@ -478,7 +478,7 @@ fn get_instructions(
     disas: &[DecodedInstr],
     config: &UArchConfig,
     uarch: &UArch,
-    data: &ArchData,
+    data: &dyn Tables,
     alignment_offset: i64,
     no_micro_fusion: bool,
     no_macro_fusion: bool,
@@ -530,9 +530,9 @@ fn get_instructions(
         };
 
         let mut built = None;
-        if let Some(entries) = data.instr_data.get(&d.iform) {
+        if let Some(entries) = data.entries(&d.iform) {
             for entry in entries {
-                if match_xml_attributes(d, &data.attr_data[entry.attr]) {
+                if match_xml_attributes(d, data.attr(entry.attr)) {
                     built = Some(known_instr(&dec, entry, config, uarch, &mut dicts, no_micro_fusion, no_macro_fusion, operands));
                     break;
                 }
@@ -762,7 +762,7 @@ fn known_instr(
     let same_reg = dec.same_reg;
     let perf_idx = entry.perf_data;
     let data = dicts.data;
-    let perf: &PerfData = &data.perf_data[perf_idx];
+    let perf: &PerfData = data.perf(perf_idx);
     let empty_lat = LatData::default();
 
     let mut uops = perf.uops.unwrap_or(0);

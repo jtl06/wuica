@@ -29,6 +29,29 @@ pub struct ArchData {
     pub perf_data: Vec<PerfData>,
 }
 
+/// What the instruction builder reads of a table: the entries of a form, and the attribute and performance records they
+/// refer to. [`ArchData`] has all of them in memory; [`crate::table_bin::LazyTable`] decodes each on first use.
+pub trait Tables {
+    /// `instrData.get(iform)`
+    fn entries(&self, iform: &str) -> Option<&[InstrEntry]>;
+    /// `attrData[k]`
+    fn attr(&self, k: usize) -> &AttrData;
+    /// `perfData[k]` (the same object for the same k: the builder shares its port data between instructions)
+    fn perf(&self, k: usize) -> &PerfData;
+}
+
+impl Tables for ArchData {
+    fn entries(&self, iform: &str) -> Option<&[InstrEntry]> {
+        self.instr_data.get(iform).map(|v| v.as_slice())
+    }
+    fn attr(&self, k: usize) -> &AttrData {
+        &self.attr_data[k]
+    }
+    fn perf(&self, k: usize) -> &PerfData {
+        &self.perf_data[k]
+    }
+}
+
 impl ArchData {
     pub fn from_json(json: &str) -> Result<ArchData, serde_json::Error> {
         let data: ArchData = serde_json::from_str(json)?;

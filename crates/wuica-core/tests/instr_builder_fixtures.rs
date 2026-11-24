@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 use wuica_core::config::UArch;
 use wuica_core::data::ArchData;
+use wuica_core::table_bin::LazyTable;
 use wuica_core::decoded::DecodedInstr;
 use wuica_core::instr_builder::build_instructions;
 use wuica_core::jsoncmp;
@@ -86,14 +87,14 @@ fn check(decode_fixtures: &str, instr_fixtures: &str) -> (usize, usize) {
     static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
     let _guard = ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let uarch = UArch::from_json(&std::fs::read_to_string(format!("{}/data/uarch.json", root())).expect("run tools/export_data.py")).unwrap();
-    let mut tables: HashMap<String, ArchData> = HashMap::new();
+    let mut tables: HashMap<String, LazyTable> = HashMap::new();
     for config in uarch.configs.values() {
         if !tables.contains_key(&config.name) {
             let path = format!("{}/data/arch/{}.json", root(), config.name);
             let json = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
             // through the binary form, as the package and the site load it (src/table_bin.rs)
             let data = ArchData::from_json(&json).unwrap_or_else(|e| panic!("{path}: {e}"));
-            tables.insert(config.name.clone(), ArchData::from_bin(&data.to_bin()).unwrap_or_else(|e| panic!("{path}: {e}")));
+            tables.insert(config.name.clone(), LazyTable::new(data.to_bin()).unwrap_or_else(|e| panic!("{path}: {e}")));
         }
     }
     let mut decoded: HashMap<(String, String), Vec<DecodedInstr>> = HashMap::new();

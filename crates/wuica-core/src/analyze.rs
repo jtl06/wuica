@@ -2,7 +2,7 @@
 //! structure described in docs/WASM-API.md. This is what the command-line tool and the WebAssembly interface call.
 
 use crate::config::UArch;
-use crate::data::ArchData;
+use crate::data::Tables;
 use crate::decoded::DecodedInstr;
 use crate::facile::{self, InstrInstanceSummary, InstrSource, SimSummary, SimView, UopSummary};
 use crate::instr_builder::build_instructions;
@@ -331,7 +331,7 @@ pub fn strip_hyperlinks(s: &str) -> String {
 
 /// Runs an analysis of decoded instructions. `decode_errors` is passed through to the response. `data` must be the instruction
 /// table of the configuration (`uarch.configs[request.arch].name`).
-pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, uarch: &UArch, data: &ArchData) -> Result<Response, String> {
+pub fn analyze(decoded: &[DecodedInstr], decode_errors: u32, request: &Request, uarch: &UArch, data: &dyn Tables) -> Result<Response, String> {
     let config = uarch.configs.get(&request.arch).ok_or_else(|| format!("unknown microarchitecture: {}", request.arch))?;
     let init_policy = match request.init_policy.as_str() {
         "diff" => InitPolicy::Diff,
