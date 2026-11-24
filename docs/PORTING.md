@@ -89,6 +89,20 @@ When the data, the fixtures or the assembler change, publish a new asset (the ol
 then commit `ci/data-asset.txt` with the change that needs it. A new fixture file that a default suite reads also has to be
 added to the list in `ci/make-data-asset.sh`.
 
+## Releases
+
+The version is written in 15 places: the page (`web/js/app.js` `VERSION`), `packages/wuica` and `server/` (their
+`package.json` and lock files), and the Rust workspace (`Cargo.toml`'s `[workspace.package]` version and the workspace crates in
+`Cargo.lock`). `node scripts/check-version.mjs [VERSION]` lists them and fails unless all are equal (and equal to `VERSION` if
+given); the suite `web_version` runs it in every check. Bump them together.
+
+After a deploy, `scripts/smoke-live.sh VERSION` checks what is live, reading only: the site in headless Chrome (the footer's
+version, the service worker's cache named after the stamp in `/sw.js`, one analysis, and the bytes on the wire of the first
+visit and of the 15 tables against `tests-js/budgets.mjs`, which `web_host_browser` checks for the build: the check that would
+have caught the uncompressed tables of 0.1.9; also that the analyzer, the assembler and the tables arrive compressed) and the API
+(`/healthz`, `/api/version` for the package and the server, one analyze, one compare, MCP `tools/list` and one `what_if`).
+`--site URL` and `--api URL` point it elsewhere (a staging host, a local server), `--no-site`/`--no-api` skip a part.
+
 ## Speed
 
 - `cargo run --release -p wuica --example phases -- ARCH N HEXFILE...`: the time and the allocations of each phase (native).

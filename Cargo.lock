@@ -196,7 +196,7 @@ checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
 
 [[package]]
 name = "wuica"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "flate2",
  "serde",
@@ -208,7 +208,7 @@ dependencies = [
 
 [[package]]
 name = "wuica-cli"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "serde_json",
  "wuica",
@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "wuica-core"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "flate2",
  "indexmap",
@@ -227,14 +227,14 @@ dependencies = [
 
 [[package]]
 name = "wuica-testkit"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "flate2",
 ]
 
 [[package]]
 name = "wuica-wasm"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "wuica",
  "wuica-xed",
@@ -242,7 +242,7 @@ dependencies = [
 
 [[package]]
 name = "wuica-xed"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "cc",
  "flate2",

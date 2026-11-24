@@ -16,6 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findChrome } from './chrome.mjs';
 import { hostHandler, compressedByHost, transferSize } from './static-host.mjs';
+import { BUDGET, SLACK } from './budgets.mjs';
 import { DEFAULT_STATE, encodeState, decodeState } from '../web/js/url-state.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -96,13 +97,7 @@ const PRECOMPRESSED = /\.(?:gz|br|woff2|png)$/;
   const bad = walk(dist).filter((f) => fs.statSync(f).size > BIG && !compressedByHost(f) && !PRECOMPRESSED.test(f)).map((f) => path.relative(dist, f));
   check(bad.length === 0, 'host: every file above 50 kB is of a type the host compresses, or compressed already', bad.join(', '));
 }
-// the budgets: what a first visit and the idle prefetch of the tables transfer (the numbers of this build; a growth of
-// more than 10% fails). First visit: the files requested until the first result (the page, its modules, the analyzer, the
-// assembler, uarch.json, the tables of the CPUs shown; the service worker's precache runs meanwhile). Tables: all 15,
-// which the idle prefetch fetches (those of the first visit included). Measured on the build of 0.1.9's hotfix with
-// tables made by zlib at level 9 (web/build.sh without zopfli: first visit 2,383,630 bytes at most, the tables 939 kB;
-// with zopfli 797 kB).
-const BUDGET = { firstVisit: 2_400_000, tables: 940_000 };
+// the budgets (tests-js/budgets.mjs, shared with scripts/smoke-live.mjs, which checks the deployed site)
 const sizeOf = (p) => { const f = path.join(dist, p.replace(/^\//, '')); try { return fs.statSync(f).isFile() ? transferSize(f) : 0; } catch { return 0; } };
 
 // ---- 2. the page in Chrome
@@ -191,8 +186,8 @@ try {
     const tables = allTables();
     const prefetch = [...tables].reduce((n, p) => n + sizeOf(p), 0);
     console.log(`transfer (host's rule): first visit ${firstVisit} bytes in ${firstRequests.size} files; the ${tables.size} tables ${prefetch} bytes`);
-    check(firstVisit <= BUDGET.firstVisit * 1.1, `first visit transfers at most ${BUDGET.firstVisit} bytes + 10%`, firstVisit);
-    check(tables.size === tableCount && prefetch <= BUDGET.tables * 1.1, `the tables (the idle prefetch fetches them all) transfer at most ${BUDGET.tables} bytes + 10%`, `${prefetch} in ${tables.size} of ${tableCount}`);
+    check(firstVisit <= BUDGET.firstVisit * SLACK, `first visit transfers at most ${BUDGET.firstVisit} bytes + 10%`, firstVisit);
+    check(tables.size === tableCount && prefetch <= BUDGET.tables * SLACK, `the tables (the idle prefetch fetches them all) transfer at most ${BUDGET.tables} bytes + 10%`, `${prefetch} in ${tables.size} of ${tableCount}`);
   }
   for (const n of [1, 2]) {
     await reload();
