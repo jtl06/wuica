@@ -82,6 +82,15 @@ export class Analyzer {
 
   hasArch(name) { return this.#tables.has(name); }
 
+  // The decoder alone (wuica_decode): the instructions of `bytes` for an XED chip ("ALL": every instruction XED knows),
+  // [{addr, opcode, asm, category, ...}], or throws.
+  decode(bytes, chip = 'ALL') {
+    this.#live();
+    const r = this.#call('wuica_decode', [bytes, enc.encode(chip)]);
+    if (!Array.isArray(r)) throw new Error(r?.error ?? 'the decoder failed');
+    return r;
+  }
+
   // The size of the instance's memory in bytes (0 after a trap, until the next call).
   get memoryBytes() { return this.#x?.memory.buffer.byteLength ?? 0; }
 

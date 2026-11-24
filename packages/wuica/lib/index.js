@@ -16,6 +16,7 @@ import { insights } from './insights.js';
 import { instrDetails, detailInsights } from './details.js';
 export { detailInsights };
 import { readMaybeCompressed, readMaybeCompressedSync, tableFile } from './files.js';
+import { readObject, objdumpText, resolveFunction, objectKind } from './objfile.js';
 import { CODES, WARM_HEX, failure, tableFailure, analysisResult, compareFields } from './core.js';
 import { ThreadPool, threadLimit, threadOption, threadsForWork } from './threads.js';
 // the web page's reading of pasted assembly (copies of web/js in lib/web: tests-js/web_pkg_copies.mjs): the loop of a whole function, objdump lines,
@@ -35,6 +36,7 @@ export function listLoops(source, { func = null } = {}) {
 export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, CODES, WARM_HEX, parseDiagnostics, insights };
 export { whatIf, VARIANTS as WHAT_IF_VARIANTS } from './whatif.js';
 export { examples, findExample } from './examples.js';
+export { objectKind } from './objfile.js';
 
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
 
@@ -528,6 +530,29 @@ class Wuica {
       bottlenecks: r.bottlenecks, limits: r.limits, decodeErrors: r.decodeErrors, ...(r.hex ? { hex: r.hex } : {}), ...(r.loop ? { loop: r.loop } : {}),
       stderr: r.stderr, instructions, ...(ins ? { insights: ins } : {}),
     };
+  }
+
+  // An object file (ELF or Mach-O, x86-64; objfile.js) as llvm-objdump -d's text of its code, which analyze() and
+  // compare() read as `source` (the objdump path: the loop at its address, exits stubbed, the alignment from it).
+  // -> {code: 0, text, format, functions: [{name, section, address, size}]} or a failure (another architecture says how
+  // to compile for x86-64). `func`: also resolves a -func name (exact, without Mach-O's "_", or a unique part): `func`.
+  disassemble(bytes, { name = 'input', func = null } = {}) {
+    const obj = readObject(bytes);
+    if (obj.error) return failure(CODES.REQUEST, obj.error);
+    if (!obj.functions.length) return failure(CODES.REQUEST, 'no functions in the code sections');
+    let resolved = null;
+    if (func !== null && func !== undefined) {
+      const r = resolveFunction(obj.functions, func);
+      if (r.error) return failure(CODES.REQUEST, r.error);
+      resolved = r.name;
+    }
+    let text;
+    try {
+      text = objdumpText(obj, (b) => this.#analyzer.decode(b, 'ALL'), name);
+    } catch (e) {
+      return failure(CODES.ANALYSIS, `the decoder failed (${e.message})`);
+    }
+    return { code: CODES.OK, text, format: obj.format, functions: obj.functions.map(({ name: n, section, address, size }) => ({ name: n, section, address, size })), ...(resolved !== null ? { func: resolved } : {}) };
   }
 
   get restarts() { return this.#analyzer.restarts; }

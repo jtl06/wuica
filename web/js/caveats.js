@@ -11,6 +11,8 @@
 //   exit       a loop with an exit before its branch (a search; a forward branch within the loop, an if, is not an
 //              exit): the exit's mispredict, once per call, is not modelled;
 //              with short trip counts it can cost more than the loop.
+//   call       a call in the block (a loop that calls a function): the call instruction is simulated, the function it
+//              calls is not.
 //   paths      a conditional branch before the last instruction whose target is inside the block (an if/else, or a
 //              second back edge: clang's remainder loop of sum_mod, `jne .LBB0_9` back to the top and the latch to the
 //              middle): uiCA runs the block straight through, so both sides of the branch are simulated one after the
@@ -165,6 +167,12 @@ export function caveats(response, config = null) {
     const r = [...new Set(hit)].sort((a, b) => a - b);
     out.push({ id: 'rmw-index', text: 'store forwarding', rows: r,
       title: `a read-modify-write to an indexed address (${some(rows, r)}): when iterations hit the same address (repeated data), each waits for the previous store; not modelled` });
+  }
+  // a call: the function it calls is not part of the block
+  const calls = rows.flatMap((x, row) => (x?.kind === 'instr' && /^call/i.test(String(x.label).trim()) ? [row] : []));
+  if (calls.length) {
+    out.push({ id: 'call', text: 'calls', rows: calls,
+      title: `the block calls a function (${some(rows, calls)}): the call instruction is simulated, the function it calls is not; a real iteration also runs that function` });
   }
   // a branch within the block: both sides are simulated
   if (inside.length) {

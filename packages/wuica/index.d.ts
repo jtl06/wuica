@@ -61,6 +61,8 @@ export interface Example {
   intel?: string;
   att?: string;
 }
+/** What a file is from its first bytes ('elf', 'macho', 'fat', 'macho32', 'coff', 'pe', 'archive'), or null. */
+export function objectKind(bytes: Uint8Array): { kind: string } | null;
 /** The built-in examples: basics, classic loops, the SHA-256 showcase. */
 export function examples(): readonly Example[];
 /** The example called `name` (case-insensitive), or null. */
@@ -291,6 +293,11 @@ export interface Wuica {
   /** Several blocks on several microarchitectures: each result exactly what compare() returns for that request (its
    * `archs`, else options.archs, else all); every block x microarchitecture is one job for the threads. */
   compareMany(requests: CompareRequest[], options?: { archs?: string[] }): Promise<(CompareResult | Failure)[]>;
+  /** An object file or executable (ELF or Mach-O, x86-64; a universal file's x86-64 slice) as llvm-objdump -d's text
+   * of its code sections, which analyze() and compare() read as `source` (the loop at its address, the alignment from
+   * it). Another architecture or format is a Failure that says what it is and how to get x86-64. `func` is resolved
+   * (exact, without Mach-O's "_", or a unique part of a name) and returned as `func`. */
+  disassemble(bytes: Uint8Array, options?: { name?: string; func?: string | null }): { code: 0; text: string; format: string; functions: { name: string; section: string; address: number; size: number }[]; func?: string } | Failure;
   /** GET /api/archs: in order of release (uiCA's ablation variants, ids with "_", are left out). */
   archs(): ArchInfo[];
   archs(fields: ArchField[] | string): Partial<ArchInfo>[];

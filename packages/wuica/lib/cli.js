@@ -2,7 +2,8 @@
 // every flag also takes "--" and "=value" spellings, and flag names are case-insensitive.
 
 import fs from 'node:fs';
-import { createWuica, normalizeHex, listLoops, whatIf, WHAT_IF_VARIANTS, CODES, examples, findExample } from './index.js';
+import path from 'node:path';
+import { createWuica, normalizeHex, listLoops, whatIf, WHAT_IF_VARIANTS, CODES, examples, findExample, objectKind } from './index.js';
 
 export const VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
@@ -33,7 +34,11 @@ Input:
   -loop L                what is analyzed: auto (default: the deepest loop, among equals the first; clang's
                          "Inner Loop Header" notes count), whole (all the text), a loop's index (0-based, as
                          -loops lists them) or its label (-loop .LBB0_12)
-  -func NAME             only the loops of function NAME (with -loop: its index or label among them)
+  -func NAME             only the loops of function NAME (with -loop: its index or label among them); in an object
+                         file its symbol, or a unique part of it
+  -funcs                 list the functions of an object file (name, section, address, size)
+Object files: an ELF or Mach-O x86-64 object, executable or shared object is read directly (wuica dot.o -func dot):
+its code as llvm-objdump -d prints it, the loop at its address.
 
 Output:
   -arch NAME             microarchitecture (default: SKL; case-insensitive); "all" prints a table for every one,
@@ -95,7 +100,7 @@ export function bareTerminalRun(o, stdinIsTTY) {
 // flag (lower case, without dashes) -> [canonical, takes a value]
 const FLAGS = {
   h: ['help'], help: ['help'], v: ['version'], version: ['version'],
-  examples: ['examples'], example: ['example', 1], show: ['show'], files: ['files', 1], report: ['report'],
+  examples: ['examples'], example: ['example', 1], show: ['show'], files: ['files', 1], report: ['report'], funcs: ['funcs'],
   arch: ['arch', 1], list: ['list'], hex: ['hex'], att: ['att'], intel: ['intel'], raw: ['raw', 1], data: ['data', 1],
   loop: ['loop', 1], loops: ['loops'], func: ['func', 1], per: ['per', 1], whatif: ['whatif'], threads: ['threads', 1],
   tponly: ['tpOnly'], json: ['json'], trace: ['trace'], details: ['details'],
@@ -177,7 +182,7 @@ function readFile(file) {
 }
 
 // {request: {hex} | {source, syntax}, name: what the diagnostics call it, notes: [stderr lines]}
-async function readInput(o, io) {
+async function readInput(o, io, w = null) {
   const notes = [];
   if (o.example !== undefined) {
     if (o.input !== null || o.raw !== undefined) throw new UsageError(`-example and an input (${o.input ?? `-raw ${o.raw}`}) cannot be combined`);
@@ -191,7 +196,7 @@ async function readInput(o, io) {
     if (o.input !== null) throw new UsageError(`-raw and an input (${o.input}) cannot be combined`);
     const b = readFile(o.raw);
     const fmt = binaryFormat(b);
-    if (fmt) throw new UsageError(`${o.raw} is ${fmt}, not bare machine code: disassemble it and pipe the listing (objdump -d ${o.raw} | wuica)`);
+    if (fmt) throw new UsageError(`${o.raw} is ${fmt}, not bare machine code: give it without -raw (wuica ${o.raw} reads ELF and Mach-O object files and executables)`);
     if (looksText(b)) notes.push(`warning: ${o.raw} looks like text, not machine code (without -raw it is read as assembly)`);
     return { request: { hex: b.toString('hex') }, name: o.raw, notes };
   }
@@ -201,8 +206,15 @@ async function readInput(o, io) {
     text = await readStdin(io.stdin);
     name = '<stdin>';
   } else if (fs.existsSync(o.input)) {
-    text = readFile(o.input).toString('utf8');
+    const b = readFile(o.input);
     name = o.input;
+    // an object file or executable: llvm-objdump -d's text of its code (Wuica.disassemble), read as objdump output
+    if (objectKind(b) && !o.hex) {
+      const d = w.disassemble(new Uint8Array(b.buffer, b.byteOffset, b.byteLength), { name: path.basename(name), func: o.func ?? null });
+      if (d.code) throw new UsageError(/^func: /.test(d.error) ? d.error : `${name}: ${d.error}`);
+      return { request: { source: d.text, syntax: 'intel', ...(o.loop !== undefined ? { loop: o.loop } : {}), ...(d.func ? { func: d.func } : {}) }, name, notes, object: d };
+    }
+    text = b.toString('utf8');
   } else if (normalizeHex(o.input) !== null) {
     const n = normalizeHex(o.input).length / 2;
     notes.push(`analyzed: ${n} byte${n === 1 ? '' : 's'} of machine code from the argument "${o.input}" (not a file)`);
@@ -270,7 +282,7 @@ function printAnalyzed(r, err, o) {
   const syn = r.syntax ? `${r.syntax === 'att' ? 'AT&T' : 'Intel'} syntax${o.syntax === 'auto' ? ' (detected)' : ''}` : null;
   if (p && p.line) {
     const others = (p.count ?? 1) - (Number.isInteger(p.index) ? 1 : 0);
-    err.write(`analyzed: ${p.name} (lines ${p.line}-${p.endLine}${p.function ? `, in ${p.function}` : ''}${p.address !== undefined ? `, address 0x${p.address.toString(16)}` : ''})${syn ? `, ${syn}` : ''}`
+    err.write(`analyzed: ${p.name} (${o.objectInput ? '' : `lines ${p.line}-${p.endLine}`}${p.function ? `${o.objectInput ? '' : ', '}in ${p.function}` : ''}${p.address !== undefined ? `, address 0x${p.address.toString(16)}` : ''})${syn ? `, ${syn}` : ''}`
       + `${others > 0 ? `; ${others} other loop${others === 1 ? '' : 's'}: -loops lists them, -loop picks one` : ''}; -loop whole for the whole text\n`);
   } else if (syn && r.syntax === 'att' && o.syntax === 'auto') {
     err.write(`analyzed: the whole text, ${syn}; -intel forces Intel\n`);
@@ -391,8 +403,18 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
       return await batch(w, o, io);
     }
     if (o.report) err.write('-report: with several inputs (one input prints its report anyway); ignored\n');
-    const input = await readInput(o, io);
+    const input = await readInput(o, io, w);
     for (const n of input.notes) err.write(`${n}\n`);
+    if (input.object) o.objectInput = true;
+    if (o.funcs) {
+      if (!input.object) return fail(CODES.REQUEST, '-funcs: lists the functions of an object file (for assembly, -loops lists the loops with their functions)');
+      const fs_ = input.object.functions;
+      if (o.json) { out.write(JSON.stringify({ code: 0, format: input.object.format, functions: fs_ }) + '\n'); return 0; }
+      const nw = Math.max(4, ...fs_.map((f) => f.name.length)), sw = Math.max(7, ...fs_.map((f) => f.section.length));
+      out.write(`${'name'.padEnd(nw)}  ${'section'.padEnd(sw)}  ${'address'.padStart(10)}  ${'size'.padStart(6)}\n`);
+      for (const f of fs_) out.write(`${f.name.padEnd(nw)}  ${f.section.padEnd(sw)}  ${`0x${f.address.toString(16)}`.padStart(10)}  ${String(f.size).padStart(6)}\n`);
+      return 0;
+    }
     const req = { ...input.request, options: o.options };
 
     if (o.loops) {
@@ -527,7 +549,7 @@ async function batch(w, o, io) {
   const items = [];
   for (const name of names) {
     try {
-      const input = await readInput({ ...o, input: name }, io);
+      const input = await readInput({ ...o, input: name }, io, w);
       for (const n of input.notes) err.write(`${name}: ${n}\n`);
       items.push({ name, req: { ...input.request, options: o.options } });
     } catch (e) {
@@ -666,5 +688,5 @@ function rowOf(r, ins, per) {
 function prefixed(doc, name) {
   const lines = doc.stderr ?? [];
   const alone = lines.length === 1 && !lines[0].tag; // a failure's one line (no such file, ...)
-  return { stderr: lines.map((l) => (alone || /^Warning\b/.test(l.text) ? { ...l, text: `${name}: ${l.text}` } : l)) };
+  return { stderr: lines.map((l) => ((alone || /^Warning\b/.test(l.text)) && !l.text.startsWith(`${name}:`) ? { ...l, text: `${name}: ${l.text}` } : l)) };
 }
