@@ -51,8 +51,22 @@ What makes it fast:
 `.github/workflows/ci.yml` runs `scripts/check.sh full --no-skip` (a skipped suite fails) on GitHub Actions (ubuntu-latest,
 Rust 1.100, Node 22, the runner's clang and Chrome) for pushes to main and pull requests; the table goes to the job summary,
 the logs of a failed run are uploaded as the artifact `check-logs`. The generated files are not in git: the workflow
-downloads them from the pre-release named in `ci/data-asset.txt` (`data/`, the four fixture files the suites read, and
-`assembler/dist/wuica_asm.wasm`, whose LLVM build is too heavy for CI) and checks their sha256.
+downloads them from the pre-release named in `ci/data-asset.txt` (`data/`, the four fixture files the suites read, the accuracy
+table, and `assembler/dist/wuica_asm.wasm` and `mca/dist/wuica_mca.wasm`, whose LLVM builds are too heavy for CI) and checks their
+sha256.
+
+The accuracy table `fixtures/generated/accuracy.jsonl.gz` (read by `crates/wuica/tests/accuracy_gate.rs`; see `docs/ACCURACY.md`,
+"Policy and the accuracy gate") is made in the fork's tree on the reference machine from the measurement files of the sets and their
+prediction caches (`microbench/measurements/fuzz/`, the caches are not in git) and the dogfood loops:
+
+    cd microbench && ~/uica-zen/venv/bin/python accuracy_export.py OUT/accuracy.jsonl.gz \
+      holdout7:<improve-r9 tree>/microbench/measurements/fuzz bhive5:<improve-r9 tree>/microbench/measurements/fuzz \
+      holdout8 bhive6 dogfood -reference=OUT/accuracy_reference.json
+
+(`-reference` also writes the numbers the gate must reproduce, computed with the Python reference). Its first line is a header (format,
+analysis options, per set the rounding of the prediction), then one line per loop: set, name, machine code, analysis mode, measured
+cycles per CPU where the loop counts. When the model changes on purpose, accept the gate's new numbers with
+`WUICA_ACCURACY_ACCEPT=1 cargo test --release -p wuica --test accuracy_gate` (rewrites `crates/wuica/tests/accuracy_expected.json`).
 
 When the data, the fixtures or the assembler change, publish a new asset (the old release stays for older commits):
 
@@ -250,7 +264,7 @@ an FP mix, the dogfood loop `fir8_s`; the extra set now has 46 blocks), and the 
 simulation fixtures 26 of ZEN3, plus the cases of the new blocks (20 instruction and 36 simulation cases per configuration); set
 `more`: 5 of ZEN3; instruction fixtures unchanged. `fixtures/decode_fixtures_extra.jsonl.gz` gained the decoder cases of the new
 blocks; of the tables only `uarch.json` changed (the new field `domainBypassDelay`). CI needs these files as the data asset
-`ci-data-v8`; `ci/data-asset.txt` still names `ci-data-v7` (round 9's). Earlier sets: `crash-fixes` (`f85fcbd`) in
+`ci-data-v8` (with the accuracy table); `ci/data-asset.txt` names it. Earlier sets: `crash-fixes` (`f85fcbd`) in
 `~/uicaspeed/wuica-fix-crash/final`; `improve-r6` in `~/projects/wuica-r6/r6m`; `improve-r7` in `~/projects/wuica-r7/t1`;
 `improve-r8` in `~/projects/wuica-r8/r8`; `improve-r9` in `/data/projects/wuica-r9/r9`.
 

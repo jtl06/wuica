@@ -26,7 +26,7 @@ simulated as if unrolled; the ZEN3, ADL-P and ICX models are the fork's prototyp
 | Time per analysis (WebAssembly, warm) | 0.52 ms (BHive block), 0.63 ms (random loop), 36 ms (2,949-instruction SHA-256 block) | Commit `623a117` message, measurement machine (Ryzen 7 7735U), Node 22; before model rounds 6–9 |
 | Analyzer module | 4.31 MB raw, 630 kB brotli q11 (package), 867 kB as the live site serves it | Section 7.1 |
 | First visit in assembly mode (analyzer, assembler, SKL table, page shell) | 2.19 MB as the live site serves it; the same files weigh 1.64 MB at brotli q11 (+34 % served) | Section 7.1 |
-| Accuracy of the prototypes, held out, within 10 % | ZEN3 84.4 % / 87.7 %, ADL-P 90.9 % / 92.6 %, ICX 85.8 % / 89.7 % (random loops / BHive blocks) | `docs/ACCURACY.md`, "Round 9" |
+| Accuracy of the prototypes, held out, within 10 % | ZEN3 85.7 % / 88.8 %, ADL-P 90.7 % / 91.5 %, ICX 85.6 % / 88.2 % (random loops / BHive blocks) | `docs/ACCURACY.md`, "Round 10"; guarded by `wuica:accuracy_gate` |
 | Python reference, same work | 40–55 ms per analysis plus interpreter start | `README.md`, "Status" |
 
 ## 3. Hard rules
@@ -161,20 +161,28 @@ Result codes everywhere: 0 ok, 1 bad request, 2 assembler error, 3 analysis fail
 The port reproduces the reference exactly, so these numbers hold for both (`docs/ACCURACY.md`). They cover only the fork's
 three models; uiCA's Intel models are unchanged by the fork's rounds and are not measured in this repository.
 
-Round 9, held-out sets (generated and measured before any model change, scored once at the end); share of loops within 10 %
+Round 10, held-out sets (generated and measured at the start of the round, scored once at the end); share of loops within 10 %
 of measured cycles per iteration, and MAPE:
 
-| Model (measured on) | Random loops `holdout7` | BHive blocks `bhive5` | llvm-mca, same sets | Nearest original uiCA model |
+| Model (measured on) | Random loops `holdout8` | BHive blocks `bhive6` | llvm-mca, same sets | Nearest original uiCA model |
 |---|---|---|---|---|
-| ZEN3 (Ryzen 7 7735U, Zen 3+) | 1960 loops: 84.4 %, 4.2 % | 1941: 87.7 %, 3.9 % | `znver3`: 55.2 % / 71.8 % | — |
-| ADL-P (Core i7-12650H, P-core) | 1933: 90.9 %, 2.8 % | 1896: 92.6 %, 3.2 % | `alderlake`: 32.3 % / 68.8 % | RKL: 47.1 % / 71.3 % |
-| ICX (Xeon Gold 6314U) | 1879: 85.8 %, 3.9 % | 1928: 89.7 %, 3.0 % | `icelake-server`: 53.0 % / 69.5 % | ICL: 78.4 % / 85.6 % |
+| ZEN3 (Ryzen 7 7735U, Zen 3+) | 1956 loops: 85.7 %, 3.8 % | 1895: 88.8 %, 3.9 % | `znver3`: 56.0 % / 71.3 % | — |
+| ADL-P (Core i7-12650H, P-core) | 1923: 90.7 %, 2.6 % | 1837: 91.5 %, 3.6 % | `alderlake`: 33.8 % / 66.2 % | RKL: 48.0 % / 70.4 % |
+| ICX (Xeon Gold 6314U) | 1867: 85.6 %, 3.7 % | 1869: 88.2 %, 3.3 % | `icelake-server`: 54.7 % / 70.1 % | ICL: 78.7 % / 84.8 % |
 
-Method (`docs/ACCURACY.md`, "Method of round 9", "Method of round 6"): `perf stat` user-mode cycles, pinned to one core, best
+The random held-out sets no longer discriminate between model variants (rounds 7-10 moved them by tenths of a point), so further
+model work starts from measured real loops and an identified mechanism; the measured sets now guard what exists. The suite
+`wuica:accuracy_gate` (`crates/wuica/tests/accuracy_gate.rs`) predicts 7,925 measured loops (the held-out sets of rounds 9 and 10 on
+all three CPUs and the 21 dogfood loops, `fixtures/generated/accuracy.jsonl.gz` from the CI data asset), reproduces the tables of
+`docs/ACCURACY.md` exactly, and fails when a share within 5/10/20 % moves by more than 0.1 point or the MAPE by more than 0.02
+(`crates/wuica/tests/accuracy_expected.json`; about 2 s). The remaining errors and the explanations that measurements ruled out are in
+`docs/ACCURACY.md`, "Known errors and what was ruled out".
+
+Method (`docs/ACCURACY.md`, "Method of round 10", "Method of round 6"): `perf stat` user-mode cycles, pinned to one core, best
 of three runs, nothing else on the machine; loops whose two fastest runs differ by more than 2 % are dropped. Random loops
 come from the fork's `microbench/fuzz/fuzz_gen.py`; real-code blocks from BHive, run as loop bodies. Development used other
 sets (`dev13`, earlier hold-outs, hand-written loops) and 21 "dogfood" loops from real use (ZEN3 within 10 %: 47.6 % → 57.1 %
-in round 9). Each model was measured on one machine.
+in round 9, unchanged in round 10). Each model was measured on one machine.
 
 ## 7. Measurements
 
@@ -273,6 +281,7 @@ Counts from the last local `scripts/check.sh full` run (development machine, 202
 | `details` changes no other field; critical path; dependency cycle | `wuica:details`, `critical_path`, `wuica-core:dependency_cycle` | 9,899; 9,899 (8,512 with a path); 36,138 |
 | No panics | `wuica:fuzz_short`, `details_fuzz` (`crates/wuica/tests/fuzz/mod.rs`) | random real encodings, random options, all 15 CPUs |
 | Same result through every interface but the page | `tests-js/interfaces.mjs` (library, wasm via `engine.js`, native CLI, npm CLI, REST, both MCP servers; random requests) | 2,647 checks |
+| Accuracy of the prototype models against measured loops | `wuica:accuracy_gate` | 7,925 loops, 22,905 predictions, per set and CPU |
 | npm package; server | `node --test` | 83; 63 tests |
 | Page logic in Node (30 suites) | `tests-js/web_*.mjs` without a browser | 23,314 checks |
 | Page in headless Chrome (19 suites) | `tests-js/web_*_browser.mjs`, `web_browser*.mjs` via `tests-js/cdp.mjs` | 1,276 checks |
@@ -286,7 +295,7 @@ inputs on which upstream uiCA raises an exception and what the fork does instead
 CI (`.github/workflows/ci.yml`): every push to main and every pull request runs `scripts/check.sh full --no-skip` on
 ubuntu-latest (Rust 1.100, Node 22, the runner's clang and Chrome, 1 Chrome suite at a time); a skipped suite fails. It does
 not run the optional set `more` (not in the data asset, `ci/make-data-asset.sh`), does not build the assembler or llvm-mca
-(downloaded), and does not check against real hardware.
+(downloaded), and does not measure on real hardware (the accuracy gate compares with measurements recorded in the data asset).
 
 ## 8. Already done, and tried and rejected
 
@@ -323,7 +332,7 @@ Check this table before suggesting an optimization. "Identical results" means ru
 | More threads for `-arch all` | 12 or 15 threads slower than 4–8; on a small block 15 threads 12 % slower than none | `docs/PORTING.md`, "Speed" |
 | A V8 code cache for the module in Node | Not available: `v8.serialize` of a module is empty in Node 22 and 26; in Chrome `compileStreaming`'s cache sped up compilation, not the first analysis | `docs/PORTING.md`, "Speed" |
 | Early stop of the simulation once it is periodic | The owner reports it was measured and not kept; **no numbers are recorded in the repository** | — |
-| Model changes (each round): e.g. ZEN3 fused CMP/TEST+Jcc on branch ports, ALU uops dispatched to any free ALU, steering to the producer's port, a `vpermd` throughput limit; others per round | Each fixed its target and made held-out or hand-written sets worse | `docs/ACCURACY.md`, "Not fixed", "Tried and not kept" (rounds 7 and 8) |
+| Model changes (each round): e.g. ZEN3 fused CMP/TEST+Jcc on branch ports, ALU uops dispatched to any free ALU, steering to the producer's port, a `vpermd` throughput limit; others per round | Each fixed its target and made held-out or hand-written sets worse; in round 10 eight port-assignment policies and the reviewer's hypotheses were ruled out by measurement | `docs/ACCURACY.md`, "Known errors and what was ruled out", "Tried and not kept" (rounds 7 and 8) |
 
 ### 8.3 Measured, gain available, deliberately not taken
 
@@ -345,11 +354,13 @@ Check this table before suggesting an optimization. "Identical results" means ru
 
 ### 10.1 Model
 
-- **Remaining ZEN3 errors** (`docs/ACCURACY.md`, round 9, "Not fixed"): the scalar prefix sum (`add edx, [rdi+rax*4]; mov
-  [rsi+rax*4], edx; inc rax; cmp rcx, rax; jne`) is predicted 1.36 cycles per iteration against 1.00 measured (a sum
-  reduction: 1.55 vs 1.07); in the model the index chain loses ALU ports to the older accumulator chain. Shuffle-heavy vector
-  loops are 13–29 % optimistic (8 `vmulps` + 6 `vpalignr`: 4.67 predicted, 5.58 measured; `vpermd` costs 1.33 cycles when
-  two or more are in a loop). The fixes tried are in section 8.2.
+- **Remaining ZEN3 errors** (`docs/ACCURACY.md`, "Known errors and what was ruled out", with every explanation that measurements
+  ruled out and the loop benchmarks that reproduce them): the scalar prefix sum (`add edx, [rdi+rax*4]; mov [rsi+rax*4], edx; inc
+  rax; cmp rcx, rax; jne`) is predicted 1.36 cycles per iteration against 1.00 measured (a sum reduction: 1.55 vs 1.07); on the
+  hardware one more macro-op that does not execute (a `nop`) makes it 1.34, so it is not ALU-port contention, and none of eight
+  port-assignment policies reproduces it. Shuffle-heavy vector loops are 13-29 % optimistic (8 `vmulps` + 6 `vpalignr`: 4.67
+  predicted, 5.58 measured, 5.22 when interleaved; `vpermd` costs 1.33 cycles back to back, 1.00 with `vaddps` between them;
+  lane-crossing permutes cost more in mixes than their port data says). The fixes tried are in section 8.2.
 - **Not modelled**: cache misses, branch mispredictions, frequency changes; loads at constant addresses crossing a line; the
   extra latency of line-crossing loads (+1 cycle on the Ryzen, +6 to +7 on the Intel CPUs); store forwarding through an
   indexed read-modify-write whose address depends on data. A branch inside the loop body makes uiCA simulate both sides one

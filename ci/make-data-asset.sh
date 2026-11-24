@@ -6,9 +6,12 @@
 #
 #   TAG  the release tag it will be uploaded to (ci-data-v1, ci-data-v2, ...)
 #   SRC  a checkout that has data/, fixtures/generated/, assembler/dist/wuica_asm.wasm and mca/dist/wuica_mca.wasm (default: this repository)
+#   UICA_COMMIT (environment): the fork's model commit the data come from, for ci/data-asset.txt (default: read from docs/DESIGN.md)
 #
 # Contents: data/ (instruction tables, uarch.json), the four fixture files the suites read
-# (fixtures/generated/{,extra_}{instr,sim}_fixtures.jsonl.gz), assembler/dist/wuica_asm.wasm, mca/dist/wuica_mca.wasm, and MANIFEST.txt (sha256 of every
+# (fixtures/generated/{,extra_}{instr,sim}_fixtures.jsonl.gz), the accuracy table of the accuracy gate
+# (fixtures/generated/accuracy.jsonl.gz, made by microbench/accuracy_export.py of the fork; see docs/PORTING.md),
+# assembler/dist/wuica_asm.wasm, mca/dist/wuica_mca.wasm, and MANIFEST.txt (sha256 of every
 # file, for `sha256sum -c`). The tar is written by Python (sorted names, fixed mtime, owner 0, mode 0644, no extended
 # attributes) and compressed with xz (preset 6, one thread), so the same inputs give the same bytes.
 # Output: target/ci-data/wuica-ci-data.tar.xz. Then upload it (see docs/PORTING.md, "CI"):
@@ -27,6 +30,7 @@ files=(
   fixtures/generated/sim_fixtures.jsonl.gz
   fixtures/generated/extra_instr_fixtures.jsonl.gz
   fixtures/generated/extra_sim_fixtures.jsonl.gz
+  fixtures/generated/accuracy.jsonl.gz
   assembler/dist/wuica_asm.wasm
   mca/dist/wuica_mca.wasm
   data/uarch.json
@@ -66,7 +70,7 @@ EOF
 if command -v sha256sum >/dev/null 2>&1; then sha() { sha256sum "$1" | cut -d' ' -f1; }; else sha() { shasum -a 256 "$1" | cut -d' ' -f1; }; fi
 # the commit of this repository the asset was made (and checked) with, and the uiCA commit the fixtures come from (docs/DESIGN.md)
 commit="$(git -C "$root" rev-parse HEAD)"
-uica="$(tr '\n' ' ' < "$root/docs/DESIGN.md" | sed -n 's/.*branch `perf`, commit *`\([0-9a-f]*\)`.*/\1/p')"
+uica="${UICA_COMMIT:-$(tr '\n' ' ' < "$root/docs/DESIGN.md" | sed -n 's/.*branch `perf`, commit *`\([0-9a-f]*\)`.*/\1/p')}"
 cat > "$root/ci/data-asset.txt" <<EOT
 # The data asset of the CI workflow (.github/workflows/ci.yml), written by ci/make-data-asset.sh. The workflow downloads
 # \`file\` from the release \`tag\`, checks \`sha256\` (of the .tar.xz), unpacks it and checks MANIFEST.txt inside.
