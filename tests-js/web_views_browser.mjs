@@ -469,6 +469,42 @@ try {
     check(r.key[0] === 'dp-i1' && r.key[1] === 'add rax, 0x1 slack 0 ← add rax, 0x1 → add rax, 0x1 ↻' && r.key[2] === 2 && r.flash === 1, 'deps: arrow keys select an instruction and its arcs; Enter jumps to the row', JSON.stringify([r.key, r.flash]));
     await page.shot('deps-chain.png');
 
+    // where the latencies are drawn: beside their own arc, nearer the producing instruction's row than any other (a user
+    // test saw imul → xor's "3" on the movzx row between them), in a short block and in a long one (drawn in a window
+    // of rows) scrolled to its middle, on the critical chain and for a selected instruction
+    const fnvBody = (k) => `  movzx r9d, byte ptr [rdi+r8+${2 * k}]\n  xor r9, rax\n  imul r9, rcx\n  movzx eax, byte ptr [rdi+r8+${2 * k + 1}]\n  xor rax, r9\n  imul rax, rcx\n`;
+    const fnv = (copies) => `loop:\n${Array.from({ length: copies }, (_, k) => fnvBody(k)).join('')}  add r8, ${2 * copies}\n  cmp rsi, r8\n  jnz loop\n`;
+    const LATS = `
+      const ROW = 18, yc = (i) => i * ROW + ROW / 2 + 2, ys = [...document.querySelectorAll('.dp-node')].map((n) => Number(n.dataset.i));
+      const bad = [];
+      let seen = 0;
+      for (const t of document.querySelectorAll('.dp-lat')) {
+        const arc = document.querySelector('.dp-arc[data-k="' + t.dataset.k + '"]');
+        if (!arc) continue; // (an arc outside the drawn window of a long block)
+        seen++;
+        const a = Number(arc.dataset.a), b = Number(arc.dataset.b), d = arc.getAttribute('d').match(/-?[\\d.]+/g).map(Number);
+        const x = d[2], y = Number(t.getAttribute('y')) - 4, tx = Number(t.getAttribute('x'));
+        const near = Math.round((y - ROW / 2 - 2) / ROW); // (the row nearest, drawn or not)
+        if (near !== a || y < Math.min(yc(a), yc(b)) - 3 || y > Math.max(yc(a), yc(b)) + 3 || Math.abs(tx - x) > 2) bad.push([t.textContent, a, b, y, near, tx, x]);
+      }`;
+    for (const [name, copies] of [['fnv', 2], ['long', 60]]) {
+      await page.goto(`${origin}/?nosw=1#v=1&deps=1&m=asm&s=intel&c=${b64(fnv(copies))}`);
+      await page.result();
+      const l = await page.eval(`${HELPERS}
+        await until(() => document.querySelector('#deps .dp-body')?.dataset.state === 'done', 60000); await wait(100);
+        const wrap = document.querySelector('.dp-wrap'), svg = document.querySelector('.dp-map');
+        if (${copies} > 10) { const sc = wrap.scrollHeight > wrap.clientHeight + 1 ? wrap : svg.closest('.view-pane, .ws-pane') ?? document.scrollingElement; svg.scrollIntoView(); sc.scrollTop += svg.getBoundingClientRect().height / 2; await wait(300); }
+        ${LATS}
+        const crit = { n: seen, bad: bad.slice(0, 5), nodes: ys.length, imul3: [...document.querySelectorAll('.dp-lat')].some((t) => t.textContent === '3') };
+        const mid = ys[Math.floor(ys.length / 2)] ?? 0;
+        svg.focus(); svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+        for (let i = 0; i < mid + 2; i++) svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+        await wait(300);
+        { ${LATS} crit.sel = { n: document.querySelectorAll('.dp-lat.on').length, seen, bad: bad.slice(0, 5) }; }
+        return crit;`);
+      check(l.n > 2 && l.imul3 && l.bad.length === 0 && l.sel.n > 0 && l.sel.bad.length === 0, `deps (${name}, ${l.nodes} rows drawn): each latency beside its arc, nearest the row of the instruction that produces the value`, JSON.stringify(l));
+    }
+
     await page.goto(`${origin}/?nosw=1`);
     await page.ready();
     const s = await page.eval(`${HELPERS}

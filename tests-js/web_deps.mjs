@@ -3,7 +3,7 @@
 // test reads from the trace itself.
 // Usage: node tests-js/web_deps.mjs
 import fs from 'node:fs';
-import { depGraph, neighbours } from '../web/js/deps.js';
+import { depGraph, neighbours, latPlace } from '../web/js/deps.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
 import { encodeState, decodeState } from '../web/js/url-state.js';
@@ -11,6 +11,19 @@ import { tableBytes } from './tables.mjs'; // the binary tables (the module read
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
+
+// --- where an arc's latency is written: nearer the producing instruction's row than any other, on the arc's span
+// (a user test saw imul → xor's "3" on the movzx row between them: the middle of an arc over two rows)
+{
+  const ROW = 18, yc = (i) => i * ROW + ROW / 2 + 2;
+  const nearest = (y, n) => [...Array(n).keys()].reduce((b, i) => (Math.abs(yc(i) - y) < Math.abs(yc(b) - y) ? i : b), 0);
+  for (const e of [{ a: 2, b: 4, lane: 0 }, { a: 1, b: 2, lane: 1 }, { a: 40, b: 0, lane: 3 }, { a: 7, b: 7, lane: 2 }, { a: 0, b: 41, lane: 5 }]) {
+    const p = latPlace(e, 300, 6);
+    const lo = Math.min(yc(e.a), yc(e.b)), hi = Math.max(yc(e.a), yc(e.b));
+    check(nearest(p.y, 50) === e.a && p.y >= lo && p.y <= hi, `latency label of ${e.a} → ${e.b}: on the arc, nearest its source's row`, JSON.stringify(p));
+    check(p.x === 300 + (e.lane + 1) * 6 + (e.lane % 2 ? 2 : -2) && p.anchor === (e.lane % 2 ? 'start' : 'end'), `latency label of ${e.a} → ${e.b}: beside its lane`, JSON.stringify(p));
+  }
+}
 const root = new URL('../', import.meta.url);
 
 const instr = (label) => ({ kind: 'instr', label, opcode: '90', notes: '', values: [] });

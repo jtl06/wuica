@@ -88,6 +88,18 @@ function s(tag, attrs, ...children) {
   return e;
 }
 const ROW = 18, CH = 7.25, LABEL = 38, PAD = 8, SL = 4 * CH; // SL: the slack column
+
+// Where an arc's latency goes (the centre of its text; x0: where the lanes start, lane: their spacing): beside the arc's
+// vertical part, a third of a row from the instruction that produces the value towards the one that reads it: nearer
+// that instruction's row than any other. (At the middle of the arc, an arc over two rows put its number on the row
+// between, as if it were that row's: "3" for imul → xor on the movzx between them.) An arc of an instruction to itself:
+// on its row. Neighbouring lanes are close: labels of even lanes go left of the arc, of odd lanes right, so they do not
+// run together.
+export function latPlace(e, x0, lane, row = ROW) {
+  const x = x0 + (e.lane + 1) * lane, left = e.lane % 2 === 0;
+  const ya = e.a * row + row / 2 + 2;
+  return { x: left ? x - 2 : x + 2, anchor: left ? 'end' : 'start', y: e.a === e.b ? ya : ya + (e.b > e.a ? row / 3 : -row / 3) };
+}
 const short = (t, n = LABEL) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
 const isCancel = (e) => e?.name === 'CancelledError';
 const yieldToPage = () => new Promise((r) => setTimeout(r, 0));
@@ -195,9 +207,8 @@ export function createDeps(env) {
     const latLabel = (e, cls) => {
       const t = latText(e);
       if (!t) return null;
-      // neighbouring lanes are close: labels of even lanes go left of the arc, of odd lanes right, so they do not run together
-      const x = X0 + (e.lane + 1) * lane, left = e.lane % 2 === 0;
-      return s('text', { class: `dp-lat ${cls}`, x: left ? x - 2 : x + 2, 'text-anchor': left ? 'end' : 'start', y: (y(e.a) + y(e.b)) / 2 + 4, 'aria-hidden': 'true' }, document.createTextNode(t));
+      const p = latPlace(e, X0, lane);
+      return s('text', { class: `dp-lat ${cls}`, x: p.x, 'text-anchor': p.anchor, y: p.y + 4, 'data-k': g.edges.indexOf(e), 'aria-hidden': 'true' }, document.createTextNode(t));
     };
     const latsCrit = s('g', { class: 'dp-lats' }, ...g.edges.filter((e) => e.critical).map((e) => latLabel(e, 'crit')).filter(Boolean));
     const latsSel = s('g', { class: 'dp-lats sel' });
