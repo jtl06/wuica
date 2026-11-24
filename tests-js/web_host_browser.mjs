@@ -69,6 +69,11 @@ const stop = () => new Promise((r) => { for (const s of sockets) s.destroy(); se
   check(r.status === 404 && (await r.text()) === notFound, 'host: a missing file gets the 404 page', r.status);
   r = await get('/');
   check(r.status === 200 && /^text\/html/.test(r.headers.get('content-type')) && (await r.text()) === index, 'host: / is the page', r.status);
+  { // one policy, in the page and as a header (the header adds frame-ancestors, which a meta element cannot set)
+    const meta = index.match(/http-equiv="Content-Security-Policy" content="([^"]*)"/)?.[1];
+    const header = r.headers.get('content-security-policy');
+    check(!!meta && header === `${meta}; frame-ancestors 'none'` && !/cloudflare|unsafe-inline/.test(header), 'host: the security policy as a response header equals the page\'s, plus frame-ancestors', JSON.stringify([meta, header]));
+  }
   r = await get('/wuica_wasm.wasm');
   check(r.status === 200 && r.headers.get('content-type') === 'application/wasm', 'host: the analyzer as application/wasm', r.headers.get('content-type'));
   await r.arrayBuffer();

@@ -163,7 +163,7 @@ try {
     check(!requests.some((r) => r.includes('wuica_wasm')), 'mock mode: the analyzer is not fetched');
     const r = await page.eval(`${HELPERS}
       const out = {};
-      out.title = document.title; out.robots = document.querySelector('meta[name=robots]').content;
+      out.title = document.title; out.robots = document.querySelector('meta[name=robots]')?.content ?? null; out.canonical = document.querySelector('link[rel=canonical]')?.href ?? null;
       out.notice = $('notice').hidden ? '' : $('notice').innerText;
       out.groups = [[...document.querySelectorAll('#cpu-grid input')].map((b) => b.value).join(','), [...document.querySelectorAll('#cpu-grid label.proto input')].map((b) => b.value).join(','),
         document.querySelector('#cpu-grid input[value=ZEN3]').getAttribute('aria-label'), document.querySelector('#cpu-grid label.proto').title];
@@ -204,7 +204,7 @@ try {
       out.columns = [document.querySelectorAll('table.uops thead th').length, !!$('hide-empty')];
       await example('error'); out.error = document.querySelector('.error-box')?.textContent;
       return out;`);
-    check(r.robots === 'noindex' && /wuica/.test(r.title), 'mock: title and robots');
+    check(r.robots === null && r.canonical === 'https://wuica.jacen.li/' && /wuica/.test(r.title), 'mock: title, a canonical address and no robots restriction', JSON.stringify([r.robots, r.canonical]));
     check(/Mock mode/.test(r.notice), 'mock: the notice says so', r.notice);
     check(r.groups[0] === 'SNB,IVB,HSW,BDW,SKL,KBL,SKX,CFL,CLX,ICL,TGL,ZEN3,RKL,ICX,ADL-P' && r.groups[1] === 'ZEN3,ICX,ADL-P' && r.groups[2] === 'ZEN3 · AMD Zen 3 (2020) · prototype' && /prototype/.test(r.groups[3])
       && r.arch[0] === 'SKL' && r.arch[1] === 'SKL', 'mock: the CPU checkboxes (in order of release; prototypes marked; names in the accessible name); SKL checked', JSON.stringify([r.groups, r.arch]));
@@ -214,7 +214,7 @@ try {
       && r.footer[1] === 'https://github.com/andreas-abel/uiCA https://www.uops.info/ https://github.com/jtl06/wuica' && r.footer[2] === 'Source on GitHub https://github.com/jtl06/wuica' && r.footer[3] === '', 'mock: the footer (credit, the repository, versions; no license or font text); GitHub at the right end of the top bar', JSON.stringify(r.footer));
     check(r.focusable && r.labelled.length === 0, 'mock: controls are focusable and labelled', JSON.stringify(r.labelled));
     check(r.empty[0] === '2.00' && r.empty[1] === '1', 'mock: a fresh visit analyzes the first example once', JSON.stringify(r.empty));
-    check(/script-src 'self' 'wasm-unsafe-eval' https:\/\/static\.cloudflareinsights\.com;/.test(r.csp) && /connect-src 'self' https:\/\/cloudflareinsights\.com https:\/\/godbolt\.org;/.test(r.csp) && !/unsafe-inline/.test(r.csp), 'mock: the CSP allows the Cloudflare beacon and Compiler Explorer (link import), nothing else', r.csp);
+    check(/script-src 'self' 'wasm-unsafe-eval';/.test(r.csp) && /connect-src 'self' https:\/\/godbolt\.org;/.test(r.csp) && !/unsafe-inline|cloudflare/.test(r.csp), 'mock: the CSP allows the page\'s own origin and Compiler Explorer (link import), no third-party script', r.csp);
     check(r.tp === '2.00' && /cycles\/iteration/.test(r.meta) && r.mode === 'loop' && /mock data/.test(r.meta) && /Dependencies/.test(r.meta), 'mock: Ctrl+Enter gives the result of the first example', r.meta.slice(0, 300));
     check(r.listing[0] === CHAIN && !r.listing[1], 'mock: the objdump listing (closed for hex input)', JSON.stringify(r.listing));
     check(r.copyVisible && r.copied[0] === CHAIN && r.copied[1] === 'copied' && r.copied[2] === 'Copy objdump', 'mock: the listing copies as text', JSON.stringify(r.copied));
@@ -515,7 +515,7 @@ try {
       out.back = [$('mode-hex').checked, $('run').disabled];
       return out;`);
     check(r.failed === '' && r.notice === '' && r.build === manifest.version, 'real: the page starts with the real analyzer and shows the build', JSON.stringify([r.failed, r.notice, r.build]));
-    check(requests.some((x) => x.includes('wuica_wasm.wasm')) && requests.some((x) => x.includes('data/arch/SKL.json')) && requests.some((x) => x.includes('js/engine-worker.js')), 'real: the analyzer, its worker and the selected table are fetched');
+    check(requests.some((x) => x.includes('wuica_wasm.wasm')) && requests.some((x) => x.includes('data/arch/SKL.bin')) && requests.some((x) => x.includes('js/engine-worker.js')), 'real: the analyzer, its worker and the selected table are fetched');
     check(r.examples === ',chain,loadstore,avx,stack,saxpy,dot1,dot4,popcnt,ptrchase,strlen,crc32,memcpy,gemm,sha256', 'real: no mock-only examples', r.examples);
     check(r.start[0] && r.start[1] === '  add rax, 1' && r.asmFirst === '2.00', 'real: assembly is the default; the first example assembled gives 2.00', JSON.stringify([r.start, r.asmFirst]));
     check(r.first.tp === '2.00' && !r.first.mock && /^loop · SKL/m.test(r.first.text) && /bottleneck\s+Dependencies/.test(r.first.text) && !/ ms\n|\d bytes|\d instructions/.test(r.first.text)

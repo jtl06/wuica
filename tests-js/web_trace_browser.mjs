@@ -41,7 +41,7 @@ const HEX = body + '0f85' + rel;
 const ARCH = 'SKL';
 const engine = await WasmEngine.create(fs.readFileSync(path.join(dist, 'wuica_wasm.wasm')));
 await engine.loadUarch(fs.readFileSync(path.join(dist, 'data', 'uarch.json')));
-await engine.loadArch(ARCH, fs.readFileSync(path.join(dist, 'data', 'arch', `${ARCH}.json`)));
+await engine.loadArch(ARCH, fs.readFileSync(path.join(dist, 'data', 'arch', `${ARCH}.bin`)));
 const reference = await engine.analyze(makeRequest(HEX, ARCH, { includeTrace: true }));
 const TRACE = reference.trace;
 

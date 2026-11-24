@@ -15,4 +15,5 @@ pub mod jsoncmp;
 pub mod model;
 pub mod sim;
 mod substr;
+pub mod table_bin;
 pub mod x64;

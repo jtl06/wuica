@@ -90,6 +90,17 @@ pub unsafe extern "C" fn wuica_load_arch(name: *const u8, name_len: usize, json:
     status(text(name, name_len).and_then(|name| text(json, len).and_then(|json| ENGINE.with(|e| e.borrow_mut().load_arch(name, json)))))
 }
 
+/// Loads the binary form of an instruction table (`data/arch/<name>.bin`, written by `encode_tables` from the JSON; see
+/// `wuica_core::table_bin`). Result: `{"ok": true}` or `{"error": ...}` (a file of another format version is an error).
+///
+/// # Safety
+/// The pointers must be valid for the given lengths.
+#[no_mangle]
+pub unsafe extern "C" fn wuica_load_arch_bin(name: *const u8, name_len: usize, bin: *const u8, len: usize) -> usize {
+    let bytes = std::slice::from_raw_parts(bin, len);
+    status(text(name, name_len).and_then(|name| ENGINE.with(|e| e.borrow_mut().load_arch_bin(name, bytes))))
+}
+
 /// Runs an analysis. The request and the result are JSON (docs/WASM-API.md).
 ///
 /// # Safety

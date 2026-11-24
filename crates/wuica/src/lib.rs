@@ -29,6 +29,12 @@ impl Engine {
         Ok(())
     }
 
+    /// Loads the binary form of an instruction table (`wuica_core::table_bin`, what `encode_tables` writes).
+    pub fn load_arch_bin(&mut self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        self.tables.insert(name.to_string(), ArchData::from_bin(bytes).map_err(|e| format!("{name}: {e}"))?);
+        Ok(())
+    }
+
     pub fn uarch(&self) -> Option<&UArch> {
         self.uarch.as_ref()
     }

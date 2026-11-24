@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Assembles the deployable site in web/dist/: the page, the analyzer (wuica_wasm.wasm), the data (data/) and,
-# if it has been built, the assembler (assembler/dist/wuica_asm.wasm). It only copies: build the analyzer with
-# ./build-wasm.sh and generate data/ with tools/export_data.py first.
+# Assembles the deployable site in web/dist/: the page, the analyzer (wuica_wasm.wasm), the data (data/uarch.json and
+# the instruction tables in their binary form, data/arch/<NAME>.bin, written from data/arch/*.json by
+# tools/encode-tables.sh) and, if it has been built, the assembler (assembler/dist/wuica_asm.wasm). Build the analyzer
+# with ./build-wasm.sh and generate data/ with tools/export_data.py first.
 #
 #   web/build.sh                  then serve web/dist/ with any static file server, e.g.
 #   python3 -m http.server -d web/dist 8000
@@ -28,7 +29,7 @@ else die "neither sha256sum nor shasum found"; fi
 
 rm -rf "$out"
 mkdir -p "$out/js" "$out/css" "$out/fonts" "$out/data/arch"
-cp "$here/index.html" "$here/404.html" "$here/favicon.svg" "$here/_headers" "$out/"
+cp "$here/index.html" "$here/404.html" "$here/favicon.svg" "$here/_headers" "$here/robots.txt" "$here/sitemap.xml" "$out/"
 cp "$here"/js/*.js "$out/js/"
 cp "$here"/css/*.css "$out/css/"
 cp "$here"/fonts/*.woff2 "$here/fonts/OFL.txt" "$out/fonts/"
@@ -37,22 +38,40 @@ cp "$root/LICENSE" "$out/licenses/AGPL-3.0.txt"
 cp "$root/third_party/xed/LICENSE" "$out/licenses/XED-Apache-2.0.txt"
 [ -f "$root/assembler/LICENSE-LLVM.txt" ] && cp "$root/assembler/LICENSE-LLVM.txt" "$out/licenses/LLVM.txt"
 cp "$root/data/uarch.json" "$out/data/"
-cp "$root"/data/arch/*.json "$out/data/arch/"
+"$root/tools/encode-tables.sh" "$root/data/arch" "$out/data/arch"
 cp "$wasm" "$out/wuica_wasm.wasm"
 assembler=false
 if [ -f "$asm" ]; then cp "$asm" "$out/wuica_asm.wasm"; assembler=true; fi
 mcafound=false
 if [ -f "$mca" ]; then cp "$mca" "$out/wuica_mca.wasm"; mcafound=true; fi
 
+# <link rel="modulepreload"> for every module that js/app.js imports statically, directly or not (not the dynamic import()s,
+# nor the workers' modules), so the browser requests them all when it reads the page instead of one level of imports per
+# round trip (four levels): the analyzer's download starts only when app.js runs. The list follows the imports at build time.
+preload=()
+queue=(app.js)
+while [ ${#queue[@]} -gt 0 ]; do
+  f="${queue[0]}"; queue=("${queue[@]:1}")
+  for d in $(grep -oE "(from|import)[[:space:]]*'\./[A-Za-z0-9_.-]+\.js'" "$out/js/$f" | sed -E "s/.*'\.\/(.*)'/\1/"); do
+    case " app.js ${preload[*]-} " in *" $d "*) ;; *) [ -f "$out/js/$d" ] || die "js/$f imports a missing js/$d"; preload+=("$d"); queue+=("$d") ;; esac
+  done
+done
+links=""
+for d in "${preload[@]}"; do links+="<link rel=\"modulepreload\" href=\"js/$d\">"$'\n'; done
+entry='<script type="module" src="js/app.js"></script>'
+grep -qF "$entry" "$out/index.html" || die "index.html has no $entry"
+LINKS="$links" ENTRY="$entry" awk 'index($0, ENVIRON["ENTRY"]) { printf "%s", ENVIRON["LINKS"] } { print }' "$out/index.html" > "$out/index.html.tmp"
+mv "$out/index.html.tmp" "$out/index.html"
+
 cd "$out"
-# What the page can request (not _headers and 404.html, which are for the host), in a stable order.
-files="$(find . -type f ! -name _headers ! -name 404.html | sed 's|^\./||' | LC_ALL=C sort)"
+# What the page can request (not _headers and 404.html, which are for the host, nor robots.txt and sitemap.xml, which are for crawlers), in a stable order.
+files="$(find . -type f ! -name _headers ! -name 404.html ! -name robots.txt ! -name sitemap.xml | sed 's|^\./||' | LC_ALL=C sort)"
 version="$( { echo "$files" | while IFS= read -r f; do sha "$f"; done; sha "$here/sw.js"; } | sha | cut -c1-12)"
 
 {
   printf '{\n  "version": "%s",\n  "assembler": %s,\n  "mca": %s,\n  "tables": [' "$version" "$assembler" "$mcafound"
   sep=''
-  for t in data/arch/*.json; do n="$(basename "$t" .json)"; printf '%s"%s"' "$sep" "$n"; sep=', '; done
+  for t in data/arch/*.bin; do n="$(basename "$t" .bin)"; printf '%s"%s"' "$sep" "$n"; sep=', '; done
   printf '],\n  "files": {\n'
   sep=''
   echo "$files" | while IFS= read -r f; do

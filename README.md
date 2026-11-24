@@ -11,19 +11,23 @@ wuica follows the fork [jtl06/uiCA](https://github.com/jtl06/uiCA), which adds e
 Alder Lake P-cores and Ice Lake server to the original Intel models.
 
 **Status: working preview.** From machine code (or assembly) to uiCA's complete report, identical to the Python reference on
-all 15,259 test cases (both fixture sets, all options), natively and as WebAssembly, at about 1 ms per analysis (the Python
+all 17,081 simulation cases of both fixture sets (all options; 3,419 more in the optional set `more`), natively and as
+WebAssembly (counts from the logs of `scripts/check.sh full`, `target/check/wuica_end_to_end.log` and
+`target/check/analyze_fixtures_*.log`), at about 1 ms per analysis (the Python
 reference needs 40–55 ms plus startup). See [docs/DESIGN.md](docs/DESIGN.md) for the structure and the rules of the port.
+
+For reviewers: [docs/SPEC.md](docs/SPEC.md) states the rules, architecture, measurements, rejected ideas and known weaknesses.
 
 | Part | Where | State |
 |---|---|---|
 | Decoding (Intel XED, the version uiCA pins) | `crates/wuica-xed` | identical to Python on 3948 file × chip cases |
 | Instruction tables, configurations | `crates/wuica-core` (`data`, `config`) | loaded from `data/` (generated, see below) |
-| Instruction builder (`instructions.py`) | `crates/wuica-core` (`instr_builder`) | identical on 11,096 + 3135 cases |
+| Instruction builder (`instructions.py`) | `crates/wuica-core` (`instr_builder`) | identical on 8,056 + 3,990 cases (`target/check/wuica-core_instr_builder_fixtures.log`) |
 | Pipeline simulator (`uiCA.py`) | `crates/wuica-core` (`sim`) | identical throughput, uop table and `-json` output |
 | Bottleneck analysis (`facile.py`, `printBottlenecks`) | `crates/wuica-core` (`facile`) | identical report text |
 | Analysis API | `crates/wuica` | the request/response of [docs/WASM-API.md](docs/WASM-API.md) |
 | Command-line tool | `crates/wuica-cli` | `wuica HEX -arch SKL` prints uiCA's report |
-| WebAssembly module | `crates/wuica-wasm` | 4.3 MB, 0.9 MB gzipped |
+| WebAssembly module | `crates/wuica-wasm` | 3.1 MB, 0.8 MB gzipped |
 | Assembler (LLVM 22.1.2 MC, x86 only) | `assembler/` | identical bytes to `llvm-mc` on 3000 files; 3.8 MB, 0.7 MB brotli |
 | Web page | `web/` | static site, runs entirely in the browser |
 

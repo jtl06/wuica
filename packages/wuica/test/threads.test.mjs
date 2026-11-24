@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createWuica } from '../lib/index.js';
-import { ThreadPool, threadLimit, threadOption, threadsFor, maxMemoryBytes } from '../lib/threads.js';
+import { ThreadPool, threadLimit, threadOption, threadsForWork, workMs, WORK, maxMemoryBytes } from '../lib/threads.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const HEX = '4801d84801c349ffcf75f5';
@@ -93,15 +93,24 @@ test('a pool whose threads cannot start gives every job back', async () => {
   await pool.close();
 });
 
-test('threadLimit, threadsFor and maxMemoryBytes', () => {
+test('threadLimit, threadsForWork and maxMemoryBytes', () => {
   assert.equal(threadOption(undefined, {}), 'auto');
   assert.equal(threadOption(0, {}), 'auto');
   assert.equal(threadOption(undefined, { WUICA_THREADS: '3' }), '3');
-  assert.equal(threadsFor(15, 16, true), 8); // auto: one thread per two microarchitectures
-  assert.equal(threadsFor(2, 16, true), 1);
-  assert.equal(threadsFor(15, 4, true), 4);
-  assert.equal(threadsFor(15, 16, false), 15); // a number given: one per microarchitecture, up to it
-  assert.equal(threadsFor(15, 6, false), 6);
+  // the default by work: a small block on every CPU, 50 small blocks on 3 CPUs: none; the SHA-256 block (2,949
+  // instructions, 23,204 hex digits) on every CPU, or 20 of them on one: 4; never more than 8, the cores but one, the jobs
+  const ARCHS = ['SNB', 'IVB', 'HSW', 'BDW', 'SKL', 'KBL', 'CFL', 'SKX', 'CLX', 'ICL', 'TGL', 'RKL', 'ICX', 'ADL-P', 'ZEN3'];
+  const job = (table, n) => ({ table, request: { hex: 'x'.repeat(n) } });
+  const small = 50, sha = 23204;
+  assert.equal(threadsForWork(ARCHS.map((a) => job(a, small)), 16, 12), 1);
+  assert.equal(threadsForWork(Array.from({ length: 50 }, (_, i) => job(['SKL', 'ZEN3', 'ADL-P'][i % 3], small)).flatMap((j) => [j, j, j]), 16, 12), 1);
+  assert.equal(threadsForWork(ARCHS.map((a) => job(a, sha)), 16, 12), 4);
+  assert.equal(threadsForWork(Array.from({ length: 20 }, () => job('SKL', sha)), 16, 12), 4);
+  assert.equal(threadsForWork(Array.from({ length: 200 }, () => job('SKL', sha)), 16, 12), WORK.max);
+  assert.equal(threadsForWork(Array.from({ length: 200 }, () => job('SKL', sha)), 16, 4), 3);
+  assert.equal(threadsForWork(Array.from({ length: 200 }, () => job('SKL', sha)), 2, 12), 2);
+  assert.equal(threadsForWork([job('SKL', 10 ** 7)], 16, 12), 1); // one job: no threads
+  assert.ok(workMs(ARCHS.map((a) => job(a, small))) < WORK.minMs);
   assert.equal(threadLimit(3, {}), 3);
   assert.equal(threadLimit(1, { WUICA_THREADS: '6' }), 1);
   assert.equal(threadLimit(undefined, { WUICA_THREADS: '6' }), 6);

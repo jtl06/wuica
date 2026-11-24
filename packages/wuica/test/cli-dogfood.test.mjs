@@ -84,7 +84,7 @@ test('4. -loops, -loop LABEL, -func; the deepest loop first (clang notes); 0-bas
 test('5. wrong kinds of input: object files, text with -raw, missing files, a hex argument, AArch64', () => {
   const elf = run(['-raw', fx('count.hsw.o')]);
   assert.equal(elf.code, 1);
-  assert.match(elf.err, /is an ELF file, not bare machine code: .*objdump -d .* \| wuica/);
+  assert.match(elf.err, /is an ELF file, not bare machine code: give it without -raw \(wuica .* reads ELF and Mach-O object files and executables\)/);
   assert.equal(binaryFormat(Buffer.from('cffaedfe', 'hex')), 'a Mach-O file');
   assert.equal(binaryFormat(Buffer.from('!<arch>\n')), 'an archive (.a)');
   assert.equal(binaryFormat(Buffer.from('4801d8', 'hex')), null);
