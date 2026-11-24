@@ -358,14 +358,15 @@ test('clang 23 -S output as is: .prefalign is read as the .p2align clang 22 wrot
   assert.equal((await w.assemble('nop\nx: .PREFALIGN 4, .Lend, nop\n add rax, 1\n.Lend:\n')).hex, (await w.assemble('nop\nx: .p2align 4\n add rax, 1\n')).hex);
 });
 
-test('what-if carries the base\'s decode errors and warnings (also with align)', async () => {
+test('what-if carries the base\'s decode errors and warnings; a base its CPU cannot run has no variants', async () => {
   const { whatIfText, markdown, findExample } = await import('../lib/index.js');
   const x = await w.whatIf('SNB', { source: findExample('dot1').intel, variants: ['unroll2', 'align'] }); // SNB has no FMA
   assert.equal(x.decodeErrors, 4);
   assert.deepEqual(x.stderr.map((l) => l.text), ['Warning: 4 position(s) could not be decoded']);
   assert.match(whatIfText(x), /^ {2}warning: 4 position\(s\) could not be decoded$/m);
   assert.match(markdown.whatIfAlignment(x), /^- Warning: 4 position\(s\) could not be decoded$/m);
-  assert.equal(x.variants.find((v) => v.id === 'align').alignment.min, 4, 'written out: 4 cycles at the best offset');
+  // (SNB cannot run dot1's FMA: no variant compares with a number that is not a result)
+  assert.deepEqual([x.unsupported, x.variants.length], ['needs FMA', 0]);
 });
 
 test('clang -g -S output (NULs in the .debug_str comments): the library, the CLI and the MCP tool, with lines and .loc', async () => {

@@ -307,7 +307,10 @@ const VARIANT_W = 18;
 // The what-if table as text (per element with elementsPerIteration); a failure as one line.
 export function whatIfText(x) {
   if (x.code) return `What if (${x.arch ?? ''}): ${x.error}\n`;
-  if (x.unsupported) return `What if (${x.arch}): not a result: ${x.unsupported} (the base ${fmt2(x.tp)} leaves out what ${x.arch} cannot run): no variants\n`;
+  if (x.unsupported) {
+    return [`What if (${x.arch}): not a result: ${x.unsupported} (the base ${fmt2(x.tp)} leaves out what ${x.arch} cannot run): no variants`,
+      ...(x.stderr ?? []).map((l) => `  warning: ${String(l.text).replace(/^Warning: /, '')}`)].join('\n') + '\n';
+  }
   const per = x.elementsPerIteration;
   const f = per ? (v) => fmtEl(v / per) : fmt2;
   const rows = x.variants.map((v) => { if (v.error) return `  ${v.label.padEnd(VARIANT_W)} ${'-'.padStart(8)}  ${v.error}`;
