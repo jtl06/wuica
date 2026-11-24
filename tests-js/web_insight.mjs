@@ -10,6 +10,7 @@ import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { summarize } from '../web/js/compare.js';
 import { EXAMPLES } from '../web/js/examples.js';
 import { DEFAULT_STATE, encodeState, decodeState } from '../web/js/url-state.js';
+import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -121,7 +122,7 @@ if (!fs.existsSync(wasm) || !fs.existsSync(new URL('data/uarch.json', root))) {
 } else {
   const e = await WasmEngine.create(fs.readFileSync(wasm));
   await e.loadUarch(fs.readFileSync(new URL('data/uarch.json', root)));
-  for (const t of ['SKL', 'ZEN3', 'ADL-P']) await e.loadArch(t, fs.readFileSync(new URL(`data/arch/${t}.json`, root)));
+  for (const t of ['SKL', 'ZEN3', 'ADL-P']) await e.loadArch(t, tableBytes(t));
   const chainEx = EXAMPLES.find((x) => x.id === 'chain');
   const r = await e.analyze(makeRequest(chainEx.hex, 'SKL'));
   check(JSON.stringify(r.criticalPath) === JSON.stringify(CHAIN.criticalPath), 'real: the criticalPath of the chain example', JSON.stringify(r.criticalPath));

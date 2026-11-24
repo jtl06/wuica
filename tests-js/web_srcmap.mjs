@@ -8,6 +8,7 @@ import { blame, boundModel, defaultResource } from '../web/js/bound.js';
 import { parseListing, defaultSelection, extractRange, rangeLines, parseCeLink } from '../web/js/godbolt.js';
 import { parseHexInput } from '../web/js/hex-input.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
+import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -71,7 +72,7 @@ const R = {
   } else {
     const e = await WasmEngine.create(fs.readFileSync(wasm));
     await e.loadUarch(fs.readFileSync(new URL('data/uarch.json', root)));
-    await e.loadArch('SKL', fs.readFileSync(new URL('data/arch/SKL.json', root)));
+    await e.loadArch('SKL', tableBytes('SKL'));
     const p = parseHexInput(ext.text);
     const hex = [...p.bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
     const r = await e.analyze(makeRequest(hex, 'SKL'));

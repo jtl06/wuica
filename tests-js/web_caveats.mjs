@@ -9,6 +9,7 @@ import { caveats, memOperand } from '../web/js/caveats.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { WasmAssembler } from '../web/js/assembler.js';
 import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES } from '../web/js/examples.js';
+import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -99,7 +100,7 @@ if (!fs.existsSync(wasm) || !fs.existsSync(asmPath) || !fs.existsSync(new URL('d
   const uarchBytes = fs.readFileSync(new URL('data/uarch.json', root));
   await e.loadUarch(uarchBytes);
   const uarch = JSON.parse(uarchBytes.toString('utf8'));
-  for (const arch of ['ZEN3', 'SKL']) await e.loadArch(uarch.configs[arch].name, fs.readFileSync(new URL(`data/arch/${uarch.configs[arch].name}.json`, root)));
+  for (const arch of ['ZEN3', 'SKL']) await e.loadArch(uarch.configs[arch].name, tableBytes(uarch.configs[arch].name));
   check(uarch.configs.ZEN3.splitLoadCycles > 0 && !(uarch.configs.SKL.splitLoadCycles > 0), 'data: ZEN3 has a split-load cost, SKL none', `${uarch.configs.ZEN3.splitLoadCycles} ${uarch.configs.SKL.splitLoadCycles}`);
   const a = await WasmAssembler.create(fs.readFileSync(asmPath));
   const of = async (name, arch) => {

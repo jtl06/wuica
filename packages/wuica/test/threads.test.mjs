@@ -47,7 +47,7 @@ test('threads: a table that cannot be loaded', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-threads-'));
   fs.mkdirSync(path.join(dir, 'arch'));
   fs.copyFileSync(path.join(ROOT, 'data/uarch.json'), path.join(dir, 'uarch.json'));
-  for (const t of ['SKL', 'ICL']) fs.copyFileSync(path.join(ROOT, 'data/arch', `${t}.json`), path.join(dir, 'arch', `${t}.json`));
+  for (const t of ['SKL', 'ICL']) fs.copyFileSync(path.join(ROOT, 'packages/wuica/dist/data/arch', `${t}.bin.br`), path.join(dir, 'arch', `${t}.bin.br`));
   const s = await createWuica({ dataDir: dir, threads: 1 });
   const p = await createWuica({ dataDir: dir, threads: 3 });
   const request = { hex: HEX, archs: ['SKL', 'TGL', 'ICL'] };

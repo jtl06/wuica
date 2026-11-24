@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import readline from 'node:readline';
 import { createWuica } from './index.js';
-import { whatIf, VARIANTS } from './whatif.js';
+import { whatIf, VARIANTS } from './web/whatif-core.js';
 
 const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 

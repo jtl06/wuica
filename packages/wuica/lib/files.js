@@ -22,7 +22,8 @@ export async function readMaybeCompressed(file) {
 }
 
 // The file of an instruction table in a data directory: the binary form (<name>.bin, the package's), else the JSON
-// (<name>.json, as tools/export_data.py writes it), each plain or .br.
+// (<name>.json, as tools/export_data.py writes it: the analyzer that ships reads no JSON tables and says so), each plain
+// or .br.
 export function tableFile(dataDir, name) {
   const bin = path.join(dataDir, 'arch', `${name}.bin`);
   return existsSync(bin) || existsSync(bin + '.br') ? bin : path.join(dataDir, 'arch', `${name}.json`);

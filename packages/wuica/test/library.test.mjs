@@ -1,3 +1,5 @@
+import zlib from 'node:zlib';
+import os from 'node:os';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -6,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createWuica, normalizeHex } from '../lib/index.js';
 
+const DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const HEX = '4801d84801c349ffcf75f5';
 const ASM = 'top:\n  add rax, rbx\n  add rbx, rax\n  dec r15\n  jnz top\n';
@@ -194,9 +197,18 @@ test('summarize', async () => {
   assert.ok(shares.every((x, i) => i === 0 || x <= shares[i - 1]));
 });
 
-test('a dataDir with plain JSON tables works', async () => {
-  const w2 = await createWuica({ dataDir: path.join(ROOT, 'data') });
+test('a dataDir with plain binary tables works; JSON tables are an error that says how to convert them', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wuica-data-'));
+  fs.mkdirSync(path.join(dir, 'arch'));
+  fs.copyFileSync(path.join(ROOT, 'data/uarch.json'), path.join(dir, 'uarch.json'));
+  fs.writeFileSync(path.join(dir, 'arch/SKL.bin'), zlib.brotliDecompressSync(fs.readFileSync(path.join(DIR, 'dist/data/arch/SKL.bin.br'))));
+  fs.copyFileSync(path.join(ROOT, 'data/arch/ICL.json'), path.join(dir, 'arch/ICL.json'));
+  const w2 = await createWuica({ dataDir: dir, threads: 1 });
   assert.equal((await w2.analyze('SKL', { hex: HEX })).tp, 2);
+  const j = await w2.analyze('ICL', { hex: HEX });
+  assert.equal(j.code, 3);
+  assert.match(j.error, /could not load the instruction table for ICL: .*reads only binary tables \(data\/arch\/<NAME>\.bin, written from the JSON by tools\/encode-tables\.sh\)/);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('compare', async () => {

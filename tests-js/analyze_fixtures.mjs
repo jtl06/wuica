@@ -23,8 +23,8 @@ const t0 = performance.now();
 const uarch = fs.readFileSync('data/uarch.json', 'utf8');
 if (!call('wuica_load_uarch', uarch).ok) throw new Error('load_uarch');
 // the instruction tables as the site and the npm package ship them: the binary form (web/dist/data/arch/<NAME>.bin.gz, written
-// by web/build.sh from data/arch/*.json); the JSON with WUICA_TABLES=json
-const TABLES = process.env.WUICA_TABLES === 'json' ? { dir: 'data/arch', ext: '.json', fn: 'wuica_load_arch' } : { dir: 'web/dist/data/arch', ext: '.bin.gz', fn: 'wuica_load_arch_bin', gz: true };
+// by web/build.sh from data/arch/*.json; the module reads no JSON tables)
+const TABLES = { dir: 'web/dist/data/arch', ext: '.bin.gz', fn: 'wuica_load_arch_bin', gz: true };
 if (!fs.existsSync(TABLES.dir)) throw new Error(`${TABLES.dir} is missing: run web/build.sh (or WUICA_TABLES=json)`);
 for (const f of fs.readdirSync(TABLES.dir).filter((f) => f.endsWith(TABLES.ext))) { const r = call(TABLES.fn, f.slice(0, -TABLES.ext.length), (TABLES.gz ? zlib.gunzipSync(fs.readFileSync(`${TABLES.dir}/${f}`)) : fs.readFileSync(`${TABLES.dir}/${f}`))); if (!r.ok) throw new Error(JSON.stringify(r)); }
 const tLoad = performance.now() - t0;

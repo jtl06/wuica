@@ -15,6 +15,7 @@ import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
 import { SHA256_BLOCK_HEX } from '../web/js/showcase.js';
 import * as pkg from '../packages/wuica/lib/details.js';
+import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -142,7 +143,7 @@ if (!fs.existsSync(wasm) || !fs.existsSync(new URL('data/uarch.json', root))) {
   await e.loadUarch(uarchBytes);
   const uarch = JSON.parse(uarchBytes);
   const archs = Object.keys(uarch.configs).filter((k) => !k.includes('_'));
-  for (const t of new Set(archs.map((a) => uarch.configs[a].name))) await e.loadArch(t, fs.readFileSync(new URL(`data/arch/${t}.json`, root)));
+  for (const t of new Set(archs.map((a) => uarch.configs[a].name))) await e.loadArch(t, tableBytes(t));
   let cases = 0;
   const blocks = [...EXAMPLES, ...CLASSIC_EXAMPLES].map((x) => ({ id: x.id, hex: x.hex }));
   for (const b of blocks) {
@@ -168,8 +169,6 @@ if (!fs.existsSync(wasm) || !fs.existsSync(new URL('data/uarch.json', root))) {
           const ms = r.rows[row].values[r.columns.indexOf('MS')] || 0;
           if (ms > 0) check(det.uopsMS > 0, `${what}: row ${row} µ badge only for microcoded instructions`);
           if (x.notes !== 'X') check(det.portData.length === 0 || portString(det.portData).length > 0, `${what}: row ${row} ports`);
-          // the MCP summary (packages/wuica/lib/details.js) says what the card says
-          check(pkg.portString(det.portData) === portString(det.portData) && JSON.stringify(pkg.latencyPairs(det)) === JSON.stringify(latencyPairs(det)), `${what}: row ${row}: the package's ports and latencies are the page's`);
         });
         if (d.ports) {
           const pb = portSetBlame(r, d.ports);

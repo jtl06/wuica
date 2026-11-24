@@ -9,7 +9,8 @@ import { experiments, outcome, bestOf } from '../web/js/whatif.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { WasmAssembler } from '../web/js/assembler.js';
 import { withRegions } from '../web/js/asm-regions.js';
-import { whatIf } from '../packages/wuica/lib/whatif.js';
+import { whatIf } from '../web/js/whatif-core.js';
+import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -85,7 +86,7 @@ if (!fs.existsSync(wasm) || !fs.existsSync(asmPath) || !fs.existsSync(new URL('d
 } else {
   const e = await WasmEngine.create(fs.readFileSync(wasm));
   await e.loadUarch(fs.readFileSync(new URL('data/uarch.json', root)));
-  for (const t of ['SKL', 'ZEN3']) await e.loadArch(t, fs.readFileSync(new URL(`data/arch/${t}.json`, root)));
+  for (const t of ['SKL', 'ZEN3']) await e.loadArch(t, tableBytes(t));
   const A = withRegions(await WasmAssembler.create(fs.readFileSync(asmPath)));
   const assembleHex = async (t) => { const r = await A.assemble(t, 'intel'); return r.ok ? hexOf(r.bytes) : null; };
   // as the page and the MCP tool run them: per original iteration

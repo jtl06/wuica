@@ -7,7 +7,8 @@ import { instrRanges, unrollHex, experiments, outcome, formatDelta, formatSpeedu
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES } from '../web/js/examples.js';
 import { encodeState, decodeState } from '../web/js/url-state.js';
-import { experiments as pkgExperiments, outcome as pkgOutcome } from '../packages/wuica/lib/whatif.js';
+import { toolOutcome } from '../web/js/whatif-core.js';
+import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -68,7 +69,7 @@ if (!fs.existsSync(wasm) || !fs.existsSync(new URL('data/uarch.json', root))) {
 } else {
   const e = await WasmEngine.create(fs.readFileSync(wasm));
   await e.loadUarch(fs.readFileSync(new URL('data/uarch.json', root)));
-  for (const t of ['SKL', 'ZEN3']) await e.loadArch(t, fs.readFileSync(new URL(`data/arch/${t}.json`, root)));
+  for (const t of ['SKL', 'ZEN3']) await e.loadArch(t, tableBytes(t));
   // the largest variant: SHA-256 (11,602 bytes) unrolled ×8; its link must carry the whole code
   {
     const sha = SHOWCASE_EXAMPLES[0];
@@ -85,16 +86,10 @@ if (!fs.existsSync(wasm) || !fs.existsSync(new URL('data/uarch.json', root))) {
       const fused = r.rows.at(-1).notes === 'M';
       const k = lines.length - (fused ? 2 : 1);
       const body = lines.slice(0, k).join(''), tail = lines.slice(k).join('');
-      // the MCP tool's experiments (packages/wuica/lib/whatif.js) are the page's
-      for (const opts of [OPTS, { ...OPTS, noMacroFusion: true }]) {
-        const page = experiments(r, ex.hex, opts).map((x) => [x.id, x.label, x.per, x.hex, JSON.stringify(x.options), x.estimate]);
-        const pkg = pkgExperiments(r, ex.hex, opts).map((x) => [x.id, x.label, x.per, x.hex, JSON.stringify(x.options), x.estimate]);
-        check(JSON.stringify(page) === JSON.stringify(pkg), `${ex.id} on ${arch}: the MCP tool's experiments are the page's`, JSON.stringify([page, pkg]));
-      }
       for (const x of experiments(r, ex.hex, OPTS)) {
         if (x.estimate !== undefined) {
-          const p = outcome(r, x, null), q = pkgOutcome({ ...r, code: 0 }, x, null);
-          check(Math.round(p.tp * 100) / 100 === q.tp && q.estimate, `${ex.id} on ${arch}: no chain, as the page estimates it`);
+          const p = outcome(r, x, null), q = toolOutcome({ ...r, code: 0 }, x, null);
+          check(Math.round(p.tp * 100) / 100 === q.tp && q.estimate, `${ex.id} on ${arch}: no chain: the package's row rounds the page's estimate`);
         }
         if (!x.id.startsWith('unroll')) continue;
         check(x.hex === body.repeat(x.per) + tail, `${ex.id} on ${arch}: ${x.label} is the body ${x.per} times and the branch`, x.hex);

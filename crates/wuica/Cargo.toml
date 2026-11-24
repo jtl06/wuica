@@ -5,6 +5,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# the JSON instruction-table loader (Engine::load_arch): for the native tools and tests; the WebAssembly module that ships
+# reads only the binary tables (crates/wuica-wasm turns it off)
+default = ["json-tables"]
+json-tables = []
+
 [dependencies]
 wuica-core = { path = "../wuica-core" }
 wuica-xed = { path = "../wuica-xed" }

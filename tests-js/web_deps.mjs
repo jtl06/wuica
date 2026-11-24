@@ -7,6 +7,7 @@ import { depGraph, neighbours } from '../web/js/deps.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
 import { encodeState, decodeState } from '../web/js/url-state.js';
+import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -42,7 +43,7 @@ const wasm = new URL('target/wasm32-unknown-unknown/release/wuica_wasm.wasm', ro
 if (fs.existsSync(wasm) && fs.existsSync(new URL('data/uarch.json', root))) {
   const e = await WasmEngine.create(fs.readFileSync(wasm));
   await e.loadUarch(fs.readFileSync(new URL('data/uarch.json', root)));
-  for (const t of ['SKL', 'ZEN3']) await e.loadArch(t, fs.readFileSync(new URL(`data/arch/${t}.json`, root)));
+  for (const t of ['SKL', 'ZEN3']) await e.loadArch(t, tableBytes(t));
   for (const ex of [...EXAMPLES, ...CLASSIC_EXAMPLES]) {
     for (const arch of ['SKL', 'ZEN3']) {
       const r = await e.analyze(makeRequest(ex.hex, arch, { includeTrace: true }));

@@ -12,7 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Analyzer, Assembler, parseDiagnostics, codeModeError } from './wasm.js';
 import { archList, DEFAULT_ARCH, ARCH_INFO, ARCH_ORDER } from './archs.js';
-import { insights } from './insights.js';
+import { insights } from './web/bound-core.js';
 import { instrDetails, detailInsights } from './details.js';
 export { detailInsights };
 import { readMaybeCompressed, readMaybeCompressedSync, tableFile } from './files.js';
@@ -34,7 +34,7 @@ export function listLoops(source, { func = null } = {}) {
 }
 
 export { ARCH_INFO, ARCH_ORDER, DEFAULT_ARCH, CODES, WARM_HEX, parseDiagnostics, insights };
-export { whatIf, VARIANTS as WHAT_IF_VARIANTS } from './whatif.js';
+export { whatIf, VARIANTS as WHAT_IF_VARIANTS } from './web/whatif-core.js';
 export { examples, findExample } from './examples.js';
 export { objectKind } from './objfile.js';
 
@@ -489,14 +489,14 @@ class Wuica {
   // The number of threads compare() has running now (0 if none).
   get threads() { return this.#pool?.threads ?? 0; }
 
-  // The derived diagnosis of an analyze() response (insights.js) with this CPU's configuration (the split-load caveat
+  // The derived diagnosis of an analyze() response (web/bound-core.js) with this CPU's configuration (the split-load caveat
   // depends on it); null for a failure.
   insights(r) {
     return r?.code === CODES.OK ? insights(r, this.#configs[r.arch] ?? null) : null;
   }
 
   // The compact form of an analyze() response (used by the MCP server): uop table reduced to non-zero values, plus the
-  // derived diagnosis of the web page's bound view (insights.js).
+  // derived diagnosis of the web page's bound view (web/bound-core.js).
   summarize(r) {
     if (r.code !== CODES.OK) return r;
     const { name, year, prototype } = this.#info(r.arch);
