@@ -42,6 +42,10 @@ function archsText(archs) {
   return archs.map((a) => `${a.id.padEnd(width)}  ${a.name}${a.year ? ` (${a.year})` : ''}${a.prototype ? '  [prototype]' : ''}\n`).join('');
 }
 
+// analyze as text: uiCA's report; for a CPU that cannot run the code (unsupported), after a blank line the note the CLI
+// prints (a reader of the body alone learns that the number is not a result)
+const analyzeText = (r) => (r.unsupported ? `${r.text.replace(/\n*$/, '\n')}\nNot a result for ${r.arch}: ${r.unsupported} (the throughput leaves out what it cannot run)\n` : r.text);
+
 function compareText(c) {
   if (c.code) return stderrText(c);
   const fmt = (tp) => tp.toFixed(2);
@@ -329,7 +333,7 @@ export async function createApp(options = {}) {
       if (!wantText && wantsMarkdown(req)) {
         return sendMarkdown(res, r, markdown.report(r, { arch: r.code ? arch : archTitle(r.arch), insights: r.insights ?? null, source: typeof body?.source === 'string' ? body.source : undefined }), unknownArch ? 404 : undefined);
       }
-      return sendResult(res, r, wantText, (x) => x.text, unknownArch ? 404 : undefined);
+      return sendResult(res, r, wantText, analyzeText, unknownArch ? 404 : undefined);
     }
     if (p === '/api/what-if' || p.startsWith('/api/what-if/')) {
       method(['POST']);

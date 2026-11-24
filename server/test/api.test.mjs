@@ -87,6 +87,17 @@ test('POST /api/analyze/<arch>: text/plain is uiCA\'s report', async () => {
   assert.match(r.text, /^Throughput \(in cycles per iteration\): /);
 });
 
+test('POST /api/analyze/<arch>: text/plain for a CPU that cannot run the code: the report, then a blank line and the note', async () => {
+  const source = fs.readFileSync(new URL('../../tests-js/fixtures/dogfood/avx512.s', import.meta.url), 'utf8');
+  for (const arch of ['SKL', 'ZEN3']) {
+    const r = await post(s.base, `/api/analyze/${arch}`, { source }, { Accept: 'text/plain' });
+    const lib = await w.analyze(arch, { source });
+    assert.equal(lib.unsupported, 'needs AVX-512');
+    assert.ok(r.text.startsWith(lib.text.replace(/\n*$/, '\n')), arch);
+    assert.match(r.text, new RegExp(`\\n\\nNot a result for ${arch}: needs AVX-512 \\(the throughput leaves out what it cannot run\\)\\n$`));
+  }
+});
+
 test('POST /api/what-if/<arch>: the library\'s whatIf (the MCP tool what_if), per element, text, Markdown, errors', async () => {
   const DOT = 'loop:\n vfmadd231ps ymm0, ymm1, [rdi+rax]\n add rax, 32\n cmp rax, rdx\n jb loop\n';
   const body = { source: DOT, variants: ['unroll2', 'acc4', 'nochain'], per: 8 };
