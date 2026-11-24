@@ -229,6 +229,58 @@ export function cycleSpan(model, rows) {
   return [Math.max(0, lo - 1), Math.min(model.nCycles - 1, hi + 1)];
 }
 
+// The time a row shows from when its wait for operands is shortened (waits 'short'): STUB_C cycles of it, and room for
+// its length written left of it.
+export const STUB_C = 3;
+const shortened = (u, delay, waits) => {
+  if (waits === 'full' || u.issued === null) return false;
+  const ready = u.ready ?? u.dispatched;
+  if (ready === null) return false;
+  return ready - Math.min(ready, u.issued + (delay ?? 0)) > STUB_C;
+};
+// The cycles the rows span as drawn: as cycleSpan, but a row whose wait for operands is shortened starts just before it
+// is ready (its issue and front end, far to the left, are not drawn): the cycles where the uops run fill the width.
+export function shownSpan(model, rows, waits = 'short') {
+  if (waits === 'full') return cycleSpan(model, rows);
+  let lo = Infinity, hi = -Infinity;
+  for (const i of rows) {
+    const u = model.uops[i];
+    const start = shortened(u, model.issueDispatchDelay, waits) ? (u.ready ?? u.dispatched) - 3 * STUB_C : (u.issued ?? u.idq ?? u.iq);
+    if (start !== null && start < lo) lo = start;
+    for (const [f] of STAGES) { const c = u[f]; if (c !== null && c > hi) hi = c; }
+  }
+  if (lo === Infinity) return [0, Math.max(0, model.nCycles - 1)];
+  return [Math.max(0, lo - 1), Math.min(model.nCycles - 1, hi + 1)];
+}
+
+// A port's group: "P" for Intel's numbered ports, the name without its number otherwise (ALU0 -> ALU, (SA1) -> SA)
+export function portGroupName(name) {
+  if (/^Port \w+$/.test(name)) return 'P';
+  return /^\(?([A-Za-z]+)\d*\)?$/.exec(String(name))?.[1] ?? String(name);
+}
+// The groups of the ports (used ones), each with the prefix sums of its busy ports per cycle: [{name, ports, pre}]
+export function portGroups(model, ports) {
+  const by = new Map();
+  for (const p of ports) { const g = portGroupName(p.name); (by.get(g) ?? by.set(g, []).get(g)).push(p); }
+  return [...by].map(([name, ps]) => {
+    const pre = new Int32Array(model.nCycles + 1);
+    for (let c = 0; c < model.nCycles; c++) { let n = 0; for (const p of ps) if (model.dispatchedAt[p.i][c] >= 0) n++; pre[c + 1] = pre[c] + n; }
+    return { name, short: name, ports: ps, pre };
+  });
+}
+
+// Two traces in their windows are the same: the same uops with the same events, relative to each window's origin
+export function sameTrace(ma, wa, mb, wb) {
+  const ra = selectRows(ma, wa.from, wa.to), rb = selectRows(mb, wb.from, wb.to);
+  if (ra.length !== rb.length || ma.labels.length !== mb.labels.length || ma.labels.some((l, k) => l !== mb.labels[k])) return false;
+  for (let k = 0; k < ra.length; k++) {
+    const a = ma.uops[ra[k]], b = mb.uops[rb[k]];
+    if (a.instrID !== b.instrID || a.n !== b.n || a.kind !== b.kind || a.port !== b.port) return false;
+    for (const [f] of STAGES) if ((a[f] === null) !== (b[f] === null) || (a[f] !== null && a[f] - wa.origin !== b[f] - wb.origin)) return false;
+  }
+  return true;
+}
+
 export function uopLabel(model, i) {
   const u = model.uops[i];
   const base = u.kind === 'regMerge' ? 'register merge uop' : u.kind === 'stackSync' ? 'stack sync uop' : model.labels[u.instrID];
@@ -402,7 +454,7 @@ export function roundEnds(model, from, to) {
 // iterations from the earlier of the two steady states) or 'all' (both from cycle 0). Returns {a: {from, to, origin},
 // b: {...}, lo, hi}: the cycle where each side's first shown round starts is cycle 0 of the axis; lo..hi (relative
 // cycles) covers the rows of both.
-export function abWindow(ma, mb, { choice = 'steady', scale = 1, n = 3 } = {}) {
+export function abWindow(ma, mb, { choice = 'steady', scale = 1, n = 3, span = cycleSpan } = {}) {
   // scale: iterations of A per iteration of B (B's elements per iteration over A's): any ratio, either way
   const s = scale > 0 && Number.isFinite(scale) ? scale : 1;
   let a, b;
@@ -419,7 +471,7 @@ export function abWindow(ma, mb, { choice = 'steady', scale = 1, n = 3 } = {}) {
   }
   let lo = Infinity, hi = -Infinity;
   for (const [m, w] of [[ma, a], [mb, b]]) {
-    const [c0, c1] = cycleSpan(m, selectRows(m, w.from, w.to));
+    const [c0, c1] = span(m, selectRows(m, w.from, w.to));
     lo = Math.min(lo, c0 - w.origin);
     hi = Math.max(hi, c1 - w.origin);
   }
@@ -455,21 +507,50 @@ const ROW_H = 16, PORT_H = 9, AXIS_H = 18, HEAD_GAP = 6, PAD = 24;
 const MIN_SCALE = 0.25, MAX_SCALE = 48;
 let idSeq = 0;
 
-// The legend: [class of the swatch, text]. The swatches are drawn by trace.css with the same colours.
+// The legend: [class of the swatch, text, (A–B only)]. The swatches are drawn by trace.css with the same colours.
 const LEGEND = [
-  ['q', 'in the IDQ (front end → issue)'],
-  ['sched', 'issued: the issue → dispatch delay'],
-  ['dep', 'not ready: waiting for operands'],
-  ['port', 'ready, waiting for a port'],
-  ['exec', 'dispatched → executed (port number on the bar)'],
-  ['rob', 'executed, waiting to retire'],
+  ['heat', 'ports busy (darker: more of the group)'],
+  ['num', 'iteration'],
+  ['q', 'front end → issue'],
+  ['sched', 'issue → dispatch delay'],
+  ['dep', 'waiting for operands'],
+  ['stub', 'that wait, shortened: its cycles'],
+  ['port', 'waiting for a port'],
+  ['exec', 'executing (port on the bar)'],
+  ['rob', 'waiting to retire'],
   ['ret', 'retired'],
   ['elim', 'eliminated (no port)'],
+  ['end', 'an iteration\'s last uop retired', true],
 ];
 
-export function legendElement() {
+export function legendElement({ ab = false } = {}) {
   return el('ul', { class: 'trace-legend', 'aria-label': 'legend' },
-    LEGEND.map(([k, t]) => el('li', null, el('span', { class: `sw sw-${k}`, 'aria-hidden': 'true' }), t)));
+    LEGEND.filter((x) => ab || !x[2]).map(([k, t]) => el('li', null, el('span', { class: `sw sw-${k}`, 'aria-hidden': 'true', text: k === 'num' ? '7' : k === 'stub' ? '9' : null }), t)));
+}
+
+// The view's controls (single and A–B): the port strip compact or full, the waits shortened or full, the legend in a
+// popover. state: {strip, waits}; onChange(): redraw. Returns {el: the controls, pop: the legend's popover}.
+let popSeq = 0;
+export function traceControls(state, onChange, { ab = false, extra = [] } = {}) {
+  const toggle = (text, title, key, on, off) => {
+    const b = el('button', { type: 'button', class: 'trace-toggle', title, 'aria-pressed': String(state[key] === on), text });
+    b.addEventListener('click', () => { state[key] = state[key] === on ? off : on; b.setAttribute('aria-pressed', String(state[key] === on)); onChange(key); });
+    return b;
+  };
+  const strip = toggle('all ports', 'every port of the strip (else one row per group of ports)', 'strip', 'full', 'compact');
+  const waits = toggle('full waits', 'the whole wait for operands (else shortened, with its cycles written)', 'waits', 'full', 'short');
+  const id = `trace-legend-${++popSeq}`;
+  const pop = el('div', { class: 'trace-legend-pop', id, role: 'dialog', 'aria-label': 'legend', hidden: true }, legendElement({ ab }));
+  const key = el('button', { type: 'button', class: 'trace-zoom trace-keybtn', 'aria-label': 'legend', title: 'what the marks mean', 'aria-expanded': 'false', 'aria-controls': id, text: '?' });
+  const close = () => { pop.hidden = true; key.setAttribute('aria-expanded', 'false'); document.removeEventListener('pointerdown', outside, true); };
+  const outside = (e) => { if (!pop.contains(e.target) && e.target !== key) close(); };
+  key.addEventListener('click', () => {
+    if (!pop.hidden) { close(); return; }
+    pop.hidden = false; key.setAttribute('aria-expanded', 'true');
+    document.addEventListener('pointerdown', outside, true);
+  });
+  for (const t of [key, pop]) t.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !pop.hidden) { e.stopPropagation(); close(); key.focus(); } });
+  return { el: el('span', { class: 'trace-toggles' }, strip, waits, ...extra, key), pop, key, strip, waits };
 }
 
 // The shared time axis of the two viewers of an A–B trace (createABTracePanel): one scale, one gutter width, one
@@ -503,7 +584,7 @@ export class Viewer {
   // options: onState(); onHoverGroup(group | null), onPickGroup(group): a uop row under the pointer / clicked (or
   // Enter), as its instruction's group (rowGroups); for an A–B trace: sync (a TimeSync), fixed {from, to, origin}
   // (the rounds shown and the cycle that is 0 on the axis), tag ('A' / 'B')
-  constructor(model, state, { onState = () => {}, onHoverGroup = null, onPickGroup = null, sync = null, fixed = null, tag = null } = {}) {
+  constructor(model, state, { onState = () => {}, onHoverGroup = null, onPickGroup = null, sync = null, fixed = null, tag = null, compare = null } = {}) {
     this.model = model;
     this.state = state; // {range, mode, scale, scrollLeft, scrollTop}: kept by the panel across re-renders
     this.onState = onState;
@@ -520,6 +601,10 @@ export class Viewer {
     this.choices = rangeChoices(model);
     if (!this.choices.some((c) => c.id === state.range)) state.range = this.choices[0].id;
     this.ports = model.ports.map((p, i) => ({ ...p, i })).filter((p) => p.used > 0);
+    this.groups = portGroups(model, this.ports); // the compact strip: one row per group (state.strip 'compact')
+    this.compare = compare; // A–B: B's viewer compares its ports' use with A's (the viewer here)
+    if (state.strip !== 'full') state.strip = 'compact';
+    if (state.waits !== 'full') state.waits = 'short';
     this.active = -1; // the row (index into this.rows) under the pointer or the keyboard focus
     this.pinned = false;
     this.portHover = null; // [port index, cycle]
@@ -544,11 +629,12 @@ export class Viewer {
     this.modeChart.checked = this.state.mode !== 'table';
     this.modeTable.checked = this.state.mode === 'table';
     for (const r of [this.modeChart, this.modeTable]) r.addEventListener('change', () => { if (r.checked) this.setMode(r.value); });
+    this.controls = this.fixed ? null : traceControls(this.state, (k) => this.restyle(k));
     this.zoomTools = el('span', { class: 'trace-zoomtools' },
       zoomBtn('−', 'zoom out', () => this.zoomBy(1 / 1.6)),
       zoomBtn('+', 'zoom in', () => this.zoomBy(1.6)),
       zoomBtn('fit', 'fit the cycles to the width', () => this.fit()),
-      this.zoomLabel);
+      this.zoomLabel, this.controls?.el);
     const tools = el('div', { class: 'trace-tools' },
       el('label', { class: 'inline' }, 'show ', this.rangeSel),
       el('span', { class: 'trace-mode', role: 'radiogroup', 'aria-label': 'view' },
@@ -565,19 +651,19 @@ export class Viewer {
     this.live = el('p', { class: 'trace-live', id: `${id}-live`, 'aria-live': 'polite' });
     this.probe = el('span', { class: 'trace-probe', 'aria-hidden': 'true' });
     this.chart = el('div', { class: 'trace-chart' }, this.scroller, this.tip, this.probe);
-    this.legend = legendElement();
+    this.legend = this.controls?.pop ?? el('span', { hidden: true }); // (A–B: the panel's)
     this.note = el('p', { class: 'trace-note hint' });
     this.tableBox = el('div', { class: 'trace-tablebox', hidden: true });
     this.root = this.fixed
       ? el('div', { class: 'trace-viewer', 'data-tag': this.tag }, this.chart, this.tableBox, this.live) // A–B: the panel has the tools and the legend
-      : el('div', { class: 'trace-viewer' }, tools, this.chart, this.legend, this.note, this.tableBox, this.live);
+      : el('div', { class: 'trace-viewer' }, tools, this.legend, this.chart, this.note, this.tableBox, this.live);
     if (this.tag) this.canvas.setAttribute('aria-label', `${this.tag}: timeline of the uops by cycle. Arrow keys move between uops; + and − zoom.`);
     if (!this.fixed) attachRange(this, tools); // trace-range-view.js
 
     this.scroller.addEventListener('scroll', () => {
       this.state.scrollLeft = this.scroller.scrollLeft;
       this.state.scrollTop = this.scroller.scrollTop;
-      if (this.sync) this.sync.scrollTo(this.scroller.scrollLeft, this);
+      if (this.sync) { this.sync.scrollTo(this.scroller.scrollLeft, this); this.sync.follow?.(this); }
       if (!this.pinned && this.active >= 0 && this.pointer) this.hoverAt(this.pointer.x, this.pointer.y);
       this.paint();
     }, { passive: true });
@@ -623,10 +709,18 @@ export class Viewer {
     this.paint();
   }
 
+  // a control changed: the strip (redraw with the other head) or the waits (another span: fitted again)
+  restyle(key) {
+    if (key === 'waits') { this.setRange(this.state.range, { keepScale: false }); return; }
+    this.labelCache.clear();
+    this.layout();
+    this.onState();
+  }
+
   setMode(mode) {
     this.state.mode = mode;
     this.chart.hidden = mode === 'table';
-    this.legend.hidden = mode === 'table';
+    if (mode === 'table' && this.controls) { this.legend.hidden = true; this.controls.key.setAttribute('aria-expanded', 'false'); }
     this.zoomTools.hidden = mode === 'table';
     this.tableBox.hidden = mode !== 'table';
     if (mode === 'table') this.renderTable(); else { this.tableBox.replaceChildren(); this.attached(); }
@@ -640,7 +734,7 @@ export class Viewer {
     this.rowSet = new Set(this.rows);
     this.rowOf = new Map(Array.from(this.rows, (u, r) => [u, r]));
     if (this.fixed) [this.c0, this.c1] = [this.origin + this.sync.lo, this.origin + this.sync.hi];
-    else [this.c0, this.c1] = cycleSpan(this.model, this.rows);
+    else [this.c0, this.c1] = shownSpan(this.model, this.rows, this.state.waits);
     this.active = -1;
     this.pinned = false;
     this.tip.hidden = true;
@@ -692,7 +786,16 @@ export class Viewer {
   gutter() { return this.sync ? this.sync.gutter() : Math.round(Math.min(280, Math.max(130, this.viewW * 0.34))); }
   // the cycles that have data: c0..c1 can reach beyond the trace in an A–B view
   dataC(c) { return Math.max(0, Math.min(this.model.nCycles - 1, c)); }
-  headH() { return AXIS_H + this.ports.length * PORT_H + (this.model.issue ? ISSUE_H : 0) + HEAD_GAP; }
+  // the rows of the strip: one per group of ports (compact) or one per port (full)
+  stripRows() { return this.state.strip === 'full' ? this.ports : this.groups; }
+  headH() { return AXIS_H + this.stripRows().length * PORT_H + (this.model.issue ? ISSUE_H : 0) + HEAD_GAP; }
+  // the share (%) of each strip row's capacity used in cycles a..b: Map name -> percent
+  stripShares(a, b) {
+    const out = new Map(), m = this.model, n = b - a + 1;
+    if (this.state.strip === 'full') for (const p of this.ports) out.set(p.short, Math.round((100 * (m.prefix[p.i][b + 1] - m.prefix[p.i][a])) / n));
+    else for (const g of this.groups) out.set(g.name, Math.round((100 * (g.pre[b + 1] - g.pre[a])) / (n * g.ports.length)));
+    return out;
+  }
   x(c) { return this.G + (c - this.c0) * this.scale - this.sl; }
   cycleAt(px) { return Math.floor((px - this.G + this.sl) / this.scale) + this.c0; }
 
@@ -871,20 +974,22 @@ export class Viewer {
       ctx.fillStyle = C.subtle; ctx.fillText(String(c - this.origin), x + 2, AXIS_H / 2 - 1);
     }
     const dA = Math.max(cA, 0), dB = Math.min(cB, m.nCycles - 1);
-    for (let p = 0; p < this.ports.length; p++) this.drawPortStrip(ctx, this.ports[p], AXIS_H + p * PORT_H, dA, dB);
-    if (m.issue) drawIssueStrip(this, ctx, m.issue, AXIS_H + this.ports.length * PORT_H, dA, dB);
+    const strip = this.stripRows(), full = this.state.strip === 'full';
+    for (let p = 0; p < strip.length; p++) (full ? this.drawPortStrip(ctx, strip[p], AXIS_H + p * PORT_H, dA, dB) : this.drawGroupStrip(ctx, strip[p], AXIS_H + p * PORT_H, dA, dB));
+    if (m.issue) drawIssueStrip(this, ctx, m.issue, AXIS_H + strip.length * PORT_H, dA, dB);
     if (hoverCycle !== null && hoverCycle >= this.c0 && hoverCycle <= this.c1) {
       ctx.globalAlpha = 0.6; ctx.fillStyle = C['accent-dim']; ctx.fillRect(this.x(hoverCycle), 0, Math.max(1, s), H); ctx.globalAlpha = 1;
     }
     ctx.restore();
     // port names and their use in the shown cycles
     if (this.tag) { // A–B: the side and its iterations
+      const tw = Math.max(16, ctx.measureText(this.tag).width + 6);
       ctx.fillStyle = this.tag === 'B' ? C.code : C.accent;
-      ctx.fillRect(4, 2, 16, AXIS_H - 5);
-      ctx.fillStyle = C.background; ctx.textAlign = 'center'; ctx.fillText(this.tag, 12, AXIS_H / 2 - 1);
+      ctx.fillRect(4, 2, tw, AXIS_H - 5);
+      ctx.fillStyle = C.background; ctx.textAlign = 'center'; ctx.fillText(this.tag, 4 + tw / 2, AXIS_H / 2 - 1);
       ctx.textAlign = 'left'; ctx.fillStyle = C.subtle;
       const f = this.fixed;
-      ctx.fillText(this.fitText(ctx, f.from === f.to ? `it ${f.from}` : `it ${f.from}–${f.to}`, G - 32), 26, AXIS_H / 2 - 1);
+      ctx.fillText(this.fitText(ctx, f.from === f.to ? `it ${f.from}` : `it ${f.from}–${f.to}`, G - tw - 16), tw + 10, AXIS_H / 2 - 1);
     } else {
       ctx.fillStyle = C.subtle;
       ctx.fillText('cycle', 6, AXIS_H / 2 - 1);
@@ -893,18 +998,26 @@ export class Viewer {
     const R = this.ext?.range(); // a selected cycle range: the shares are its own
     const span = R ? R.b - R.a + 1 : this.c1 - this.c0 + 1;
     const pc0 = R ? R.a : this.dataC(this.c0), pc1 = R ? R.b : this.dataC(this.c1);
-    for (let p = 0; p < this.ports.length; p++) {
-      const port = this.ports[p];
+    const shares = this.stripShares(pc0, pc1);
+    // A–B: B's rows whose use differs from A's (in A's own window of the same length) say by how much
+    const other = this.compare && !R ? this.compare.stripShares(this.compare.dataC(this.compare.c0), this.compare.dataC(this.compare.c1)) : null;
+    for (let p = 0; p < strip.length; p++) {
+      const name = strip[p].short;
       const y = AXIS_H + p * PORT_H + PORT_H / 2;
-      const n = m.prefix[port.i][pc1 + 1] - m.prefix[port.i][pc0];
-      ctx.fillStyle = C.subtle;
+      const pct = shares.get(name) ?? 0, d = other ? pct - (other.get(name) ?? 0) : 0;
+      ctx.fillStyle = Math.abs(d) >= 2 ? C.text : C.subtle;
       ctx.textAlign = 'left';
-      ctx.fillText(port.short, 6, y);
+      ctx.fillText(name, 6, y);
       ctx.textAlign = 'right';
-      ctx.fillText(`${Math.round((100 * n) / span)}%`, G - 6, y);
+      ctx.fillText(`${pct}%`, G - 6, y);
+      if (Math.abs(d) >= 2) { // (in A's colour: what A had)
+        const pw = ctx.measureText(`${pct}%`).width;
+        ctx.fillStyle = C.heading;
+        ctx.fillText(`${d > 0 ? '+' : '−'}${Math.abs(d)}`, G - 10 - pw, y);
+      }
     }
     if (m.issue) { // the issue strip: the share of the issue slots used in the shown cycles
-      const y = AXIS_H + this.ports.length * PORT_H + ISSUE_H / 2;
+      const y = AXIS_H + strip.length * PORT_H + ISSUE_H / 2;
       const f = issueShare(m.issue, pc0, pc1);
       ctx.fillStyle = C.subtle;
       ctx.textAlign = 'left';
@@ -957,6 +1070,36 @@ export class Viewer {
     ctx.globalAlpha = 1;
   }
 
+  // a group of ports per cycle: the share of its ports busy (darker: more)
+  drawGroupStrip(ctx, g, y, cA, cB) {
+    const C = this.colors, s = this.scale, n = g.ports.length, h = PORT_H - 2;
+    ctx.fillStyle = C.border; ctx.globalAlpha = 0.5;
+    ctx.fillRect(this.x(this.c0), y + h / 2, (this.c1 - this.c0 + 1) * s, 1);
+    ctx.fillStyle = C.accent;
+    const hot = this.portHover && this.portHover[0] === g ? this.portHover[1] : null;
+    if (s >= 1.5) {
+      for (let c = cA; c <= cB; c++) {
+        const k = g.pre[c + 1] - g.pre[c];
+        if (!k) continue;
+        ctx.globalAlpha = 0.25 + (0.75 * k) / n;
+        ctx.fillStyle = c === hot ? C.heading : C.accent;
+        ctx.fillRect(this.x(c), y, Math.max(1, s - (s >= 4 ? 1 : 0)), h);
+      }
+    } else {
+      const x0 = Math.max(this.G, Math.floor(this.x(cA))), x1 = Math.ceil(this.x(cB + 1));
+      for (let x = x0; x < x1; x++) {
+        const a = Math.max(this.c0, 0, Math.floor((x - this.G + this.sl) / s) + this.c0);
+        const b = Math.min(this.c1 + 1, this.model.nCycles, Math.floor((x + 1 - this.G + this.sl) / s) + this.c0);
+        if (b <= a) continue;
+        const f = (g.pre[b] - g.pre[a]) / ((b - a) * n);
+        if (f <= 0) continue;
+        ctx.globalAlpha = 0.2 + 0.8 * f;
+        ctx.fillRect(x, y, 1, h);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
   drawUop(ctx, i, y) {
     const C = this.colors, u = this.model.uops[i], s = this.scale;
     const mid = Math.round(y + ROW_H / 2) + 0.5;
@@ -967,22 +1110,38 @@ export class Viewer {
       ctx.fillRect(X(a), mid - 0.5, (b - a) * s, 1);
       ctx.globalAlpha = 1;
     };
-    // front end: predecoded -> IDQ (faint), IDQ -> issued
-    if (u.iq !== null && u.idq !== null) line(u.iq, u.idq, C.subtle, 0.45);
-    const fe = u.idq ?? u.iq;
-    line(fe, u.issued, C.subtle);
-    if (u.idq !== null) { ctx.fillStyle = C.subtle; ctx.fillRect(X(u.idq), y + 4, Math.max(1, Math.min(2, s)), ROW_H - 8); }
     const end = this.c1 + 1;
+    // a long wait for operands, shortened (waits 'short'): its last cycles hatched, its length written left of them; the
+    // issue and the front end before it are not drawn
+    const cut = (u.inRS || u.dispatched !== null) && shortened(u, this.model.issueDispatchDelay, this.state.waits);
+    // front end: predecoded -> IDQ (faint), IDQ -> issued
+    if (!cut) {
+      if (u.iq !== null && u.idq !== null) line(u.iq, u.idq, C.subtle, 0.45);
+      const fe = u.idq ?? u.iq;
+      line(fe, u.issued, C.subtle);
+      if (u.idq !== null) { ctx.fillStyle = C.subtle; ctx.fillRect(X(u.idq), y + 4, Math.max(1, Math.min(2, s)), ROW_H - 8); }
+    }
     if (u.inRS || u.dispatched !== null) {
       const ready = u.ready ?? (u.dispatched !== null ? u.dispatched : end);
       const disp = u.dispatched ?? end;
       const sched = u.issued === null ? null : Math.min(ready, u.issued + this.model.issueDispatchDelay);
-      if (sched !== null && sched > u.issued) { // the fixed delay between issue and the earliest dispatch
+      if (cut) {
+        const x1 = X(ready), w = Math.max(STUB_C * s, 10), x0 = x1 - w;
+        ctx.fillStyle = this.patterns.dep;
+        ctx.fillRect(x0, y + 4, w, ROW_H - 8);
+        ctx.globalAlpha = 0.9; ctx.fillStyle = C.caveat;
+        ctx.fillRect(x0, y + ROW_H - 5, w, 1);
+        ctx.fillRect(x0, y + 4, 1, ROW_H - 8);
+        ctx.globalAlpha = 1;
+        ctx.textAlign = 'right';
+        ctx.fillText(String(ready - sched), x0 - 2, mid);
+        ctx.textAlign = 'left';
+      } else if (sched !== null && sched > u.issued) { // the fixed delay between issue and the earliest dispatch
         ctx.fillStyle = C.subtle; ctx.globalAlpha = 0.55;
         ctx.fillRect(X(u.issued), y + 6, (sched - u.issued) * s, ROW_H - 12);
         ctx.globalAlpha = 1;
       }
-      if (sched !== null && ready > sched) { // not ready: waiting for operands
+      if (!cut && sched !== null && ready > sched) { // not ready: waiting for operands
         ctx.fillStyle = this.patterns.dep;
         ctx.fillRect(X(sched), y + 4, (ready - sched) * s, ROW_H - 8);
         ctx.globalAlpha = 0.9; ctx.fillStyle = C.caveat;
@@ -1104,7 +1263,19 @@ export class Viewer {
   hoverAt(x, y) {
     const H = this.headH();
     this.portHover = null;
-    if (y >= AXIS_H && y < AXIS_H + this.ports.length * PORT_H && x > this.G) {
+    const strip = this.stripRows();
+    if (this.state.strip !== 'full' && y >= AXIS_H && y < AXIS_H + strip.length * PORT_H && x > this.G) {
+      const g = strip[Math.floor((y - AXIS_H) / PORT_H)], c = this.cycleAt(x);
+      if (g && c >= this.c0 && c <= this.c1 && c >= 0 && c < this.model.nCycles) {
+        this.portHover = [g, c];
+        const busy = g.ports.map((p) => [p, this.model.dispatchedAt[p.i][c]]).filter(([, u]) => u >= 0);
+        const text = busy.length ? busy.map(([p, u]) => `${p.short}: ${uopLabel(this.model, u)}`).join(' · ') : 'none busy';
+        this.setActive(-1, { x, y, textTip: [`${g.name} (${busy.length} of ${g.ports.length} busy), cycle ${c}`, text] });
+        this.paint();
+        return;
+      }
+    }
+    if (this.state.strip === 'full' && y >= AXIS_H && y < AXIS_H + this.ports.length * PORT_H && x > this.G) {
       const p = this.ports[Math.floor((y - AXIS_H) / PORT_H)];
       const c = this.cycleAt(x);
       if (p && c >= this.c0 && c <= this.c1) {
@@ -1116,7 +1287,7 @@ export class Viewer {
         return;
       }
     }
-    const iy = AXIS_H + this.ports.length * PORT_H;
+    const iy = AXIS_H + strip.length * PORT_H;
     if (this.model.issue && y >= iy && y < iy + ISSUE_H && x > this.G) {
       const c = this.cycleAt(x);
       const text = issueText(this.model.issue, c);
@@ -1232,8 +1403,8 @@ export class Viewer {
     this.active = r;
     const hk = r >= 0 ? groupKey(this.model.uops[this.rows[r]]) : null;
     if (hk !== this.hoverKey) { this.hoverKey = hk; this.onHoverGroup?.(r >= 0 ? groupOfUop(this.model.uops[this.rows[r]]) : null); }
-    if (r < 0 && !(at && (at.portCycle || at.issueCycle))) { this.tip.hidden = true; this.canvas.removeAttribute('aria-activedescendant'); return; }
-    if (changed || at?.portCycle || at?.issueCycle || !this.tip.hidden || announce) this.showTip(r, at);
+    if (r < 0 && !(at && (at.portCycle || at.issueCycle || at.textTip))) { this.tip.hidden = true; this.canvas.removeAttribute('aria-activedescendant'); return; }
+    if (changed || at?.portCycle || at?.issueCycle || at?.textTip || !this.tip.hidden || announce) this.showTip(r, at);
     if (announce && r >= 0) this.live.textContent = this.tipText(r);
   }
 
@@ -1241,6 +1412,10 @@ export class Viewer {
     const m = this.model;
     const tip = this.tip;
     tip.replaceChildren();
+    if (at?.textTip) {
+      tip.append(el('p', { class: 'tt-head', text: at.textTip[0] }), el('p', { class: 'tt-sub', text: at.textTip[1] }));
+      tip.dataset.key = ''; this.placeTip(at); tip.hidden = false; return;
+    }
     if (at?.issueCycle) {
       tip.append(el('p', { class: 'tt-head', text: `issue, cycle ${at.issueCycle[0]}` }), el('p', { class: 'tt-sub', text: at.issueCycle[1] }));
       tip.dataset.key = ''; this.placeTip(at); tip.hidden = false; return;
@@ -1258,7 +1433,7 @@ export class Viewer {
     if (!at?.portCycle) {
       tip.append(el('p', { class: 'tt-head', text: d.label }));
       const kind = d.kind === 'instr' ? '' : ` · belongs to ${d.instruction}`;
-      tip.append(el('p', { class: 'tt-sub', text: `iteration ${d.rnd}${kind}` }));
+      tip.append(el('p', { class: 'tt-sub', text: `iteration ${d.rnd} (the number in the margin)${kind}` }));
     }
     const dl = el('dl', { class: 'tt-stages' });
     const add = (name, value, field) => { dl.append(el('dt', { text: name }), el('dd', { 'data-stage': field, text: value })); };
@@ -1481,7 +1656,7 @@ export function createABTracePanel({ analyze, config = () => null, onToggle = nu
   const body = el('div', { class: 'trace-body' });
   const summary = el('summary', { title: 'A and B on one time axis' }, 'cycle by cycle');
   const details = el('details', { class: 'trace-panel trace-ab' }, summary, body);
-  const ui = { range: 'steady' };
+  const ui = { range: 'steady', strip: 'compact', waits: 'short', lock: true };
   let view = null, job = null; // job: {view, state, models, error, force}
   let viewers = [], sync = null, lastOpen = false;
   const usable = (s) => !!s && !!s.request && !!s.response && typeof s.response === 'object' && !('error' in s.response) && Array.isArray(s.response.rows);
@@ -1529,33 +1704,85 @@ export function createABTracePanel({ analyze, config = () => null, onToggle = nu
       button('try again', () => { if (job) job.state = 'idle'; want(); }));
   }
 
+  // The rows of A that are B's (the same relative iteration, the instruction the diff aligns with, the same uop of it),
+  // and back: for scrolling the two lists together. align: A's instruction index -> B's (null: the same index).
+  function rowMaps(va, vb, align) {
+    const key = (v, u, map) => `${u.rnd - v.fixed.from}/${map ? map.get(u.instrID) : u.instrID}/${u.n}/${u.kind}`;
+    const inv = align ? new Map([...align].map(([a, b]) => [b, a])) : null;
+    const index = (v, map) => { const out = new Map(); v.rows.forEach((i, r) => { const k = key(v, v.model.uops[i], map); if (!out.has(k)) out.set(k, r); }); return out; };
+    const inB = index(vb, null), inA = index(va, null);
+    return {
+      aToB: Int32Array.from(va.rows, (i) => inB.get(key(va, va.model.uops[i], align)) ?? -1),
+      bToA: Int32Array.from(vb.rows, (i) => inA.get(key(vb, vb.model.uops[i], inv)) ?? -1),
+    };
+  }
+  // A's instruction index -> B's, from the comparison's alignment (ab-diff.js: one unit per instruction)
+  function alignment(v) {
+    const rows = v?.cmp?.diff?.rows;
+    if (!rows) return null;
+    const map = new Map();
+    let ia = 0, ib = 0;
+    for (const r of rows) { const a = r.a ? ia++ : null, b = r.b ? ib++ : null; if (a !== null && b !== null) map.set(a, b); }
+    return map;
+  }
+
   function build() {
     destroy();
     const { a: ma, b: mb } = job.models;
-    const w = abWindow(ma, mb, { choice: ui.range, scale: view.scale ?? 1 });
+    const span = (m, rows) => shownSpan(m, rows, ui.waits);
+    const w = abWindow(ma, mb, { choice: ui.range, scale: view.scale ?? 1, span });
     sync = new TimeSync(w.lo, w.hi);
-    const st = () => ({ range: 'fixed', mode: 'chart', scale: null, fit: true, scrollLeft: 0, scrollTop: 0 });
-    const va = new Viewer(ma, st(), { sync, fixed: w.a, tag: 'A' });
-    const vb = new Viewer(mb, st(), { sync, fixed: w.b, tag: 'B' });
-    viewers = [va, vb];
+    // the same trace on both sides (the same code, or code that runs the same): shown once, and said
+    const same = sameTrace(ma, w.a, mb, w.b);
+    const st = () => ({ range: 'fixed', mode: 'chart', scale: null, fit: true, scrollLeft: 0, scrollTop: 0, strip: ui.strip, waits: ui.waits });
+    const va = new Viewer(ma, st(), { sync, fixed: w.a, tag: same ? 'A = B' : 'A' });
+    const vb = same ? null : new Viewer(mb, st(), { sync, fixed: w.b, tag: 'B', compare: va });
+    viewers = vb ? [va, vb] : [va];
     sync.viewers = viewers;
+
+    // scrolled together when the rows line up (the diff's alignment), unless unlocked
+    let maps = null, following = false;
+    if (vb) {
+      maps = rowMaps(va, vb, alignment(view));
+      sync.follow = (from) => {
+        if (!ui.lock || following) return;
+        const to = from === va ? vb : va, map = from === va ? maps.aToB : maps.bToA;
+        const top = from.scroller.scrollTop, r = Math.floor(top / ROW_H);
+        let k = Math.max(0, r);
+        while (k < map.length && map[k] < 0) k++;
+        if (k >= map.length) return;
+        const t = map[k] * ROW_H + (k === r ? top - r * ROW_H : 0);
+        if (Math.abs(to.scroller.scrollTop - t) < 1) return;
+        following = true;
+        to.scroller.scrollTop = t;
+        requestAnimationFrame(() => { following = false; });
+      };
+    }
 
     const sel = el('select', { class: 'trace-ab-range' }, el('option', { value: 'steady', text: 'steady state' }), el('option', { value: 'all', text: 'all iterations' }));
     sel.value = ui.range;
     sel.addEventListener('change', () => { ui.range = sel.value === 'all' ? 'all' : 'steady'; build(); });
     const label = el('span', { class: 'trace-scale', 'aria-live': 'polite' });
     const zoomBtn = (text, aria, f) => { const b = el('button', { type: 'button', class: 'trace-zoom', 'aria-label': aria, title: aria, text }); b.addEventListener('click', f); return b; };
+    const lock = vb ? el('button', { type: 'button', class: 'trace-toggle trace-lock', title: 'scroll A and B together (their rows line up)', 'aria-pressed': String(ui.lock), text: '⇅' }) : null;
+    lock?.addEventListener('click', () => { ui.lock = !ui.lock; lock.setAttribute('aria-pressed', String(ui.lock)); if (ui.lock) sync.follow(va); });
+    const controls = traceControls(ui, (k) => {
+      if (k === 'waits') { build(); return; }
+      for (const v of viewers) { v.state.strip = ui.strip; v.labelCache.clear(); }
+      sync.relayout();
+    }, { ab: true, extra: lock ? [lock] : [] });
     const tools = el('div', { class: 'trace-tools' },
       el('label', { class: 'inline' }, 'show ', sel),
       el('span', { class: 'trace-zoomtools' },
-        zoomBtn('−', 'zoom out', () => va.zoomBy(1 / 1.6)), zoomBtn('+', 'zoom in', () => va.zoomBy(1.6)), zoomBtn('fit', 'fit the cycles to the width', () => va.fit()), label));
+        zoomBtn('−', 'zoom out', () => va.zoomBy(1 / 1.6)), zoomBtn('+', 'zoom in', () => va.zoomBy(1.6)), zoomBtn('fit', 'fit the cycles to the width', () => va.fit()), label, controls.el));
     const relayout = sync.relayout.bind(sync);
     sync.relayout = () => {
       relayout();
       if (sync?.scale) label.textContent = sync.scale >= 0.95 ? `${+sync.scale.toFixed(1)} px per cycle` : `${+(1 / sync.scale).toFixed(1)} cycles per px`;
     };
-    body.replaceChildren(el('div', { class: 'trace-viewer trace-ab-view' }, tools, va.root, vb.root, legendElement()));
-    details.wuicaTraces = { a: va, b: vb, sync, window: w }; // for tests
+    const note = same ? el('p', { class: 'trace-same hint', text: 'A and B: the same trace' }) : null;
+    body.replaceChildren(el('div', { class: 'trace-viewer trace-ab-view' }, tools, controls.pop, note, ...viewers.map((v) => v.root)));
+    details.wuicaTraces = { a: va, b: vb ?? va, same, sync, window: w, maps, ui, controls }; // for tests
     if (details.isConnected) attached();
   }
 

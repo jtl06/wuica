@@ -176,6 +176,15 @@ try {
       const colours = new Set(); for (let i = 0; i < img.length; i += 4 * 97) colours.add(img[i] + ',' + img[i + 1] + ',' + img[i + 2]);
       out.colours = colours.size;
       out.legend = [...document.querySelectorAll('.trace-legend li')].map((li) => li.textContent);
+      // the legend: in a popover from "?" next to the zoom (closed at first); by keyboard: Enter opens it, Escape closes it
+      const qb = document.querySelector('.trace-keybtn'), pop = document.querySelector('.trace-legend-pop');
+      out.pop = [pop.hidden, qb.getAttribute('aria-expanded'), qb.closest('.trace-zoomtools') !== null];
+      qb.focus(); qb.click(); await wait(30);
+      out.pop.push(pop.hidden, qb.getAttribute('aria-expanded'), pop.getBoundingClientRect().height > 40);
+      qb.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await wait(30);
+      out.pop.push(pop.hidden, document.activeElement === qb);
+      // the toggles: two buttons with aria-pressed (all ports: off; full waits: off)
+      out.toggles = [...document.querySelectorAll('.trace-toggle')].map((b) => b.textContent + ':' + b.getAttribute('aria-pressed'));
       out.buildMs = +document.querySelector('.trace-viewer').dataset.buildMs; out.drawMs = +document.querySelector('.trace-viewer').dataset.drawMs;
       // keyboard: the first uop, then the sixth
       v.canvas.focus(); key('ArrowDown'); await wait(50);
@@ -192,7 +201,9 @@ try {
     check(r.closed && r.label === 'trace' && r.inResult && r.wide, 'the trace panel is in the result, closed, and nothing is loaded until it is opened; open, it is the pane\'s width', JSON.stringify([r.closed, r.label, r.inResult, r.wide]));
     check(r.range === 'steady' && r.rowRounds.length === 3 && r.rowRounds[0] === r.relevant.first && /uops in cycles/.test(r.note), 'it opens on three steady-state iterations', JSON.stringify([r.range, r.rowRounds, r.relevant, r.note]));
     check(r.canvas[0] > 600 && r.canvas[1] > 200 && r.colours >= 5, 'the timeline is drawn', JSON.stringify([r.canvas, r.colours]));
-    check(r.legend.length === 8, 'the legend', JSON.stringify(r.legend));
+    check(r.legend.length === 11 && r.legend.some((t) => /^7\s*iteration/.test(t)) && r.legend.some((t) => /shortened/.test(t)) && r.legend.some((t) => /ports busy/.test(t)), 'the legend: everything drawn (the iteration numbers, the shortened waits, the compact strip)', JSON.stringify(r.legend));
+    check(r.pop.join() === 'true,false,true,false,true,true,true,true', 'the legend is a popover from "?" by the zoom; it opens and Escape closes it (the focus back on "?")', JSON.stringify(r.pop));
+    check(r.toggles.join() === 'all ports:false,full waits:false', 'the strip is compact and long waits are short at first', JSON.stringify(r.toggles));
     check(!r.k1.hidden && r.k1.key === r.k1key, 'arrow down focuses the first uop and shows its tooltip', JSON.stringify(r.k1));
     compare('first uop', r.k1, r.k1key);
     check(r.live.includes('issued') && r.live.includes(r.k1.stages.issued), 'the keyboard focus is announced', r.live);
@@ -217,11 +228,22 @@ try {
     check(!hov.hidden && hov.key === pt.key, 'hovering a row shows its uop', JSON.stringify([hov.key, pt.key]));
     compare('hovered uop', hov, pt.key);
     await page.shot('trace-hover.png');
-    // the port strip: hovering a dispatch names the uop
+    // the compact strip (one row per group of ports): hovering a cycle says how many of the group are busy, and with what
+    const gs = await page.eval(`${HELPERS}
+      const v = viewer(); const u = v.model.uops[v.rows[4]];
+      const g = v.groups.findIndex((q) => q.ports.some((p) => p.id === u.port)); const b = v.canvas.getBoundingClientRect();
+      return { x: b.left + v.x(u.dispatched) + v.scale / 2, y: b.top + 18 + g * 9 + 4, group: v.groups[g].name, c: u.dispatched, groups: v.groups.length, ports: v.ports.length };`);
+    await page.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: gs.x, y: gs.y });
+    await sleep(150);
+    const gst = await page.eval(`${HELPERS} return tip();`);
+    check(gs.groups < gs.ports && new RegExp('^' + gs.group + ' \\(\\d+ of \\d+ busy\\), cycle ' + gs.c).test(gst.text) && !/none busy/.test(gst.text), 'the compact strip: fewer rows than ports; hovering names how many of the group are busy, and with what', JSON.stringify([gst.text.slice(0, 120), gs]));
+    // "all ports": a row per port, as before
     const ps = await page.eval(`${HELPERS}
+      [...document.querySelectorAll('.trace-toggle')].find((b) => b.textContent === 'all ports').click(); await wait(50);
       const v = viewer(); const u = v.model.uops[v.rows[4]];
       const p = v.ports.findIndex((q) => q.id === u.port); const b = v.canvas.getBoundingClientRect();
-      return { x: b.left + v.x(u.dispatched) + v.scale / 2, y: b.top + 18 + p * 9 + 4, port: v.ports[p].name, c: u.dispatched };`);
+      return { x: b.left + v.x(u.dispatched) + v.scale / 2, y: b.top + 18 + p * 9 + 4, port: v.ports[p].name, c: u.dispatched, pressed: document.querySelector('.trace-toggle').getAttribute('aria-pressed') };`);
+    check(ps.pressed === 'true', '"all ports" is pressed');
     await page.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: ps.x, y: ps.y });
     await sleep(150);
     const pst = await page.eval(`${HELPERS} return tip();`);
@@ -236,9 +258,18 @@ try {
       const sel = document.querySelector('.trace-tools select');
       sel.value = 'all'; sel.dispatchEvent(new Event('change')); await wait(100);
       out.all = [v.rows.length, v.model.uops.length, v.c0, v.c1];
+      // as it opens (the strip compact, the waits short); then every port and the waits in full
+      const allPorts = [...document.querySelectorAll('.trace-toggle')].find((b) => b.textContent === 'all ports');
+      allPorts.click(); await wait(50); out.compact = allPorts.getAttribute('aria-pressed');
       const times = [];
       for (let i = 0; i < 30; i++) { v.scroller.scrollTop += 150; v.scroller.scrollLeft += 40; v.draw(); times.push(v.lastDrawMs); }
       out.drawMax = Math.max(...times); out.drawAvg = times.reduce((a, b) => a + b) / times.length;
+      // the same with the waits drawn in full (and every port: "all ports" is pressed above)
+      const fw = [...document.querySelectorAll('.trace-toggle')].find((b) => b.textContent === 'full waits');
+      allPorts.click(); fw.click(); await wait(50); v.scroller.scrollTop = 0;
+      const tf = []; for (let i = 0; i < 30; i++) { v.scroller.scrollTop += 150; v.scroller.scrollLeft += 40; v.draw(); tf.push(v.lastDrawMs); }
+      out.drawMaxFull = Math.max(...tf); out.fullPressed = fw.getAttribute('aria-pressed') + allPorts.getAttribute('aria-pressed');
+      fw.click(); await wait(50);
       sel.value = 'steady'; sel.dispatchEvent(new Event('change')); await wait(50);
       document.querySelector('.trace-mode input[value=table]').click(); await wait(100);
       const rows = [...document.querySelectorAll('table.trace-table tbody tr')];
@@ -263,13 +294,14 @@ try {
       return out;`);
     check(z.zoom[1] > z.zoom[0] && /px per cycle|cycles per px/.test(z.zoom[2]) && z.zoomKey < z.zoom[1], 'zoom buttons and keys', JSON.stringify(z.zoom));
     check(z.all[0] === z.all[1] && z.all[2] === 0, '"all" shows every uop', JSON.stringify(z.all));
-    check(z.drawMax < FRAME_MS, `drawing all ${z.all[0]} uops stays under a frame (max ${z.drawMax.toFixed(2)} ms; bound ${FRAME_MS} ms)`);
+    check(z.compact === 'false' && z.drawMax < FRAME_MS, `drawing all ${z.all[0]} uops (compact strip, short waits) stays under a frame (max ${z.drawMax.toFixed(2)} ms; bound ${FRAME_MS} ms)`);
+    check(z.fullPressed === 'truetrue' && z.drawMaxFull < FRAME_MS, `drawing all ${z.all[0]} uops with every port and the waits in full stays under a frame (max ${z.drawMaxFull.toFixed(2)} ms)`);
     check(z.table[0] === z.table[1] && z.table[2] === 11 && z.table[3].length > 0 && z.chartHidden, 'the table view lists the same uops', JSON.stringify(z.table));
     check(z.copied?.[0].startsWith('iteration\tinstruction\tport\tpredecoded\tIDQ\tissued') && z.copied[1].split('\t').length === 11, 'the table copies as tab-separated text', JSON.stringify(z.copied));
     check(z.themed.join() === '250,248,240', 'the canvas follows the theme\'s custom properties', JSON.stringify(z.themed));
     check(z.redraw.every(Boolean), 'the panel survives other parts of the result opening and closing', JSON.stringify(z.redraw));
     check(z.overflow <= 0, 'no sideways scrolling of the page at 1280px', z.overflow);
-    console.log(`draw with all uops: avg ${z.drawAvg.toFixed(2)} ms, max ${z.drawMax.toFixed(2)} ms`);
+    console.log(`draw with all ${z.all[0]} uops (compact, short waits): avg ${z.drawAvg.toFixed(2)} ms, max ${z.drawMax.toFixed(2)} ms; all ports + waits in full: max ${z.drawMaxFull.toFixed(2)} ms`);
 
     // a new run replaces the trace (the open panel loads the new one)
     const n = await page.eval(`${HELPERS}

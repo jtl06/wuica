@@ -78,7 +78,16 @@
     if (!view) return;
     if (!opened[0] && view.classList.contains('ws-main')) return;
     var all = opened[0] ? view.querySelectorAll(SCROLLERS) : view.querySelectorAll('.table-wrap');
-    if (!all.length || (all.length > 1 && abOn())) return; // (A–B's two traces: the pane scrolls)
+    if (!all.length || (all.length > 2 && abOn())) return;
+    // A–B's two traces: they share what is left, half each (the rows are the content: they get the height)
+    if (all.length === 2 && abOn()) {
+      var pr = pane.getBoundingClientRect(), a = all[0].getBoundingClientRect(), b = all[1].getBoundingClientRect(), vv = view.getBoundingClientRect();
+      var padB = parseFloat(getComputedStyle(pane).paddingBottom) || 0;
+      var between = b.top - a.bottom, under = Math.max(0, vv.bottom - b.bottom);
+      var half = Math.floor((pane.clientHeight - (a.top - pr.top + pane.scrollTop) - between - under - padB - 4) / 2);
+      for (var k = 0; k < 2; k++) { all[k].style.maxHeight = Math.max(160, half) + 'px'; fitted.push(all[k]); }
+      return;
+    }
     var scroller = all[0];
     var p = pane.getBoundingClientRect(), r = scroller.getBoundingClientRect(), v = view.getBoundingClientRect();
     var below = Math.max(0, v.bottom - r.bottom);         // the view's own lines under its scroller (legends)

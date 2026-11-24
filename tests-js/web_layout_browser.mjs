@@ -199,6 +199,13 @@ try {
         o.ab = overflow(); o.abStacked = rect('#code-b').top > rect('#code').bottom && Math.abs(rect('#code-b').left - rect('#code').left) < 2;
         o.abSide = rect('#results').left > rect('#code').right; o.abBelow = rect('#results').top > rect('#run').bottom; o.abTable = $('cmp-cpus').offsetParent === null;
         o.abCpus = [...document.querySelectorAll('#ab-cpus tbody tr')].map((tr) => tr.dataset.arch).join();
+        // from 1200 px the table of the CPUs and the headline side by side while the headline fits there (nothing cut);
+        // else (and below 1200 px) the headline under the table
+        await wait(100);
+        const lead = document.querySelector('#ab-cpus + .row.lead'), cr = rect('#ab-cpus'), lr = lead ? rect(lead) : null;
+        o.abBesideOn = ${w} >= 1200 && $('result-body').classList.contains('ab-beside');
+        o.abBeside = lr ? (o.abBesideOn ? lr.left >= cr.right && lr.top < cr.bottom : lr.top >= cr.bottom - 1) : null;
+        o.abCut = [...lead.querySelectorAll('.ab-meta, .ab-delta')].filter((e) => e.scrollWidth > e.clientWidth + 1).map((e) => e.textContent);
         // the A–B traces (the trace tab stays open)
         await until(() => tpanel()?.wuicaTraces); await wait(100);
         o.abTrace = overflow(); o.abTraceBelow = document.querySelector('.view-tab[aria-selected="true"]')?.dataset.tab === 'trace' && rect(tpanel()).top >= rect('#result-body').bottom && rect(tpanel()).right > rect(tpanel()).left;
@@ -210,6 +217,7 @@ try {
     check(out.every((m) => m.sweep[0] === 'sweep' && m.single <= 0 && m.pop <= 0 && m.ab <= 0), 'layout: no sideways scrolling from 320 to 2560 px (single with three CPUs, the sweep and the report open; the options open; A–B)', JSON.stringify(out));
     check(out.every((m) => m.trace <= 0 && m.traceWide && m.abTrace <= 0 && m.abTraceBelow), 'layout: the trace (with the wait column and a selected row) and the A–B traces (their tab): no sideways scrolling from 320 to 2560 px', JSON.stringify(out.map((m) => [m.w, m.trace, m.traceWide, m.abTrace, m.abTraceBelow])));
     check(out.every((m) => m.side === m.w >= 1200), 'layout: input and result side by side from 1200 px, stacked below', JSON.stringify(out.map((m) => [m.w, m.side])));
+    check(out.every((m) => m.abBeside === true && (m.w < 1440 || m.abBesideOn) && (!m.abBesideOn || m.abCut.length === 0)), 'layout: A–B: the table of the CPUs and the headline side by side from 1200 px when the headline fits there (from 1440 px here), nothing of it cut; else stacked', JSON.stringify(out.map((m) => [m.w, m.abBeside, m.abBesideOn, m.abCut])));
     check(out.every((m) => m.abStacked && m.abTable && m.abSide === m.w >= 1200 && (m.w >= 1200 || m.abBelow) && m.abCpus === 'SKL,ZEN3,ADL-P'), 'layout: A–B: A over B, the result beside them from 1200 px (below on narrow screens); its own table of the CPUs, not single mode\'s', JSON.stringify(out.map((m) => [m.w, m.abStacked, m.abSide, m.abBelow, m.abTable, m.abCpus])));
     // the default toolbar (assembly: the syntax menu too) with the options open, around the phone breakpoint and the two panes
     const pop = [];

@@ -32,9 +32,27 @@ export function createRegionChip(after, select) {
 
 // The loop chip (loop-find.js, through asm-regions.js): when pasted assembly has code around its loop (a whole function,
 // objdump output), a small select of what is analyzed: each loop ("loop .L3"), the function's body, or the whole text.
-// pick(value): 'whole', 'body' or a loop's index.
-export function createLoopChip(after, pick, id = 'loop-chip') {
+// pick(value): 'whole', 'body' or a loop's index. after: the element it follows in its side's row of controls;
+// places: () => [elements], where it follows instead, the first whose row has room (the row would not wrap, so the
+// editor keeps its height); the last one is taken in any case.
+export function createLoopChip(after, pick, id = 'loop-chip', places = null) {
   let sel = null, last = null;
+  function place() {
+    if (!places || !sel || sel.hidden || document.activeElement === sel) return; // (moving it would take the focus away)
+    const list = [after, ...places()];
+    for (let k = 0; k < list.length; k++) {
+      const at = list[k], row = at.parentElement;
+      if (sel.previousElementSibling !== at) at.after(sel);
+      if (k === list.length - 1) return;
+      sel.hidden = true;
+      const h0 = row.getBoundingClientRect().height;
+      sel.hidden = false;
+      if (row.getBoundingClientRect().height < h0 + sel.offsetHeight / 2) return; // (taller than the row is not a wrap)
+    }
+  }
+  // again when the row changes (its width, or what is in it: the syntax menu comes and goes); place() ends where it
+  // started or in the place it settles on, so this does not loop
+  if (places && typeof ResizeObserver === 'function') { let t = 0; new ResizeObserver(() => { cancelAnimationFrame(t); t = requestAnimationFrame(place); }).observe(after.parentElement); }
   function paint(info) {
     if (!info) { if (sel) sel.hidden = true; return; }
     if (!sel?.isConnected) {
@@ -51,6 +69,7 @@ export function createLoopChip(after, pick, id = 'loop-chip') {
     const at = loop ? `lines ${loop.line}–${loop.endLine}${loop.address !== null && loop.address !== undefined ? ` at 0x${loop.address.toString(16)}` : ''}` : 'the whole text';
     sel.title = `analyzed: ${at}; branches out of it are taken as not taken`;
     sel.hidden = false;
+    place();
   }
   return {
     // info: the assembly's {loop, loops, body, choosable} (null or nothing to choose: hidden); text: the assembly it is for

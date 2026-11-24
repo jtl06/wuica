@@ -413,6 +413,24 @@ try {
     check(ab.zoomed[0] === ab.zoomed[1] && ab.zoomed[0] > ab.scale[0] && ab.zoomed[2] && ab.keyZoom[0] === ab.keyZoom[1] && ab.keyZoom[0] < ab.zoomed[0], 'A–B: zooming one zooms the other (buttons, keys)', JSON.stringify([ab.zoomed, ab.keyZoom]));
     check(ab.scrolled[0] === 120 && ab.scrolled[1] === 120 && ab.scrolledB[0] === 40 && ab.scrolledB[1] === 40 && Math.abs(ab.zeroAfter[0] - ab.zeroAfter[1]) < 0.01, 'A–B: scrolling one scrolls the other', JSON.stringify([ab.scrolled, ab.scrolledB, ab.zeroAfter]));
     check(ab.overflow <= 0, 'A–B: no sideways scrolling of the page', ab.overflow);
+    // the rows: scrolled together where the diff lines them up (the lock), not when unlocked; B's strip compared with A's
+    const lk = await p.eval(`${HELPERS}
+      const t = panel().wuicaTraces, A = t.a, B = t.b, lock = document.querySelector('.trace-ab .trace-lock');
+      const out = { same: t.same, note: !!document.querySelector('.trace-ab .trace-same'), compare: B.compare === A, pressed: [lock.getAttribute('aria-pressed')] };
+      const r = Array.from(t.maps.aToB).findIndex((b, a) => a >= 6 && b >= 0);
+      A.scroller.scrollTop = r * 16; await wait(150);
+      out.follow = [r, t.maps.aToB[r], A.scroller.scrollTop, B.scroller.scrollTop, B.rows.length];
+      lock.focus(); lock.click(); out.pressed.push(lock.getAttribute('aria-pressed'));
+      const b0 = B.scroller.scrollTop; A.scroller.scrollTop = 0; await wait(150);
+      out.unlocked = [A.scroller.scrollTop, B.scroller.scrollTop === b0];
+      lock.click(); out.pressed.push(lock.getAttribute('aria-pressed')); await wait(150);
+      out.relocked = [A.scroller.scrollTop, B.scroller.scrollTop];
+      out.heights = [A.scroller.clientHeight, B.scroller.clientHeight];
+      return out;`);
+    const followed = lk.follow[1] * 16 === lk.follow[3] || lk.follow[3] >= lk.follow[4] * 16 - lk.heights[1] - 1; // (or at its end)
+    check(!lk.same && !lk.note && lk.compare && lk.follow[0] > 0 && lk.follow[2] === lk.follow[0] * 16 && followed, 'A–B: scrolling A\'s rows scrolls B to the row the diff aligns', JSON.stringify(lk));
+    check(lk.pressed.join() === 'true,false,true' && lk.unlocked[0] === 0 && lk.unlocked[1] && lk.relocked[1] === 0, 'A–B: the lock (a toggle button): unlocked, each scrolls alone; locked again, they line up', JSON.stringify(lk));
+    check(lk.heights[0] > 160 && lk.heights[1] > 160, 'A–B: the two lists of rows share the pane\'s height', JSON.stringify(lk.heights));
     // "all": both from cycle 0
     const all = await p.eval(`${HELPERS}
       const sel = document.querySelector('.trace-ab-range'); sel.value = 'all'; sel.dispatchEvent(new Event('change')); await wait(100);
@@ -439,6 +457,31 @@ try {
     check(back[0] && back[1], 'A–B → single: the single trace, still open', JSON.stringify(back));
     check(back[2] === 2 && back[3] === 3, 'the trace of the other mode is not loaded in the background (swap: 2 traces; single: 1)', JSON.stringify(back));
     check(p.problems.length === 0, 'no console errors (A–B)', p.problems.join('\n'));
+    await p.cmd('Page.close');
+  }
+
+  // --- A–B with the same code: one trace, said so --------------------------------------------------------------------------
+  {
+    const p = await openPage();
+    await p.goto(`${origin}/?nosw=1`);
+    const same = await p.eval(`${HELPERS}
+      await until(() => !$('run').disabled);
+      let n = $('results').dataset.run; $('cmp-ab').click(); await until(() => $('results').dataset.run !== n && document.querySelector('.ab-tp'));
+      panel().querySelector('summary').click(); await until(() => panel().wuicaTraces);
+      n = $('results').dataset.run; $('ab-copy').click(); await until(() => $('results').dataset.run !== n);
+      await until(() => panel().wuicaTraces?.same); await wait(200);
+      const t = panel().wuicaTraces;
+      return { same: t.same, one: t.a === t.b, canvases: panel().querySelectorAll('.trace-ab canvas').length, note: panel().querySelector('.trace-same')?.textContent,
+        lock: !!panel().querySelector('.trace-lock'), bn: document.querySelector('.ab-bn')?.textContent ?? '' };`);
+    check(same.same && same.one && same.canvases === 1 && same.note === 'A and B: the same trace' && !same.lock, 'A–B, A = B: one trace, "the same trace", no lock', JSON.stringify(same));
+    check(/\(both\)$/.test(same.bn), 'A–B, A = B: the bottleneck said once, "(both)"', same.bn);
+    // no named bottleneck (the stack example on SKL): "≈" the nearest limit, the words in its tooltip; once for both
+    const near = await p.eval(`${HELPERS}
+      let n = $('results').dataset.run; $('examples').value = 'stack'; $('examples').dispatchEvent(new Event('change')); await until(() => $('results').dataset.run !== n);
+      n = $('results').dataset.run; $('ab-copy').click(); await until(() => $('results').dataset.run !== n); await wait(100);
+      const bn = document.querySelector('.ab-bn'); return [bn?.textContent ?? '', bn?.querySelector('.hint')?.title ?? '', bn ? Math.round(bn.getBoundingClientRect().height) : 0, bn ? Math.round(parseFloat(getComputedStyle(bn).lineHeight)) : 0];`);
+    check(/^bottleneck ≈ \S.* \d+\.\d\d \(both\)$/.test(near[0]) && /nearest limit/.test(near[1]) && near[2] <= near[3] * 1.5, 'A–B, no named bottleneck: "≈" the nearest limit (said in the tooltip), once for both', JSON.stringify(near));
+    check(p.problems.length === 0, 'no console errors (A = B)', p.problems.join('\n'));
     await p.cmd('Page.close');
   }
 

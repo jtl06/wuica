@@ -149,7 +149,10 @@ const insight = createInsight({
 let pastedSource = null; // the .loc lines of pasted assembly (asm-regions.js), bound to its bytes
 const regionChip = createRegionChip(el.messages, (line) => selectLine(line));
 // what of pasted assembly is analyzed (loop-find.js): the loop chip sets state.loop
-const loopChip = createLoopChip(el.messages, (v) => { if (state.loop === v) return; state.loop = v; changed({ rerun: true }); });
+// (in A's row of controls, after the options: the editor keeps its height)
+// (single: else next to the single / A–B switch; at last under the editor, as before)
+const loopChip = createLoopChip(el.advanced, (v) => { if (state.loop === v) return; state.loop = v; changed({ rerun: true }); }, 'loop-chip',
+  () => [...(document.body.classList.contains('ab-on') ? [] : [document.querySelector('.ab-switch')].filter(Boolean)), el.messages]);
 // Where the alignment offset came from: 'auto' (the analyzed code's address, objdump input: set again for each pick, and
 // back to the default for a text without addresses), 'manual' (by hand, a link, an import: kept until the text is
 // replaced), or null (the default).
@@ -1159,7 +1162,7 @@ function setupFeatures() {
   // side B's loop chip, and its pick back to the first loop when B's text is replaced
   const bCode = document.getElementById('code-b');
   if (bCode) {
-    bLoopChip = createLoopChip(document.getElementById('b-messages'), (v) => { if (bLoop === v) return; bLoop = v; changed({ rerun: true }); }, 'loop-chip-b');
+    bLoopChip = createLoopChip(document.getElementById('b-arch').closest('label'), (v) => { if (bLoop === v) return; bLoop = v; changed({ rerun: true }); }, 'loop-chip-b', () => [document.getElementById('b-messages')]); // (in B's row, else under its editor)
     textB = bCode.value;
     bCode.addEventListener('input', () => {
       if (replacesText(textB, bCode.value)) newTextB(); else textB = bCode.value;

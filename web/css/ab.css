@@ -150,3 +150,12 @@ table.grid.ab-limits { width: auto; min-width: min(100%, 36rem); }
 .ab-col[data-side="a"] .grid.uops tbody tr.abd-only > * { background-color: color-mix(in srgb, var(--caveat) 12%, var(--surface)); }
 .ab-col[data-side="b"] .grid.uops tbody tr.abd-only > * { background-color: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
 .ab-col .grid.uops tbody tr.abd-only > th.first { box-shadow: inset 3px 0 var(--side), inset -1px 0 var(--border); }
+
+/* wide: the table per CPU and the two lines on top side by side, so the tabs start higher; only while the two lines fit
+   beside the table (ab.js sets .ab-beside) */
+@media (min-width: 1200px) {
+  body.ab-on #result-body.ab-beside { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 1.5rem; align-items: start; }
+  body.ab-on #result-body.ab-beside > * { grid-column: 1 / -1; min-width: 0; }
+  body.ab-on #result-body.ab-beside > #ab-cpus:not([hidden]) { grid-column: 1; margin-bottom: 0.3rem; }
+  body.ab-on #result-body.ab-beside > #ab-cpus:not([hidden]) + .row.lead { grid-column: 2; align-self: center; }
+}

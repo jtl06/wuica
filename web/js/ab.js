@@ -104,6 +104,22 @@ export function createAB(api) {
       bWork.label),
     bCode, bMessages);
   field.append(bSide);
+
+  // wide (ab.css, from 1200 px): the table per CPU and the headline side by side, only while the headline fits beside it
+  // (nothing of its two lines cut); else the headline under the table, as on narrow screens
+  const resultBody = document.getElementById('result-body');
+  if (resultBody && typeof ResizeObserver === 'function') {
+    let t = 0;
+    const fitBeside = () => {
+      t = 0;
+      resultBody.classList.add('ab-beside');
+      const cut = [...resultBody.querySelectorAll(':scope > .row.lead .ab-meta, :scope > .row.lead .ab-delta')].some((e) => e.scrollWidth > e.clientWidth + 1);
+      if (cut) resultBody.classList.remove('ab-beside');
+    };
+    const later = () => { if (!t) t = requestAnimationFrame(fitBeside); };
+    new ResizeObserver(later).observe(resultBody);
+    new MutationObserver(later).observe(resultBody, { childList: true, subtree: true, characterData: true });
+  }
   api.watchLinks?.(bCode, 'B', bMessages);
 
   // ---- state <-> controls -------------------------------------------------------------------------------------------
@@ -399,7 +415,11 @@ export function createAB(api) {
     const bn = cmp.bottlenecks;
     const k = h('span', { class: 'k', text: bn.a.length > 1 || bn.b.length > 1 ? 'bottlenecks' : 'bottleneck' });
     // none named: the nearest limit of that side (per element when counted so), as single mode says it
-    const unknown = (s, w) => { const n = nearestLimit(s?.response, w); return h('span', { class: 'hint', title: 'no single limit explains the throughput', text: n ? `unknown · nearest ${n}` : 'unknown' }); };
+    // none named: "≈" the nearest limit of that side (per element when counted so); the words in the tooltip
+    const near = (s, w) => nearestLimit(s?.response, w);
+    const unknown = (s, w) => { const n = near(s, w); return h('span', { class: 'hint', title: n ? `no single limit explains the throughput; ≈ the nearest limit: ${n}` : 'no single limit explains the throughput', text: n ? `≈ ${n}` : 'unknown' }); };
+    // both unknown, with the same nearest limit: once
+    if (!bn.a.length && !bn.b.length && near(view.a, cmp.workA) === near(view.b, cmp.workB)) return h('span', { class: 'ab-bn' }, k, ' ', unknown(view.a, cmp.workA), h('span', { class: 'hint', text: ' (both)' }));
     const list = (names, cls, s, w) => (names.length ? names.flatMap((n, i) => [i ? ', ' : '', h('span', { class: cls(n), text: n })]) : unknown(s, w));
     if (bn.same && bn.a.length) return h('span', { class: 'ab-bn' }, k, ' ', h('span', { class: 'bn', text: bn.a.join(', ') }), h('span', { class: 'hint', text: ' (both)' }));
     const change = [bn.gone.length ? `no longer: ${bn.gone.join(', ')}` : '', bn.new.length ? `new: ${bn.new.join(', ')}` : ''].filter(Boolean).join(' · ');
