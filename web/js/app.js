@@ -36,7 +36,7 @@ const MOCK = query.get('mock') === '1';       // ?mock=1: do not load the analyz
 const NO_SW = query.get('nosw') === '1';      // ?nosw=1: do not register the service worker
 // ?pool=N: N workers for the compare panels and the cost column (0: none, they share the main analyzer's worker)
 const POOL_SIZE = query.has('pool') ? Math.max(0, Math.min(16, Number.parseInt(query.get('pool'), 10) || 0)) : poolSize();
-const VERSION = '0.1.7';                  // the page's version (footer); bump it with packages/wuica and server (tests-js/web_version.mjs)
+const VERSION = '0.1.8';                  // the page's version (footer); bump it with packages/wuica and server (tests-js/web_version.mjs)
 
 const el = {
   notice: $('notice'), code: $('code'), codeHint: $('code-hint'), messages: $('input-messages'),
