@@ -64,6 +64,9 @@ const OPTS = { alignmentOffset: 0, initPolicy: 'diff', simpleFrontEnd: false, no
     check(under.tp === 8 && under.approx?.limit === 'Ports' && under.approx.simulated === 63.75 / 8 && under.delta === -24 && under.speedup === 4, 'outcome: under its own Ports limit: at the limit, approximate', JSON.stringify(under));
     check(!outcome(b, acc8, { tp: 64, mode: 'loop', limits: lim(64) }).approx && outcome(b, acc8, { tp: 66, mode: 'loop', limits: lim(64) }).tp === 8.25, 'outcome: at or over the limit: as simulated');
     check(outcome(b, acc8, { tp: 63.75, mode: 'loop', limits: lim(60, 9) }).tp === 63.75 / 8, 'outcome: the chain\'s limit is not a floor (a simulation can be under it)');
+    // further under than sampling (uiCA's model is under its own Ports limit by up to 10% on some loops): as simulated
+    const far = outcome(b, acc8, { tp: 62, mode: 'loop', limits: lim(64) });
+    check(far.tp === 62 / 8 && !far.approx, 'outcome: more than 1% under the limit: as simulated (the model, not sampling)', JSON.stringify(far));
     const t = toolOutcome({ ...b, code: 0 }, acc8, { code: 0, tp: 63.75, mode: 'loop', bottlenecks: ['Ports'], limits: lim(64) });
     check(t.tp === 8 && t.delta === -24 && t.speedup === 4 && t.approx?.limit === 'Ports' && t.approx.simulated === 7.97, 'toolOutcome (the package): the same', JSON.stringify(t));
     const best = bestOf(32, [{ id: 'acc4', per: 4 }, acc8], new Map([['acc4', { tp: 32, limits: lim(32) }], ['acc8', { tp: 63.75, limits: lim(64) }]]));

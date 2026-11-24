@@ -94,9 +94,11 @@ export function experiments(response, hex, options) {
 // limits). A variant's analysis measures its steady state over the iterations the simulation runs (fewer for an unrolled
 // copy), and can come out a little under them: 8 accumulators on a dot product on SKL gave 63.75 cycles per 8 original
 // iterations under its Ports limit of 64 (64.00 with minCycles 20000). Such a variant is shown at the limit, marked as
-// approximate (≈), with the simulated number kept (simulated). Not the loop-carried chain's limit: a simulation can be
-// under it.
+// approximate (≈), with the simulated number kept (simulated). Only within SAMPLING of the limit: uiCA's own results
+// are under these limits too, by more (of 21,184 fixture responses, 278 under Ports, by up to 10%, and 68 under Issue,
+// by up to 1.7%: its model, not sampling), and the loop-carried chain's limit is no floor at all (156, up to 86%).
 const HARD_LIMITS = ['Ports', 'Issue'];
+export const SAMPLING = 0.01; // relative
 /** @param {any} limits @returns {{name: string, tp: number} | null} the largest of them */
 export function hardLimit(limits) {
   /** @type {{name: string, tp: number} | null} */
@@ -110,8 +112,10 @@ export function hardLimit(limits) {
 // a variant's cycles per original iteration (r: its analysis, with limits): {tp, approx?: {limit, simulated}}
 function perOriginal(r, per) {
   const tp = Number(r.tp) / per, hard = hardLimit(r.limits);
-  if (!hard || !(tp < hard.tp / per - 0.005)) return { tp };
-  return { tp: hard.tp / per, approx: { limit: hard.name, simulated: tp } };
+  if (!hard) return { tp };
+  const floor = hard.tp / per;
+  if (!(tp < floor - 0.005) || floor - tp > SAMPLING * floor) return { tp };
+  return { tp: floor, approx: { limit: hard.name, simulated: tp } };
 }
 
 // One result line of the page: {tp (per original iteration), delta, speedup, comparable, approx?} from a summary ({tp,
