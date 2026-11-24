@@ -221,7 +221,7 @@ export async function whatIf(analyze, arch, request, variants = VARIANTS, { asse
 
 // The variant align: the code at each alignment offset 0-63 (64 analyses with the other options as given). tp is the
 // median; alignment: {min, median, max, best, worst (the first offset with the minimum, the maximum), spread (max - min),
-// offset (the base's)}. A failed analysis at any offset: the variant's error.
+// offset (the base's, 0-63: the analyzer reads an offset modulo 64)}. A failed analysis at any offset: the variant's error.
 /** @returns {Promise<any>} */
 async function alignment(analyze, base, code, options) {
   const row = { id: 'align', label: labelOf('align') };
@@ -236,7 +236,7 @@ async function alignment(analyze, base, code, options) {
   const sorted = [...tps].sort((a, b) => a - b);
   const min = sorted[0], max = sorted[63], median = round((sorted[31] + sorted[32]) / 2);
   return { ...row, tp: median, delta: round(median - base.tp), speedup: median > 0 ? round(base.tp / median) : null,
-    alignment: { min, median, max, best: tps.indexOf(min), worst: tps.indexOf(max), spread: round(max - min), offset: Number(options.alignmentOffset ?? 0) } };
+    alignment: { min, median, max, best: tps.indexOf(min), worst: tps.indexOf(max), spread: round(max - min), offset: ((Number(options.alignmentOffset ?? 0) % 64) + 64) % 64 } };
 }
 
 // ---- per element and as text (the CLI's -whatif, the REST API's text/plain) ------------------------------------------------

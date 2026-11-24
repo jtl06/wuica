@@ -160,6 +160,25 @@ test('the what-if variant align: the 64 alignment offsets, only when asked for',
   assert.match(whatIfText(x), /^ {2}alignment over 64 offsets: min 1\.50 \(offset \d+\), median 1\.50, max 3\.00 \(offset \d+\), spread 1\.50; this block at offset 0$/m);
   assert.match(markdown.whatIfAlignment(x), /\*\*Alignment\*\* over the 64 offsets: min 1\.50/);
   assert.equal((await w.whatIf('SKL', { source: src, variants: ['align'], options: { alignmentOffset: 8 } })).variants[0].alignment.offset, 8);
+  // the median of 64 offsets: the mean of the two middle ones. With an analyzer that gives 2 at the even offsets and 3
+  // at the odd ones, worked out by hand: sorted, 32 times 2 then 32 times 3, the middle two (the 32nd and 33rd) are 2
+  // and 3: median 2.5 (not 3, the upper middle one, nor 2); best 0, worst 1 (the first offsets with 2 and 3)
+  const { whatIf } = await import('../lib/index.js');
+  const fake = async (arch, req) => ({ code: 0, arch, mode: 'loop', bottlenecks: [], rows: [], hex: '4801d8', tp: (req.options?.alignmentOffset ?? 0) % 2 ? 3 : 2 });
+  const h = await whatIf(fake, 'SKL', { hex: '4801d8' }, ['align']);
+  assert.deepEqual(h.variants[0].alignment, { min: 2, median: 2.5, max: 3, best: 0, worst: 1, spread: 1, offset: 0 });
+  assert.equal(h.variants[0].tp, 2.5);
+  // 31 offsets at 1.25, 33 at 1.5: the middle two are 1.5 and 1.5
+  const fake2 = async (arch, req) => ({ ...(await fake(arch, req)), tp: (req.options?.alignmentOffset ?? 0) < 31 ? 1.25 : 1.5 });
+  assert.equal((await whatIf(fake2, 'SKL', { hex: '4801d8' }, ['align'])).variants[0].alignment.median, 1.5);
+  // 33 at 1.25, 31 at 1.5: 1.25; 32 and 32: (1.25 + 1.5) / 2 = 1.375, 1.38 to two decimals
+  const fake3 = async (arch, req) => ({ ...(await fake(arch, req)), tp: (req.options?.alignmentOffset ?? 0) < 33 ? 1.25 : 1.5 });
+  assert.equal((await whatIf(fake3, 'SKL', { hex: '4801d8' }, ['align'])).variants[0].alignment.median, 1.25);
+  const fake4 = async (arch, req) => ({ ...(await fake(arch, req)), tp: (req.options?.alignmentOffset ?? 0) < 32 ? 1.25 : 1.5 });
+  assert.equal((await whatIf(fake4, 'SKL', { hex: '4801d8' }, ['align'])).variants[0].alignment.median, 1.38);
+  // an offset of 64 or more is the same as modulo 64 for the analyzer: also for the offset named
+  assert.equal(tps[8], (await w.analyze('SKL', { source: src, options: { alignmentOffset: 72 } })).tp);
+  assert.equal((await w.whatIf('SKL', { source: src, variants: ['align'], options: { alignmentOffset: 72 } })).variants[0].alignment.offset, 8);
 });
 
 test('profiles: objdump -dS keeps the source lines', async () => {
