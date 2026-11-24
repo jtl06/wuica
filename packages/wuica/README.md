@@ -416,8 +416,12 @@ Request:
   `line`, its 1-based line in the text, and `loc` ("file.c:12") when the text has `.file`/`.loc` directives: what the
   loop finder and the assembler record, not a match of the text. Machine code has neither.
 - Profiles are read as they are: `objdump -dS` (or `-S`) output gives each instruction `source`, the interleaved source
-  line in force; `perf annotate --stdio` output gives `samples` (its percent) and `source`, and when the text has several
-  loops, the one with the most samples is analyzed (`loop` still picks another).
+  line in force; `perf annotate --stdio` output gives `samples` (its percent of all the samples of the output: each
+  symbol's percentages weighted by its sample count) and `source`, and when the text has several loops, the one whose
+  own instructions (not those of a loop nested in it) have the most samples is analyzed (`loop` still picks another).
+  `perf annotate --stdio2` output has no addresses: it is refused with a note to use `--stdio`. A text with `.rept`,
+  `.irp`, `.irpc`, `.macro` or `.if` has no `line` (its lines are not its instructions one to one) and is analyzed whole,
+  with a note.
 
 ### Option ranges per interface
 

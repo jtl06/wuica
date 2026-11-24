@@ -149,7 +149,8 @@ export interface Row {
   loc?: string;
   /** objdump -S and perf annotate input: the interleaved source line in force ("s += a[i] * b[i];"). */
   source?: string;
-  /** perf annotate input: the instruction's percent of the samples. */
+  /** perf annotate input: the instruction's percent of all the samples of the output (each symbol's own percent weighted
+   * by its sample count). */
   samples?: number;
 }
 
