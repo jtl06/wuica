@@ -25,6 +25,8 @@ Alder Lake P-cores and Ice Lake server to the original Intel models.
   An MCP endpoint for agents is at `https://api.wuica.jacen.li/mcp`.
 - **Source and issues:** [github.com/jtl06/wuica](https://github.com/jtl06/wuica). The models come from the fork
   [jtl06/uiCA](https://github.com/jtl06/uiCA) of [uiCA](https://github.com/andreas-abel/uiCA).
+- **Measure your own CPU:** [wuica-calibrate](https://github.com/jtl06/wuica-calibrate) (pre-release) runs about 1,800 real
+  loops on a Linux x86-64 machine and writes a result file you can send back to help model that CPU.
 
 **Status: working preview.** From machine code (or assembly) to uiCA's complete report, identical to the Python reference on
 all 18,791 simulation cases of both fixture sets (all options; 3,419 more in the optional set `more`), natively and as
