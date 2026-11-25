@@ -3,10 +3,10 @@
 # tar_sha256 (of the uncompressed tar) is for checking a rebuild: xz versions may compress differently.
 tag=ci-data-v9
 file=wuica-ci-data.tar.xz
-sha256=fcc7d694b675e08b3eb9677e80416033d58f0b62440569d54ab31c1db5d578d6
-bytes=66059116
-tar_sha256=06de0a3a870dcee22ae563167654ac09b7b0b378cf7317b0f1ceabc98b701f19
+sha256=4ab7d55cbb7da057c8de5c4c0f2bc2c253506a064bf48a16e1b740421415792d
+bytes=65965876
+tar_sha256=7093eacf9b7b92d77cbcb9afe7e8212fbe328386c2ca16511f65ecbae6bb327d
 tar_bytes=112250880
 files=23
-wuica_commit=4f34869c8163652489f048b6f28d435621736fd7
-uica_commit=7b8f800 (improve-r11)
+wuica_commit=3bbcd5d0bfc3933e0fe4a5758dc37c0f69a537dc
+uica_commit=5429430 (improve-r11)
