@@ -217,6 +217,10 @@ pub struct UArchConfig {
     /// operand are not fused (`amdBranchFusionRules`)
     #[serde(rename = "amdBranchFusionRules", default)]
     pub amd_branch_fusion_rules: bool,
+    /// positions in the issue (rename) group, counted from 0, in which an eliminable move is not eliminated
+    /// (`moveElimBlockedSlots`; empty in data exported before the field existed)
+    #[serde(rename = "moveElimBlockedSlots", default)]
+    pub move_elim_blocked_slots: Vec<i64>,
 }
 
 impl UArchConfig {

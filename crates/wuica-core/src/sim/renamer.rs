@@ -507,7 +507,11 @@ impl<'a> Sim<'a> {
         let mut n_simd_move_elim: i64 = 0;
         let pipeline_length = cfg.move_elimination_pipeline_length;
 
-        for &fused in renamer_uops.iter() {
+        let blocked_slots = &cfg.move_elim_blocked_slots;
+        for (slot, &fused) in renamer_uops.iter().enumerate() {
+            if !blocked_slots.is_empty() && blocked_slots.contains(&(slot as i64)) {
+                continue; // moveElimBlockedSlots
+            }
             for u in self.fused[fused as usize].unfused_uops() {
                 let prop = &self.prep.props[self.uops[u as usize].prop as usize];
                 let ii = prop.instr as usize;
