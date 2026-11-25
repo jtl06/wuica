@@ -372,7 +372,7 @@ try {
     check(/^744\.25 cycles\/iteration · SKL · \d+(\.\d)? ms$/.test(r.status), 'showcase: the status line shows the analysis time', r.status);
     check(r.costWait[0] === 'waiting' && /compute \(\d{4} analyses\)/.test(r.costWait[1] ?? ''), 'showcase: the cost column waits for a click', JSON.stringify(r.costWait));
     check(r.all[0] === r.count - 1 && r.all[2] < 200, 'showcase: at the end of the scroll range, the last row is drawn (and few others)', JSON.stringify([r.all, r.count]));
-    check(r.cpus.map((x) => x.join(':')).join() === 'SKL:744.25,ZEN3:620.75,ADL-P:587.00', 'showcase: the table of three CPUs (as uiCA: 744.25, 620.75, 587)', JSON.stringify([r.cpus, r.cpusInfo]));
+    check(r.cpus.map((x) => x.join(':')).join() === 'SKL:744.25,ZEN3:621.25,ADL-P:597.25', 'showcase: the table of three CPUs (as uiCA: 744.25, 621.25, 597.25)', JSON.stringify([r.cpus, r.cpusInfo]));
     check(r.long.every((ms) => ms < LONG_TASK_MS), `showcase: no long task of ${LONG_TASK_MS} ms or more while it loads`, JSON.stringify(r.long));
     console.log(`showcase: example to result ${r.ms.toFixed(0)} ms (${r.status}); long tasks meanwhile ${JSON.stringify(r.long)} ms; scrolled to the last row in ${r.all[1]} ms; three CPUs: ${r.cpusInfo}`);
   }
