@@ -178,6 +178,19 @@ pub struct UArchConfig {
     /// (integer, floating point, lane-crossing permutes; `domainBypassDelay`, 0 in data exported before the field existed)
     #[serde(rename = "domainBypassDelay", default)]
     pub domain_bypass_delay: i64,
+    /// register files (None: no limit): at most this many fused uops that write a vector register (a name with 'MM') are in
+    /// flight, from issue until their registers are free again (`vecRegFileSize`; None in data exported before the field existed)
+    #[serde(rename = "vecRegFileSize", default)]
+    pub vec_reg_file_size: Option<i64>,
+    /// the same for general-purpose registers (`gprRegFileSize`)
+    #[serde(rename = "gprRegFileSize", default)]
+    pub gpr_reg_file_size: Option<i64>,
+    /// a vector register freed at retirement can be allocated again this many cycles later (`vecRegFreeDelay`)
+    #[serde(rename = "vecRegFreeDelay", default)]
+    pub vec_reg_free_delay: i64,
+    /// the same for general-purpose registers (`gprRegFreeDelay`)
+    #[serde(rename = "gprRegFreeDelay", default)]
+    pub gpr_reg_free_delay: i64,
 }
 
 impl UArchConfig {

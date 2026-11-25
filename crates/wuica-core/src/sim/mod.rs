@@ -466,6 +466,8 @@ pub(crate) struct Sim<'a> {
 
     pub idq: VecDeque<u32>,
     pub rob: VecDeque<u32>,
+    /// the register files of the reorder buffer (`vecRegFileSize`, `gprRegFileSize`)
+    pub regs: frontend::RegFiles,
     pub retire_queue: VecDeque<u32>,
     pub fe: frontend::FrontEnd,
     pub rn: renamer::Renamer,
@@ -657,6 +659,7 @@ fn simulate_impl(list: &InstrList, config: &UArchConfig, uarch: &UArch, options:
         ren_lists: Vec::with_capacity(cap(n_ren_per_round * 2)),
         idq: VecDeque::new(),
         rob: VecDeque::new(),
+        regs: frontend::RegFiles::new(config),
         retire_queue: VecDeque::new(),
         fe: frontend::FrontEnd::new(unroll, options.alignment_offset, prep.info.iter().map(|i| i.len).sum()),
         rn: renamer::Renamer::new(options.init_policy, config.load_value_numbering, prep.keys.info.len(), config.move_elimination_pipeline_length, prep.mem_addrs.len()),

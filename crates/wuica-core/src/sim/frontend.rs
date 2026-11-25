@@ -163,6 +163,55 @@ impl AddressSet {
     }
 }
 
+/// The register files of the reorder buffer (`vecRegFileSize`, `gprRegFileSize`): the registers allocated and those freed at a
+/// later cycle. The reference keeps the frees in one heap of (cycle, vector, general-purpose) and subtracts every entry whose
+/// cycle has come; since only the sums of the released entries matter, two queues of (cycle, count) are the same: the cycles of
+/// each kind are pushed in increasing order (the retire cycle plus a constant), so each queue stays sorted.
+pub(crate) struct RegFiles {
+    /// `regFiles`: one of the two sizes is set
+    pub enabled: bool,
+    pub n_vec: i64,
+    pub n_gpr: i64,
+    pub vec_frees: VecDeque<(i64, i64)>,
+    pub gpr_frees: VecDeque<(i64, i64)>,
+    /// `ReorderBuffer.clock`: the cycle of its last `cycle` (-1 before the first)
+    pub clock: i64,
+}
+
+impl RegFiles {
+    pub fn new(cfg: &crate::config::UArchConfig) -> RegFiles {
+        RegFiles {
+            enabled: cfg.vec_reg_file_size.is_some() || cfg.gpr_reg_file_size.is_some(),
+            n_vec: 0,
+            n_gpr: 0,
+            vec_frees: VecDeque::new(),
+            gpr_frees: VecDeque::new(),
+            clock: -1,
+        }
+    }
+
+    /// `heappush(pendingFrees, (cycle, ...))` of `n` registers of one kind
+    fn schedule(q: &mut VecDeque<(i64, i64)>, cycle: i64, n: i64) {
+        match q.back_mut() {
+            Some(last) if last.0 == cycle => last.1 += n,
+            _ => q.push_back((cycle, n)),
+        }
+    }
+
+    /// pops the entries due by cycle `c`; returns the number of registers released
+    fn release(q: &mut VecDeque<(i64, i64)>, c: i64) -> i64 {
+        let mut n = 0;
+        while let Some(&(cycle, k)) = q.front() {
+            if cycle > c {
+                break;
+            }
+            n += k;
+            q.pop_front();
+        }
+        n
+    }
+}
+
 /// the state of `CacheBlockGenerator`
 struct CacheBlockGenerator {
     unroll: bool,
@@ -1134,13 +1183,52 @@ impl<'a> Sim<'a> {
 
     // ---- ReorderBuffer ----
 
-    /// `ReorderBuffer.isFull`
-    pub(crate) fn rob_is_full(&self) -> bool {
-        self.rob.len() as i64 + self.cfg.issue_width > self.cfg.rb_width
+    /// `ReorderBuffer.isFull`. With register files, it first releases the registers that can be allocated again in the cycle of
+    /// the next issue (`ReorderBuffer.clock + 1`), as the reference does; releasing them again with the same cycle changes nothing,
+    /// so calling it more than once in a cycle (the issue log) gives the same state.
+    pub(crate) fn rob_is_full(&mut self) -> bool {
+        let w = self.cfg.issue_width;
+        if self.rob.len() as i64 + w > self.cfg.rb_width {
+            return true;
+        }
+        if self.regs.enabled {
+            let r = &mut self.regs;
+            let c = r.clock + 1;
+            r.n_vec -= RegFiles::release(&mut r.vec_frees, c);
+            r.n_gpr -= RegFiles::release(&mut r.gpr_frees, c);
+            if self.cfg.vec_reg_file_size.is_some_and(|s| r.n_vec + w > s) {
+                return true;
+            }
+            if self.cfg.gpr_reg_file_size.is_some_and(|s| r.n_gpr + w > s) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// the registers that a fused uop allocates (`ReorderBuffer.addUops`): (vector, general-purpose), each 0 or 1: whether one of its
+    /// uops that is not eliminated writes a register of that kind
+    fn reg_kinds(&self, fused: u32) -> (i64, i64) {
+        let (mut v, mut g) = (0, 0);
+        for u in self.fused[fused as usize].unfused_uops() {
+            let uop = &self.uops[u as usize];
+            if uop.eliminated {
+                continue;
+            }
+            let prop = &self.prep.props[uop.prop as usize];
+            if prop.has(pf::WRITES_VEC) {
+                v = 1;
+            }
+            if prop.has(pf::WRITES_GPR) {
+                g = 1;
+            }
+        }
+        (v, g)
     }
 
     /// `ReorderBuffer.cycle`
     fn rob_cycle(&mut self, clock: i64, new_uops: &[u32]) {
+        self.regs.clock = clock;
         // retireUops
         let mut n_retired_in_same_cycle = 0;
         for _ in 0..self.cfg.retire_width {
@@ -1153,6 +1241,16 @@ impl<'a> Sim<'a> {
                 self.fused[fused as usize].retired = clock;
                 self.fused[fused as usize].retire_idx = n_retired_in_same_cycle;
                 n_retired_in_same_cycle += 1;
+                if self.regs.enabled {
+                    // (the kinds counted when the uop was issued: eliminated and the properties do not change after that)
+                    let (v, g) = self.reg_kinds(fused);
+                    if v != 0 {
+                        RegFiles::schedule(&mut self.regs.vec_frees, clock + 1 + self.cfg.vec_reg_free_delay, v);
+                    }
+                    if g != 0 {
+                        RegFiles::schedule(&mut self.regs.gpr_frees, clock + 1 + self.cfg.gpr_reg_free_delay, g);
+                    }
+                }
             } else {
                 break;
             }
@@ -1160,6 +1258,11 @@ impl<'a> Sim<'a> {
         // addUops
         for &fused in new_uops {
             self.rob.push_back(fused);
+            if self.regs.enabled {
+                let (v, g) = self.reg_kinds(fused);
+                self.regs.n_vec += v;
+                self.regs.n_gpr += g;
+            }
             for u in self.fused[fused as usize].unfused_uops() {
                 let uop = &mut self.uops[u as usize];
                 if !self.prep.props[uop.prop as usize].has(pf::HAS_PORTS) || uop.eliminated {

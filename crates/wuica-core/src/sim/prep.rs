@@ -135,6 +135,10 @@ pub(crate) mod pf {
     pub const M256: u32 = 1 << 17;
     /// `FOLDED_SHIFT_RE.match(instr.instrStr)`: shifts and rotates, see `foldedShiftDelay`
     pub const FOLD_SHIFT: u32 = 1 << 18;
+    /// an output operand is a vector register (`'MM' in reg`): counts toward `vecRegFileSize` (see [`super::reg_file_kind`])
+    pub const WRITES_VEC: u32 = 1 << 19;
+    /// an output operand is a general-purpose register in the sense of `gprRegFileSize`
+    pub const WRITES_GPR: u32 = 1 << 20;
     pub const STORE: u32 = STORE_ADDR | STORE_DATA;
 }
 
@@ -393,6 +397,21 @@ fn compute_uop_grouping(instr: &Instr, props: &[UopProperties], config: &UArchCo
     fused_sizes.extend(fused.iter().map(|f| f.1 as u32));
 }
 
+/// The register file that an output register operand counts toward (`ReorderBuffer.addUops`): [`pf::WRITES_VEC`] if `'MM' in reg`
+/// (also TMM), else [`pf::WRITES_GPR`] unless the name starts with K, ST or TMM or is RFLAGS, RIP, MXCSR or an x87 control
+/// register; the tests on the names are those of the reference, literally.
+pub(crate) fn reg_file_kind(reg: &str) -> u32 {
+    if has(reg, "MM") {
+        pf::WRITES_VEC
+    } else if !(reg.starts_with('K') || reg.starts_with("ST") || reg.starts_with("TMM"))
+        && !matches!(reg, "RFLAGS" | "RIP" | "MXCSR" | "X87CONTROL" | "X87STATUS" | "X87TAG")
+    {
+        pf::WRITES_GPR
+    } else {
+        0
+    }
+}
+
 /// the [`pf`] bits of a property that come from its instruction
 fn instr_prop_flags(instr: &Instr, flags: u32) -> u32 {
     let mut f = flags;
@@ -617,7 +636,11 @@ impl Prep {
                 in_key_list.push(InKey { op, is_pseudo, key });
             }
             let out_start = idx(out_key_list.len());
+            let mut reg_files = 0;
             for &op in &p.output_operands {
+                if let Some(Operand::Reg { reg, .. }) = list.operands.get(op as usize) {
+                    reg_files |= reg_file_kind(reg);
+                }
                 let (is_pseudo, key, is_reg) = key_of(op)?;
                 let lat = p.latencies.iter().find(|(o, _)| *o == op).map_or(1, |(_, l)| *l);
                 out_key_list.push(OutKey { op, is_pseudo, key, is_reg, lat });
@@ -644,7 +667,7 @@ impl Prep {
                 }
             }
             Ok(PropInfo {
-                flags: instr_prop_flags(instr, flags),
+                flags: instr_prop_flags(instr, flags) | reg_files,
                 instr: ii,
                 port_mask: mask,
                 ports_start,
@@ -695,7 +718,8 @@ impl Prep {
                 props.push(convert(p, instr, ii as u32, res, &mut keys, &mut port_lists, &mut in_key_list, &mut out_key_list, &mut mem_addrs)?);
             }
             let stack_sync_prop = idx(props.len());
-            let mut ss_flags = pf::FIRST | pf::STACK_SYNC;
+            // (the stack-sync uop writes RSP)
+            let mut ss_flags = pf::FIRST | pf::STACK_SYNC | reg_file_kind("RSP");
             if n_alu_ports > 0 {
                 ss_flags |= pf::HAS_PORTS;
             }
