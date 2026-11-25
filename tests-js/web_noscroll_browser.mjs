@@ -8,6 +8,9 @@
 // WUICA_TEST_SCROLLBARS and WUICA_TEST_FONT); skipped (exit 0) without Chrome.
 //
 //   node tests-js/web_noscroll_browser.mjs [--chrome PATH]
+//
+// WUICA_SHARD=k/n (scripts/check.mjs runs n shards in parallel in `full`): only the k-th of every n of the cases below,
+// each of which opens a page of its own; the shards' check counts add up to the count of a whole run.
 import fs from 'node:fs';
 import path from 'node:path';
 import { findChrome, launch, serve, copyDist, Page, HELPERS, checker, ROOT } from './cdp.mjs';
@@ -16,6 +19,11 @@ const chrome = findChrome();
 const check = checker('no-scroll browser');
 if (!fs.existsSync(path.join(ROOT, 'web/dist/manifest.json'))) { console.log('web/dist is missing: run web/build.sh first'); process.exit(1); }
 if (!chrome) { console.log('Chrome not found (use --chrome PATH): skipped'); process.exit(check.summary() ? 1 : 0); }
+
+const [shard, shards] = (process.env.WUICA_SHARD || '0/1').split('/').map(Number);
+if (!(shards >= 1 && shard >= 0 && shard < shards)) { console.log(`WUICA_SHARD=${process.env.WUICA_SHARD}: not k/n with 0 <= k < n`); process.exit(2); }
+let caseNo = -1;
+const mine = () => ++caseNo % shards === shard; // (called once per case, in order, whatever the shard)
 
 const SMALL = 'loop:\n  add rax, [rsi]\n  add rsi, 8\n  imul rbx, rax\n  vaddps ymm0, ymm0, ymm1\n  dec rcx\n  jnz loop\n';
 
@@ -61,6 +69,7 @@ const srv = await serve(dir);
 const { browser, close } = await launch(chrome);
 try {
   for (const [w, h] of [[1440, 900], [1200, 700]]) for (const mode of ['single', 'ab']) for (const content of ['small', 'showcase']) {
+    if (!mine()) continue;
     const what = `${w}×${h} ${mode === 'ab' ? 'A–B' : 'single'} ${content}`;
     const page = await Page.open(browser, { width: w, height: h });
     await page.goto(`${srv.origin}/?nosw=1`);
@@ -108,7 +117,7 @@ try {
 
   // A–B's diff tab, wide: A and B side by side when each half has room for its columns; the folds one line under them;
   // a long block (stacked): the two tables' rows scroll together
-  {
+  if (mine()) {
     const page = await Page.open(browser, { width: 2000, height: 1140 });
     await page.goto(`${srv.origin}/?nosw=1`);
     await page.ready();
@@ -138,7 +147,7 @@ try {
   }
 
   // the limitations: a popover from the top bar (the page does not scroll to them); Escape closes it
-  {
+  if (mine()) {
     const page = await Page.open(browser, { width: 1440, height: 900 });
     await page.goto(`${srv.origin}/?nosw=1`);
     await page.ready();
@@ -158,7 +167,7 @@ try {
   }
 
   // a shorter window: it scrolls as before (nothing trapped): Analyze is in the window or the input pane scrolls to it
-  {
+  if (mine()) {
     const page = await Page.open(browser, { width: 1200, height: 600 });
     await page.goto(`${srv.origin}/?nosw=1`);
     await page.ready();
@@ -172,6 +181,7 @@ try {
   // the status line in the top bar stays one line in the window with a long text (a CPU that cannot run the code, all
   // CPUs checked): cut with …, the whole text in its title
   for (const [w, h] of [[1440, 900], [1200, 700]]) {
+    if (!mine()) continue;
     const page = await Page.open(browser, { width: w, height: h });
     await page.goto(`${srv.origin}/?nosw=1`);
     await page.ready();
