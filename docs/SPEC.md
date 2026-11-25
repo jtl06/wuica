@@ -22,7 +22,7 @@ simulated as if unrolled; the ZEN3, ADL-P and ICX models are the fork's prototyp
 
 | | Value | Source |
 |---|---|---|
-| Fixture cases identical to the reference | 17,081 simulation cases (+3,419 in an optional set), 12,046 instruction-builder cases, 3,948 decoder cases | Last local `scripts/check.sh full` logs (section 7.6) |
+| Fixture cases identical to the reference | 18,791 simulation cases (+3,419 in an optional set), 12,996 instruction-builder cases, 3,948 decoder cases | Last local `scripts/check.sh full` logs (section 7.6) |
 | Time per analysis (WebAssembly, warm) | 0.52 ms (BHive block), 0.63 ms (random loop), 36 ms (2,949-instruction SHA-256 block) | Commit `623a117` message, measurement machine (Ryzen 7 7735U), Node 22; before model rounds 6–9 |
 | Analyzer module | 4.31 MB raw, 630 kB brotli q11 (package), 867 kB as the live site serves it | Section 7.1 |
 | First visit in assembly mode (analyzer, assembler, SKL table, page shell) | 2.19 MB as the live site serves it; the same files weigh 1.64 MB at brotli q11 (+34 % served). After 0.1.9 the default first visit does not wait for the assembler: 1.14 MB before the first result (local host, brotli q2) | Section 7.1; `docs/PORTING.md`, "Size of the modules" |
@@ -116,10 +116,10 @@ instantiates again and reloads the tables (`docs/WASM-API.md`, "Failures and tra
 | `fixtures/decode_fixtures*.jsonl.gz` (in git) and `fixtures/generated/*.jsonl.gz` (not in git; 1.4 GB uncompressed for the simulation set) | What the reference computes at each boundary | `tools/export_decode_fixtures.py`, `tools/export_fixtures.py`, `tools/export_all.sh` |
 
 `data/` and `fixtures/generated/` are generated locally and not committed (`.gitignore`). CI downloads them, with the
-assembler and llvm-mca modules, from a GitHub pre-release named in `ci/data-asset.txt` (`ci-data-v7`), checked by sha256. The
+assembler and llvm-mca modules, from a GitHub pre-release named in `ci/data-asset.txt` (`ci-data-v9`), checked by sha256. The
 tables are derived from uops.info data via uiCA and generated locally; the repository does not state a license for them.
-The reference commit whose model and data are shipped is recorded once, in `ci/data-asset.txt` (`uica_commit=640e40e
-(improve-r9)`), and reported by `wuica --version -json` and `GET /api/version`.
+The reference commit whose model and data are shipped is recorded once, in `ci/data-asset.txt` (`uica_commit=7b8f800
+(improve-r11)`), and reported by `wuica --version -json` and `GET /api/version`.
 
 ### 4.5 Threads and workers
 
@@ -287,19 +287,20 @@ finished 03:16 UTC, conclusion success; `gh run list`).
 
 ### 7.6 Tests and CI
 
-Counts from the last local `scripts/check.sh full` run (development machine, 2026-11-23; `target/check/*.log`):
+Counts from the last local `scripts/check.sh full` run (development machine, 2026-11-24; `target/check/*.log`):
 
 | Boundary or area | Suite(s) | Count |
 |---|---|---|
 | Decoder vs Python `xed` records | `wuica-xed:fixtures` (native), `tests-js/decode_fixtures.mjs` (wasm) | 3,948 file × chip cases (51,312 instructions), both |
-| Instruction objects vs `getInstructions` + adjustments, every field | `wuica-core:instr_builder_fixtures`, `model_fixtures` | 8,056 + 3,990 cases (81,624 + 44,480 instructions) |
-| Simulation: throughput, uop table, `-json` trace | `wuica-core:sim_fixtures` | 17,062 cases (19 without an instruction fixture skipped here, covered end to end); 1,919 traces; optional set `more`: 3,419 cases with traces |
-| Bottleneck analysis | `wuica-core:facile_fixtures` | 7,182 + 9,880 compared |
-| End to end, bytes → complete report text | `wuica:end_to_end` (native), `tests-js/analyze_fixtures.mjs 1` in 4 shards (wasm: `tp` and `text`) | 17,081 cases each |
+| Instruction objects vs `getInstructions` + adjustments, every field | `wuica-core:instr_builder_fixtures`, `model_fixtures` | 8,056 + 4,940 cases (81,624 + 81,055 instructions) |
+| Simulation: throughput, uop table, `-json` trace | `wuica-core:sim_fixtures` | 18,772 cases (19 without an instruction fixture skipped here, covered end to end); 2,109 traces; optional set `more`: 3,419 cases with traces |
+| Bottleneck analysis | `wuica-core:facile_fixtures` | 8,892 + 9,880 compared |
+| End to end, bytes → complete report text | `wuica:end_to_end` (native), `tests-js/analyze_fixtures.mjs 1` in 4 shards (wasm: `tp` and `text`) | 18,791 cases each |
 | `details` changes no other field; critical path; dependency cycle | `wuica:details`, `critical_path`, `wuica-core:dependency_cycle` | 9,899; 9,899 (8,512 with a path); 36,138 |
 | No panics | `wuica:fuzz_short`, `details_fuzz` (`crates/wuica/tests/fuzz/mod.rs`) | random real encodings, random options, all 15 CPUs |
-| Same result through every interface but the page | `tests-js/interfaces.mjs` (library, wasm via `engine.js`, the reference binary, npm CLI, REST, both MCP servers; random requests) | 2,647 checks |
+| Same result through every interface but the page | `tests-js/interfaces.mjs` (library, wasm via `engine.js`, the reference binary, npm CLI, REST, both MCP servers; random requests) | 2,644 checks |
 | Accuracy of the prototype models against measured loops | `wuica:accuracy_gate` | 7,925 loops, 22,905 predictions, per set and CPU |
+| The parameters of model round 11, one at a time, against the reference | `wuica:model_r11` | 23 cases |
 | npm package; server | `node --test` | 83; 63 tests |
 | Page logic in Node (30 suites) | `tests-js/web_*.mjs` without a browser | 23,314 checks |
 | Page in headless Chrome (19 suites) | `tests-js/web_*_browser.mjs`, `web_browser*.mjs` via `tests-js/cdp.mjs` | 1,276 checks |
@@ -448,7 +449,7 @@ Check this table before suggesting an optimization. "Identical results" means ru
 
 Answer any of these; cite the file and function.
 
-1. **Exactness strategy.** Is three-boundary fixture testing on 17,081 cases, plus a fuzzer for panics, enough to trust
+1. **Exactness strategy.** Is three-boundary fixture testing on 18,791 cases, plus a fuzzer for panics, enough to trust
    exactness on inputs outside the corpus? Which reference paths are likely unexercised (e.g. options combined, ZMM code
    beyond the extra set, very long blocks)? Are there float-ordering or `round` risks in `crates/wuica-core/src/facile.rs`
    or `sim/` that the fixtures would not catch?

@@ -11,7 +11,7 @@ wuica follows the fork [jtl06/uiCA](https://github.com/jtl06/uiCA), which adds e
 Alder Lake P-cores and Ice Lake server to the original Intel models.
 
 **Status: working preview.** From machine code (or assembly) to uiCA's complete report, identical to the Python reference on
-all 17,081 simulation cases of both fixture sets (all options; 3,419 more in the optional set `more`), natively and as
+all 18,791 simulation cases of both fixture sets (all options; 3,419 more in the optional set `more`), natively and as
 WebAssembly (counts from the logs of `scripts/check.sh full`, `target/check/wuica_end_to_end.log` and
 `target/check/analyze_fixtures_*.log`), at about 1 ms per analysis (the Python
 reference needs 40–55 ms plus startup). See [docs/DESIGN.md](docs/DESIGN.md) for the structure and the rules of the port.

@@ -76,7 +76,11 @@ prediction caches (`microbench/measurements/fuzz/`, the caches are not in git) a
       holdout7:<improve-r9 tree>/microbench/measurements/fuzz bhive5:<improve-r9 tree>/microbench/measurements/fuzz \
       holdout8 bhive6 dogfood -reference=OUT/accuracy_reference.json
 
-(`-reference` also writes the numbers the gate must reproduce, computed with the Python reference). Its first line is a header (format,
+(`-reference` also writes the numbers the gate must reproduce, computed with the Python reference). Round 11 ran it in the exported tree
+`/data/projects/wuica-r11/uica/microbench` (its `out_fuzz` a link to `improve-r10`'s, the caches of holdout8 and bhive6 given as
+`holdout8:/data/projects/uica-r10/microbench/measurements/fuzz` and `bhive6:...`); the table came out identical to round 10's (it
+depends only on the measurements and the caches), and the gate's accepted numbers equal the reference's
+(`/data/projects/wuica-r11/acc/accuracy_reference.json`) for every set and CPU. Its first line is a header (format,
 analysis options, per set the rounding of the prediction), then one line per loop: set, name, machine code, analysis mode, measured
 cycles per CPU where the loop counts. When the model changes on purpose, accept the gate's new numbers with
 `WUICA_ACCURACY_ACCEPT=1 cargo test --release -p wuica --test accuracy_gate` (rewrites `crates/wuica/tests/accuracy_expected.json`).
@@ -167,6 +171,16 @@ Before a release, on the reference machine: `tools/fuzz/run.sh --cases 100000 --
 - Binary tables: 14.6 MB of JSON -> 6.4 MB (brotli 681 -> 614 kB for the 15); loading a table (decompress and load,
   warm) SKL 2.2 -> 1.4 ms, ADL-P 6.1 -> 3.7 ms, all 15 55 -> 33 ms (Mac); the analyzer module grows by 21 kB.
 
+- Model round 11 (the measurement machine under an exclusive lease, `phases` example, 100 runs per block, pinned to one core, two
+  interleaved repetitions, the faster taken; before: `e2e3293` with round 10's data, after: `model-r11` with round 11's;
+  `/data/projects/wuica-r11/speed/`). Mean over six blocks (the SHA-256 showcase, b1000, b100, a random loop, a BHive block, the
+  291-instruction `x_r11_window`), time of `simulate` and of the whole analysis (`total`), before -> after: SKL 2.81 -> 2.81 ms and 6.91
+  -> 6.89 ms (unchanged: nothing of round 11 runs with its parameters off); ZEN3 2.90 -> 3.23 ms, 7.50 -> 7.91 ms; ICX 2.98 -> 3.26 ms,
+  7.17 -> 7.68 ms; ADL-P 3.16 -> 3.41 ms, 7.42 -> 7.70 ms. Part of it is more work: b1000's predictions rose from 178-300 to 950-1064
+  cycles per iteration on the three CPUs (the register files bind), so it simulates several times the cycles (simulate +22 to +27 %);
+  on blocks whose prediction did not change (b100, the random loop) the round's bookkeeping (register counts at issue and retirement,
+  the store index, the queue counts) costs +6 to +10 % of the simulation and +3 to +8 % of the analysis.
+
 ## Size of the modules
 
 Measured on 0.1.8 (sizes in bytes; brotli with the command-line tool, window 24 unless said otherwise).
@@ -237,8 +251,9 @@ Measured on 0.1.8 (sizes in bytes; brotli with the command-line tool, window 24 
 
 ## The reference
 
-The reference is [jtl06/uiCA](https://github.com/jtl06/uiCA), branch `improve-r10` (model at commit `7301b04`; not pushed yet,
-worktree `/data/projects/uica-r10` on the reference machine): the model change of round 10 (see `docs/ACCURACY.md`) on top of
+The reference is [jtl06/uiCA](https://github.com/jtl06/uiCA), branch `improve-r11` (model and data at commit `7b8f800`, pushed;
+worktree `/data/projects/uica-r11` on the reference machine): the model changes of round 11 (see `docs/ACCURACY.md` and the fork's
+`CHANGES.md`) on top of `improve-r10` (model `7301b04`: the change of round 10) on top of
 `improve-r9` (model and data at `640e40e`, pushed; branch tip `5a07a40`) on top of `improve-r8` (model `c899be7`: the changes of
 round 8) on top of `improve-r7` (model `f4a7868`: the changes of round 7) on top of `improve-r6`
 (`21b0b17`: the model changes of round 6, `9bed908`, merged with branch
@@ -251,8 +266,8 @@ which uiCA raised an exception, `docs/DEVIATIONS.md`). All fixtures in `fixtures
   `crates/wuica-xed/shim/wuica_xed.c`.
 - Run: on the host `aethia` (`ssh aethia`), the fixed reference is installed in `~/uica-zen/uiCA-crashfix` (branch `crash-fixes`;
   the unfixed one in `~/uica-zen/uiCA-perf`; `improve-r6` in `~/uica-zen/uiCA-r6`; `improve-r7` in `~/uica-zen/uiCA-r7`;
-  `improve-r8` in `~/uica-zen/uiCA-r8`; `improve-r9` in `/data/projects/uica-r9`; the reference of this branch, `improve-r10`, in
-  `/data/projects/uica-r10`; never modify any of them), with the Python interpreter `~/uica-zen/venv/bin/python`. To add debug output, copy the directory (e.g. to `~/uicaspeed/<name>/uiCA`, 60 MB) and
+  `improve-r8` in `~/uica-zen/uiCA-r8`; `improve-r9` in `/data/projects/uica-r9`; `improve-r10` in `/data/projects/uica-r10`; the
+  reference of this branch, `improve-r11`, in `/data/projects/uica-r11`; never modify any of them), with the Python interpreter `~/uica-zen/venv/bin/python`. To add debug output, copy the directory (e.g. to `~/uicaspeed/<name>/uiCA`, 60 MB) and
   edit the copy. Example: `cd ~/uica-zen/uiCA-perf && ~/uica-zen/venv/bin/python -c "import xed, uiCA; ..."`; the functions take
   the list returned by `xed.disasHex(hexString, chip=config.XEDName)`.
 - aethia is also a measurement machine. A single short Python run is fine. Anything CPU-heavy (more than a few seconds, or
@@ -280,10 +295,10 @@ with `"error": "InputError: <message>"` must give an error with the text `<messa
 
 **Extra set** (same formats; files `fixtures/decode_fixtures_extra.jsonl.gz`, `fixtures/generated/extra_instr_fixtures.jsonl.gz`,
 `fixtures/generated/extra_sim_fixtures.jsonl.gz`; sources in `fixtures/extra-src/x_*.s`): 36 hand-written blocks (and since round 9
-six more, `x_r9_*.s`, and since round 10 four more, `x_r10_*.s`) for paths that
+six more, `x_r9_*.s`, since round 10 four more, `x_r10_*.s`, and since round 11 six more, `x_r11_*.s`) for paths that
 the main corpus does not reach (ZMM registers, stack operations, high-8 registers, LCP, lock, rep, fences, microcode, x87, ...,
 and four blocks for the crash fixes: `x_dsb_fused_mid*.s`, `x_push_mem_pair.s`, `x_stack_init.s`), each with all option variants
-and, for some cases, the `-json` output (7182 simulation cases, 798 of them with the `-json` output; 3990 instruction-object
+and, for some cases, the `-json` output (8892 simulation cases, 988 of them with the `-json` output; 4940 instruction-object
 cases). Every case was run in a new process (`FRESH=1`),
 like a run of the command-line tool: the reference modifies its instruction tables in place for code that uses ZMM registers, so
 within one process earlier cases can change later ones (the main set has no ZMM code).
@@ -293,25 +308,35 @@ options, each with the `-json` output; made with `REPLAY=<the previous file> too
 simulation fixture test reads it with `WUICA_SET=more WUICA_MORE_SIM_FIXTURES=<path>`; `scripts/check.sh full` runs it if the file
 is present.
 
-Current sets: exported from the fork's `improve-r10` (`7301b04`) on the reference machine with `/data/projects/wuica-r10/export_r10.sh`
-into `/data/projects/wuica-r10/r10` (`data/`, `fix/`; a copy on the development Mac in `~/Documents/blackedge/wuica-r10-exports/r10`,
-`data/` and `fixtures-generated/`), with the sources of the extra blocks from `~/uicaspeed/wuica-fix-crash/extra-src`, the six blocks of
-round 9 (`fixtures/extra-src/x_r9_*.s`) and four of round 10 (`x_r10_*.s`: chains across vector domains, `vperm2i128` + `vpaddd`,
-an FP mix, the dogfood loop `fir8_s`; the extra set now has 46 blocks), and the cases of the set `more` replayed from
-`~/uicaspeed/wuica-fix-crash/final`. Compared with the export of `improve-r9`: simulation fixtures 5 cases of ZEN3 differ; extra
-simulation fixtures 26 of ZEN3, plus the cases of the new blocks (20 instruction and 36 simulation cases per configuration); set
-`more`: 5 of ZEN3; instruction fixtures unchanged. `fixtures/decode_fixtures_extra.jsonl.gz` gained the decoder cases of the new
-blocks; of the tables only `uarch.json` changed (the new field `domainBypassDelay`). CI needs these files as the data asset
-`ci-data-v8` (with the accuracy table); `ci/data-asset.txt` names it. Earlier sets: `crash-fixes` (`f85fcbd`) in
-`~/uicaspeed/wuica-fix-crash/final`; `improve-r6` in `~/projects/wuica-r6/r6m`; `improve-r7` in `~/projects/wuica-r7/t1`;
-`improve-r8` in `~/projects/wuica-r8/r8`; `improve-r9` in `/data/projects/wuica-r9/r9`.
+Current sets: exported from the fork's `improve-r11` (`7b8f800`) on the reference machine with `/data/projects/wuica-r11/export_r11.sh`
+into `/data/projects/wuica-r11/r11` (`data/`, `fix/`; a copy on the development Mac in `~/Documents/blackedge/wuica-r11-exports/r11`,
+`data/` and `fixtures-generated/`). The uiCA tree is `/data/projects/wuica-r11/uica`, a `git archive` of `7b8f800` with the `xed`
+module copied and `instrData/` generated there with `PYTHONHASHSEED=0 ~/uica-zen/venv/bin/python convertXML.py
+~/uica-zen/data/instructions.xml` (every table identical to the reference worktree's). The sources of the extra blocks are those of round
+10 plus six of round 11 (`x_r11_*.s`: store-reload pairs at offsets and wider loads, a memory-form compare-and-branch with the VEX ones
+idiom, fast adds feeding other instructions, eight eliminable moves, a loop that can cross a 64-byte line, a 291-instruction window of
+vector and LEA writers; the extra set now has 52 blocks), and the cases of the set `more` are replayed from
+`~/uicaspeed/wuica-fix-crash/final`. Compared with the export of `improve-r10`: every case of the twelve Intel models and their
+variants is byte-identical; instruction fixtures 424 cases of ZEN3, 24 of ADL-P and 6 of ICX differ; simulation fixtures 521 / 300 / 186;
+extra instruction fixtures 225 / 5 / 50 and extra simulation fixtures 414 / 208 / 158, plus the cases of the new blocks (30 instruction
+and 54 simulation cases per configuration); set `more` 184 / 107 / 45. `fixtures/decode_fixtures_extra.jsonl.gz` gained the decoder
+cases of the new blocks. Of the tables, `ZEN3`, `ICX` and `ADL-P` changed, and `uarch.json` (ZEN3's port `q`, the new fields). CI
+needs these files as the data asset `ci-data-v9` (with the accuracy table); `ci/data-asset.txt` names it. Earlier sets: `crash-fixes`
+(`f85fcbd`) in `~/uicaspeed/wuica-fix-crash/final`; `improve-r6` in `~/projects/wuica-r6/r6m`; `improve-r7` in `~/projects/wuica-r7/t1`;
+`improve-r8` in `~/projects/wuica-r8/r8`; `improve-r9` in `/data/projects/wuica-r9/r9`; `improve-r10` in `/data/projects/wuica-r10/r10`.
+
+**Model round 11, one parameter at a time** (`crates/wuica/tests/model_r11.rs`, `model_r11.jsonl.gz`): the shipped configurations
+switch several round-11 parameters on at once, so the test runs 23 blocks with one parameter switched on in a configuration that does
+not have it (or off in ZEN3), as the reference ran them in a new process each: `tools/gen_model_r11_cases.py UICA_DIR EXTRA_OBJ_DIR
+OUT.jsonl.gz` on the reference machine (`EXTRA_OBJ_DIR`: the object files of `x_r11_*.s`). Each case must also change the result of its
+block, so that it tests the parameter.
 
 The decoded records of a case are found in the decode fixtures by `file` and the chip `configs[arch].XEDName`.
 Compare JSON with `wuica_core::jsoncmp::diff` (numbers by value, object key order ignored).
 
 ## Differential fuzzer
 
-`tools/fuzz/run.sh --cases N --seed S [--arch X] [--jobs J] [--out DIR]` runs random blocks through the Python reference and through
+`tools/fuzz/run.sh --cases N --seed S [--arch X] [--jobs J] [--out DIR] [--reach]` runs random blocks through the Python reference and through
 the native binary and compares throughput, report text and `-json` output field by field (as the fixture tests do). It runs on
 the reference machine (`UICA_DIR`, default `/data/projects/wuica-fuzz/uica`: a worktree of the fork at the reference commit with
 `instrData/` and the `xed` module copied from the reference tree; `PYTHON`); on aethia under `perfq ssh aethia --mode shared
@@ -323,14 +348,23 @@ the reference machine (`UICA_DIR`, default `/data/projects/wuica-fuzz/uica`: a w
   instructions and forms of more than 200 uops.
 - Blocks (`fuzz.py gen`): 1 to 64 instructions of the forms the CPU supports (2 % without data), drawn uniformly or with a bias to
   a few themes (shuffles, lane-crossing ymm, MUL, rotates, narrow stores, SSE/AVX, high-8 registers, rip-relative operands, LCP,
-  zero idioms, eliminable moves, stack instructions, microcode); 80 % end in a branch to the start (macro-fusible pair, jcc, jmp,
-  rel8 or rel32). Case `i` of seed `S` depends only on `(S, i)`, the pool and `--arch`.
+  zero idioms, eliminable moves, stack instructions, microcode; since round 11 also `stlf`: stores and loads with the same base at
+  displacements from a small set near 0x100, of all widths, into GPRs, xmm and ymm, `fpadd`: fast FP adds and subs feeding other
+  instructions on four registers, `vecwin`: long-latency vector and integer instructions with many vector and GPR writers, and the
+  VEX ones idioms among the zero idioms); 80 % end in a branch to the start (macro-fusible pair, jcc, jmp, rel8 or rel32; since round
+  11 the fusible instructions include memory forms with and without an immediate and a displacement, RIP-relative ones, a 10-byte
+  compare that is longer than 15 bytes with a rel32 branch, INC/DEC and a read-modify-write, and the conditions include JBE). Case `i` of seed `S` depends only on `(S, i)`, the pool and `--arch`.
 - Options: a quarter of the cases with the defaults, the others from a pairwise covering array (960 rows) of CPU ×
   `alignmentOffset` 0..63 × `initPolicy` × `simpleFrontEnd` × `noMicroFusion` × `noMacroFusion` × 11 `minIterations`/`minCycles`
   pairs (0 and negative values among them).
 - Reference: worker processes (as the exporter), an alarm per case (120 s), a fork per case with ZMM registers (the reference
   changes its tables in place for them). `fuzz.py calibrate UICA_DIR FIXTURES N` checks that the runner reproduces the fixture lines
   (all fields, compared as values). A `-json` output above 4 MB (about one case in ten: long simulations of large blocks) is not compared (counted as such; throughput and text still are).
+- `--reach`: for each parameter of model round 11 that a configuration of the run sets, wuica compares each chunk again with that
+  parameter reset to its default (a data directory per parameter in `DIR/reach`); the cases whose verdict then changes reach the
+  mechanism (`reach CPU PARAMETER` among the features of `summary.json`). One more `-compare` per parameter on chunks of up to
+  ~750 MB of reference output: use it with `--arch`: each comparison of a 1,000-case chunk of all 15 CPUs takes about 1.7 GB, so the 19 parameters of the three
+  CPUs at once exceed the reference machine's 26 GB (each of them alone completes).
 - wuica: `wuica -compare FILE|-` (crates/wuica-cli/src/compare.rs) reads the reference's lines and prints one verdict per case:
   `same`, `differs` (TP, stdout, json or the input error), `wuica-error`, `wuica-panic`, `ref-crash`, `ref-timeout`.
 - Each kind of difference: run again with the reference in a new process, minimized (ddmin over the instructions, then the
@@ -340,6 +374,18 @@ the reference machine (`UICA_DIR`, default `/data/projects/wuica-fuzz/uica`: a w
 - Checked against two deliberate changes of `sim/frontend.rs` (3,000 cases each, seed 1): 2 predecoder stall cycles per LCP
   instead of 3 (204 cases differ, minimized to `sub ax, 0xae` on TGL), and the DSB rule for 16-byte blocks with LCP and
   macro-fusible instructions at 3 instead of 2 (2 cases, minimized to 6 such instructions and a `jp` on ICL).
+- Model round 11 (`model-r11`): `UICA_DIR=/data/projects/wuica-r11/uica` (the exported tree of `7b8f800`), the pool and the runs in
+  `/data/projects/wuica-r11/fuzz/` (the pool rebuilt with the new templates). The default `UICA_DIR`,
+  `/data/projects/wuica-fuzz/uica`, is still a round-10 worktree: against it the round-11 port differs on the three prototypes. Seed 11001,
+  100,000 cases over all 15 CPUs (without `--reach`): every case `same` (6,664-6,672 per CPU; 6,982 input errors of the reference reproduced; the `-json` trace compared
+  in 83,743), no finding. Seeds 11002, 11003, 11004 with `--arch` ZEN3, ICX, ADL-P and `--reach`,
+  20,000 cases each: every case `same` (input errors of the reference: 1,369, 1,377, 1,383), no finding. Cases that reach each
+  parameter (whose verdict changes when it is reset to its default): ZEN3 `branchPorts` 12,958, `amdBranchFusionRules` 1,871,
+  `fusedALUBranchPorts` 1,866, `storeForwardFailInterval` 1,840, `vectorStoreForwardDelay` 1,676, `storeForwardOverlap` 1,161,
+  `vecRegFileSize` 985; ICX `moveElimBlockedSlots` 5,899, `storeForwardFailInterval` 1,807, `storeForwardOverlap` 1,121, `vecRegFileSize`
+  822, `vectorStoreForwardDelay` 362, `lsdLineDelivery` 316; ADL-P `schedulerQueues` 7,340, `fastAddBypassDelay` 3,130, `storeForwardFailInterval` 1,847, `storeForwardOverlap` 1,215,
+  `gprRegFileSize` 199, `vecRegFileSize` 194. The table-only changes of the round (the ones idiom, zmm on
+  ports 0 and 5, the fusible flags) are not parameters and are not counted.
 
 ## Shared code
 

@@ -9,8 +9,8 @@ uiCA's predictions, bit for bit, from a Rust core that runs natively and as WebA
 ## Reference
 
 The reference ("oracle") is the Python uiCA of the fork [jtl06/uiCA](https://github.com/jtl06/uiCA). The commit whose model and
-data wuica ships is written in one place, `ci/data-asset.txt` (`uica_commit`; at the time of writing `640e40e` on the branch
-`improve-r9`); `wuica --version -json` and `GET /api/version` report it, and `docs/PORTING.md` ("The reference") lists the
+data wuica ships is written in one place, `ci/data-asset.txt` (`uica_commit`; at the time of writing `7b8f800` on the branch
+`improve-r11`); `wuica --version -json` and `GET /api/version` report it, and `docs/PORTING.md` ("The reference") lists the
 branches it builds on.
 
 History: the first reference was the branch `perf`, commit `8f24bd3` (improve-r4 `a5ef6c2` plus the determinism fix `9b69d9d`,
@@ -44,6 +44,26 @@ since round 9, in `uiCA.py`: `vectorDomain` and `domainBypassDelay` (ZEN3: 1): a
 the floating-point domain (...PS/PD/SS/SD, FMA) or the lane-crossing domain (VPERM2I128/VPERM2F128) that reads a register written by
 an instruction of another domain (not a load) gets it that many cycles later; store-data uops are exempt. Ported in `sim/prep.rs`
 (`vector_domain`, the instruction flags `DOMAIN_*`) and `sim/scheduler.rs` (`get_ready_for_dispatch_cycle`).
+
+On the branch `model-r11`, the reference is the fork's branch `improve-r11` at `7b8f800` (the changes of round 11 on top of
+`improve-r10`; pushed). Every new behavior is a configuration parameter whose default keeps the old one; ZEN3, ICX and ADL-P switch
+them on, the Intel models are unchanged. New since round 10:
+- register files (`vecRegFileSize`, `gprRegFileSize`, `vecRegFreeDelay`, `gprRegFreeDelay`; `ReorderBuffer`): fused uops that write a
+  vector or general-purpose register are counted at issue and freed at retirement plus a delay; issue stops when a full group would
+  not fit. `sim/frontend.rs` (`RegFiles`, `rob_is_full`, `rob_cycle`; per uop property `pf::WRITES_VEC` / `WRITES_GPR` in `sim/prep.rs`);
+- store forwarding (`storeForwardOverlap`, `vectorStoreForwardDelay`, `storeForwardFailInterval`): a load reads from the most recent
+  store with the same base, index and scale whose bytes contain its first byte, fails if it is wider than the rest of the store, and
+  failing loads are serialized through one shared cell (`failSerial`) when their ready cycle is first computed; an extra forwarding
+  delay into xmm/ymm. `sim/renamer.rs` (`StoresByBase`), `sim/mod.rs` (`compute_ready_cycle`), `instr_builder.rs`
+  (`compute_uop_properties`);
+- branch units and AMD fusion (`branchPorts`, `fusedALUBranchPorts`, `amdBranchFusionRules`; `fusibleMemForm` in `instructions.py`):
+  `instr_builder.rs` (`known_instr`, `fusible_mem_form`, `get_instructions`);
+- `moveElimBlockedSlots` (`sim/renamer.rs`), `lsdLineDelivery` (`sim/frontend.rs`), `schedulerQueues` and `fastAddBypassDelay`
+  (`isFastAdd`; `sim/scheduler.rs`, `sim/prep.rs`);
+- in the data (`convertXML.py`): ZEN3's branch unit `q` in `allPorts`, memory forms of CMP/TEST and the non-RMW ALU instructions
+  marked fusible on AMD, table corrections for ZEN3, ICX and ADL-P (also the keys `lat_SR` and `divC`), and ICX's 512-bit FP
+  instructions on ports 0 and 5. The binary tables need no new format: the keys and port strings already exist (`WUICATBL` 1).
+The parameters are checked one at a time in `crates/wuica/tests/model_r11.rs`.
 
 Not ported:
 
@@ -84,7 +104,7 @@ basic blocks, all microbench microbenchmarks, blocks of 10/100/1000 instructions
 |---|---|---|---|
 | decoder output | `fixtures/decode_fixtures.jsonl.gz` (file × XED chip: hex, list of dicts) | `tools/export_decode_fixtures.py` | `crates/wuica-xed/tests/fixtures.rs`, `tests-js/decode_fixtures.mjs` |
 | instruction objects | `fixtures/generated/instr_fixtures.jsonl.gz` (8056 cases: file × configuration × options that affect them): every field of every `Instr` after `getInstructions`, `adjustLatenciesAndAddMergeUops` and `computeUopProperties`; the JSON form of `wuica_core::model::InstrList` | `tools/export_fixtures.py` | `crates/wuica-core/tests/model_fixtures.rs` (the model holds everything), builder test |
-| simulation result | `fixtures/generated/sim_fixtures.jsonl.gz` (9899 cases: file × configuration, and 8 option variants for 24 files): throughput and the detailed text output; the `-json` output for 1121 cases (and 798 of the 7182 cases of the extra set, `docs/PORTING.md`) | `tools/export_fixtures.py` | simulator test |
+| simulation result | `fixtures/generated/sim_fixtures.jsonl.gz` (9899 cases: file × configuration, and 8 option variants for 24 files): throughput and the detailed text output; the `-json` output for 1121 cases (and 988 of the 8892 cases of the extra set, `docs/PORTING.md`) | `tools/export_fixtures.py` | simulator test |
 
 The fixtures in `fixtures/generated/` and the tables in `data/` are generated (they are large): run `tools/export_data.py` and
 `tools/export_fixtures.py` against a uiCA installation. No case has an `error` field: the four cases on which the unfixed
