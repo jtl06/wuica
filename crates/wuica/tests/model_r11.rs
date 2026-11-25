@@ -1,6 +1,6 @@
 //! The parameters of model round 11, one at a time: each case of `model_r11.jsonl.gz` is a block that the reference (the fork's
 //! `improve-r11`) ran with one round-11 parameter switched on in a configuration that does not have it, or switched off in one
-//! that has it (made with `gen_r11_mech.py` on the reference machine; see docs/PORTING.md, "Model round 11"). The shipped
+//! that has it (made with `tools/gen_model_r11_cases.py` on the reference machine; see docs/PORTING.md, "Model round 11"). The shipped
 //! configurations switch several on at once; these cases check each mechanism alone. wuica must give the same throughput, text
 //! and `-json` trace, and the parameter must change the result (otherwise the case would not test it).
 //!

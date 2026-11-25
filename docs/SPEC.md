@@ -301,9 +301,9 @@ Counts from the last local `scripts/check.sh full` run (development machine, 202
 | Same result through every interface but the page | `tests-js/interfaces.mjs` (library, wasm via `engine.js`, the reference binary, npm CLI, REST, both MCP servers; random requests) | 2,644 checks |
 | Accuracy of the prototype models against measured loops | `wuica:accuracy_gate` | 7,925 loops, 22,905 predictions, per set and CPU |
 | The parameters of model round 11, one at a time, against the reference | `wuica:model_r11` | 23 cases |
-| npm package; server | `node --test` | 83; 63 tests |
-| Page logic in Node (30 suites) | `tests-js/web_*.mjs` without a browser | 23,314 checks |
-| Page in headless Chrome (19 suites) | `tests-js/web_*_browser.mjs`, `web_browser*.mjs` via `tests-js/cdp.mjs` | 1,276 checks |
+| npm package; server | `node --test` | 134; 77 tests |
+| Page logic in Node (36 suites) | `tests-js/web_*.mjs` without a browser | 21,050 checks |
+| Page in headless Chrome (28 suites) | `tests-js/web_*_browser.mjs`, `web_browser*.mjs` via `tests-js/cdp.mjs` | 1,728 checks |
 
 Corpus: 329 files of random loops, BHive blocks, uiCA's microbenchmarks and blocks of 10/100/1000 instructions (main set,
 9,899 simulation cases), plus 42 hand-written blocks for paths the main set misses (`fixtures/extra-src/x_*.s`: ZMM, stack,
