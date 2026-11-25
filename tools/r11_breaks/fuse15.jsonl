@@ -1,0 +1,32 @@
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp8", "arch": "ZEN3", "set": {}, "options": {}, "hex": "4F3984EC785634120F85F2FFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp8", "arch": "ZEN3", "set": {}, "options": {"alignmentOffset": 3}, "hex": "4F3984EC785634120F85F2FFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp8", "arch": "ZEN3", "set": {"amdBranchFusionRules": false}, "options": {}, "hex": "4F3984EC785634120F85F2FFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp8", "arch": "ZEN3", "set": {"amdBranchFusionRules": false}, "options": {"alignmentOffset": 3}, "hex": "4F3984EC785634120F85F2FFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp8-add", "arch": "ZEN3", "set": {}, "options": {}, "hex": "4883C3014F3984EC785634120F85EEFFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp8-add", "arch": "ZEN3", "set": {}, "options": {"alignmentOffset": 3}, "hex": "4883C3014F3984EC785634120F85EEFFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp8-add", "arch": "ZEN3", "set": {"amdBranchFusionRules": false}, "options": {}, "hex": "4883C3014F3984EC785634120F85EEFFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp8-add", "arch": "ZEN3", "set": {"amdBranchFusionRules": false}, "options": {"alignmentOffset": 3}, "hex": "4883C3014F3984EC785634120F85EEFFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp9fs", "arch": "ZEN3", "set": {}, "options": {}, "hex": "644F3984EC785634120F85F1FFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp9fs", "arch": "ZEN3", "set": {}, "options": {"alignmentOffset": 3}, "hex": "644F3984EC785634120F85F1FFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp9fs", "arch": "ZEN3", "set": {"amdBranchFusionRules": false}, "options": {}, "hex": "644F3984EC785634120F85F1FFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp9fs", "arch": "ZEN3", "set": {"amdBranchFusionRules": false}, "options": {"alignmentOffset": 3}, "hex": "644F3984EC785634120F85F1FFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp9fs-add", "arch": "ZEN3", "set": {}, "options": {}, "hex": "4883C301644F3984EC785634120F85EDFFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp9fs-add", "arch": "ZEN3", "set": {}, "options": {"alignmentOffset": 3}, "hex": "4883C301644F3984EC785634120F85EDFFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp9fs-add", "arch": "ZEN3", "set": {"amdBranchFusionRules": false}, "options": {}, "hex": "4883C301644F3984EC785634120F85EDFFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp9fs-add", "arch": "ZEN3", "set": {"amdBranchFusionRules": false}, "options": {"alignmentOffset": 3}, "hex": "4883C301644F3984EC785634120F85EDFFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp10fsgs", "arch": "ZEN3", "set": {}, "options": {}, "hex": "64654F3984EC785634120F85F0FFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp10fsgs", "arch": "ZEN3", "set": {}, "options": {"alignmentOffset": 3}, "hex": "64654F3984EC785634120F85F0FFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp10fsgs", "arch": "ZEN3", "set": {"amdBranchFusionRules": false}, "options": {}, "hex": "64654F3984EC785634120F85F0FFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp10fsgs", "arch": "ZEN3", "set": {"amdBranchFusionRules": false}, "options": {"alignmentOffset": 3}, "hex": "64654F3984EC785634120F85F0FFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp10fsgs-add", "arch": "ZEN3", "set": {}, "options": {}, "hex": "4883C30164654F3984EC785634120F85ECFFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp10fsgs-add", "arch": "ZEN3", "set": {}, "options": {"alignmentOffset": 3}, "hex": "4883C30164654F3984EC785634120F85ECFFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp10fsgs-add", "arch": "ZEN3", "set": {"amdBranchFusionRules": false}, "options": {}, "hex": "4883C30164654F3984EC785634120F85ECFFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp10fsgs-add", "arch": "ZEN3", "set": {"amdBranchFusionRules": false}, "options": {"alignmentOffset": 3}, "hex": "4883C30164654F3984EC785634120F85ECFFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp7", "arch": "ZEN3", "set": {}, "options": {}, "hex": "483B86785634120F85F3FFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp7", "arch": "ZEN3", "set": {}, "options": {"alignmentOffset": 3}, "hex": "483B86785634120F85F3FFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp7", "arch": "ZEN3", "set": {"amdBranchFusionRules": false}, "options": {}, "hex": "483B86785634120F85F3FFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp7", "arch": "ZEN3", "set": {"amdBranchFusionRules": false}, "options": {"alignmentOffset": 3}, "hex": "483B86785634120F85F3FFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp7-add", "arch": "ZEN3", "set": {}, "options": {}, "hex": "4883C301483B86785634120F85EFFFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp7-add", "arch": "ZEN3", "set": {}, "options": {"alignmentOffset": 3}, "hex": "4883C301483B86785634120F85EFFFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp7-add", "arch": "ZEN3", "set": {"amdBranchFusionRules": false}, "options": {}, "hex": "4883C301483B86785634120F85EFFFFFFF"}
+{"variant": "branch:fuse15", "mech": "branch", "file": "fuse15-cmp7-add", "arch": "ZEN3", "set": {"amdBranchFusionRules": false}, "options": {"alignmentOffset": 3}, "hex": "4883C301483B86785634120F85EFFFFFFF"}
