@@ -223,6 +223,15 @@ pub(crate) mod inf {
     pub const DOMAIN_FP: u32 = 1 << 19;
     pub const DOMAIN_XLANE: u32 = 1 << 20;
     pub const DOMAINS: u32 = DOMAIN_INT | DOMAIN_FP | DOMAIN_XLANE;
+    /// `isFastAdd(instrStr)` (see `fastAddBypassDelay`)
+    pub const FAST_ADD: u32 = 1 << 21;
+}
+
+/// `isFastAdd`: `re.match(r'^V?(ADD|SUB)(PS|PD|SS|SD)[ _]', instrStr)` (a string that starts with 'V' cannot also match without it)
+pub(crate) fn is_fast_add(instr_str: &str) -> bool {
+    let m = instr_str.strip_prefix('V').unwrap_or(instr_str);
+    let Some(rest) = m.strip_prefix("ADD").or_else(|| m.strip_prefix("SUB")) else { return false };
+    ["PS", "PD", "SS", "SD"].iter().any(|t| rest.strip_prefix(t).is_some_and(|r| r.starts_with(' ') || r.starts_with('_')))
 }
 
 /// `vectorDomain`: the domain of a vector instruction for the bypass delay (`domainBypassDelay`): XLANE for VPERM2I128/VPERM2F128,
@@ -834,6 +843,9 @@ impl Prep {
                 }
             }
             flags |= vector_domain(s);
+            if is_fast_add(s) {
+                flags |= inf::FAST_ADD;
+            }
             let out_regs_start = idx(out_reg_list.len());
             out_reg_list.extend(out_regs.iter().map(|r| (r.0, r.1)));
             let in_regs_start = idx(in_reg_list.len());

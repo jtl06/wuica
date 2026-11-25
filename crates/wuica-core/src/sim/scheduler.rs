@@ -953,6 +953,20 @@ impl<'a> Sim<'a> {
                             }
                         }
                     }
+                    if self.cfg.fast_add_bypass_delay != 0 {
+                        // the result of a fast FP add/sub read by an instruction that is not one (see fastAddBypassDelay)
+                        let producer = self.ren_ops[r as usize].uop;
+                        let cons = &self.prep.props[self.uops[u as usize].prop as usize];
+                        if producer != NONE && !cons.has(pf::STORE_DATA) {
+                            let prod = &self.prep.props[self.uops[producer as usize].prop as usize];
+                            if !prod.has(pf::LOAD)
+                                && self.prep.info[prod.instr as usize].has(inf::FAST_ADD)
+                                && !self.prep.info[cons.instr as usize].has(inf::FAST_ADD)
+                            {
+                                c += self.cfg.fast_add_bypass_delay;
+                            }
+                        }
+                    }
                     if c > op_ready_cycle {
                         op_ready_cycle = c;
                     }

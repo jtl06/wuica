@@ -229,6 +229,10 @@ pub struct UArchConfig {
     /// it was assigned at issue, and issue stops when a queue has no room for a full issue group (`schedulerQueues`)
     #[serde(rename = "schedulerQueues", default)]
     pub scheduler_queues: Vec<(String, i64)>,
+    /// if > 0: the result of a fast FP add/sub (ADDPS/PD/SS/SD, SUBPS/PD/SS/SD, also VEX) reaches a consumer that is not one of these
+    /// this many cycles later (`fastAddBypassDelay`)
+    #[serde(rename = "fastAddBypassDelay", default)]
+    pub fast_add_bypass_delay: i64,
 }
 
 impl UArchConfig {
