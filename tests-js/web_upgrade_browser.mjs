@@ -16,6 +16,7 @@
 //   5 Data Saver (no prefetch: nothing but the first table is cached) after the switch
 //   6 offline: a visit from the cache; a table that is not cached (an error, then a later try works)
 //   7 a cache or proxy answers the page's own paths with other bytes (refused: an error, not left in the cache)
+//   8 no service worker (?nosw=1): a table gone from the site, the page's own update check
 // Every number a page shows (sampled every 100 ms) must be one its own build gives (its build: the page's stamped
 // build id, read in the same evaluation); each probe of Z@ZEN3 and I@ICX must give the own build's number or an error
 // (and then no number); without legacy files the page then reloads into the build that is live; a path that answered
@@ -431,6 +432,27 @@ try {
     check(again.build === 'A' && !again.err && Number(again.tp) === own('A', 'Z@ZEN3'), `${what}: back online, the table loads and A's number shows`, fmt(again));
     return [`offline: Z@ZEN3 ${fmt(z)}`, `online again: ${fmt(again)}`, `seen: ${(await stop()).join(' > ')}`];
   }, VARIANTS.slice(0, 1));
+
+  // 8: no service worker (?nosw=1: as where workers are unsupported or blocked): an A page fetches from the site itself; a
+  // table that is gone is an error, and the page asks the site's manifest, finds B and reloads into it
+  await both('8 no service worker', async ({ srv, ctx, to, what, sink, legacy }) => {
+    const x = await open(ctx, 'X');
+    await x.goto(`${srv.origin}/?nosw=1`);
+    await x.waitFor(`${READY} && document.getElementById('results').dataset.run`, `${what}: A's page`, 60000);
+    const sw = await x.eval(`return !!navigator.serviceWorker?.controller;`);
+    check(!sw, `${what}: (no service worker)`);
+    const stop = watch(x, sink);
+    srv.label = to;
+    const z = expectProbe(what, await probe(x, 'Z', 'ZEN3'), { block: 'Z', arch: 'ZEN3', want: legacy ? 'own' : null });
+    const lines = [`Z@ZEN3 ${fmt(z)}`];
+    if (legacy) check(z.build === 'A', `${what}: the A page computes with A's files from the legacy paths`, fmt(z));
+    else {
+      check(z.build === 'B' || (z.build === 'A' && !!z.err), `${what}: Z@ZEN3: an error on A's page, or B after the reload`, fmt(z));
+      if (await settleOn(x, 'B', what)) { const r = expectProbe(what, await probe(x, 'I', 'ICX'), { block: 'I', arch: 'ICX', want: 'own' }); lines.push(`then I@ICX ${fmt(r)}`); }
+    }
+    lines.push(`seen: ${(await stop()).join(' > ')}`);
+    return lines;
+  });
 
   // 7: a cache or proxy on the way answers the page's own paths with other bytes: B's ZEN3 table at A's ZEN3 path (another
   // size), A's ICX table with one byte changed (the same size). The page refuses both (an error, no number), drops them

@@ -206,17 +206,22 @@ given); the suite `web_version` runs it in every check. Bump them together.
 
 The site's release (from a clean checkout of the release commit with the data of its CI asset; only reads from the live site):
 
-    scripts/check.sh full                                        # the gate (web/dist, without legacy files)
-    rm -rf target/legacy && scripts/fetch-legacy.sh target/legacy   # the live build's engine files, checked
-    WUICA_OUT=$PWD/target/site WUICA_LEGACY_DIR=$PWD/target/legacy web/build.sh   # the same build id as web/dist
-    (cd web && cf deploy ../target/site)                         # the deploy (by hand)
+    scripts/check.sh full                                            # the gate (web/dist without legacy files)
+    rm -rf target/legacy && scripts/fetch-legacy.sh target/legacy    # the live build's engine files, checked
+    WUICA_LEGACY_DIR=$PWD/target/legacy web/build.sh                 # web/dist again, with them (the same build id)
+    cd web && cf deploy ./dist && cd ..                              # the deploy (by hand)
     scripts/smoke-live.sh VERSION
+
+A deploy of a build without its legacy files (a plain `web/build.sh`, or a check run after the build with them, which
+builds web/dist again) leaves the live build's open pages without their files: errors instead of results until they reload
+(0.1.10's pages may not reload by themselves); smoke-live then fails ("the manifest lists the legacy files"), unless
+`--no-legacy`.
 
 After a deploy, `scripts/smoke-live.sh VERSION` checks what is live, reading only: the site in headless Chrome (the footer's
 version, the service worker's cache named after the stamp in `/sw.js`, one analysis, and the bytes on the wire of the first
 visit and of the 15 tables against `tests-js/budgets.mjs`, which `web_host_browser` checks for the build: the check that would
 have caught the uncompressed tables of 0.1.9; also that the analyzer, the assembler and the tables arrive compressed), the
-engine files of the manifest (each served with its size and sha256), the legacy files if the manifest lists any (each served,
+engine files of the manifest (each served with its size and sha256), the legacy files (none listed fails, unless `--no-legacy`; each served,
 byte-identical to what the release before served: the size and sha256 `fetch-legacy` recorded from the site, the large ones
 compressed) and the API
 (`/healthz`, `/api/version` for the package and the server, one analyze, one compare, MCP `tools/list` and one `what_if`).

@@ -2,7 +2,7 @@
 // A smoke test of the deployed site and API, after a deploy: it only reads (GET, and one analyze, compare and what_if as
 // any visitor sends them); it deploys nothing. scripts/smoke-live.sh runs it.
 //
-//   node scripts/smoke-live.mjs VERSION [--site URL] [--api URL] [--chrome PATH] [--no-site] [--no-api]
+//   node scripts/smoke-live.mjs VERSION [--site URL] [--api URL] [--chrome PATH] [--no-site] [--no-api] [--no-legacy]
 //
 // Site (default https://wuica.jacen.li), in headless Chrome with a fresh profile:
 //   - the page's version (the footer) is VERSION;
@@ -16,7 +16,8 @@
 //     the size and sha256 the manifest gives it;
 //   - the legacy files (manifest.json's `legacy`, if it lists any: the engine files of the release before, which its open
 //     pages still request, web/build.sh WUICA_LEGACY_DIR): each is served, byte-identical to what that release served
-//     (the size and sha256 scripts/fetch-legacy.mjs recorded from the site before the deploy), the large ones compressed.
+//     (the size and sha256 scripts/fetch-legacy.mjs recorded from the site before the deploy), the large ones compressed; a
+//     manifest with hashed engine files but no legacy files fails unless --no-legacy.
 // API (default https://api.wuica.jacen.li): /healthz, /api/version (wuica and server are VERSION), one analyze, one
 // compare, MCP tools/list (exactly the tools of that version) and one what_if.
 // Exit status 1 if a check fails.
@@ -35,7 +36,7 @@ const opt = (name, def = null) => { const i = args.indexOf(name); return i >= 0 
 const flag = (name) => args.includes(name);
 const VALUED = new Set(['--site', '--api', '--chrome']);
 const version = args.find((a, i) => !a.startsWith('--') && !VALUED.has(args[i - 1])) ?? null;
-if (!version || !/^\d+\.\d+\.\d+$/.test(version)) { console.error('usage: node scripts/smoke-live.mjs VERSION [--site URL] [--api URL] [--chrome PATH] [--no-site] [--no-api]'); process.exit(2); }
+if (!version || !/^\d+\.\d+\.\d+$/.test(version)) { console.error('usage: node scripts/smoke-live.mjs VERSION [--site URL] [--api URL] [--chrome PATH] [--no-site] [--no-api] [--no-legacy]'); process.exit(2); }
 const SITE = (opt('--site') ?? 'https://wuica.jacen.li').replace(/\/$/, '');
 const API = (opt('--api') ?? 'https://api.wuica.jacen.li').replace(/\/$/, '');
 const HEX = '4801d84801c349ffcf75f5'; // add rax, rbx; add rbx, rax; dec r15; jnz: 2.00 cycles per iteration on SKL
@@ -103,7 +104,9 @@ async function files() {
   else console.log('      (manifest.json has no engine files with hashes: a release before 0.1.11)');
   const legacy = Object.entries(m.legacy ?? {});
   if (legacy.length) await served(legacy, `the legacy files of build ${m.legacyOf ?? '?'} (byte-identical to what it served)`);
-  else console.log('      (manifest.json lists no legacy files)');
+  // (a release without them leaves the open pages of the build before it without their engine files: --no-legacy when
+  // that is meant, e.g. the first release with hashed names was deployed without them)
+  else check(flag('--no-legacy'), 'the manifest lists the legacy files of the release before (web/build.sh with WUICA_LEGACY_DIR; --no-legacy if none are meant)');
 }
 
 // ---- the site ------------------------------------------------------------------------------------------------------
