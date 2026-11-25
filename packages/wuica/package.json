@@ -58,5 +58,8 @@
     "url": "git+https://github.com/jtl06/wuica.git",
     "directory": "packages/wuica"
   },
-  "homepage": "https://wuica.jacen.li"
+  "homepage": "https://wuica.jacen.li",
+  "bugs": {
+    "url": "https://github.com/jtl06/wuica/issues"
+  }
 }

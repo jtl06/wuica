@@ -1,6 +1,7 @@
 # wuica (WebAssembly uiCA)
 
 [![CI](https://github.com/jtl06/wuica/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jtl06/wuica/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/wuica-cli)](https://www.npmjs.com/package/wuica-cli)
 
 An independent Rust/WebAssembly port of [uiCA](https://github.com/andreas-abel/uiCA), which predicts the throughput of x86-64
 basic blocks with a detailed pipeline simulation. The goal is uiCA in the browser: paste assembly or machine code, get the
@@ -9,6 +10,21 @@ prediction, with nothing sent to a server.
 This is not the official uiCA and not its official web version (that is [uiCA.uops.info](https://uiCA.uops.info)).
 wuica follows the fork [jtl06/uiCA](https://github.com/jtl06/uiCA), which adds experimental models for AMD Zen 3,
 Alder Lake P-cores and Ice Lake server to the original Intel models.
+
+## Use it
+
+- **In the browser:** [wuica.jacen.li](https://wuica.jacen.li). Paste assembly or machine code; nothing leaves the page.
+- **From Node or the command line:** `npx wuica-cli loop.s -arch SKL`. The npm package
+  [`wuica-cli`](https://www.npmjs.com/package/wuica-cli) is a library, a command-line tool and a local MCP server; it runs
+  offline and has no dependencies. See [packages/wuica/README.md](packages/wuica/README.md).
+- **Over HTTP:** a hosted API at [api.wuica.jacen.li](https://api.wuica.jacen.li). Unlike the page, this sends your code to
+  the server.
+
+      curl -s -X POST https://api.wuica.jacen.li/api/analyze/SKL -d '{"hex":"4801d84801c349ffcf75f5"}'
+
+  An MCP endpoint for agents is at `https://api.wuica.jacen.li/mcp`.
+- **Source and issues:** [github.com/jtl06/wuica](https://github.com/jtl06/wuica). The models come from the fork
+  [jtl06/uiCA](https://github.com/jtl06/uiCA) of [uiCA](https://github.com/andreas-abel/uiCA).
 
 **Status: working preview.** From machine code (or assembly) to uiCA's complete report, identical to the Python reference on
 all 18,791 simulation cases of both fixture sets (all options; 3,419 more in the optional set `more`), natively and as

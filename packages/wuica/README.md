@@ -8,6 +8,9 @@ port's test corpus. The package contains:
 - a **command-line tool**: `npx wuica-cli loop.s -arch SKL`
 - a local **MCP server** (stdio) for AI agents: `npx wuica-cli mcp`
 
+In the browser: [wuica.jacen.li](https://wuica.jacen.li) · source and issues: [github.com/jtl06/wuica](https://github.com/jtl06/wuica) ·
+hosted API: [api.wuica.jacen.li](https://api.wuica.jacen.li)
+
 This is **not the official uiCA** (that is [uiCA.uops.info](https://uiCA.uops.info) and the
 [uiCA repository](https://github.com/andreas-abel/uiCA)). The instruction data (latencies, throughputs, port usage) comes
 from [uops.info](https://www.uops.info). Besides uiCA's Intel models (Sandy Bridge to Rocket Lake), wuica includes the
