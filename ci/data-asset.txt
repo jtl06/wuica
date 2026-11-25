@@ -1,12 +1,12 @@
 # The data asset of the CI workflow (.github/workflows/ci.yml), written by ci/make-data-asset.sh. The workflow downloads
 # `file` from the release `tag`, checks `sha256` (of the .tar.xz), unpacks it and checks MANIFEST.txt inside.
 # tar_sha256 (of the uncompressed tar) is for checking a rebuild: xz versions may compress differently.
-tag=ci-data-v8
+tag=ci-data-v9
 file=wuica-ci-data.tar.xz
-sha256=5371405b70708b59d562fe3c803501df03627e67410a5f802755943df0fb49c9
-bytes=61640596
-tar_sha256=579068a9ea739705d00addbf62d00c591ec8b414a1786e159b9fe0e959447db6
-tar_bytes=105676800
+sha256=fcc7d694b675e08b3eb9677e80416033d58f0b62440569d54ab31c1db5d578d6
+bytes=66059116
+tar_sha256=06de0a3a870dcee22ae563167654ac09b7b0b378cf7317b0f1ceabc98b701f19
+tar_bytes=112250880
 files=23
-wuica_commit=22c007f7a090e5ebbb90db6a9003b2c0ea3b229d
-uica_commit=7301b04 (improve-r10)
+wuica_commit=4f34869c8163652489f048b6f28d435621736fd7
+uica_commit=7b8f800 (improve-r11)
