@@ -16,6 +16,7 @@ import { encodeState } from '../web/js/url-state.js';
 import { EXAMPLES } from '../web/js/examples.js';
 import { WasmEngine, makeRequest } from '../web/js/engine.js';
 import { tableBytes } from './tables.mjs';
+import { enginePath } from './dist-files.mjs';
 
 const chrome = findChrome();
 const check = checker('review browser');
@@ -24,8 +25,8 @@ if (!chrome) { console.log('Chrome not found (use --chrome PATH): skipped'); pro
 
 // the default example's throughput, from an analysis of the test's own
 const chain = EXAMPLES.find((e) => e.id === 'chain');
-const engine = await WasmEngine.create(fs.readFileSync(path.join(ROOT, 'web/dist/wuica_wasm.wasm')));
-await engine.loadUarch(fs.readFileSync(path.join(ROOT, 'web/dist/data/uarch.json')));
+const engine = await WasmEngine.create(fs.readFileSync(enginePath(path.join(ROOT, 'web/dist'), 'wuica_wasm.wasm')));
+await engine.loadUarch(fs.readFileSync(enginePath(path.join(ROOT, 'web/dist'), 'data/uarch.json')));
 await engine.loadArch('SKL', tableBytes('SKL'));
 const chainTp = Number((await engine.analyze(makeRequest(chain.hex, 'SKL'))).tp);
 const IMUL = 'loop:\n  imul rax, rax\n  imul rax, rax\n  dec r15\n  jnz loop\n';

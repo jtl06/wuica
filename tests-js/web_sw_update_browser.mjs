@@ -56,7 +56,10 @@ try {
     await x.waitFor(`navigator.serviceWorker.controller && (await caches.keys()).length === 1`, 'the worker of A in control', 60000);
     root = B;
     const y = await open(ctx);
-    await y.cmd('Page.addScriptToEvaluateOnNewDocument', { source: `if (location.protocol === 'http:' && !sessionStorage.getItem('held')) { sessionStorage.setItem('held', '1'); const t = Date.now(); while (Date.now() - t < 6000); }` });
+    // (and the build of every document the tab loads, in its session storage: a page of A that reloads itself at once is
+    // gone before a sample sees it, since it no longer waits for an analyzer it cannot locate in B's manifest)
+    await y.cmd('Page.addScriptToEvaluateOnNewDocument', { source: `if (location.protocol === 'http:') addEventListener('DOMContentLoaded', () => sessionStorage.setItem('docs', (sessionStorage.getItem('docs') ?? '') + (document.querySelector('meta[name="wuica-build"]')?.content ?? '?') + ' '));
+      if (location.protocol === 'http:' && !sessionStorage.getItem('held')) { sessionStorage.setItem('held', '1'); const t = Date.now(); while (Date.now() - t < 6000); }` });
     await y.cmd('Page.navigate', { url: `${origin}/` });
     await sleep(500);
     await x.eval(`await (await navigator.serviceWorker.getRegistration()).update(); return 1;`); // another tab's update check
@@ -74,7 +77,8 @@ try {
       if (s.note || (s.mark === vB && s.html === vB && s.ready)) break;
     }
     check(s && (s.note || (s.mark === vB && s.html === vB && s.build === vB)), `round ${round}: a page whose start a new deploy's worker took over reloads into the new build (or says so)`, JSON.stringify({ last: s && { ...s, html: name(s.html), build: name(s.build) }, seen: [...seen] }));
-    check(seen.has('A') || seen.has('A mark') || seen.has('A note'), `round ${round}: (the page started as the old build: the race happened)`, JSON.stringify([...seen]));
+    const docs = (await y.eval(`return sessionStorage.getItem('docs') ?? '';`).catch(() => '')).trim().split(' ').map(name);
+    check(docs[0] === 'A', `round ${round}: (the page started as the old build: the race happened)`, JSON.stringify({ docs, seen: [...seen] }));
     // a read while the page replaces its document (as during its own reload): the new document's values, not a failure
     if (round === 1) {
       await y.eval(`setTimeout(() => location.reload(), 0); return 1;`);

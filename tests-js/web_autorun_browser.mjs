@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import zlib from 'node:zlib';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { enginePath, tablePath } from './dist-files.mjs';
 import { findChrome, launch, serve, copyDist, Page, HELPERS, checker, ROOT, LONG_TASK_MS } from './cdp.mjs';
 
 const chrome = findChrome();
@@ -19,9 +20,9 @@ const dir = copyDist();
 const { WasmEngine, makeRequest } = await import(pathToFileURL(path.join(ROOT, 'web/js/engine.js')).href);
 const { EXAMPLES } = await import(pathToFileURL(path.join(ROOT, 'web/js/examples.js')).href);
 const { encodeState } = await import(pathToFileURL(path.join(ROOT, 'web/js/url-state.js')).href);
-const engine = await WasmEngine.create(fs.readFileSync(path.join(dir, 'wuica_wasm.wasm')));
-await engine.loadUarch(fs.readFileSync(path.join(dir, 'data/uarch.json')));
-await engine.loadArch('SKL', zlib.gunzipSync(fs.readFileSync(path.join(dir, 'data/arch/SKL.bin.gz'))));
+const engine = await WasmEngine.create(fs.readFileSync(enginePath(dir, 'wuica_wasm.wasm')));
+await engine.loadUarch(fs.readFileSync(enginePath(dir, 'data/uarch.json')));
+await engine.loadArch('SKL', zlib.gunzipSync(fs.readFileSync(tablePath(dir, 'SKL'))));
 const want = Number((await engine.analyze(makeRequest(EXAMPLES[0].hex, 'SKL'))).tp).toFixed(2);
 
 const srv = await serve(dir);

@@ -15,6 +15,7 @@
 //   node tests-js/web_qa2_browser.mjs [--chrome PATH]
 import fs from 'node:fs';
 import zlib from 'node:zlib';
+import { enginePath, tablePath } from './dist-files.mjs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { findChrome, launch, serve, copyDist, Page, HELPERS, checker, ROOT, LONG_TASK_MS } from './cdp.mjs';
@@ -27,13 +28,13 @@ const check = checker('qa2 browser');
 const dir = copyDist();
 const { WasmEngine, makeRequest } = await import(pathToFileURL(path.join(ROOT, 'web/js/engine.js')).href);
 const { EXAMPLES, CLASSIC_EXAMPLES } = await import(pathToFileURL(path.join(ROOT, 'web/js/examples.js')).href);
-const engine = await WasmEngine.create(fs.readFileSync(path.join(dir, 'wuica_wasm.wasm')));
-const uarchBytes = fs.readFileSync(path.join(dir, 'data/uarch.json'));
+const engine = await WasmEngine.create(fs.readFileSync(enginePath(dir, 'wuica_wasm.wasm')));
+const uarchBytes = fs.readFileSync(enginePath(dir, 'data/uarch.json'));
 await engine.loadUarch(uarchBytes);
 const configs = JSON.parse(uarchBytes).configs;
 async function ref(hex, arch, options = {}) {
   const table = configs[arch].name;
-  if (!engine.hasArch(table)) await engine.loadArch(table, zlib.gunzipSync(fs.readFileSync(path.join(dir, 'data/arch', `${table}.bin.gz`))));
+  if (!engine.hasArch(table)) await engine.loadArch(table, zlib.gunzipSync(fs.readFileSync(tablePath(dir, table))));
   return engine.analyze({ ...makeRequest(hex, arch, options), details: true });
 }
 const ex = (id) => [...EXAMPLES, ...CLASSIC_EXAMPLES].find((e) => e.id === id);

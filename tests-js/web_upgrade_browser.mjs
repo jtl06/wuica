@@ -15,12 +15,13 @@
 //   4 a rollback to A (B's worker gone, A's takes over a B tab that is busy)
 //   5 Data Saver (no prefetch: nothing but the first table is cached) after the switch
 //   6 offline: a visit from the cache; a table that is not cached (an error, then a later try works)
+//   7 a cache or proxy answers the page's own paths with other bytes (refused: an error, not left in the cache)
 // Every number a page shows (sampled every 100 ms) must be one its own build gives (its build: the page's stamped
 // build id, read in the same evaluation); each probe of Z@ZEN3 and I@ICX must give the own build's number or an error
 // (and then no number); without legacy files the page then reloads into the build that is live; a path that answered
 // 404 is not requested again and again.
 //   node tests-js/web_upgrade_browser.mjs [--chrome PATH]
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -129,24 +130,26 @@ function makeServer() {
 }
 const servers = [makeServer(), makeServer()];
 for (const s of servers) await s.start();
-function legacyFrom(label, srv) {
+// (the script in its own process, as a release runs it, against this process's server: not spawnSync, which would stop
+// the server from answering)
+async function legacyFrom(label, srv) {
   const dir = path.join(tmp, `legacy-of-${label}`);
   srv.label = label;
-  const r = spawnSync('node', [path.join(ROOT, 'scripts/fetch-legacy.mjs'), '--site', srv.origin, dir], { encoding: 'utf8' });
-  if (r.status !== 0) throw new Error(`fetch-legacy (${label}): ${r.stdout.slice(-400)} ${r.stderr.slice(-800)}`);
+  const r = await new Promise((resolve) => execFile('node', [path.join(ROOT, 'scripts/fetch-legacy.mjs'), '--site', srv.origin, dir], (e, stdout, stderr) => resolve({ e, stdout, stderr })));
+  if (r.e) throw new Error(`fetch-legacy (${label}): ${r.stdout.slice(-400)} ${r.stderr.slice(-800)}`);
   log(`legacy of ${label}: ${r.stdout.trim().split('\n').at(-1)}`);
   return dir;
 }
 if (legacyOk) {
-  ROOTS['B+L'] = build('B+L', path.join(tmp, 'data-b'), wasmB, legacyFrom('A', servers[0]));
-  ROOTS['A+L'] = build('A+L', path.join(tmp, 'data-a'), WASM, legacyFrom('B', servers[0]));
+  ROOTS['B+L'] = build('B+L', path.join(tmp, 'data-b'), wasmB, await legacyFrom('A', servers[0]));
+  ROOTS['A+L'] = build('A+L', path.join(tmp, 'data-a'), WASM, await legacyFrom('B', servers[0]));
   check(versionOf(ROOTS['B+L']) === VER.B && versionOf(ROOTS['A+L']) === VER.A, 'the legacy files do not change the build id');
 }
 
 // ---- the browser
 const { browser, close } = await launch(chrome);
-async function open(ctx, label, { init = null } = {}) {
-  const { targetId } = await browser.send('Target.createTarget', { url: 'about:blank', browserContextId: ctx });
+async function open(ctx, label, { init = null, background = false } = {}) {
+  const { targetId } = await browser.send('Target.createTarget', { url: 'about:blank', browserContextId: ctx, background });
   const p = new Page();
   p.browser = browser; p.targetId = targetId; p.label = label;
   p.sessionId = (await browser.send('Target.attachToTarget', { targetId, flatten: true })).sessionId;
@@ -196,15 +199,22 @@ const PROBE = (block, arch) => `${HELPERS}
     if (settled && v === last) { if (++same >= 6) break; } else same = 0;
     last = v; await wait(150);
   }
-  ${SNAPSHOT} return snap;`;
+  ${SNAPSHOT} return { ...snap, ms: Date.now() - t0, settledState: [focused(), $('results').hasAttribute('aria-busy'), $('result-body').classList.contains('stale'), same] };`;
 // one probe; a page that reloads meanwhile (the update path) is probed again once it has loaded
 async function probe(p, block, arch) {
   for (let i = 0; i < 3; i++) {
+    await p.waitFor(`document.readyState === 'complete' && (document.getElementById('run')?.disabled === false || document.querySelector('.error-box'))`, 'the page', 60000).catch(() => {});
+    const doc = await p.eval('return performance.timeOrigin;').catch(() => null);
     try {
       const s = await p.eval(PROBE(block, arch), { timeout: 40000 });
       if (s.html) return { ...s, build: nameOf(s.html), reloads: i };
-    } catch (e) { if (!/context|navigat|target/i.test(e.message)) return { failed: e.message.slice(0, 200) }; }
-    await p.waitFor(`document.readyState === 'complete' && (document.getElementById('run')?.disabled === false || document.querySelector('.error-box'))`, 'the page after a reload', 60000).catch(() => {});
+    } catch (e) {
+      // (an error in the same document is the page's; one while it is replaced, or in the next one before it has its
+      // elements, is the reload's)
+      const now = await p.eval('return performance.timeOrigin;').catch(() => null);
+      if (now === doc && doc !== null && !/context|navigat|target/i.test(e.message)) return { failed: e.message.slice(0, 200) };
+    }
+    await sleep(200);
   }
   return { failed: 'the page kept reloading' };
 }
@@ -258,7 +268,9 @@ async function withContext(fn) {
 // runs a scenario for each host variant at once (the two servers); returns their reports
 const VARIANTS = legacyOk ? [['B', 'without legacy files'], ['B+L', 'with legacy files']] : [['B', 'without legacy files']];
 const report = [];
+const ONLY = process.env.WUICA_UPGRADE_ONLY ? new RegExp(process.env.WUICA_UPGRADE_ONLY) : null; // (scenarios by name, for work on one)
 async function both(name, fn, variants = VARIANTS) {
+  if (ONLY && !ONLY.test(name)) return;
   const t0 = Date.now();
   const out = await Promise.all(variants.map(async ([to, how], i) => {
     const srv = servers[i], sink = { bad: [], numbers: 0 }, since = Date.now();
@@ -273,7 +285,7 @@ async function both(name, fn, variants = VARIANTS) {
   for (const lines of out) { report.push(...lines); for (const l of lines) log(l); }
   log(`  (${((Date.now() - t0) / 1000).toFixed(1)} s)`);
 }
-const fmt = (r) => (r.failed ? `failed: ${r.failed}` : `page ${r.build}: ${r.err ? `error "${r.err.slice(0, 90)}" / status "${r.status.slice(0, 90)}"` : r.tp}${r.reloads ? ' (after a reload)' : ''}`);
+const fmt = (r) => (r.failed ? `failed: ${r.failed}` : `page ${r.build}: ${r.err ? `error "${r.err.slice(0, 90)}" / status "${r.status.slice(0, 90)}"` : r.tp}${r.reloads ? ' (after a reload)' : ''} [${r.ms} ms ${JSON.stringify(r.settledState)}]`);
 
 try {
   // 1: an A tab under A's worker, two tables not in its cache, the host now on B; no update check
@@ -302,9 +314,11 @@ try {
     const stop = watch(x, sink);
     await hold(x);
     srv.label = to;
-    const z = await open(ctx, 'Z');
+    const z = await open(ctx, 'Z', { background: true }); // (X stays in front: a tab in the background has its timers slowed)
     await z.cmd('Page.navigate', { url: `${srv.origin}/` });
+    const tw = Date.now();
     await x.waitFor(`(await caches.keys()).join() === 'wuica-${VER.B}'`, 'B in control', 60000);
+    log(`  (${what}: B's worker took over in ${Date.now() - tw} ms)`);
     const a = expectProbe(what, await probe(x, 'Z', 'ZEN3'), { block: 'Z', arch: 'ZEN3', want: legacy ? 'own' : 'error' });
     const b = expectProbe(what, await probe(x, 'I', 'ICX'), { block: 'I', arch: 'ICX', want: legacy ? 'own' : 'error' });
     check(a.build === 'A' && b.build === 'A', `${what}: (the reload waited: the probes ran on A's page)`, JSON.stringify([a.build, b.build]));
@@ -356,7 +370,7 @@ try {
     const stop = watch(x, sink);
     await hold(x);
     srv.label = legacy ? 'A+L' : 'A';
-    const z = await open(ctx, 'Z');
+    const z = await open(ctx, 'Z', { background: true }); // (X stays in front: a tab in the background has its timers slowed)
     await z.cmd('Page.navigate', { url: `${srv.origin}/` });
     await x.waitFor(`(await caches.keys()).join() === 'wuica-${VER.A}'`, 'A in control', 60000);
     const a = expectProbe(what, await probe(x, 'Z', 'ZEN3'), { block: 'Z', arch: 'ZEN3', want: legacy ? 'own' : 'error' });
@@ -418,6 +432,32 @@ try {
     const again = expectProbe(what, await probe(x, 'Z', 'ZEN3'), { block: 'Z', arch: 'ZEN3', want: 'own' });
     check(again.build === 'A' && !again.err && Number(again.tp) === own('A', 'Z@ZEN3'), `${what}: back online, the table loads and A's number shows`, fmt(again));
     return [`offline: Z@ZEN3 ${fmt(z)}`, `online again: ${fmt(again)}`, `seen: ${(await stop()).join(' > ')}`];
+  }, VARIANTS.slice(0, 1));
+
+  // 7: a cache or proxy on the way answers the page's own paths with other bytes: B's ZEN3 table at A's ZEN3 path (another
+  // size), A's ICX table with one byte changed (the same size). The page refuses both (an error, no number), drops them
+  // from the worker's cache, and loads its own once they are served again
+  {
+    const bad = path.join(tmp, 'dist-A-bad');
+    fs.cpSync(ROOTS.A, bad, { recursive: true });
+    const z = path.join(bad, path.relative(ROOTS.A, enginePath(ROOTS.A, 'data/arch/ZEN3.bin.gz'))), i = path.join(bad, path.relative(ROOTS.A, enginePath(ROOTS.A, 'data/arch/ICX.bin.gz')));
+    fs.copyFileSync(enginePath(ROOTS.B, 'data/arch/ZEN3.bin.gz'), z);
+    const bytes = fs.readFileSync(i); bytes[bytes.length >> 1] ^= 1; fs.writeFileSync(i, bytes);
+    ROOTS['A!'] = bad;
+  }
+  await both('7 other bytes at the page\'s own paths', async ({ srv, ctx, what, sink }) => {
+    const x = await prep(srv, ctx, 'X', 'A', { saveData: true });
+    const stop = watch(x, sink);
+    srv.label = 'A!';
+    const z = expectProbe(what, await probe(x, 'Z', 'ZEN3'), { block: 'Z', arch: 'ZEN3', want: 'error' });
+    const i = expectProbe(what, await probe(x, 'I', 'ICX'), { block: 'I', arch: 'ICX', want: 'error' });
+    check(z.build === 'A' && i.build === 'A' && /not this version/.test(z.err + i.err), `${what}: refused as not this version's files (another size; the same size, another sha256)`, JSON.stringify([z.err, i.err]));
+    const cached = await x.eval(`const c = await caches.open('wuica-${VER.A}'); return (await c.keys()).map((k) => new URL(k.url).pathname).filter((p) => /\\/(ZEN3|ICX)[.]/.test(p));`);
+    check(cached.length === 0, `${what}: the refused files are not left in the worker's cache`, JSON.stringify(cached));
+    srv.label = 'A';
+    const again = expectProbe(what, await probe(x, 'Z', 'ZEN3'), { block: 'Z', arch: 'ZEN3', want: 'own' });
+    check(again.build === 'A' && Number(again.tp) === own('A', 'Z@ZEN3'), `${what}: served right again, the page loads its own table`, fmt(again));
+    return [`Z@ZEN3 ${fmt(z)}`, `I@ICX ${fmt(i)}`, `served right again: Z@ZEN3 ${fmt(again)}`, `seen: ${(await stop()).join(' > ')}`];
   }, VARIANTS.slice(0, 1));
 } catch (e) {
   check(false, 'the test ran to the end', e?.stack ?? String(e));

@@ -4,6 +4,8 @@
 // cycle more breaks the period, the slack itself does not); the sliced version gives the same.
 // Usage: node tests-js/web_deps_slack.mjs
 import fs from 'node:fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { enginePath } from './dist-files.mjs';
 import { canonReg, edgeLatency, annotateLatencies, slackOf, slackOfAsync, fmtSlack } from '../web/js/deps-slack.js';
 import { depGraph } from '../web/js/deps.js';
 import { tableBytes } from './tables.mjs'; // the binary tables (the module reads no JSON tables)
@@ -40,7 +42,7 @@ check(edgeLatency(det([['RDX', 5], ['flags (C)', 9]], []), det([], ['RBX'])) ===
 
 // with the analyzer
 const wasm = new URL('target/wasm32-unknown-unknown/release/wuica_wasm.wasm', root);
-const distWasm = new URL('web/dist/wuica_wasm.wasm', root);
+const distWasm = fs.existsSync(new URL('web/dist/manifest.json', root)) ? pathToFileURL(enginePath(fileURLToPath(new URL('web/dist', root)), 'wuica_wasm.wasm')) : new URL('web/dist/wuica_wasm.wasm', root);
 const wasmPath = fs.existsSync(distWasm) ? distWasm : fs.existsSync(wasm) ? wasm : null;
 const dataDir = new URL('data/', root);
 if (!wasmPath || !fs.existsSync(new URL('uarch.json', dataDir))) {

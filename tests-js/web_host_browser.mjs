@@ -78,7 +78,7 @@ const stop = () => new Promise((r) => { for (const s of sockets) s.destroy(); se
     const header = r.headers.get('content-security-policy');
     check(!!meta && header === `${meta}; frame-ancestors 'none'` && !/cloudflare|unsafe-inline/.test(header), 'host: the security policy as a response header equals the page\'s, plus frame-ancestors', JSON.stringify([meta, header]));
   }
-  r = await get('/wuica_wasm.wasm');
+  r = await get(`/${JSON.parse(fs.readFileSync(path.join(dist, 'manifest.json'), 'utf8')).engine['wuica_wasm.wasm'].path}`); // (its name holds a hash: the manifest's)
   check(r.status === 200 && r.headers.get('content-type') === 'application/wasm', 'host: the analyzer as application/wasm', r.headers.get('content-type'));
   await r.arrayBuffer();
   r = await get('/sw.js');

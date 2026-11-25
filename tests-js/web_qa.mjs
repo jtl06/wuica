@@ -7,6 +7,7 @@
 //   node tests-js/web_qa.mjs [--seed N]
 import fs from 'node:fs';
 import zlib from 'node:zlib';
+import { enginePath, tablePath } from './dist-files.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES } from '../web/js/examples.js';
@@ -26,13 +27,13 @@ if (!fs.existsSync(path.join(dist, 'manifest.json'))) { console.log('web/dist is
 
 // ---- the examples with the real modules
 const all = [...EXAMPLES, ...CLASSIC_EXAMPLES];
-const engine = await WasmEngine.create(fs.readFileSync(path.join(dist, 'wuica_wasm.wasm')));
-const uarchBytes = fs.readFileSync(path.join(dist, 'data/uarch.json'));
+const engine = await WasmEngine.create(fs.readFileSync(enginePath(dist, 'wuica_wasm.wasm')));
+const uarchBytes = fs.readFileSync(enginePath(dist, 'data/uarch.json'));
 await engine.loadUarch(uarchBytes);
 const configs = JSON.parse(uarchBytes).configs;
 const loadTable = async (arch) => {
   const table = configs[arch].name;
-  if (!engine.hasArch(table)) await engine.loadArch(table, zlib.gunzipSync(fs.readFileSync(path.join(dist, 'data/arch', `${table}.bin.gz`))));
+  if (!engine.hasArch(table)) await engine.loadArch(table, zlib.gunzipSync(fs.readFileSync(tablePath(dist, table))));
 };
 if (fs.existsSync(path.join(dist, 'wuica_asm.wasm'))) {
   // the text gives exactly the listed machine code (examples.js: 'avx' lists the assembler's 49 01 ca for "add r10, rcx",

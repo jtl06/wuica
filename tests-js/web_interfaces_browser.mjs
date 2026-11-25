@@ -9,6 +9,7 @@
 //   node tests-js/web_interfaces_browser.mjs [MODULE_CASES] [PAGE_CASES] [--seed N]   (default 300 and 30, seed 1)
 import fs from 'node:fs';
 import zlib from 'node:zlib';
+import { enginePath, tablePath } from './dist-files.mjs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { findChrome, launch, serve, copyDist, Page, HELPERS, checker, ROOT } from './cdp.mjs';
@@ -27,13 +28,13 @@ const check = checker('page interface');
 
 const dir = copyDist();
 const { WasmEngine, makeRequest } = await import(pathToFileURL(path.join(ROOT, 'web/js/engine.js')).href);
-const engine = await WasmEngine.create(fs.readFileSync(path.join(dir, 'wuica_wasm.wasm')));
-const uarchBytes = fs.readFileSync(path.join(dir, 'data/uarch.json'));
+const engine = await WasmEngine.create(fs.readFileSync(enginePath(dir, 'wuica_wasm.wasm')));
+const uarchBytes = fs.readFileSync(enginePath(dir, 'data/uarch.json'));
 await engine.loadUarch(uarchBytes);
 const uarch = JSON.parse(uarchBytes);
 async function reference(c) {
   const table = uarch.configs[c.arch].name;
-  if (!engine.hasArch(table)) await engine.loadArch(table, zlib.gunzipSync(fs.readFileSync(path.join(dir, 'data/arch', `${table}.bin.gz`))));
+  if (!engine.hasArch(table)) await engine.loadArch(table, zlib.gunzipSync(fs.readFileSync(tablePath(dir, table))));
   return engine.analyze(makeRequest(c.hex, c.arch, c.options));
 }
 
@@ -52,15 +53,17 @@ try {
     const { WasmEngine, makeRequest } = await import('/js/engine.js');
     const { gunzip } = await import('/js/loader.js');
     const bytes = async (p) => new Uint8Array(await (await fetch(p)).arrayBuffer());
-    const e = await WasmEngine.create(await bytes('/wuica_wasm.wasm'));
-    const uarchBytes = await bytes('/data/uarch.json');
+    const m = await (await fetch('/manifest.json')).json();
+    const at = (name) => '/' + (m.engine?.[name]?.path ?? name); // (the engine files by the manifest's paths)
+    const e = await WasmEngine.create(await bytes(at('wuica_wasm.wasm')));
+    const uarchBytes = await bytes(at('data/uarch.json'));
     await e.loadUarch(uarchBytes);
     const configs = JSON.parse(new TextDecoder().decode(uarchBytes)).configs;
     window.__qaRun = async (cases) => {
       const out = [];
       for (const c of cases) {
         const t = configs[c.arch].name;
-        if (!e.hasArch(t)) await e.loadArch(t, await gunzip(await bytes('/data/arch/' + t + '.bin.gz')));
+        if (!e.hasArch(t)) await e.loadArch(t, await gunzip(await bytes(at('data/arch/' + t + '.bin.gz'))));
         out.push(await e.analyze(makeRequest(c.hex, c.arch, c.options)));
       }
       return out;
