@@ -224,8 +224,7 @@ if (fs.existsSync(wasmPath) && fs.existsSync(new URL('data/uarch.json', root))) 
     check(m.relevant.tp === r.tp, `${arch}: the steady-state rounds give the response's throughput`, `${m.relevant.tp} vs ${r.tp}`);
     const all = selectRows(m, 0, m.nRounds - 1);
     check(all.length > 500 && m.labels[48].startsWith('dec r15 + jnz 0x'), `${arch}: rows and labels`, `${all.length} ${m.labels[48]}`);
-    // (the branch unit 'q' of model round 11 has no name in uarch.json: 'Port q', as in the reference's text)
-    if (arch === 'ZEN3') check(m.ports.some((p) => p.name === 'ALU0') && m.ports.every((p) => !p.name.startsWith('Port ') || p.name === 'Port q'), 'ZEN3: port names from uarch.json');
+    if (arch === 'ZEN3') check(m.ports.some((p) => p.name === 'ALU0') && m.ports.every((p) => !p.name.startsWith('Port ')), 'ZEN3: port names from uarch.json');
     // the rows say the branch as the uop table does (a user test saw "cmp rsi, r8 + jnz 0xfffffffffffff…"), the trace's
     // comparison of two sides still reads the analyzer's text
     {
