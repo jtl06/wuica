@@ -31,7 +31,8 @@ ITER_LEVELS = [(10, 500), (1, 0), (0, 0), (0, 200), (1, 1), (2, 30), (25, 100), 
 MAX_TRACE = 4 << 20
 DEFAULT_TIMEOUT = 120
 # the parameters of model round 11 with their defaults (run --reach)
-R11_PARAMS = [('vecRegFileSize', None), ('gprRegFileSize', None), ('storeForwardOverlap', False), ('vectorStoreForwardDelay', None),
+R11_PARAMS = [('vecRegFileSize', None), ('gprRegFileSize', None), ('vecRegFreeDelay', 0), ('gprRegFreeDelay', 0),
+              ('storeForwardOverlap', False), ('vectorStoreForwardDelay', None),
               ('storeForwardFailInterval', 0), ('branchPorts', None), ('fusedALUBranchPorts', None), ('amdBranchFusionRules', False),
               ('moveElimBlockedSlots', []), ('lsdLineDelivery', False), ('schedulerQueues', []), ('fastAddBypassDelay', 0)]
 
