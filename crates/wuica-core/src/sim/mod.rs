@@ -601,7 +601,17 @@ impl<'a> Sim<'a> {
             if self.uops[u].forward_fails {
                 mem_ready += forward_fail_delay;
             }
-            ready = (dispatched + lat).max(mem_ready);
+            let mut r = (dispatched + lat).max(mem_ready);
+            let interval = self.cfg.store_forward_fail_interval;
+            if interval != 0 && self.uops[u].forward_fails {
+                // failSerial (storeForwardFailInterval): the loads whose forwarding fails share one cell, updated when the ready
+                // cycle of one of their output operands is first computed
+                if let Some(last) = self.rn.fail_serial_last {
+                    r = r.max(last + interval);
+                }
+                self.rn.fail_serial_last = Some(r);
+            }
+            ready = r;
         } else {
             ready = dispatched + lat;
         }

@@ -72,6 +72,43 @@ pub(crate) struct StoreBufferEntry {
     /// width of the store (bits)
     pub width: Option<i64>,
     pub renamable: bool,
+    /// `seq`: the order of the stores (`storeForwardOverlap`; 0 for stores without an address or without the parameter)
+    pub seq: u64,
+}
+
+/// `storeBufferByBase` (`storeForwardOverlap`): (base, index, scale) -> {displacement: store buffer entry}. Each (base, index,
+/// scale) is a group: a list of (displacement, entry) nodes in one arena (pointer loops make a new group in every iteration: no
+/// allocation per group). A displacement appears once per group; a later store with it replaces the entry, as in the dict. The
+/// search takes the entry with the largest `seq`, which does not depend on the order of the dict (the `seq` are distinct).
+#[derive(Default)]
+pub(crate) struct StoresByBase {
+    groups: FxHashMap<(Option<AbstractValue>, Option<AbstractValue>, Option<i64>), u32>,
+    /// first node of each group (NONE: none)
+    heads: Vec<u32>,
+    /// (displacement, store buffer entry, next node)
+    nodes: Vec<(i64, u32, u32)>,
+}
+
+impl StoresByBase {
+    /// `storeBufferByBase.setdefault(key[:3], {})[key[3] or 0] = sbe`
+    fn insert(&mut self, key: &AbstractAddress, sbe: u32) {
+        let next = idx(self.heads.len());
+        let g = *self.groups.entry((key.0, key.1, key.2)).or_insert(next);
+        if g == next {
+            self.heads.push(NONE);
+        }
+        let d = key.3.unwrap_or(0);
+        let mut n = self.heads[g as usize];
+        while n != NONE {
+            if self.nodes[n as usize].0 == d {
+                self.nodes[n as usize].1 = sbe;
+                return;
+            }
+            n = self.nodes[n as usize].2;
+        }
+        self.nodes.push((d, sbe, self.heads[g as usize]));
+        self.heads[g as usize] = idx(self.nodes.len()) - 1;
+    }
 }
 
 /// A list of `u32` that stores its first elements inline.
@@ -247,6 +284,12 @@ pub(crate) struct Renamer {
     /// last uop for which register merge uops were issued
     last_reg_merge_issued: u32,
     pub sbes: Vec<StoreBufferEntry>,
+    /// `storeBufferByBase` and `storeSeq` (`storeForwardOverlap`)
+    stores_by_base: StoresByBase,
+    store_seq: u64,
+    /// `failSerial[0]`: the ready cycle of the last load whose forwarding failed (`storeForwardFailInterval`; the uops that share the
+    /// cell are those with `forward_fails`, if the interval is not 0)
+    pub fail_serial_last: Option<i64>,
 }
 
 impl Renamer {
@@ -292,6 +335,9 @@ impl Renamer {
             cur_instr_folded_width: Vec::new(),
             last_reg_merge_issued: NONE,
             sbes: Vec::new(),
+            stores_by_base: StoresByBase::default(),
+            store_seq: 0,
+            fail_serial_last: None,
         }
     }
 }
@@ -588,9 +634,17 @@ impl<'a> Sim<'a> {
                     data_ready_cycle: None,
                     width: instr_mem_width,
                     renamable: true,
+                    seq: 0,
                 };
                 self.rn.cur_store_buffer_entry = sbe_id;
                 self.rn.addrs.sbe[key as usize] = sbe_id;
+                if cfg.store_forward_overlap {
+                    if let Some(k) = self.rn.addrs.values[key as usize] {
+                        self.rn.store_seq += 1;
+                        sbe.seq = self.rn.store_seq;
+                        self.rn.stores_by_base.insert(&k, sbe_id);
+                    }
+                }
                 // recordStore
                 if self.rn.abs_val_gen.load_value_numbering {
                     let info = &self.prep.info[ii];
@@ -652,18 +706,40 @@ impl<'a> Sim<'a> {
                     && !base_entry.is_some_and(|e| e.renamed_by_elim_32bit_move)
                     && base_instr.is_some_and(|i| self.prep.info[i].has(inf::FAST_PTR_CHASING_SOURCE))
                     && (mem_addr.index.is_none() || index_instr.is_some_and(|i| self.prep.info[i].has(inf::NO_UOPS)));
-                let sbe = self.rn.addrs.sbe[key as usize];
+                let mut sbe = self.rn.addrs.sbe[key as usize];
+                let mut overlap_offset = 0i64;
+                if cfg.store_forward_overlap {
+                    if let Some(k) = self.rn.addrs.values[key as usize] {
+                        // the most recent store whose bytes contain the load's first byte (storeForwardOverlap)
+                        let d = k.3.unwrap_or(0);
+                        let sb = &self.rn.stores_by_base;
+                        if let Some(&g) = sb.groups.get(&(k.0, k.1, k.2)) {
+                            let mut n = sb.heads[g as usize];
+                            while n != NONE {
+                                let (ds, e, next) = sb.nodes[n as usize];
+                                let es = &self.rn.sbes[e as usize];
+                                if let Some(w) = es.width.filter(|&w| w != 0) {
+                                    if ds < d && d < ds + w.div_euclid(8) && (sbe == NONE || es.seq > self.rn.sbes[sbe as usize].seq) {
+                                        sbe = e;
+                                        overlap_offset = d - ds;
+                                    }
+                                }
+                                n = next;
+                            }
+                        }
+                    }
+                }
                 let uop = &mut self.uops[u as usize];
                 uop.lat_reduced_due_to_fast_ptr_chasing = lat_reduced;
                 uop.store_buffer_entry = sbe;
                 if sbe != NONE {
                     let sb = &self.rn.sbes[sbe as usize];
                     let load_width = instr_mem_width.unwrap_or(0);
-                    if sb.width.is_some_and(|w| w != 0 && load_width > w) {
+                    if sb.width.is_some_and(|w| w != 0 && load_width > w - 8 * overlap_offset) {
                         uop.forward_fails = true;
                     }
                     if cfg.mem_renaming_widths.as_ref().is_some_and(|w| !w.is_empty()) {
-                        uop.mem_renaming_blocked = !sb.renamable || load_width > sb.width.unwrap_or(0);
+                        uop.mem_renaming_blocked = !sb.renamable || load_width > sb.width.unwrap_or(0) || overlap_offset > 0;
                     }
                 }
             }

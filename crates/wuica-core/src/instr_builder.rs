@@ -1374,6 +1374,15 @@ fn compute_uop_properties(instructions: &mut [Instr], operands: &mut Vec<Operand
             props.is_load_uop = true;
             props.mem_addr = mem_addr;
             props.forward_delay = config.store_forward_delay;
+            if let Some(delays) = config.vector_store_forward_delay.as_ref().filter(|d| !d.is_empty()) {
+                // forwarding into a vector register (vectorStoreForwardDelay): [xmm, ymm] by the widest vector output register
+                let vec_out: Vec<&str> =
+                    instr.output_reg_operands.iter().map(|&op| reg_of(operands, op)).filter(|r| r.contains("MM")).collect();
+                if !vec_out.is_empty() {
+                    let wide = vec_out.iter().any(|r| r.starts_with("YMM") || r.starts_with("ZMM"));
+                    props.forward_delay += delays[usize::from(wide)];
+                }
+            }
             props.forward_fail_delay = config.store_forward_fail_delay;
             if let Some(d) = config.load_op_forward_delay {
                 if !non_mem_pcs.is_empty() && instr.output_mem_operands.is_empty() {

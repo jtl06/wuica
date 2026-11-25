@@ -191,6 +191,19 @@ pub struct UArchConfig {
     /// the same for general-purpose registers (`gprRegFreeDelay`)
     #[serde(rename = "gprRegFreeDelay", default)]
     pub gpr_reg_free_delay: i64,
+    /// if true: a load whose first byte lies inside an older store with the same base, index and scale but another displacement
+    /// reads from that store (a forwarding failure if it is wider than the rest of the store); otherwise such a load is independent
+    /// of the store (`storeForwardOverlap`; false in data exported before the field existed)
+    #[serde(rename = "storeForwardOverlap", default)]
+    pub store_forward_overlap: bool,
+    /// (xmm, ymm): additional forwarding delay when the load's instruction writes a vector register of at most 128 bits, or a 256-
+    /// or 512-bit one (`vectorStoreForwardDelay`; a tuple in the reference, None: no delay)
+    #[serde(rename = "vectorStoreForwardDelay", default)]
+    pub vector_store_forward_delay: Option<Vec<i64>>,
+    /// if > 0: the value of a load whose forwarding fails is ready no earlier than this many cycles after that of the previous such
+    /// load (`storeForwardFailInterval`)
+    #[serde(rename = "storeForwardFailInterval", default)]
+    pub store_forward_fail_interval: i64,
 }
 
 impl UArchConfig {
