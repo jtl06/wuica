@@ -204,6 +204,19 @@ pub struct UArchConfig {
     /// load (`storeForwardFailInterval`)
     #[serde(rename = "storeForwardFailInterval", default)]
     pub store_forward_fail_interval: i64,
+    /// if set: the ports of conditional and unconditional branches (their uops without a memory port), replacing those of the
+    /// instruction data (`branchPorts`)
+    #[serde(rename = "branchPorts", default)]
+    pub branch_ports: Option<String>,
+    /// AMD: if set, a fused pair whose first instruction writes a general-purpose register executes on these ports instead of the
+    /// branch's (`fusedALUBranchPorts`)
+    #[serde(rename = "fusedALUBranchPorts", default)]
+    pub fused_alu_branch_ports: Option<String>,
+    /// AMD: the branch-fusion rules for instructions with a memory operand (fusible unless RIP-relative, with an immediate and a
+    /// displacement, or longer than 15 bytes with the branch; INC/DEC not with branches on CF); if false, instructions with a memory
+    /// operand are not fused (`amdBranchFusionRules`)
+    #[serde(rename = "amdBranchFusionRules", default)]
+    pub amd_branch_fusion_rules: bool,
 }
 
 impl UArchConfig {

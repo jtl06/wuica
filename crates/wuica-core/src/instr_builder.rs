@@ -404,6 +404,37 @@ fn split_load_patterns(instructions: &mut [Instr], operands: &[Operand], before:
     }
 }
 
+/// `fusibleMemForm(prevInstr, branch, uArchConfig)` (`amdBranchFusionRules`; on other microarchitectures the instruction data
+/// decides)
+fn fusible_mem_form(prev: &Instr, branch: &Instr, operands: &[Operand], config: &UArchConfig) -> bool {
+    if !config.is_amd {
+        return true;
+    }
+    // inputMemOperands or outputMemOperands
+    let mem = if !prev.input_mem_operands.is_empty() { &prev.input_mem_operands } else { &prev.output_mem_operands };
+    let rules = config.amd_branch_fusion_rules;
+    if rules
+        && (prev.instr_str.starts_with("INC ") || prev.instr_str.starts_with("DEC "))
+        && matches!(branch.instr_str.split(' ').next().unwrap_or(""), "JB" | "JNB" | "JBE" | "JNBE")
+    {
+        return false;
+    }
+    if mem.is_empty() {
+        return true;
+    }
+    if !rules {
+        return false;
+    }
+    for &m in mem {
+        let a = mem_addr_of(operands, m);
+        // (the displacement as a truth value: not None and not 0)
+        if a.base.as_deref() == Some("RIP") || (prev.immediate.is_some() && a.disp.unwrap_or(0) != 0) {
+            return false;
+        }
+    }
+    (prev.opcode.len() + branch.opcode.len()) / 2 <= 15
+}
+
 fn mem_addr_of(operands: &[Operand], id: OpId) -> &MemAddr {
     match &operands[id as usize] {
         Operand::Mem { mem_addr } => mem_addr,
@@ -585,11 +616,14 @@ fn get_instructions(
         // Macro-fusion
         if let Some(prev) = instructions.len().checked_sub(1) {
             // Macrofusion does not happen when the jump is at the beginning of a 64 byte cache line
-            if instructions[prev].macro_fusible_with.contains(&instruction.instr_str) && addr.rem_euclid(64) != 0 {
+            if instructions[prev].macro_fusible_with.contains(&instruction.instr_str)
+                && addr.rem_euclid(64) != 0
+                && fusible_mem_form(&instructions[prev], &instruction, operands, config)
+            {
                 instruction.macro_fused_with_prev_instr = true;
                 let prev_instr = &mut instructions[prev];
                 prev_instr.macro_fused_with_next_instr = true;
-                let instr_ports = dicts
+                let mut instr_ports = dicts
                     .first_key(port_ref)
                     .unwrap_or_else(|| panic!("IndexError: macro-fused instruction {:?} has no port data", instruction.asm))
                     .to_string();
@@ -598,6 +632,12 @@ fn get_instructions(
                     port_refs[prev] = port_ref;
                 } else if config.is_amd {
                     // the fused uop is executed by a branch unit
+                    if let Some(fused_ports) = config.fused_alu_branch_ports.as_deref().filter(|p| !p.is_empty()) {
+                        // (fusedALUBranchPorts: a pair whose first instruction writes a general-purpose register)
+                        if prev_instr.output_reg_operands.iter().any(|&op| is_gp_reg(&canonical_reg_cow(reg_of(operands, op)))) {
+                            instr_ports = fused_ports.to_string();
+                        }
+                    }
                     port_refs[prev] = dicts.copy(port_refs[prev]);
                     let dict = dicts.get_mut(port_refs[prev]);
                     // the loop ends at the first item that is changed: the items before it are unchanged
@@ -1173,6 +1213,20 @@ fn known_instr(
         uop_properties_list: Vec::new(),
         reg_merge_uop_properties_list: Vec::new(),
     };
+
+    let mut port_ref = port_ref;
+    if let Some(branch_ports) = config.branch_ports.as_deref().filter(|p| !p.is_empty()) {
+        if matches!(d.category.as_str(), "COND_BR" | "UNCOND_BR") && !dicts.is_empty(port_ref) {
+            // branchPorts: a new dict, in which the port combinations without a memory port become the branch ports
+            let mem_ports = format!("{}{}{}", config.load_ports, config.store_addr_ports, config.store_data_ports);
+            let mut new_port_data = Dict::new();
+            for (p, u) in dicts.items(port_ref) {
+                let k = if p.chars().any(|x| mem_ports.contains(x)) { p } else { branch_ports.to_string() };
+                port_add(&mut new_port_data, &k, u);
+            }
+            port_ref = dicts.new_dict(new_port_data);
+        }
+    }
 
     let iclass = iclass_of_iform(&d.iform);
     if config.rename_immediate_folding && uops == 0 && !may_be_eliminated && !same_reg && !instr_output_reg_operands.is_empty() {
