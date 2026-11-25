@@ -97,6 +97,7 @@ const SERIAL = {
   web_asm_tokens: 'bounds in ms (a 200 KB line, the pathological lines, the SHA-256 showcase): 245 ms of 500 alone on the check runner, 507 to 515 ms beside the other suites',
   web_robust_browser: 'bounds of its own in ms: a huge .rept leaves no gap over 1 s, a new assembly supersedes within 2.5 s, Cancel within 1 s, hex at once within 5 s',
   web_host_browser: "types every 200 ms while an update waits for the page's 1.2 s quiet time (no reload while typing); which requests come before the first result",
+  web_upgrade_browser: "its scenarios hold a page's update reload with a key press every 200 ms against the 1.2 s quiet time, and wait for a deploy's worker to take over; two profiles run side by side",
   web_sw_update_browser: "its race needs a page held 6 s at its start while another tab's update check lands, sampled every 250 ms: beside other suites the race did not happen, or its states were missed (4 of 48 runs, 8 at a time)",
 };
 const TIMING_BOUND = /\b(FRAME_MS|LONG_TASK_MS|TIMING_SLACK)\b/;
