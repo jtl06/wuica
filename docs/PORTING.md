@@ -14,9 +14,23 @@ Read `docs/DESIGN.md` first: the architecture, the fixtures and, above all, the 
 ## Checks
 
 `scripts/check.sh` builds what is out of date and runs every test suite in parallel (up to one job per CPU, at most 2 headless
-Chrome suites at a time), each into `target/check/<suite>.log`, and prints one table: suite, result, time, the suite's count line.
-On failure it prints the tail of the failed logs and exits with 1. `--list` shows the suites, `--only PATTERN` (a regular
-expression) runs some of them and the builds they need.
+Chrome suites at a time), each into `target/check/<suite>.log`, and prints one table: suite, result, time, the suite's count line
+(also written to `target/check/results.json`). On failure it prints the tail of the failed logs and exits with 1. `--list` shows
+the suites, `--only PATTERN` (a regular expression) runs some of them and the builds they need, `--chrome-jobs N` sets how many
+browser suites run at a time (default `$WUICA_CHROME_JOBS`, else 2; `auto`: a quarter of the CPUs, 2 to 16).
+
+The suites whose checks bound wall-clock or frame time are *serial*: each runs alone, after every other suite has finished,
+with nothing beside it (`--list` marks them). A browser suite is serial if it imports one of the timing bounds of
+`tests-js/cdp.mjs` (`FRAME_MS`, `LONG_TASK_MS`, `TIMING_SLACK`: the "under a frame" and "no long task" checks of autorun, lag,
+layout, qa2, trace, trace_range and views); any suite is if it is listed in `SERIAL` in `scripts/check.mjs` with its reason
+(`web_robust_browser`: bounds of its own in ms; `web_host_browser`: it types every 200 ms against the page's 1.2 s quiet time
+before an update reload; `web_sw_update_browser`: the race it sets up for an update depends on timing; `web_asm_tokens`, not a browser suite: its bounds in ms failed beside the other suites on the check
+runner). A new browser suite that asserts on time should use the bounds of `cdp.mjs`, which makes it serial; another suite
+should be added to `SERIAL`. In `full`, `web_noscroll_browser`
+(13 independent cases, the longest browser suite) runs as 8 shards (`WUICA_SHARD=k/n`, as `analyze_fixtures` in 4); the shards'
+check counts add up to those of a whole run. `--part main|serial|browser:K/N` selects one part of the suites, for running them on
+several machines (together the parts are every suite once): `main` every suite that is not a browser suite, `serial` the serial
+browser suites, `browser:K/N` the K-th of N groups of the other browser suites.
 
 - `scripts/check.sh` (= `quick`, about a minute): the simulation fixtures only for SKL and ZEN3, `analyze_fixtures.mjs 7`,
   `web_trace.mjs 16`, browser suites only if their last run took at most 10 s; no npm package, no doc tests. While working.
@@ -29,15 +43,18 @@ expression) runs some of them and the builds they need.
   up the elements of `index.html` by id, which the checker would call possibly null at each of about 600 uses); errors in
   the shared modules are left to the first project. TypeScript and `@types/node` (20, the package's oldest Node) are
   development dependencies of `packages/wuica`; nothing of them is shipped.
-- `scripts/check.sh full --remote aethia`: the same on aethia, under a perfq lease (shared) taken from the Mac. The tree is
-  copied to `~/wuica-check/` with rsync (`data/` and `fixtures/generated/` are linked to `~/wuica/`), with the WebAssembly
-  module built on the Mac (aethia has no wasm32 target). aethia has no Chrome: the browser suites are skipped there.
+- `scripts/check-remote.sh [COMMIT] [check arguments]`: the check of a commit on the check runner (diomedea, 64 cores; see
+  "Check runner" below).
+- `scripts/check.sh full --remote aethia`: the working tree (not a commit) on aethia, under a perfq lease (shared) taken from
+  the Mac. The tree is copied to `~/wuica-check/` with rsync (`data/` and `fixtures/generated/` are linked to `~/wuica/`), with
+  the WebAssembly module built on the Mac (aethia has no wasm32 target). aethia has no Chrome: the browser suites are skipped there.
 
 The browser suites serve `web/dist` with `tests-js/static-host.mjs`, which behaves like the host (Cloudflare): `/index.html`
 redirects to `/` and `/404.html` to `/404` (307), `/404` and missing files get `404.html` with status 404, `_headers` is
 applied. `web_host_browser.mjs` checks the service worker against it (fresh profile, reloads, `/index.html`, offline). A new
-browser suite should use `hostHandler` too, and is recognized as one (at most 2 at a time) if it starts Chrome with
-`--headless` or `--remote-debugging-port`.
+browser suite should use `hostHandler` too, and is recognized as one (at most `--chrome-jobs` at a time) if it starts Chrome with
+`--headless` or `--remote-debugging-port`. Browser suites run side by side, so a suite must not use a fixed port, a fixed
+temporary folder or a shared Chrome profile (`cdp.mjs`: `serve` listens on port 0, `launch` and `copyDist` make their own folders).
 
 What makes it fast:
 - Rust tests use the profile `check-fast` (`Cargo.toml`: release without LTO, 16 codegen units, incremental). The
@@ -94,6 +111,43 @@ When the data, the fixtures or the assembler change, publish a new asset (the ol
 
 then commit `ci/data-asset.txt` with the change that needs it. A new fixture file that a default suite reads also has to be
 added to the list in `ci/make-data-asset.sh`.
+
+## Check runner
+
+diomedea (Linux, 64 cores, Ice Lake server) runs the check of any commit, started from the Mac with one command:
+
+    CI=true WUICA_TEST_SCROLLBARS=15 scripts/check-remote.sh [COMMIT] full --no-skip    # COMMIT: default HEAD
+
+It pushes the commit (it may be unpushed) over ssh to a bare repository on the runner, checks it out in the runner's tree with
+nothing else in it (only `target/` and the npm installations stay; those are reinstalled when their lock file changed), links the
+generated files from the commit's CI data asset (`ci/data-asset.txt`; fetched and checked on first use), and runs the commit's
+own `scripts/check.sh` with the given arguments under a shared perfq lease (`--est 15m`, `WUICA_RUNNER_EST`). The output streams
+to the terminal; the output, `results.json` and the logs of the failed suites are copied back to `target/check-remote/<run>/`. The
+exit status is the check's; a run that did not finish (Ctrl-C, the lease's end, a lost connection) exits non-zero. `CI`,
+`WUICA_TEST_*` and `WUICA_CHROME_JOBS` are passed on (the runner's default: `auto`, 16 browser suites at a time). One check at a
+time runs in the tree; a second waits on the runner until it is done. The runner's side is `scripts/runner-remote.sh`, which the
+Mac sends over ssh each time, so commits from before it can be checked too.
+
+On the runner, under `/data/projects/wuica-check/`: `repo.git` (refs `refs/check/<sha>`, the last 50 kept), `tree/` (the checkout
+and its build caches), `assets/<tag>/` (the CI data asset of each tag), `extra/` (`more_sim_fixtures.jsonl.gz`, not in the asset;
+with it `full` runs the set 'more' as on the Mac), `chrome/` (Chrome for Testing: `<version>/`, `current`, and the wrapper
+`chrome/chrome` the check uses as `$CHROME`, which adds `--no-sandbox`: AppArmor does not let a Chrome outside the system's
+packages make its sandbox), `runs/<id>/` (the last 30 runs: output, status, results, logs; temporary files of the running check
+under `tmp/`). Toolchains are the machine's: rustup in the home directory (with `wasm32-unknown-unknown`), the system's Node 22,
+npm, clang 21 (with the wasm32 target) and its llvm-ar and llvm-objcopy.
+
+To rebuild it from nothing (or check it): `scripts/runner-setup.sh --more-sim` from a checkout on the Mac (`--host HOST` for
+another machine). It checks the tools, adds the wasm32 target, makes the bare repository, installs the current Chrome for Testing
+stable build for linux64 (only from Google's endpoints: the version from
+`googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json`, the zip from
+`storage.googleapis.com/chrome-for-testing-public/`; its URL, sha256 and size in `chrome/<version>/SOURCE.txt`) and fetches the
+data asset. The first check then builds everything (about 1.5 minutes). To update Chrome: `scripts/runner-setup.sh
+--chrome-update` (`current` then points at the new version; remove old versions by hand).
+
+Chrome needs shared libraries that the machine does not have (as of November 2026: `libatk-1.0.so.0`, `libatk-bridge-2.0.so.0`,
+`libatspi.so.0`, `libasound.so.2`, `libXdamage.so.1`; on Ubuntu 26.04 `sudo apt-get install libatk1.0-0t64 libatk-bridge2.0-0t64
+libatspi2.0-0t64 libasound2t64 libxdamage1`). Until they are installed the check finds no Chrome that starts and the browser suites
+are skipped there, which `--no-skip` counts as failures; `runner-setup.sh` and every check print the missing libraries.
 
 ## Releases
 

@@ -193,7 +193,12 @@ export async function readSettled(evaluate, expression, { ready = 'true', ms = 6
     try { doc = await evaluate(`return document.readyState === 'complete' && !!(${ready}) ? performance.timeOrigin : null;`); } catch (e) { last = e; }
     if (doc !== null) {
       try {
-        return await evaluate(expression);
+        const value = await evaluate(expression);
+        // (the read may have run in the next document, if the page replaced it between the two evaluations: then its
+        // values are of a document that has not loaded yet, and it is read again)
+        let now = null;
+        try { now = await evaluate('return performance.timeOrigin;'); } catch { /* navigating */ }
+        if (now === doc) return value;
       } catch (e) {
         last = e;
         let now = null;

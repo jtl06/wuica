@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Runs the test suites of the repository in parallel; called by scripts/check.sh (which sets up PATH, sccache and --remote).
 //
-//   node scripts/check.mjs [quick|full] [--only PATTERN] [--jobs N] [--chrome-jobs N] [--no-wasm-build] [--wasm-only] [--no-skip] [--list]
+//   node scripts/check.mjs [quick|full] [--only PATTERN] [--part PART] [--jobs N] [--chrome-jobs N|auto] [--no-wasm-build] [--wasm-only] [--no-skip] [--list]
 //
 // - Builds first, each skipped while its inputs are unchanged (content hash stamps in target/check/stamps/): the Rust test
 //   binaries (profile check-fast, cargo decides), the WebAssembly module (./build-wasm.sh, release profile), the site
@@ -10,12 +10,19 @@
 //   tests-js/decode_fixtures.mjs, every tests-js/web_*.mjs (found by glob; those that start Chrome are "browser" suites, at
 //   most --chrome-jobs of them at a time), the npm package's and the API server's tests, tests-js/interfaces.mjs, and the
 //   type check (scripts/typecheck.mjs).
+// - Serial suites: the suites whose checks bound wall-clock or frame time (see SERIAL below) run one at a time, after every
+//   other suite has finished, with nothing beside them; the other browser suites run --chrome-jobs at a time.
+// --chrome-jobs N: default $WUICA_CHROME_JOBS, else 2; 'auto' is a quarter of the CPUs, 2 to 16 (scripts/check-remote.sh
+//   sets it on the check runner).
 // - quick: the simulation fixtures only for a few configurations, analyze_fixtures on every 7th case, web_trace on every 16th
 //   case, browser suites only if their last run took at most 10 s, no npm package or server, no doc tests. full: everything,
 //   including the simulation fixtures of the set 'more' (fixtures/generated/more_sim_fixtures.jsonl.gz) if present.
-// - Each suite's output goes to target/check/<suite>.log; at the end one table, and the tail of the logs of failed suites.
-//   The exit status is 1 if anything failed.
+// - Each suite's output goes to target/check/<suite>.log; at the end one table, and the tail of the logs of failed suites;
+//   the table also as target/check/results.json. The exit status is 1 if anything failed.
 // --only PATTERN: only the suites whose name matches the regular expression (and the builds they need).
+// --part PART: one part of the suites, for running them on several machines (together the parts are every suite once):
+//   main (every suite that is not a browser suite; its serial ones at its end), serial (the serial browser suites),
+//   browser:K/N (the K-th of N groups of the other browser suites: every N-th by name).
 // --no-skip: a skipped suite (e.g. no Chrome, or a suite that skipped itself) counts as a failure (CI).
 // With $GITHUB_STEP_SUMMARY set (GitHub Actions), the table is also appended to that file as Markdown.
 import { spawn, spawnSync } from 'node:child_process';
@@ -38,31 +45,40 @@ const MORE_SIM = path.join(ROOT, 'fixtures/generated/more_sim_fixtures.jsonl.gz'
 
 // ---- options
 const argv = process.argv.slice(2);
-const opts = { mode: 'quick', only: null, jobs: 0, chromeJobs: 2, noWasmBuild: false, wasmOnly: false, noSkip: false, list: false };
+const opts = { mode: 'quick', only: null, part: null, jobs: 0, chromeJobs: null, noWasmBuild: false, wasmOnly: false, noSkip: false, list: false };
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === 'quick' || a === 'full') opts.mode = a;
   else if (a === '--only') opts.only = new RegExp(argv[++i], 'i');
+  else if (a === '--part') opts.part = argv[++i];
   else if (a === '--jobs' || a === '-j') opts.jobs = Number(argv[++i]);
-  else if (a === '--chrome-jobs') opts.chromeJobs = Number(argv[++i]);
+  else if (a === '--chrome-jobs') opts.chromeJobs = argv[++i];
   else if (a === '--no-wasm-build') opts.noWasmBuild = true;
   else if (a === '--wasm-only') opts.wasmOnly = true;
   else if (a === '--no-skip') opts.noSkip = true;
   else if (a === '--list') opts.list = true;
-  else { console.error(`check: unknown argument ${a}\nusage: scripts/check.sh [quick|full] [--only PATTERN] [--jobs N] [--chrome-jobs N] [--no-skip] [--remote HOST] [--list]`); process.exit(2); }
+  else { console.error(`check: unknown argument ${a}\nusage: scripts/check.sh [quick|full] [--only PATTERN] [--part PART] [--jobs N] [--chrome-jobs N|auto] [--no-skip] [--remote HOST] [--list]`); process.exit(2); }
 }
+const part = opts.part === null ? null : /^(main|serial)$|^browser:(\d+)\/(\d+)$/.exec(opts.part);
+if (opts.part !== null && !(part && (!part[2] || (+part[2] >= 1 && +part[2] <= +part[3])))) { console.error(`check: --part main, serial or browser:K/N (1 <= K <= N), not ${opts.part}`); process.exit(2); }
 const QUICK = opts.mode === 'quick';
 const CPUS = os.availableParallelism ? os.availableParallelism() : os.cpus().length;
 const JOBS = opts.jobs > 0 ? opts.jobs : CPUS;
+const chromeJobsArg = String(opts.chromeJobs ?? process.env.WUICA_CHROME_JOBS ?? 2);
+const CHROME_JOBS = chromeJobsArg === 'auto' ? Math.max(2, Math.min(16, Math.floor(CPUS / 4))) : Number(chromeJobsArg);
+if (!(Number.isInteger(CHROME_JOBS) && CHROME_JOBS >= 1)) { console.error(`check: --chrome-jobs (or WUICA_CHROME_JOBS) must be a number from 1 or auto, not ${chromeJobsArg}`); process.exit(2); }
 
 // ---- per-suite settings for the two modes
 // A suite can run as several variants (each a row in the table) with different environments:
 // quick: the simulation fixtures for a few configurations (the test's own filter WUICA_ARCH);
-// full: analyze_fixtures (every case, single-threaded, the longest suite) in 4 parallel shards (WUICA_SHARD)
+// full: analyze_fixtures (every case, single-threaded, the longest suite) in 4 parallel shards (WUICA_SHARD), and
+// web_noscroll_browser (13 cases, the longest browser suite) in 8
+const shards = (n) => [...Array(n).keys()].map((k) => ({ tag: `${k + 1}/${n}`, env: { WUICA_SHARD: `${k}/${n}` } }));
 const VARIANTS = {
   quick: { 'wuica-core:sim_fixtures': ['SKL', 'ZEN3'].map((a) => ({ tag: a, env: { WUICA_ARCH: a } })) },
   full: {
-    analyze_fixtures: [0, 1, 2, 3].map((k) => ({ tag: `${k + 1}/4`, env: { WUICA_SHARD: `${k}/4` } })),
+    analyze_fixtures: shards(4),
+    web_noscroll_browser: shards(8),
     // the set 'more' (cases with options and the -json output), if present
     ...(fs.existsSync(MORE_SIM) ? { 'wuica-core:sim_fixtures': [{ tag: 'main+extra', env: {} }, { tag: 'more', env: { WUICA_SET: 'more', WUICA_MORE_SIM_FIXTURES: MORE_SIM } }] } : {}),
   },
@@ -73,6 +89,17 @@ const ARGS = {
   full: { analyze_fixtures: ['1'] },
 };
 const QUICK_BROWSER_MAX_S = 10; // quick runs a browser suite only if its last run took at most this long
+// Serial suites: those whose checks bound wall-clock or frame time, which other suites running beside them would make fail
+// without a fault of the code. Each runs alone, after all other suites. A browser suite is serial if it imports one of
+// tests-js/cdp.mjs's timing bounds (FRAME_MS, LONG_TASK_MS, TIMING_SLACK: the "under a frame" and "no long task" checks);
+// any suite is if it is listed here, with the reason.
+const SERIAL = {
+  web_asm_tokens: 'bounds in ms (a 200 KB line, the pathological lines, the SHA-256 showcase): 245 ms of 500 alone on the check runner, 507 to 515 ms beside the other suites',
+  web_robust_browser: 'bounds of its own in ms: a huge .rept leaves no gap over 1 s, a new assembly supersedes within 2.5 s, Cancel within 1 s, hex at once within 5 s',
+  web_host_browser: "types every 200 ms while an update waits for the page's 1.2 s quiet time (no reload while typing); which requests come before the first result",
+  web_sw_update_browser: "its race needs a page held 6 s at its start while another tab's update check lands, sampled every 250 ms: beside other suites the race did not happen, or its states were missed (4 of 48 runs, 8 at a time)",
+};
+const TIMING_BOUND = /\b(FRAME_MS|LONG_TASK_MS|TIMING_SLACK)\b/;
 
 // ---- helpers
 const rel = (p) => path.relative(ROOT, p) || '.';
@@ -162,7 +189,7 @@ function jsCount(out) {
 
 // ---- the plan
 const tasks = new Map();
-function task(t) { tasks.set(t.name, { deps: [], weight: 1, browser: false, ...t }); }
+function task(t) { tasks.set(t.name, { deps: [], weight: 1, browser: false, serial: false, ...t }); }
 
 /** a build that is skipped while the hash of its inputs is unchanged and its outputs exist */
 function stamped(name, inputs, outputs, run) {
@@ -328,14 +355,18 @@ const jsSuites = ['analyze_fixtures', 'decode_fixtures', ...fs.readdirSync(path.
 for (const name of jsSuites) {
   const file = path.join(ROOT, 'tests-js', `${name}.mjs`);
   // (a browser suite by its name too: the newer ones start Chrome through tests-js/cdp.mjs and name no flag)
-  const browser = /_browser$/.test(name) || /remote-debugging-port|--headless/.test(fs.readFileSync(file, 'utf8'));
+  const src = fs.readFileSync(file, 'utf8');
+  const browser = /_browser$/.test(name) || /remote-debugging-port|--headless/.test(src);
+  const serial = name in SERIAL || (browser && TIMING_BOUND.test(src));
   const args = ARGS[opts.mode][name] ?? [];
-  for (const v of variants(name)) {
+  const vs = variants(name);
+  for (const v of vs) {
     const full = v.tag ? `${name}[${v.tag}]` : name;
     task({
       // (analyze_fixtures: on the site's binary tables, web/dist/data/arch/*.bin)
       // (web_pkg_copies: after build:npm, which refreshes the copies)
-      name: full, kind: 'js', browser, weight: browser ? 2 : 1, deps: name === 'web_pkg_copies' && !QUICK ? ['build:npm'] : name.startsWith('web_') || name === 'analyze_fixtures' ? ['build:web'] : ['build:wasm'],
+      // (est: a new shard's first estimate, from the whole suite's last time)
+      name: full, kind: 'js', browser, serial, weight: browser ? 2 : 1, est: v.tag && previous[name] ? previous[name] / vs.length : undefined, deps: name === 'web_pkg_copies' && !QUICK ? ['build:npm'] : name.startsWith('web_') || name === 'analyze_fixtures' ? ['build:web'] : ['build:wasm'],
       skip: browser && !chrome ? 'no Chrome' : browser && QUICK && previous[full] > QUICK_BROWSER_MAX_S ? `slow (${previous[full].toFixed(0)} s): full only` : null,
       run: async (log) => {
         const code = await exec('node', [rel(file), ...args], { env: v.env, log });
@@ -351,6 +382,9 @@ for (const name of jsSuites) {
 // ---- selection
 let selected = [...tasks.values()].filter((t) => t.kind !== 'build');
 if (opts.wasmOnly) selected = [];
+if (part?.[1] === 'main') selected = selected.filter((t) => !t.browser);
+else if (part?.[1] === 'serial') selected = selected.filter((t) => t.browser && t.serial);
+else if (part) selected = selected.filter((t) => t.browser && !t.serial).sort((a, b) => (a.name < b.name ? -1 : 1)).filter((_, i) => i % +part[3] === +part[2] - 1);
 if (opts.only) selected = selected.filter((t) => opts.only.test(t.name));
 const wanted = new Set(opts.wasmOnly ? ['build:wasm'] : []);
 const addDeps = (t) => { if (wanted.has(t.name)) return; wanted.add(t.name); t.deps.forEach((d) => addDeps(tasks.get(d))); };
@@ -358,19 +392,21 @@ selected.forEach(addDeps);
 const plan = [...tasks.values()].filter((t) => wanted.has(t.name));
 
 if (opts.list) {
-  for (const t of plan) console.log(`${t.name.padEnd(36)} ${t.kind.padEnd(5)} ${t.browser ? 'browser ' : ''}${t.skip ? `(skipped: ${t.skip})` : ''}${t.deps.length ? `  after ${t.deps.join(', ')}` : ''}`);
+  for (const t of plan) console.log(`${t.name.padEnd(36)} ${t.kind.padEnd(5)} ${t.browser ? 'browser ' : ''}${t.serial ? 'serial ' : ''}${t.skip ? `(skipped: ${t.skip})` : ''}${t.deps.length ? `  after ${t.deps.join(', ')}` : ''}`);
   process.exit(0);
 }
 
-// ---- scheduling: at most JOBS slots in use (a task takes `weight` slots), at most --chrome-jobs browser suites, longest first
+// ---- scheduling: at most JOBS slots in use (a task takes `weight` slots), at most --chrome-jobs browser suites, longest first;
+// a serial suite only when every other suite is done and nothing runs, and nothing beside it
 fs.mkdirSync(OUT, { recursive: true });
 for (const f of fs.readdirSync(OUT)) if (f.endsWith('.log')) fs.rmSync(path.join(OUT, f));
 const t0 = Date.now();
 const state = new Map(plan.map((t) => [t.name, 'waiting']));
 const results = new Map();
-let slots = 0, chromes = 0;
-const estimate = (t) => previous[t.name] ?? (t.kind === 'build' ? 1000 : t.kind === 'rust' ? 10 : 5);
-console.log(`check ${opts.mode}: ${plan.filter((t) => t.kind !== 'build').length} suites, ${JOBS} jobs${process.env.RUSTC_WRAPPER ? `, RUSTC_WRAPPER=${path.basename(process.env.RUSTC_WRAPPER)}` : ''}; logs in ${rel(OUT)}/`);
+let slots = 0, chromes = 0, active = 0, serialRunning = false;
+const estimate = (t) => previous[t.name] ?? t.est ?? (t.kind === 'build' ? 1000 : t.kind === 'rust' ? 10 : 5);
+const nSerial = plan.filter((t) => t.serial && !t.skip).length;
+console.log(`check ${opts.mode}: ${plan.filter((t) => t.kind !== 'build').length} suites, ${JOBS} jobs, ${CHROME_JOBS} browser suite${CHROME_JOBS > 1 ? 's' : ''} at a time${nSerial ? ` (${nSerial} serial: alone, at the end)` : ''}${process.env.RUSTC_WRAPPER ? `, RUSTC_WRAPPER=${path.basename(process.env.RUSTC_WRAPPER)}` : ''}; logs in ${rel(OUT)}/`);
 
 await new Promise((finish) => {
   const pump = () => {
@@ -382,16 +418,20 @@ await new Promise((finish) => {
     }
     const ready = plan.filter((t) => state.get(t.name) === 'waiting' && t.deps.every((d) => results.get(d)?.status === 'pass')).sort((a, b) => estimate(b) - estimate(a));
     for (const t of ready) {
+      if (serialRunning) break;
+      if (t.serial && (active > 0 || plan.some((u) => !u.serial && state.get(u.name) !== 'done'))) continue;
       const w = Math.min(t.weight, JOBS);
       if (slots + w > JOBS && slots > 0) continue;
-      if (t.browser && chromes >= opts.chromeJobs) continue;
+      if (t.browser && chromes >= CHROME_JOBS) continue;
       slots += w; if (t.browser) chromes++;
+      active++; if (t.serial) serialRunning = true;
       state.set(t.name, 'running');
       const start = Date.now();
       const log = path.join(OUT, `${logName(t.name)}.log`);
       fs.writeFileSync(log, '');
       t.run(log).catch((e) => ({ status: 'fail', count: `check: ${e.stack || e}` })).then((r) => {
         slots -= w; if (t.browser) chromes--;
+        active--; if (t.serial) serialRunning = false;
         r.time = (Date.now() - start) / 1000;
         r.log = log;
         results.set(t.name, r);
@@ -428,6 +468,11 @@ for (const [name, r] of rows) console.log(`${name.padEnd(w)}  ${r.status.toUpper
 const count = (s) => rows.filter(([, r]) => r.status === s).length;
 const verdict = `check ${opts.mode}: ${failed.length ? 'FAILED' : 'ok'}: ${count('pass')} passed, ${count('fail')} failed, ${count('not run')} not run, ${count('skip')} skipped${opts.noSkip && count('skip') ? ' (--no-skip: skips fail)' : ''}; ${fmtTime(total)} with ${JOBS} jobs`;
 console.log(`\n${verdict}`);
+// the table for programs (scripts/check-remote.sh, comparisons of runs)
+fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({
+  mode: opts.mode, ok: !failed.length, verdict, seconds: total, jobs: JOBS, chromeJobs: CHROME_JOBS, cpus: CPUS, host: os.hostname(),
+  suites: rows.map(([name, r]) => ({ name, status: r.status, seconds: r.time, count: String(r.count), serial: tasks.get(name).serial, log: r.log ? rel(r.log) : null })),
+}, null, 1) + '\n');
 if (process.env.GITHUB_STEP_SUMMARY) {
   const cell = (x) => String(x).replace(/\|/g, '\\|');
   const md = [`### ${verdict}`, '', '| suite | result | time | count |', '|---|---|---:|---|',
