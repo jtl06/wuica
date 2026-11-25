@@ -235,6 +235,10 @@ pub(crate) struct FrontEnd {
     pub all_generated_instr_instances: Vec<u32>,
     addresses_in_dsb: AddressSet,
     pub lsd_unroll_count: i64,
+    /// `nextLSDDelivery` (`lsdLineDelivery`): the first cycle in which the LSD delivers again
+    next_lsd_delivery: i64,
+    /// the 64-byte lines of a round (`lsdLineDelivery`; reused)
+    lsd_lines: Vec<i64>,
     /// None, MITE, DSB or LSD
     pub uop_source: Option<UopSource>,
     cbg: CacheBlockGenerator,
@@ -288,6 +292,8 @@ impl FrontEnd {
             all_generated_instr_instances: Vec::new(),
             addresses_in_dsb: AddressSet::new(alignment_offset, code_len),
             lsd_unroll_count: 1,
+            next_lsd_delivery: 0,
+            lsd_lines: Vec::new(),
             uop_source: None,
             cbg: CacheBlockGenerator { unroll: true, rnd: 0, pos: 0, next_addr: alignment_offset },
             nrg_cache_blocks: Vec::new(),
@@ -653,15 +659,36 @@ impl<'a> Sim<'a> {
                 }
             }
         } else if self.fe.uop_source == Some(UopSource::Lsd) {
-            if self.idq.is_empty() {
+            let line_delivery = cfg.lsd_line_delivery;
+            if self.idq.is_empty() && (!line_delivery || clock >= self.fe.next_lsd_delivery) {
                 let mut round = std::mem::take(&mut self.fe.round_blocks);
+                let mut lines = std::mem::take(&mut self.fe.lsd_lines);
+                let mut n_lines = 0;
                 for _ in 0..self.fe.lsd_unroll_count {
                     self.next_round_cache_blocks(&mut round);
+                    lines.clear();
                     for &cache_block in &round {
                         self.add_new_cache_block(cache_block);
+                        if line_delivery {
+                            // the 64-byte lines that the bytes of the loop body touch
+                            for inst in cache_block.0..cache_block.1 {
+                                let (a, len) = (self.inst_addr(inst), self.inst_len(inst));
+                                lines.extend(a.div_euclid(64)..=(a + len - 1).div_euclid(64));
+                            }
+                        }
+                    }
+                    if line_delivery {
+                        // len(set(lines))
+                        lines.sort_unstable();
+                        lines.dedup();
+                        n_lines += lines.len() as i64;
                     }
                 }
+                if line_delivery {
+                    self.fe.next_lsd_delivery = clock + n_lines;
+                }
                 self.fe.round_blocks = round;
+                self.fe.lsd_lines = lines;
             }
         } else {
             // add new cache blocks

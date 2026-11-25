@@ -221,6 +221,10 @@ pub struct UArchConfig {
     /// (`moveElimBlockedSlots`; empty in data exported before the field existed)
     #[serde(rename = "moveElimBlockedSlots", default)]
     pub move_elim_blocked_slots: Vec<i64>,
+    /// if true: the loop stream detector delivers a loop at most one 64-byte line per cycle: the next delivery is no earlier than one
+    /// cycle per line that the bytes of the previous one touched (`lsdLineDelivery`)
+    #[serde(rename = "lsdLineDelivery", default)]
+    pub lsd_line_delivery: bool,
 }
 
 impl UArchConfig {
