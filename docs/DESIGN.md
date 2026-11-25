@@ -9,7 +9,7 @@ uiCA's predictions, bit for bit, from a Rust core that runs natively and as WebA
 ## Reference
 
 The reference ("oracle") is the Python uiCA of the fork [jtl06/uiCA](https://github.com/jtl06/uiCA). The commit whose model and
-data wuica ships is written in one place, `ci/data-asset.txt` (`uica_commit`; at the time of writing `7b8f800` on the branch
+data wuica ships is written in one place, `ci/data-asset.txt` (`uica_commit`; at the time of writing `5429430` on the branch
 `improve-r11`); `wuica --version -json` and `GET /api/version` report it, and `docs/PORTING.md` ("The reference") lists the
 branches it builds on.
 
@@ -45,7 +45,7 @@ the floating-point domain (...PS/PD/SS/SD, FMA) or the lane-crossing domain (VPE
 an instruction of another domain (not a load) gets it that many cycles later; store-data uops are exempt. Ported in `sim/prep.rs`
 (`vector_domain`, the instruction flags `DOMAIN_*`) and `sim/scheduler.rs` (`get_ready_for_dispatch_cycle`).
 
-On the branch `model-r11`, the reference is the fork's branch `improve-r11` at `7b8f800` (the changes of round 11 on top of
+On the branch `model-r11`, the reference is the fork's branch `improve-r11` at `5429430` (the changes of round 11 on top of
 `improve-r10`; pushed). Every new behavior is a configuration parameter whose default keeps the old one; ZEN3, ICX and ADL-P switch
 them on, the Intel models are unchanged. New since round 10:
 - register files (`vecRegFileSize`, `gprRegFileSize`, `vecRegFreeDelay`, `gprRegFreeDelay`; `ReorderBuffer`): fused uops that write a
@@ -60,7 +60,7 @@ them on, the Intel models are unchanged. New since round 10:
   `instr_builder.rs` (`known_instr`, `fusible_mem_form`, `get_instructions`);
 - `moveElimBlockedSlots` (`sim/renamer.rs`), `lsdLineDelivery` (`sim/frontend.rs`), `schedulerQueues` and `fastAddBypassDelay`
   (`isFastAdd`; `sim/scheduler.rs`, `sim/prep.rs`);
-- in the data (`convertXML.py`): ZEN3's branch unit `q` in `allPorts`, memory forms of CMP/TEST and the non-RMW ALU instructions
+- in the data (`convertXML.py`): ZEN3's branch unit `q` in `allPorts` (`BR` in `portNames`), memory forms of CMP/TEST and the non-RMW ALU instructions
   marked fusible on AMD, table corrections for ZEN3, ICX and ADL-P (also the keys `lat_SR` and `divC`), and ICX's 512-bit FP
   instructions on ports 0 and 5. The binary tables need no new format: the keys and port strings already exist (`WUICATBL` 1).
 The parameters are checked one at a time in `crates/wuica/tests/model_r11.rs`.

@@ -85,7 +85,8 @@ per iteration; original uiCA ICL predicts 1.48, 1.61, 1.89) and run at 0.97-1.00
 
 ## Round 11 (current model)
 
-"Before" is the fork's `improve-r10` at `7301b04` (branch `model-r10`), "after" is `improve-r11` at `7b8f800` (branch `model-r11`).
+"Before" is the fork's `improve-r10` at `7301b04` (branch `model-r10`), "after" is `improve-r11` at `5429430` (branch `model-r11`; its predictions are those of `7b8f800`, which only lacked
+the name of ZEN3's port `q`).
 The fork's round 11 worked from a benchmark of real hot loops (its development split) and microbenchmarks; its `CHANGES.md` lists
 the mechanisms, their sources and the development numbers. The numbers below are those of the accuracy gate (the held-out sets of
 rounds 9 and 10, the dogfood loops), which wuica reproduces exactly.

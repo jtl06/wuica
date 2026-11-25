@@ -118,7 +118,7 @@ instantiates again and reloads the tables (`docs/WASM-API.md`, "Failures and tra
 `data/` and `fixtures/generated/` are generated locally and not committed (`.gitignore`). CI downloads them, with the
 assembler and llvm-mca modules, from a GitHub pre-release named in `ci/data-asset.txt` (`ci-data-v9`), checked by sha256. The
 tables are derived from uops.info data via uiCA and generated locally; the repository does not state a license for them.
-The reference commit whose model and data are shipped is recorded once, in `ci/data-asset.txt` (`uica_commit=7b8f800
+The reference commit whose model and data are shipped is recorded once, in `ci/data-asset.txt` (`uica_commit=5429430
 (improve-r11)`), and reported by `wuica --version -json` and `GET /api/version`.
 
 ### 4.5 Threads and workers
@@ -296,11 +296,11 @@ Counts from the last local `scripts/check.sh full` run (development machine, 202
 | Simulation: throughput, uop table, `-json` trace | `wuica-core:sim_fixtures` | 18,772 cases (19 without an instruction fixture skipped here, covered end to end); 2,109 traces; optional set `more`: 3,419 cases with traces |
 | Bottleneck analysis | `wuica-core:facile_fixtures` | 8,892 + 9,880 compared |
 | End to end, bytes → complete report text | `wuica:end_to_end` (native), `tests-js/analyze_fixtures.mjs 1` in 4 shards (wasm: `tp` and `text`) | 18,791 cases each |
-| `details` changes no other field; critical path; dependency cycle | `wuica:details`, `critical_path`, `wuica-core:dependency_cycle` | 9,899; 9,899 (8,512 with a path); 36,138 |
+| `details` changes no other field; critical path; dependency cycle | `wuica:details`, `critical_path`, `wuica-core:dependency_cycle` | 9,899; 9,899 (8,512 with a path); 38,988 (35,565 with a cycle) |
 | No panics | `wuica:fuzz_short`, `details_fuzz` (`crates/wuica/tests/fuzz/mod.rs`) | random real encodings, random options, all 15 CPUs |
 | Same result through every interface but the page | `tests-js/interfaces.mjs` (library, wasm via `engine.js`, the reference binary, npm CLI, REST, both MCP servers; random requests) | 2,644 checks |
 | Accuracy of the prototype models against measured loops | `wuica:accuracy_gate` | 7,925 loops, 22,905 predictions, per set and CPU |
-| The parameters of model round 11, one at a time, against the reference | `wuica:model_r11` | 23 cases |
+| The parameters of model round 11, one at a time, against the reference | `wuica:model_r11` | 23 cases, and 258 at the boundaries of each mechanism |
 | npm package; server | `node --test` | 134; 77 tests |
 | Page logic in Node (36 suites) | `tests-js/web_*.mjs` without a browser | 21,050 checks |
 | Page in headless Chrome (28 suites) | `tests-js/web_*_browser.mjs`, `web_browser*.mjs` via `tests-js/cdp.mjs` | 1,728 checks |
