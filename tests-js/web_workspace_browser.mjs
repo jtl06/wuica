@@ -12,6 +12,7 @@
 //   node tests-js/web_workspace_browser.mjs [--chrome PATH]
 import fs from 'node:fs';
 import zlib from 'node:zlib';
+import { enginePath, tablePath } from './dist-files.mjs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { findChrome, launch, serve, copyDist, Page, HELPERS, checker, ROOT } from './cdp.mjs';
@@ -26,13 +27,13 @@ const imp = (f) => import(pathToFileURL(path.join(ROOT, 'web/js', f)).href);
 const { WasmEngine, makeRequest } = await imp('engine.js');
 const { CLASSIC_EXAMPLES } = await imp('examples.js');
 const { encodeState } = await imp('url-state.js');
-const engine = await WasmEngine.create(fs.readFileSync(path.join(dir, 'wuica_wasm.wasm')));
-const uarchBytes = fs.readFileSync(path.join(dir, 'data/uarch.json'));
+const engine = await WasmEngine.create(fs.readFileSync(enginePath(dir, 'wuica_wasm.wasm')));
+const uarchBytes = fs.readFileSync(enginePath(dir, 'data/uarch.json'));
 await engine.loadUarch(uarchBytes);
 const configs = JSON.parse(uarchBytes).configs;
 async function tpOf(hex, arch) {
   const t = configs[arch].name;
-  if (!engine.hasArch(t)) await engine.loadArch(t, zlib.gunzipSync(fs.readFileSync(path.join(dir, 'data/arch', `${t}.bin.gz`))));
+  if (!engine.hasArch(t)) await engine.loadArch(t, zlib.gunzipSync(fs.readFileSync(tablePath(dir, t))));
   return Number((await engine.analyze(makeRequest(hex, arch))).tp);
 }
 const ex = (id) => CLASSIC_EXAMPLES.find((e) => e.id === id);

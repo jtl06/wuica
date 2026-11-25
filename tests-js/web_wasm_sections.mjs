@@ -4,6 +4,8 @@
 // code offset mean the same in both.
 // Usage: node tests-js/web_wasm_sections.mjs
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { engineRel } from './dist-files.mjs';
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -53,8 +55,10 @@ if (fs.existsSync(file(DEBUG))) {
 // what the site serves
 const dist = 'web/dist/';
 if (fs.existsSync(file(dist + 'manifest.json'))) {
-  check(Buffer.compare(fs.readFileSync(file(dist + 'wuica_wasm.wasm')), shipped) === 0, `${dist}wuica_wasm.wasm is ${WASM}`);
-  for (const m of ['wuica_wasm.wasm', 'wuica_asm.wasm', 'wuica_mca.wasm']) {
+  // (the analyzer's name holds a hash of its content: the manifest's, dist-files.mjs)
+  const analyzer = engineRel(fileURLToPath(file(dist)), 'wuica_wasm.wasm');
+  check(Buffer.compare(fs.readFileSync(file(dist + analyzer)), shipped) === 0, `${dist}${analyzer} is ${WASM}`);
+  for (const m of [analyzer, 'wuica_asm.wasm', 'wuica_mca.wasm']) {
     if (!fs.existsSync(file(dist + m))) continue;
     const c = sections(fs.readFileSync(file(dist + m))).filter((x) => x.id === 0).map((x) => x.name);
     check(!c.includes('name'), `${dist}${m}: no name section`, c.join());
