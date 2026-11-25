@@ -5,7 +5,8 @@ operands) are added when the pool is built.
 
 Placeholders: {r64} {r32} {r16} {r8} (any general-purpose register of that size), {l64} {l32} {l8} (legacy registers only,
 for instructions with a high-8 register), {h8} (AH, BH, CH, DH), {x} (xmm0-15), {y} (ymm0-15), {m} (a memory operand),
-{i8} {i16} {i32} (immediates), {s} (a shift count 1-63), {cc} (a condition code).
+{i8} {i16} {i32} (immediates), {s} (a shift count 1-63), {cc} (a condition code), {d} (a displacement from a small set near 0x100,
+so that stores and loads of one block overlap: model round 11, storeForwardOverlap), {xs} {ys} (xmm0-3, ymm0-3: chains).
 """
 
 TEMPLATES = {
@@ -75,6 +76,34 @@ TEMPLATES = {
       'xor {r32}, {r32}=', 'sub {r64}, {r64}=', 'pxor {x}, {x}=', 'vpxor {y}, {y}=, {y}=', 'xorps {x}, {x}=', 'vxorps {y}, {y}=, {y}=',
       'pcmpeqd {x}, {x}=', 'vpcmpeqb {y}, {y}=, {y}=', 'vpsubd {x}, {x}=, {x}=', 'sbb {r32}, {r32}=', 'xor {r16}, {r16}=',
       'xor {r8}, {r8}=', 'xor {r64}, {r64}=', 'vpxor {x}, {x}=, {x}=', 'pcmpgtq {x}, {x}=', 'vxorpd {x}, {x}=, {x}=',
+      # VEX compare-equal with one register (all ones: dependency-breaking on ZEN3, ICX, ADL-P since round 11)
+      'vpcmpeqd {x}, {x}=, {x}=', 'vpcmpeqw {y}, {y}=, {y}=', 'vpcmpeqq {x}, {x}=, {x}=', 'vpcmpeqd {y}, {y}=, {y}=',
+   ],
+   # model round 11: stores and loads with the same base at nearby displacements (forwarding at an offset, wider loads that fail,
+   # forwarding into vector registers)
+   'stlf': [
+      'mov qword ptr [rsi+{d}], {r64}', 'mov dword ptr [rsi+{d}], {r32}', 'mov word ptr [rsi+{d}], {r16}', 'mov byte ptr [rsi+{d}], {r8}',
+      'movdqu xmmword ptr [rsi+{d}], {x}', 'vmovdqu ymmword ptr [rsi+{d}], {y}', 'movq qword ptr [rsi+{d}], {x}',
+      'movss dword ptr [rsi+{d}], {x}', 'mov {r64}, qword ptr [rsi+{d}]', 'add {r32}, dword ptr [rsi+{d}]', 'movzx {r32}, byte ptr [rsi+{d}]',
+      'movzx {r32}, word ptr [rsi+{d}]', 'mov {r8}, byte ptr [rsi+{d}]', 'movdqu {x}, xmmword ptr [rsi+{d}]',
+      'vmovdqu {y}, ymmword ptr [rsi+{d}]', 'vpaddd {y}, {y}, ymmword ptr [rsi+{d}]', 'vpaddd {x}, {x}, xmmword ptr [rsi+{d}]',
+      'movss {x}, dword ptr [rsi+{d}]', 'movq {x}, qword ptr [rsi+{d}]', 'add qword ptr [rsi+{d}], {r64}', 'cmp {r32}, dword ptr [rsi+{d}]',
+      'mov qword ptr [rsp+{d}], {r64}', 'mov {r32}, dword ptr [rsp+{d}]', 'mov dword ptr [rsi+rdi*4+{d}], {r32}',
+      'mov {r64}, qword ptr [rsi+rdi*4+{d}]',
+   ],
+   # model round 11: fast FP add/sub feeding other instructions (fastAddBypassDelay)
+   'fpadd': [
+      'vaddps {ys}, {ys}, {ys}', 'vsubpd {ys}, {ys}, {ys}', 'addsd {xs}, {xs}', 'subss {xs}, {xs}', 'vaddsd {xs}, {xs}, {xs}',
+      'addps {xs}, {xs}', 'vaddps {ys}, {ys}, ymmword ptr {m}', 'vmulps {ys}, {ys}, {ys}', 'vfmadd231ps {ys}, {ys}, {ys}',
+      'vmaxpd {ys}, {ys}, {ys}', 'mulsd {xs}, {xs}', 'vandps {ys}, {ys}, {ys}', 'cvtss2sd {xs}, {xs}', 'vpaddd {ys}, {ys}, {ys}',
+      'vmovups ymmword ptr {m}, {ys}', 'vblendps {ys}, {ys}, {ys}, 5',
+   ],
+   # model round 11: long windows of vector and general-purpose writers behind long-latency instructions (register files,
+   # scheduler queues)
+   'vecwin': [
+      'vsqrtpd {ys}, {ys}', 'vdivps {ys}, {ys}, {ys}', 'sqrtsd {xs}, {xs}', 'vpaddd {y}, {y}, {y}', 'vxorps {x}, {x}, {x}',
+      'vpor {y}, {y}, {y}', 'paddq {x}, {x}', 'vpmovzxbw {y}, {x}', 'lea {r64}, [{r64}+{r64}]', 'imul {r64}, {r64}', 'add {r32}, {r32}',
+      'mov {r64}, qword ptr {m}', 'div {r32}', 'vmovdqu {y}, ymmword ptr {m}', 'mov qword ptr {m}, {r64}',
    ],
    'moveelim': [
       'mov {r64}, {r64}', 'mov {r32}, {r32}', 'movaps {x}, {x}', 'vmovaps {y}, {y}', 'movdqa {x}, {x}', 'vmovdqa {y}, {y}',
@@ -130,6 +159,8 @@ def expand(template, r):
       'i16': lambda: hex(r.choice([0x100, 0x1234, 0x7fff, 0xff00, r.randrange(0x100, 0x10000)])),
       'i32': lambda: hex(r.choice([0x100, 0x1000, 0x12345, 0x7fffffff, r.randrange(0x100, 0x7fffffff)])),
       's': lambda: str(r.choice([1, 3, 7, 13, 31, 63])), 'cc': lambda: r.choice(CCS),
+      'd': lambda: hex(0x100 + r.choice([0, 1, 2, 3, 4, 6, 8, 12, 16, 20, 24, 28, 31, 32])),
+      'xs': lambda: 'xmm%d' % r.randrange(4), 'ys': lambda: 'ymm%d' % r.randrange(4),
    }
    out, i = [], 0
    while i < len(template):

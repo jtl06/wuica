@@ -9,6 +9,10 @@ that has the reference; tools/fuzz/run.sh is the entry point. See docs/PORTING.m
    fuzz.py ref-one UICA_DIR                          one case from stdin through the reference in this (fresh) process
    fuzz.py replay --uica DIR --wuica BIN --data DIR FINDING.json   the minimized case of a finding, both sides again
 
+run --reach: for each parameter of model round 11 that a configuration sets (R11_PARAMS), wuica compares each chunk again with that
+parameter reset to its default (a data directory per parameter in OUT/reach); the cases whose result then differs reach the
+mechanism, counted in the features as 'reach CPU parameter'.
+
 Case i of seed S depends only on (S, i, the pool, --arch). The pool depends only on the reference's decoder and tables, the
 decode fixtures and templates.py.
 """
@@ -19,13 +23,17 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 CPUS = ['SKL', 'SKX', 'KBL', 'CFL', 'CLX', 'HSW', 'BDW', 'IVB', 'SNB', 'ICL', 'TGL', 'RKL', 'ZEN3', 'ADL-P', 'ICX']
 BIAS_TAGS = ['shuffle', 'lanecross', 'mul', 'rotate', 'narrowstore', 'sse', 'avx', 'high8', 'rip', 'lcp', 'zeroidiom', 'moveelim',
-             'stack', 'micro']
+             'stack', 'micro', 'stlf', 'fpadd', 'vecwin']
 # minIterations, minCycles: the default, extremes, and ordinary values
 ITER_LEVELS = [(10, 500), (1, 0), (0, 0), (0, 200), (1, 1), (2, 30), (25, 100), (-3, 700), (60, 2000), (1, 5000), (150, 0)]
 # the -json output is compared when the reference's is at most this large (bytes); larger ones (long simulations of large
 # blocks) are counted, and their throughput and report text are still compared
 MAX_TRACE = 4 << 20
 DEFAULT_TIMEOUT = 120
+# the parameters of model round 11 with their defaults (run --reach)
+R11_PARAMS = [('vecRegFileSize', None), ('gprRegFileSize', None), ('storeForwardOverlap', False), ('vectorStoreForwardDelay', None),
+              ('storeForwardFailInterval', 0), ('branchPorts', None), ('fusedALUBranchPorts', None), ('amdBranchFusionRules', False),
+              ('moveElimBlockedSlots', []), ('lsdLineDelivery', False), ('schedulerQueues', []), ('fastAddBypassDelay', 0)]
 
 # ---------------------------------------------------------------------------------------------------------------------------
 # the reference
@@ -315,9 +323,13 @@ def load_pool(path):
 # the generator
 
 # the instructions before the branch at the end of a loop: macro-fusible with a jcc (on the CPUs that fuse that pair), or not
-FUSIBLE = ['49FFCF', '4883E901', '4839D0', '85C0', '4883C640', '41FFC1', '4981F800010000', '21CA', '4885F6', '3B4F08', '4C39C1', '83F801']
+FUSIBLE = ['49FFCF', '4883E901', '4839D0', '85C0', '4883C640', '41FFC1', '4981F800010000', '21CA', '4885F6', '3B4F08', '4C39C1', '83F801',
+           # model round 11 (amdBranchFusionRules): memory forms (cmp/test/add with memory, an immediate and no displacement,
+           # an immediate and a displacement, RIP-relative, a pair longer than 15 bytes with a rel32 branch), INC/DEC, RMW
+           '48394708', '48854708', '48034708', '48833F01', '48837F0801', '483B0500100000', '4B3B84C878563412',
+           '6466433B84C878563412', '48FFC0', 'FFC8', '2B0F', '23470C', '48FF4708', 'F60601']
 NOT_FUSIBLE = ['803D0001000001', 'B801000000', '48C7C001000000', 'F6050010000001', '0FAFC1', '488D4001', '']
-JCC_CC = [0x5, 0x5, 0x5, 0x2, 0x4, 0xC, 0xE, 0x7, 0x3, 0x8, 0xF, 0x0, 0xA]
+JCC_CC = [0x5, 0x5, 0x5, 0x2, 0x4, 0xC, 0xE, 0x7, 0x3, 0x8, 0xF, 0x0, 0xA, 0x6]
 
 
 def end_bytes(body_len, end):
@@ -623,6 +635,26 @@ def run(a):
    finish(a, say)
 
 
+def reach_dirs(a):
+   """run --reach: OUT/reach/CPU~PARAM, a data directory with that parameter reset to its default (the tables are links)"""
+   uarch = json.load(open(os.path.join(a.data, 'uarch.json')))
+   out = []
+   for cpu in ([a.arch] if a.arch else CPUS):
+      cfg = uarch['configs'][cpu]
+      for p, default in R11_PARAMS:
+         if cfg.get(p, default) == default:
+            continue
+         d = os.path.join(a.out, 'reach', '%s~%s' % (cpu, p))
+         os.makedirs(d, exist_ok=True)
+         u = json.loads(json.dumps(uarch))
+         u['configs'][cpu][p] = default
+         write_atomic(os.path.join(d, 'uarch.json'), json.dumps(u))
+         if not os.path.exists(os.path.join(d, 'arch')):
+            os.symlink(os.path.join(a.data, 'arch'), os.path.join(d, 'arch'))
+         out.append((cpu, p, d))
+   return out
+
+
 def finalize_chunk(a, say, t_start, start, done, cases, ref_file, proc, t0, t1, times):
       err = proc.stderr.read()
       proc.wait()
@@ -649,6 +681,14 @@ def finalize_chunk(a, say, t_start, start, done, cases, ref_file, proc, t0, t1, 
                odd.append({'case': strip_case(c), 'verdict': v, 'ref': {k: ref.get(k) for k in ['TP', 'error', 'timeout']}})
             elif 'error' in line[-400:] and '"error": "InputError' in line:
                counts[c['arch'] + ' same-input-error'] += 1
+      # (in parallel: the reference's workers wait meanwhile; the cases of other CPUs are unchanged)
+      reach = [(cpu, p, subprocess.Popen([a.wuica, '-data', d, '-compare', ref_file], stdout=subprocess.PIPE, text=True))
+               for cpu, p, d in (reach_dirs(a) if a.reach else [])]
+      for cpu, p, rp in reach:
+         rv = [json.loads(l) for l in rp.communicate()[0].splitlines()]
+         if rp.returncode != 0 or len(rv) != len(cases):
+            raise SystemExit('wuica -compare failed (reach %s %s)' % (cpu, p))
+         feats['reach %s %s' % (cpu, p)] += sum(1 for c, v, v0 in zip(cases, rv, verdicts) if c['arch'] == cpu and v['verdict'] != v0['verdict'])
       if not os.environ.get('FUZZ_KEEP'):
          os.remove(ref_file)
          os.remove(ref_file + '.v')
@@ -772,6 +812,7 @@ def main():
    ap.add_argument('--cases', type=int, default=1000); ap.add_argument('--seed', type=int, default=1); ap.add_argument('--arch')
    ap.add_argument('--jobs', type=int, default=max(1, (os.cpu_count() or 2) - 2)); ap.add_argument('--chunk', type=int, default=1000)
    ap.add_argument('--timeout', type=int, default=DEFAULT_TIMEOUT); ap.add_argument('--minimize-per-group', type=int, default=2)
+   ap.add_argument('--reach', action='store_true')
    a = ap.parse_args()
    for k in ['uica', 'wuica', 'data', 'pool', 'out']:  # the reference's runner changes the working directory
       if getattr(a, k):
