@@ -96,6 +96,10 @@ pub(crate) struct Scheduler {
     n_fp_uops_in_scheduler: i64,
     /// uops waiting in the non-scheduling queue (`fpNonSchedulingQueue`)
     fp_non_scheduling_queue: VecDeque<u32>,
+    /// `queueOfPort` (`schedulerQueues`): port index -> the first queue that has the port (NONE: none)
+    queue_of_port: Vec<u32>,
+    /// `queueCount`: the uops that wait in each queue
+    queue_count: Vec<i64>,
 }
 
 /// `uopsReadyInCycle`: cycle -> uops, for the cycles after the current one. A ring of buckets indexed by `cycle & mask`; it
@@ -246,6 +250,13 @@ impl Scheduler {
             dep_nodes: Vec::new(),
             n_fp_uops_in_scheduler: 0,
             fp_non_scheduling_queue: VecDeque::new(),
+            queue_of_port: (0..n_ports)
+                .map(|p| {
+                    let c = prep.ports[p] as char;
+                    cfg.scheduler_queues.iter().position(|(ports, _)| ports.contains(c)).map_or(NONE, |q| q as u32)
+                })
+                .collect(),
+            queue_count: vec![0; cfg.scheduler_queues.len()],
         }
     }
 }
@@ -270,7 +281,11 @@ impl Scheduler {
 impl<'a> Sim<'a> {
     /// `Scheduler.isFull`
     pub(crate) fn scheduler_is_full(&self) -> bool {
-        self.sched.n_uops + self.cfg.issue_width > self.cfg.rs_width
+        if self.sched.n_uops + self.cfg.issue_width > self.cfg.rs_width {
+            return true;
+        }
+        // (schedulerQueues; none in most configurations)
+        self.sched.queue_count.iter().zip(&self.cfg.scheduler_queues).any(|(&c, (_, size))| c + self.cfg.issue_width > *size)
     }
 
     /// `Scheduler.cycle`
@@ -408,6 +423,13 @@ impl<'a> Sim<'a> {
 
             self.uops[u as usize].dispatched = clock;
             s.n_uops -= 1;
+            // (the queue of the port that dispatches it: for a uop of the divider queue, the divider port)
+            if !s.queue_count.is_empty() {
+                let q = s.queue_of_port[port];
+                if q != NONE {
+                    s.queue_count[q as usize] -= 1;
+                }
+            }
             if cfg.fp_scheduler_size != 0 && cfg.fp_scheduler_ports.as_bytes().contains(&self.prep.ports[port]) {
                 s.n_fp_uops_in_scheduler -= 1;
             }
@@ -681,6 +703,12 @@ impl<'a> Sim<'a> {
                 self.uops[u as usize].actual_port = port as u8;
                 self.sched.port_usage[port] += 1;
                 self.sched.n_uops += 1;
+                if !self.sched.queue_count.is_empty() {
+                    let q = self.sched.queue_of_port[port];
+                    if q != NONE {
+                        self.sched.queue_count[q as usize] += 1;
+                    }
+                }
 
                 if self.is_fp_scheduler_port(port) {
                     if !self.sched.fp_non_scheduling_queue.is_empty() || self.sched.n_fp_uops_in_scheduler >= self.cfg.fp_scheduler_size {

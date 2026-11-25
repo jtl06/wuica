@@ -225,6 +225,10 @@ pub struct UArchConfig {
     /// cycle per line that the bytes of the previous one touched (`lsdLineDelivery`)
     #[serde(rename = "lsdLineDelivery", default)]
     pub lsd_line_delivery: bool,
+    /// scheduler queues: (ports, size); a uop that waits in the scheduler counts toward the first queue whose ports contain the port
+    /// it was assigned at issue, and issue stops when a queue has no room for a full issue group (`schedulerQueues`)
+    #[serde(rename = "schedulerQueues", default)]
+    pub scheduler_queues: Vec<(String, i64)>,
 }
 
 impl UArchConfig {
