@@ -199,7 +199,7 @@ const PROBE = (block, arch) => `${HELPERS}
     if (settled && v === last) { if (++same >= 6) break; } else same = 0;
     last = v; await wait(150);
   }
-  ${SNAPSHOT} return { ...snap, ms: Date.now() - t0, settledState: [focused(), $('results').hasAttribute('aria-busy'), $('result-body').classList.contains('stale'), same] };`;
+  ${SNAPSHOT} return snap;`;
 // one probe; a page that reloads meanwhile (the update path) is probed again once it has loaded
 async function probe(p, block, arch) {
   for (let i = 0; i < 3; i++) {
@@ -285,7 +285,7 @@ async function both(name, fn, variants = VARIANTS) {
   for (const lines of out) { report.push(...lines); for (const l of lines) log(l); }
   log(`  (${((Date.now() - t0) / 1000).toFixed(1)} s)`);
 }
-const fmt = (r) => (r.failed ? `failed: ${r.failed}` : `page ${r.build}: ${r.err ? `error "${r.err.slice(0, 90)}" / status "${r.status.slice(0, 90)}"` : r.tp}${r.reloads ? ' (after a reload)' : ''} [${r.ms} ms ${JSON.stringify(r.settledState)}]`);
+const fmt = (r) => (r.failed ? `failed: ${r.failed}` : `page ${r.build}: ${r.err ? `error "${r.err.slice(0, 90)}" / status "${r.status.slice(0, 90)}"` : r.tp}${r.reloads ? ' (after a reload)' : ''}`);
 
 try {
   // 1: an A tab under A's worker, two tables not in its cache, the host now on B; no update check
@@ -316,9 +316,7 @@ try {
     srv.label = to;
     const z = await open(ctx, 'Z', { background: true }); // (X stays in front: a tab in the background has its timers slowed)
     await z.cmd('Page.navigate', { url: `${srv.origin}/` });
-    const tw = Date.now();
     await x.waitFor(`(await caches.keys()).join() === 'wuica-${VER.B}'`, 'B in control', 60000);
-    log(`  (${what}: B's worker took over in ${Date.now() - tw} ms)`);
     const a = expectProbe(what, await probe(x, 'Z', 'ZEN3'), { block: 'Z', arch: 'ZEN3', want: legacy ? 'own' : 'error' });
     const b = expectProbe(what, await probe(x, 'I', 'ICX'), { block: 'I', arch: 'ICX', want: legacy ? 'own' : 'error' });
     check(a.build === 'A' && b.build === 'A', `${what}: (the reload waited: the probes ran on A's page)`, JSON.stringify([a.build, b.build]));
