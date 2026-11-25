@@ -2,7 +2,7 @@
 // A smoke test of the deployed site and API, after a deploy: it only reads (GET, and one analyze, compare and what_if as
 // any visitor sends them); it deploys nothing. scripts/smoke-live.sh runs it.
 //
-//   node scripts/smoke-live.mjs VERSION [--site URL] [--api URL] [--chrome PATH] [--no-site] [--no-api]
+//   node scripts/smoke-live.mjs VERSION [--site URL] [--api URL] [--chrome PATH] [--no-site] [--no-api] [--no-legacy]
 //
 // Site (default https://wuica.jacen.li), in headless Chrome with a fresh profile:
 //   - the page's version (the footer) is VERSION;
@@ -12,10 +12,17 @@
 //   - the bytes on the wire (what Chrome received, headers included; the worker bypassed, each file once) of the first
 //     visit and of all the tables (the idle prefetch) are within tests-js/budgets.mjs (+10%): the check whose absence let uncompressed tables ship in 0.1.9.
 //     Also: the analyzer, the assembler and the tables come compressed (content-encoding, or the precompressed .gz).
+//   - the engine files (from 0.1.11: manifest.json's `engine`, names with a hash of their content): each is served with
+//     the size and sha256 the manifest gives it;
+//   - the legacy files (manifest.json's `legacy`, if it lists any: the engine files of the release before, which its open
+//     pages still request, web/build.sh WUICA_LEGACY_DIR): each is served, byte-identical to what that release served
+//     (the size and sha256 scripts/fetch-legacy.mjs recorded from the site before the deploy), the large ones compressed; a
+//     manifest with hashed engine files but no legacy files fails unless --no-legacy.
 // API (default https://api.wuica.jacen.li): /healthz, /api/version (wuica and server are VERSION), one analyze, one
 // compare, MCP tools/list (exactly the tools of that version) and one what_if.
 // Exit status 1 if a check fails.
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -29,7 +36,7 @@ const opt = (name, def = null) => { const i = args.indexOf(name); return i >= 0 
 const flag = (name) => args.includes(name);
 const VALUED = new Set(['--site', '--api', '--chrome']);
 const version = args.find((a, i) => !a.startsWith('--') && !VALUED.has(args[i - 1])) ?? null;
-if (!version || !/^\d+\.\d+\.\d+$/.test(version)) { console.error('usage: node scripts/smoke-live.mjs VERSION [--site URL] [--api URL] [--chrome PATH] [--no-site] [--no-api]'); process.exit(2); }
+if (!version || !/^\d+\.\d+\.\d+$/.test(version)) { console.error('usage: node scripts/smoke-live.mjs VERSION [--site URL] [--api URL] [--chrome PATH] [--no-site] [--no-api] [--no-legacy]'); process.exit(2); }
 const SITE = (opt('--site') ?? 'https://wuica.jacen.li').replace(/\/$/, '');
 const API = (opt('--api') ?? 'https://api.wuica.jacen.li').replace(/\/$/, '');
 const HEX = '4801d84801c349ffcf75f5'; // add rax, rbx; add rbx, rax; dec r15; jnz: 2.00 cycles per iteration on SKL
@@ -72,6 +79,34 @@ async function api() {
   } catch (e) {
     check(false, 'API reachable', e.message);
   }
+}
+
+// ---- the engine files and the legacy files, by the live manifest ------------------------------------------------------
+async function files() {
+  let m;
+  try { m = await (await fetchT(`${SITE}/manifest.json`, { cache: 'no-store' })).json(); } catch (e) { check(false, 'GET /manifest.json', e.message); return; }
+  const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
+  // each file: served (200), its size and sha256; the large ones compressed on the wire (content-encoding) unless gzip
+  const served = async (list, what) => {
+    const bad = [], raw = [];
+    for (const [p, want] of list) {
+      try {
+        const r = await fetchT(`${SITE}/${p}`, { cache: 'no-store' }, 60000);
+        const b = Buffer.from(await r.arrayBuffer());
+        if (r.status !== 200 || b.length !== want.size || sha(b) !== want.sha256) bad.push(`${p}: ${r.status}, ${b.length} bytes${r.status === 200 && b.length === want.size ? ', another sha256' : ''}`);
+        else if (b.length > 50_000 && !/\.gz$/.test(p) && !r.headers.get('content-encoding')) raw.push(`${p} ${b.length}`);
+      } catch (e) { bad.push(`${p}: ${e.message}`); }
+    }
+    check(bad.length === 0, `${what}: ${list.length} files served with the size and sha256 of the manifest`, bad.slice(0, 5).join('; '));
+    check(raw.length === 0, `${what}: the large ones come compressed`, raw.join(', '));
+  };
+  if (m.engine) await served(Object.values(m.engine).map((e) => [e.path, e]), 'the engine files');
+  else console.log('      (manifest.json has no engine files with hashes: a release before 0.1.11)');
+  const legacy = Object.entries(m.legacy ?? {});
+  if (legacy.length) await served(legacy, `the legacy files of build ${m.legacyOf ?? '?'} (byte-identical to what it served)`);
+  // (a release without them leaves the open pages of the build before it without their engine files: --no-legacy when
+  // that is meant, e.g. the first release with hashed names was deployed without them)
+  else check(flag('--no-legacy'), 'the manifest lists the legacy files of the release before (web/build.sh with WUICA_LEGACY_DIR; --no-legacy if none are meant)');
 }
 
 // ---- the site ------------------------------------------------------------------------------------------------------
@@ -192,6 +227,6 @@ async function site() {
 }
 
 if (!flag('--no-api')) await api();
-if (!flag('--no-site')) await site();
+if (!flag('--no-site')) { await site(); await files(); }
 console.log(`${count} live checks, ${failed} failed (version ${version})`);
 process.exit(failed ? 1 : 0);

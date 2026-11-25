@@ -10,6 +10,7 @@ import { LONG_TASK_MS } from './cdp.mjs'; // (the bound of the long-task checks)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import zlib from 'node:zlib';
+import { enginePath, tablePath } from './dist-files.mjs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -38,10 +39,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const b64 = (s) => Buffer.from(s).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
 
 // ---- the expected values, under Node ---------------------------------------------------------------------------------
-const engine = await WasmEngine.create(fs.readFileSync(path.join(dist, 'wuica_wasm.wasm')));
-const uarch = JSON.parse(fs.readFileSync(path.join(dist, 'data', 'uarch.json')));
-await engine.loadUarch(fs.readFileSync(path.join(dist, 'data', 'uarch.json')));
-for (const t of ['SKL', 'ZEN3']) await engine.loadArch(t, zlib.gunzipSync(fs.readFileSync(path.join(dist, 'data', 'arch', `${t}.bin.gz`))));
+const engine = await WasmEngine.create(fs.readFileSync(enginePath(dist, 'wuica_wasm.wasm')));
+const uarch = JSON.parse(fs.readFileSync(enginePath(dist, 'data/uarch.json')));
+await engine.loadUarch(fs.readFileSync(enginePath(dist, 'data/uarch.json')));
+for (const t of ['SKL', 'ZEN3']) await engine.loadArch(t, zlib.gunzipSync(fs.readFileSync(tablePath(dist, t))));
 const analyze = (hex, arch = 'SKL', options = {}) => engine.analyze(makeRequest(hex, arch, options));
 const ex = (id) => [...EXAMPLES, ...CLASSIC_EXAMPLES].find((e) => e.id === id);
 

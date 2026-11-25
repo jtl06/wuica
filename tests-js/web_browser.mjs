@@ -522,7 +522,8 @@ try {
       out.back = [$('mode-hex').checked, $('run').disabled];
       return out;`);
     check(r.failed === '' && r.notice === '' && r.build === manifest.version, 'real: the page starts with the real analyzer and shows the build', JSON.stringify([r.failed, r.notice, r.build]));
-    check(requests.some((x) => x.includes('wuica_wasm.wasm')) && requests.some((x) => x.includes('data/arch/SKL.bin.gz')) && requests.some((x) => x.includes('js/engine-worker.js')), 'real: the analyzer, its worker and the selected table are fetched');
+    // (the engine files by the paths of the build's manifest: their names hold a hash of their content)
+    check(requests.some((x) => x.endsWith(`/${manifest.engine['wuica_wasm.wasm'].path}`)) && requests.some((x) => x.endsWith(`/${manifest.engine['data/arch/SKL.bin.gz'].path}`)) && requests.some((x) => x.includes('js/engine-worker.js')), 'real: the analyzer, its worker and the selected table are fetched');
     check(r.examples === ',chain,loadstore,avx,stack,saxpy,dot1,dot4,popcnt,ptrchase,strlen,crc32,memcpy,gemm,sha256', 'real: no mock-only examples', r.examples);
     check(r.start[0] && r.start[1] === '  add rax, 1' && r.asmFirst === '2.00', 'real: assembly is the default; the first example assembled gives 2.00', JSON.stringify([r.start, r.asmFirst]));
     check(r.first.tp === '2.00' && !r.first.mock && /^loop · SKL/m.test(r.first.text) && /bottleneck\s+Dependencies/.test(r.first.text) && !/ ms\n|\d bytes|\d instructions/.test(r.first.text)

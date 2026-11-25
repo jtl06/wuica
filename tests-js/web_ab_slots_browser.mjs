@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import zlib from 'node:zlib';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { enginePath, tablePath } from './dist-files.mjs';
 import { findChrome, launch, serve, copyDist, Page, HELPERS, checker, ROOT } from './cdp.mjs';
 
 const chrome = findChrome();
@@ -32,10 +33,10 @@ const { WasmEngine, makeRequest } = await import(pathToFileURL(path.join(ROOT, '
 const { CLASSIC_EXAMPLES } = await import(pathToFileURL(path.join(ROOT, 'web/js/examples.js')).href);
 const { slotParts } = await import(pathToFileURL(path.join(ROOT, 'web/js/slots.js')).href);
 const { encodeState } = await import(pathToFileURL(path.join(ROOT, 'web/js/url-state.js')).href);
-const engine = await WasmEngine.create(fs.readFileSync(path.join(dir, 'wuica_wasm.wasm')));
-await engine.loadUarch(fs.readFileSync(path.join(dir, 'data/uarch.json')));
-await engine.loadArch('SKL', zlib.gunzipSync(fs.readFileSync(path.join(dir, 'data/arch/SKL.bin.gz'))));
-await engine.loadArch('ZEN3', zlib.gunzipSync(fs.readFileSync(path.join(dir, 'data/arch/ZEN3.bin.gz'))));
+const engine = await WasmEngine.create(fs.readFileSync(enginePath(dir, 'wuica_wasm.wasm')));
+await engine.loadUarch(fs.readFileSync(enginePath(dir, 'data/uarch.json')));
+await engine.loadArch('SKL', zlib.gunzipSync(fs.readFileSync(tablePath(dir, 'SKL'))));
+await engine.loadArch('ZEN3', zlib.gunzipSync(fs.readFileSync(tablePath(dir, 'ZEN3'))));
 const [d1, d4] = ['dot1', 'dot4'].map((id) => CLASSIC_EXAMPLES.find((e) => e.id === id));
 const pctOf = async (ex) => slotParts((await engine.analyze({ ...makeRequest(ex.hex, 'SKL'), details: true })).details.issue).filter((p) => p.share >= 0.005).map((p) => `${p.name} ${Math.round(p.share * 100)}%`).join(',');
 const want = [await pctOf(d1), await pctOf(d4)];

@@ -131,8 +131,13 @@ The reference commit whose model and data are shipped is recorded once, in `ci/d
 
 ### 4.6 Page shell: service worker and URL state
 
-- `web/build.sh` copies files into `web/dist/`, writes `manifest.json` (file sizes, table list) and stamps a hash of all files
-  into `sw.js`. The service worker precaches everything except the tables, the assembler, llvm-mca and the showcase's
+- `web/build.sh` copies files into `web/dist/`, writes the engine files (analyzer, `uarch.json`, tables) under names that hold
+  a hash of their content, writes `manifest.json` (file sizes, table list, the engine files' paths, sizes and sha256) and stamps
+  a hash of all files into `sw.js`. A page computes only with its own build's engine files: their paths come from its own
+  build's manifest and each is checked (size, sha256) before use; one that is gone (a later deploy) or not its own is an error
+  in the result and the status line, and the update path reloads the page, never a number of a mix of builds. A release ships
+  the live build's engine files at their paths too (legacy files, `scripts/fetch-legacy.sh`), so its open pages keep their
+  own; `tests-js/web_upgrade_browser.mjs` checks the upgrade scenarios (`docs/PORTING.md`, "The site"). The service worker precaches everything except the tables, the assembler, llvm-mca and the showcase's
   assembly, serves cache-first, and fetches and caches lazy files on use; a new deploy is a new cache. After the first result
   the page prefetches all tables and the assembler when idle, unless Save-Data is set (`web/js/app.js`, `prefetchTables`).
   The build is also stamped into `index.html` (after the hash, over a placeholder of the same length): the page knows its
@@ -506,8 +511,8 @@ Single pieces: `./build-wasm.sh`; `web/build.sh && python3 -m http.server -d web
 | Number | Command |
 |---|---|
 | Module and table sizes | `wc -c web/dist/*.wasm web/dist/data/arch/*.json`; `gzip -9 -c F \| wc -c`; `brotli -q 11 -w 24 -c F \| wc -c` |
-| Section sizes (name, code, data) | `wasm-objdump -h web/dist/wuica_wasm.wasm` (wabt) |
-| Served sizes | `curl -s -o /dev/null -w '%{size_download}\n' -H 'Accept-Encoding: br, gzip' https://wuica.jacen.li/wuica_wasm.wasm` |
+| Section sizes (name, code, data) | `wasm-objdump -h web/dist/wuica_wasm.*.wasm` (wabt; the name holds a hash of the content from 0.1.11) |
+| Served sizes | `curl -s -o /dev/null -w '%{size_download}\n' -H 'Accept-Encoding: br, gzip' https://wuica.jacen.li/PATH`, PATH from the site's `manifest.json` (`engine`; before 0.1.11 `wuica_wasm.wasm`) |
 | Package size | `cd packages/wuica && npm pack --dry-run` |
 | CLI time and memory | after `packages/wuica/build.sh`: `/usr/bin/time -l node packages/wuica/bin/wuica.js -example sha256 -arch all` (macOS; `-v` on Linux); the registry's 0.1.7 has no `-example` |
 | Per-phase time and allocations (native) | `cargo run --release -p wuica --example phases -- ARCH N HEXFILE...` |

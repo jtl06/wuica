@@ -1,8 +1,12 @@
 // Service worker of wuica: makes the page work offline after the first visit.
 // Everything is served cache-first from a cache named after the build; build.sh stamps VERSION (a hash of the
 // site's files), so a new deploy is a new worker with a new, empty cache, and the old cache is deleted.
-//   install:   the page itself, the analyzer and uarch.json are fetched into the cache (the list is manifest.json)
+//   install:   the page itself, the analyzer and uarch.json are fetched into the cache (the list is manifest.json's
+//              `files`; the legacy files, which are another build's, are not in it)
 //   fetch:     cache first; what is not cached yet (instruction tables, the assembler) is fetched and added
+// The engine files (analyzer, uarch.json, tables) have the hash of their content in their names (web/build.sh), so a
+// page of an older build that this worker answers asks for its own files, never gets this build's under the same name:
+// it gets them from the site (the legacy files of a release), or a 404 (the page then says it is out of date).
 // A new worker takes over open pages at once (skipWaiting, clients.claim); such a page is still the old build, and
 // reloads itself once when it is idle (app.js, updated()), or shows a note asking for a reload.
 const VERSION = '__WUICA_VERSION__';
@@ -18,6 +22,17 @@ const fetchPath = (path) => (path === 'index.html' ? './' : path === '404.html' 
 async function plain(res) {
   if (!res.redirected) return res;
   return new Response(await res.blob(), { status: res.status, statusText: res.statusText, headers: res.headers });
+}
+// An engine file's name holds the first 16 hex digits of the sha256 of its content (web/build.sh): one whose bytes do not
+// match (a cache or proxy on the way) is not stored, so it is not served again (the page refuses it too: app.js).
+const HASHED = /\.([0-9a-f]{16})\.(?:wasm|json|bin\.gz)$/;
+async function intact(path, res) {
+  const m = HASHED.exec(path);
+  if (!m || !self.crypto?.subtle) return true;
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', await res.arrayBuffer()));
+  let hex = '';
+  for (const b of digest.subarray(0, 8)) hex += b.toString(16).padStart(2, '0');
+  return hex === m[1];
 }
 const relative = (url) => (url.origin === scope.origin && url.pathname.startsWith(scope.pathname) ? url.pathname.slice(scope.pathname.length) : null);
 
@@ -37,6 +52,7 @@ async function install() {
     // the page of this build (build.sh stamps it): a page of another one (a cache on the way still serving the last
     // deploy's) would make every visit an old page with this build's files, its note never cleared by a reload
     if (path === 'index.html' && !(await r.clone().text()).includes(`<meta name="wuica-build" content="${VERSION}">`)) throw new Error('index.html belongs to another build'); // retry on the next visit
+    if (!(await intact(path, r.clone()))) throw new Error(`${path}: not the file its name says`); // retry on the next visit
     await cache.put(path, await plain(r));
   }));
   await self.skipWaiting();
@@ -69,6 +85,7 @@ self.addEventListener('fetch', (event) => {
         event.waitUntil((async () => {
           // Not caches.open() unconditionally: once a newer worker has deleted this build's cache, a request
           // that this worker still answers must not bring the cache back.
+          if (!(await intact(path, copy.clone()))) return;
           if (await caches.has(CACHE)) await (await caches.open(CACHE)).put(key, copy);
         })().catch(() => {})); // e.g. over quota: still answer
       }

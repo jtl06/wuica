@@ -7,7 +7,7 @@ import { parseHexInput, toHex, hexToBytes } from './hex-input.js';
 import { archGroups, archTitle, DEFAULT_ARCH, ARCH_INFO, PROTOTYPE, accuracyNote } from './archs.js';
 import { DEFAULT_STATE, LIMITS, encodeState, decodeState, clampInt } from './url-state.js';
 import { EXAMPLES, CLASSIC_EXAMPLES, SHOWCASE_EXAMPLES, MOCK_EXAMPLES } from './examples.js';
-import { fetchBytes, fetchManifest, PATHS, formatSize, whenIdle, gunzip } from './loader.js';
+import { fetchBytes, fetchManifest, PATHS, formatSize, whenIdle, gunzip, engineFiles, checkBytes, EngineFileError } from './loader.js';
 import { WasmAssembler, isWasm, MAX_CODE_BYTES, tooMuchCode } from './assembler.js';
 import { WorkerAssembler, PageAssembler } from './assembler-rpc.js'; // large sources in a worker of its own
 import { renderResult, renderEmpty, renderFailure, copyText, h, row, messageList } from './render.js';
@@ -80,6 +80,11 @@ const buffers = { hex: '', asm: '' }; // the text of each input mode; the text a
 const ui = { hideEmpty: true, reportOpen: false, listingOpen: { asm: null, hex: null } }; // listing: per input mode; null: closed
 
 let manifest = { version: 'dev', files: {}, tables: [], assembler: null };
+// this build's engine files by plain name -> {path, size, sha256} (loader.js engineFiles): only from its own manifest
+/** @type {((name: string) => ({path: string, size: number, sha256: string | null} | null)) | null} */
+let engineFile = null;
+let engineGone = null; // the EngineFileError once this build's files are gone from the site: final for this page
+let startFailed = false; // the page could not start (the update path may still reload it)
 let uarch = null;
 let archItems = new Map(); // key -> {key, title, table, chip, experimental}
 let checked = [];          // the checked CPUs, in menu order; state.arch (the focused one, with the details) is one of them
@@ -223,6 +228,7 @@ let ce = null; // the Compiler Explorer import (godbolt-ui.js)
 
 const downloads = new Map(); // label -> {got, total}
 let idleStatus = 'starting…';
+let idleError = false; // the idle text is an error: shown (an idle status line is hidden otherwise)
 let flashTimer = 0;
 
 function paintStatus() {
@@ -238,10 +244,11 @@ function paintStatus() {
     el.status.textContent = idleStatus;
     el.status.title = idleStatus;
     el.statusBar.style.width = '0';
-    el.statusWrap.classList.add('idle'); // (hidden while idle: the result says the same)
+    el.statusWrap.classList.add(idleError ? 'error' : 'idle'); // (hidden while idle: the result says the same)
   }
 }
-function setIdle(text) { idleStatus = text; paintStatus(); }
+// (once this build's files are gone, the line keeps saying so)
+function setIdle(text, { error = false } = {}) { if (engineGone && !error) return; idleStatus = text; idleError = error; paintStatus(); }
 // Copying as text (copy-view.js): the tab row's control and the key c copy the shown tab; "copy all" the whole result
 createCopy({ copyText, flash: (t, o) => flash(t, o), current: () => /** @type {HTMLElement | null} */ (document.querySelector('#result-body .view-tab[aria-selected="true"]'))?.dataset.tab ?? null,
   stale: () => !!lastView && (runKey() !== lastRunKey || !!inputErrorNote) });
@@ -264,8 +271,7 @@ function endStaleFlash() {
   flashTimer = 0; flashKey = null;
   paintStatus();
 }
-async function download(label, path) {
-  const size = manifest.files[path] ?? 0;
+async function download(label, path, size = manifest.files[path] ?? 0) {
   const d = { got: 0, total: size };
   downloads.set(label, d);
   paintStatus();
@@ -275,6 +281,47 @@ async function download(label, path) {
     downloads.delete(label);
     paintStatus();
   }
+}
+
+// An engine file of this build (name: its plain name, PATHS), checked: its path from this build's manifest, its size and
+// sha256 as the manifest has them. A file the site no longer has (404: a later deploy or a rollback) or one that is not
+// this build's is an EngineFileError, never used; a network failure (offline) is an ordinary error, tried again on the
+// next use.
+async function downloadEngine(label, name) {
+  if (engineGone) throw engineGone;
+  const file = engineFile?.(name);
+  if (!file) throw engineFailed(new EngineFileError('foreign', label));
+  let bytes;
+  try {
+    bytes = await download(label, file.path, file.size);
+  } catch (e) {
+    if (e?.status === 404 || e?.status === 410) throw engineFailed(new EngineFileError('gone', label));
+    throw e;
+  }
+  if (!(await checkBytes(bytes, file))) {
+    forgetCached(file.path); // (the service worker would answer it again)
+    throw engineFailed(new EngineFileError('mismatch', label));
+  }
+  return bytes;
+}
+// A file of this build is gone, or the manifest is another build's: the page is out of date, for good. It says so in
+// the status line (the result area: whoever asked for the file) and checks for the new version once, which then
+// reloads the page when that loses nothing (updated()). A file that is not this build's: said, not final.
+function engineFailed(e) {
+  if (e.kind === 'mismatch') { flash(e.message, { error: true, ms: 8000 }); return e; }
+  if (engineGone) return e;
+  engineGone = e;
+  setIdle('out of date: reload for the current version', { error: true });
+  // the new deploy's worker takes the page over (controllerchange -> updated()); without a worker, updated() asks the site
+  if (swUsable() && navigator.serviceWorker.controller) navigator.serviceWorker.getRegistration().then((r) => r?.update()).catch(() => {}).finally(() => updated());
+  else updated();
+  return e;
+}
+async function forgetCached(path) {
+  try {
+    const url = new URL(path, location.href).href;
+    for (const name of await caches.keys()) if (name.startsWith('wuica-')) await (await caches.open(name)).delete(url);
+  } catch { /* no Cache Storage */ }
 }
 
 // ---- controls <-> state ---------------------------------------------------------------------------------------
@@ -449,7 +496,7 @@ function focusArch(key, { rerun = true } = {}) {
   if (key === state.arch) return;
   state.arch = key;
   ab?.paint();
-  ensureTable(key).catch((e) => flash(`table not loaded: ${e?.message ?? e}`, { error: true, ms: 6000 }));
+  ensureTable(key).catch(tableFailed);
   changed({ rerun });
 }
 const cpuBoxes = () => [.../** @type {NodeListOf<HTMLInputElement>} */ (el.cpuGrid.querySelectorAll('input[type=checkbox]'))];
@@ -480,7 +527,7 @@ function cpusChanged(e) {
   if (focus !== state.arch) {
     state.arch = focus;
     ab?.paint(); // side A's caption, B's "same as A"
-    ensureTable(focus).catch((err) => flash(`table not loaded: ${err?.message ?? err}`, { error: true, ms: 6000 }));
+    ensureTable(focus).catch(tableFailed);
     changed({ rerun: true });
   } else {
     paintDerived();
@@ -690,12 +737,16 @@ function fillArchs() {
 function tableBytes(name) {
   let p = tableData.get(name);
   if (!p) {
-    p = download(`${name} table`, PATHS.table(name)).then(gunzip);
+    p = downloadEngine(`${name} table`, PATHS.table(name)).then(gunzip);
     tableData.set(name, p);
     p.catch(() => tableData.delete(name)); // a later attempt may succeed (e.g. back online)
   }
   return p;
 }
+
+// (a table loaded ahead of its use that failed: said in the status line; the status line already says why an engine
+// file was refused, engineFailed)
+function tableFailed(e) { if (!(e instanceof EngineFileError)) flash(`table not loaded: ${e?.message ?? e}`, { error: true, ms: 6000 }); }
 
 // Loads the table of a microarchitecture into the main engine.
 function ensureTable(archKey) {
@@ -993,7 +1044,7 @@ async function run({ auto = false } = {}) {
     if (id !== runSeq) return;
     lastView = null;
     showTrace(null);
-    renderFailure(el.body, `Analysis failed: ${e?.message ?? e}`);
+    renderFailure(el.body, e instanceof EngineFileError ? e.message : `Analysis failed: ${e?.message ?? e}`);
   } finally {
     if (inflight.id === id) inflight = { id: 0, key: '' };
     if (id === runSeq) {
@@ -1058,7 +1109,7 @@ async function runCompare(id, key, { auto = false, ctrl = null, snap = () => nul
     if (!current()) return;
     lastView = null;
     showTrace(null);
-    renderFailure(el.body, `Comparison failed: ${e?.message ?? e}`);
+    renderFailure(el.body, e instanceof EngineFileError ? e.message : `Comparison failed: ${e?.message ?? e}`);
   } finally {
     if (inflight.id === id) inflight = { id: 0, key: '' };
     if (current()) {
@@ -1334,8 +1385,9 @@ async function registerServiceWorker() {
   // first visit's page never noticed a later deploy.)
   navigator.serviceWorker.addEventListener('controllerchange', () => { updated(); });
   // A new deploy's worker that took over while this page started (another tab's update check, a slow start) answered
-  // its manifest, and no controllerchange comes any more: the manifest is not this page's build
-  if (hadController && PAGE_BUILD && manifest.version !== PAGE_BUILD) updated();
+  // its manifest, and no controllerchange comes any more; or the page itself came from before a deploy (a cache, a
+  // first visit across it): the manifest is not this page's build
+  if (PAGE_BUILD && manifest.version !== PAGE_BUILD) updated();
   try {
     await navigator.serviceWorker.register('sw.js');
   } catch { /* the page works without it, just not offline */ }
@@ -1361,7 +1413,8 @@ async function updated() {
   el.updateNote.hidden = false;
   const mark = typeof next === 'string' ? next : `after ${PAGE_BUILD || manifest.version}`;
   try { if (sessionStorage.getItem(UPDATE_KEY) === mark) return; } catch { return; }
-  while (!ready || busy || pool?.busy || performance.now() - lastInput < UPDATE_QUIET_MS) await sleep(250);
+  // (a page that could not start loses nothing either)
+  while ((!ready && !startFailed) || busy || pool?.busy || performance.now() - lastInput < UPDATE_QUIET_MS) await sleep(250);
   syncUrl(true);
   if (location.hash.replace(/^#/, '') !== lastFragment) return; // the address does not hold the state
   // and the state comes back from it as it is: a link carries at most 200,000 characters of text (url-state.js), so a
@@ -1390,16 +1443,19 @@ async function prefetchTables() {
     }
     controlled = !!navigator.serviceWorker.controller;
   }
-  // the tables, and the assembler if the build has one (so that assembly mode also works offline)
-  const urls = [...new Set([...archItems.values()].map((i) => i.table))].map(PATHS.table);
+  // the tables (this build's: their paths from its manifest), and the assembler if the build has one (so that assembly
+  // mode also works offline)
+  const urls = [...new Set([...archItems.values()].map((i) => i.table))].map((t) => engineFile?.(PATHS.table(t))?.path).filter((u) => !!u);
   if (manifest.assembler && controlled) urls.push(PATHS.assembler);
   let done = 0;
   for (const url of urls) {
     await new Promise(whenIdle);
+    if (engineGone) break;
     try {
       const cached = controlled && 'caches' in window && await caches.match(url, { ignoreSearch: true });
       if (!cached) {
         const res = await fetch(url);
+        if ((res.status === 404 || res.status === 410) && url !== PATHS.assembler) engineFailed(new EngineFileError('gone', 'tables'));
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         await res.arrayBuffer();
       }
@@ -1558,6 +1614,7 @@ async function start() {
 
   manifest = await fetchManifest();
   el.buildId.textContent = PAGE_BUILD || manifest.version;
+  engineFile = engineFiles(manifest, PAGE_BUILD);
   registerServiceWorker();
   // other code in the link: the assembler loads while the analyzer does (the first result needs both); a built-in
   // example's needs only the analyzer, and the assembler follows it (assemblerSoon, below)
@@ -1567,9 +1624,11 @@ async function start() {
   whenShown(assemblerSoon);
 
   try {
-    const wasmBytes = MOCK ? null : download('analyzer', PATHS.wasm);
+    // a manifest of another build (the update path takes over) or none (offline, without the service worker)
+    if (!engineFile) throw manifest.version === 'dev' ? new Error('the list of files (manifest.json) could not be loaded') : engineFailed(new EngineFileError('foreign', 'manifest'));
+    const wasmBytes = MOCK ? null : downloadEngine('analyzer', PATHS.wasm);
     wasmBytes?.catch(() => {}); // reported below
-    uarchBytes = await download('configurations', PATHS.uarch);
+    uarchBytes = await downloadEngine('configurations', PATHS.uarch);
     uarch = JSON.parse(new TextDecoder().decode(uarchBytes));
     fillArchs();
     writeControls();
@@ -1581,7 +1640,7 @@ async function start() {
       fillExamples();
     } else {
       let bytes;
-      try { bytes = await wasmBytes; } catch (e) { throw new Error(`the analyzer could not be loaded (${e?.message ?? e})`); }
+      try { bytes = await wasmBytes; } catch (e) { throw e instanceof EngineFileError ? e : new Error(`the analyzer could not be loaded (${e?.message ?? e})`); }
       if (!isWasm(bytes)) throw new Error('the analyzer could not be loaded (wuica_wasm.wasm is not a WebAssembly module)');
       wasmModule = await WebAssembly.compile(bytes);
       try {
@@ -1594,8 +1653,9 @@ async function start() {
     await engine.loadUarch(uarchBytes);
     await ensureTable(state.arch);
   } catch (e) {
-    setIdle('not ready');
-    el.statusWrap.classList.add('error');
+    startFailed = true;
+    if (e instanceof EngineFileError) { renderFailure(el.body, e.message); setIdle(e.kind === 'mismatch' ? 'not ready' : 'out of date: reload for the current version', { error: true }); return; }
+    setIdle('not ready', { error: true });
     renderFailure(el.body, `Could not start: ${e?.message ?? e}. Reload to retry.`);
     return;
   }

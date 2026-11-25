@@ -7,6 +7,7 @@
 // The `-json` trace: of the sampled cases that have one, every WUICA_TRACE_EVERY-th (default 10; 0: none) is also run with
 // `includeTrace`, and the response's `trace` must equal it (numbers by value, the order of object keys ignored, as jsoncmp::diff).
 import fs from 'node:fs'; import zlib from 'node:zlib'; import readline from 'node:readline';
+import { tablePath } from './dist-files.mjs';
 const every = Number(process.argv[2] || 7);
 // WUICA_SHARD=k/n (scripts/check.sh runs shards in parallel): only the k-th of every n sampled cases
 const [shard, shards] = (process.env.WUICA_SHARD || '0/1').split('/').map(Number);
@@ -24,11 +25,12 @@ function call(fn, ...strings) {
 const t0 = performance.now();
 const uarch = fs.readFileSync('data/uarch.json', 'utf8');
 if (!call('wuica_load_uarch', uarch).ok) throw new Error('load_uarch');
-// the instruction tables as the site and the npm package ship them: the binary form (web/dist/data/arch/<NAME>.bin.gz, written
+// the instruction tables as the site and the npm package ship them: the binary form (web/dist/data/arch/<NAME>.<hash>.bin.gz, written
 // by web/build.sh from data/arch/*.json; the module reads no JSON tables)
-const TABLES = { dir: 'web/dist/data/arch', ext: '.bin.gz', fn: 'wuica_load_arch_bin', gz: true };
-if (!fs.existsSync(TABLES.dir)) throw new Error(`${TABLES.dir} is missing: run web/build.sh (or WUICA_TABLES=json)`);
-for (const f of fs.readdirSync(TABLES.dir).filter((f) => f.endsWith(TABLES.ext))) { const r = call(TABLES.fn, f.slice(0, -TABLES.ext.length), (TABLES.gz ? zlib.gunzipSync(fs.readFileSync(`${TABLES.dir}/${f}`)) : fs.readFileSync(`${TABLES.dir}/${f}`))); if (!r.ok) throw new Error(JSON.stringify(r)); }
+// (their names hold a hash of their content: the manifest's, dist-files.mjs)
+const TABLES = { dist: 'web/dist', ext: '.bin.gz', fn: 'wuica_load_arch_bin' };
+if (!fs.existsSync(`${TABLES.dist}/manifest.json`)) throw new Error(`${TABLES.dist} is missing: run web/build.sh`);
+for (const t of JSON.parse(fs.readFileSync(`${TABLES.dist}/manifest.json`, 'utf8')).tables) { const r = call(TABLES.fn, t, zlib.gunzipSync(fs.readFileSync(tablePath(TABLES.dist, t)))); if (!r.ok) throw new Error(JSON.stringify(r)); }
 const tLoad = performance.now() - t0;
 const strip = s => s.replace(/\x1b\]8;;.*?\x07/g, '');
 let n = 0, bad = 0, refErr = 0, i = 0, tAnalyze = 0, traceI = 0, traces = 0;

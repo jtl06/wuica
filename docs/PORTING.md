@@ -24,7 +24,8 @@ with nothing beside it (`--list` marks them). A browser suite is serial if it im
 `tests-js/cdp.mjs` (`FRAME_MS`, `LONG_TASK_MS`, `TIMING_SLACK`: the "under a frame" and "no long task" checks of autorun, lag,
 layout, qa2, trace, trace_range and views); any suite is if it is listed in `SERIAL` in `scripts/check.mjs` with its reason
 (`web_robust_browser`: bounds of its own in ms; `web_host_browser`: it types every 200 ms against the page's 1.2 s quiet time
-before an update reload; `web_sw_update_browser`: the race it sets up for an update depends on timing; `web_asm_tokens`, not a browser suite: its bounds in ms failed beside the other suites on the check
+before an update reload; `web_sw_update_browser`: the race it sets up for an update depends on timing; `web_upgrade_browser`: it holds a page's update
+reload with key presses against the same quiet time and waits for a deploy's worker to take over; `web_asm_tokens`, not a browser suite: its bounds in ms failed beside the other suites on the check
 runner). A new browser suite that asserts on time should use the bounds of `cdp.mjs`, which makes it serial; another suite
 should be added to `SERIAL`. In `full`, `web_noscroll_browser`
 (13 independent cases, the longest browser suite) runs as 8 shards (`WUICA_SHARD=k/n`, as `analyze_fixtures` in 4); the shards'
@@ -155,6 +156,47 @@ Chrome needs shared libraries that the machine does not have (as of November 202
 libatspi2.0-0t64 libasound2t64 libxdamage1`). Until they are installed the check finds no Chrome that starts and the browser suites
 are skipped there, which `--no-skip` counts as failures; `runner-setup.sh` and every check print the missing libraries.
 
+## The site: build, engine files, updates
+
+`web/build.sh` assembles `web/dist` (`WUICA_OUT` another directory, `WUICA_DATA` another data directory). The engine files (the
+analyzer, `uarch.json`, the 15 tables) get names that hold the first 16 hex digits of the sha256 of their content
+(`wuica_wasm.<hash>.wasm`, `data/uarch.<hash>.json`, `data/arch/<NAME>.<hash>.bin.gz`; `web/tools/manifest.mjs`); `manifest.json`
+lists them under `engine` (plain name -> path, size, sha256) besides `version` (the build id, also stamped into `sw.js` and
+`index.html`), `files` (what the page can request, with sizes: the service worker's list) and `tables`. The extensions stay, so the
+host's content types (`.wasm` and `.json` compressed by the host, `.bin.gz` gzip already), the `/data/*` rules of `_headers` and
+the worker's lazy pattern are unchanged; `tests-js/dist-files.mjs` resolves the names for the suites.
+
+The rule: a page computes only with the engine files of its own build. It takes their paths only from its own build's manifest
+(the version must equal the build id stamped into its HTML; a manifest of another build is the update case), checks each file's
+size and sha256 before use (`crypto.subtle`, off the page's thread; where it is missing, in a page served over plain http from
+another host than localhost, the size only), and the service worker does not store a hashed file whose bytes do not match its
+name. A file it cannot use is an error in the result area and the status line, never a number:
+- 404 (a later deploy or a rollback replaced its build): "out of date", final for the page (no more requests for engine
+  files), and one update check (`registration.update()`, or without a worker the site's manifest): the new build's worker
+  takes the page over and it reloads itself when idle (`updated()`, the same path as any deploy: at most once per build, not
+  while the user types, the note otherwise). A page that could not start reloads too.
+- other bytes (a cache or proxy on the way): refused, removed from the worker's cache, tried again on the next use.
+- a network failure (offline): an ordinary error, tried again on the next use.
+
+Because names change with content, an open page of the build before a deploy, and its old worker, ask for their own files,
+which the new deploy does not have unless it ships them: the legacy files. Without them such a page shows the error and reloads;
+with them it keeps computing with its own files until it reloads. 0.1.10 and older ask for the plain names
+(`wuica_wasm.wasm`, `data/uarch.json`, `data/arch/<NAME>.bin.gz`), which from 0.1.11 on are never this build's files: a
+legacy file there or a 404 (0.1.10 then shows its own "Analysis failed: ... HTTP 404"). `tests-js/web_upgrade_browser.mjs`
+builds two versions whose engine files differ and checks the scenarios of an upgrade (old worker, a table not cached; the new
+worker taking over before the reload; a link opened mid-swap; a rollback; Data Saver; offline; other bytes at a page's own
+paths) with and without legacy files: every number shown is the page's own build's, or an error.
+
+`scripts/fetch-legacy.sh DIR [--site URL] [--keep-previous]` downloads the engine files of the build that is live, as its
+`manifest.json` lists them (`engine`; for 0.1.10, which has none, the plain names of the analyzer, `uarch.json` and its
+`tables`), checks each (sha256, or for 0.1.10 the size and the kind of file) and writes them with `legacy.json` (the live build,
+each file's size and sha256). `WUICA_LEGACY_DIR=DIR web/build.sh` copies them into the build at their paths and lists them as
+`legacy` (and `legacyOf`, the live build) in the manifest: not in `files` (not precached, not in the transfer budgets), not in
+the build id; a legacy path that the build has itself (an unchanged table keeps its hashed name) must have the same bytes.
+Without `WUICA_LEGACY_DIR` (development, CI) a build has none. Keep them for one release (the default: only the live build's own
+files); `--keep-previous` also carries the live build's legacy files, for a release that follows the last one within a day or
+so, while pages of the one before may still be open.
+
 ## Releases
 
 The version is written in 15 places: the page (`web/js/app.js` `VERSION`), `packages/wuica` and `server/` (their
@@ -162,10 +204,26 @@ The version is written in 15 places: the page (`web/js/app.js` `VERSION`), `pack
 `Cargo.lock`). `node scripts/check-version.mjs [VERSION]` lists them and fails unless all are equal (and equal to `VERSION` if
 given); the suite `web_version` runs it in every check. Bump them together.
 
+The site's release (from a clean checkout of the release commit with the data of its CI asset; only reads from the live site):
+
+    scripts/check.sh full                                            # the gate (web/dist without legacy files)
+    rm -rf target/legacy && scripts/fetch-legacy.sh target/legacy    # the live build's engine files, checked
+    WUICA_LEGACY_DIR=$PWD/target/legacy web/build.sh                 # web/dist again, with them (the same build id)
+    cd web && cf deploy ./dist && cd ..                              # the deploy (by hand)
+    scripts/smoke-live.sh VERSION
+
+A deploy of a build without its legacy files (a plain `web/build.sh`, or a check run after the build with them, which
+builds web/dist again) leaves the live build's open pages without their files: errors instead of results until they reload
+(0.1.10's pages may not reload by themselves); smoke-live then fails ("the manifest lists the legacy files"), unless
+`--no-legacy`.
+
 After a deploy, `scripts/smoke-live.sh VERSION` checks what is live, reading only: the site in headless Chrome (the footer's
 version, the service worker's cache named after the stamp in `/sw.js`, one analysis, and the bytes on the wire of the first
 visit and of the 15 tables against `tests-js/budgets.mjs`, which `web_host_browser` checks for the build: the check that would
-have caught the uncompressed tables of 0.1.9; also that the analyzer, the assembler and the tables arrive compressed) and the API
+have caught the uncompressed tables of 0.1.9; also that the analyzer, the assembler and the tables arrive compressed), the
+engine files of the manifest (each served with its size and sha256), the legacy files (none listed fails, unless `--no-legacy`; each served,
+byte-identical to what the release before served: the size and sha256 `fetch-legacy` recorded from the site, the large ones
+compressed) and the API
 (`/healthz`, `/api/version` for the package and the server, one analyze, one compare, MCP `tools/list` and one `what_if`).
 `--site URL` and `--api URL` point it elsewhere (a staging host, a local server), `--no-site`/`--no-api` skip a part.
 

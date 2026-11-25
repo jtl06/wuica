@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { enginePath } from './dist-files.mjs';
 import { findChrome, launch, serve, copyDist, Page, HELPERS, checker, ROOT } from './cdp.mjs';
 
 const chrome = findChrome();
@@ -39,8 +40,8 @@ const { sweepData, summarize } = await import(pathToFileURL(path.join(ROOT, 'web
 const { tableBytes } = await import('./tables.mjs');
 // the default example, analyzed here: the text each view should copy
 const chain = EXAMPLES[0];
-const eng = await WasmEngine.create(fs.readFileSync(path.join(ROOT, 'web/dist/wuica_wasm.wasm')));
-await eng.loadUarch(fs.readFileSync(path.join(ROOT, 'web/dist/data/uarch.json')));
+const eng = await WasmEngine.create(fs.readFileSync(enginePath(path.join(ROOT, 'web/dist'), 'wuica_wasm.wasm')));
+await eng.loadUarch(fs.readFileSync(enginePath(path.join(ROOT, 'web/dist'), 'data/uarch.json')));
 await eng.loadArch('SKL', tableBytes('SKL'));
 // (as the page: its result; the dependencies from a run with the trace and details, as the analyzer's worker makes
 // them, engine-rpc.js depGraph; the slack by the result's critical path, deps.js)

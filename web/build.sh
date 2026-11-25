@@ -8,25 +8,31 @@
 #   web/build.sh                  then serve web/dist/ with any static file server, e.g.
 #   python3 -m http.server -d web/dist 8000
 #
-# Environment: WUICA_WASM (path of the analyzer), WUICA_ASM_WASM (path of the assembler), WUICA_MCA_WASM (llvm-mca).
-# It writes manifest.json (version, files with sizes, tables) and stamps the version, a hash of all files,
-# into sw.js: a deploy with any change gives the service worker a new cache.
+# Environment: WUICA_WASM (path of the analyzer), WUICA_ASM_WASM (path of the assembler), WUICA_MCA_WASM (llvm-mca),
+# WUICA_DATA (the data directory, default data/: uarch.json and arch/*.json), WUICA_OUT (the output directory, default
+# web/dist; it is replaced), WUICA_LEGACY_DIR (see below).
+# web/tools/manifest.mjs renames the engine files (the analyzer, uarch.json, the tables) to names that hold a hash of
+# their content (wuica_wasm.<hash>.wasm, data/uarch.<hash>.json, data/arch/<NAME>.<hash>.bin.gz) and writes manifest.json
+# (version, engine: plain name -> path, size, sha256; files with sizes; tables); the page finds its engine files only in
+# its own build's manifest and checks them (web/js/loader.js). The version, a hash of all files, is stamped into sw.js (a
+# deploy with any change gives the service worker a new cache) and into index.html (the page's own build).
+# WUICA_LEGACY_DIR (a release: scripts/fetch-legacy.sh): the engine files of the build that is live, copied in at their
+# paths, so that its open pages still find their own files after the deploy; listed in the manifest as `legacy`, not
+# precached, not in the version. Without it (development, CI) the build has none.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(dirname "$here")"
-out="$here/dist"
+out="${WUICA_OUT:-$here/dist}"
+data="${WUICA_DATA:-$root/data}"
 wasm="${WUICA_WASM:-$root/target/wasm32-unknown-unknown/release/wuica_wasm.wasm}"
 asm="${WUICA_ASM_WASM:-$root/assembler/dist/wuica_asm.wasm}"
 mca="${WUICA_MCA_WASM:-$root/mca/dist/wuica_mca.wasm}"
 
 die() { echo "web/build.sh: $*" >&2; exit 1; }
 [ -f "$wasm" ] || die "the analyzer is missing: $wasm (run ./build-wasm.sh, or set WUICA_WASM)"
-[ -f "$root/data/uarch.json" ] || die "data/uarch.json is missing (generate data/ with tools/export_data.py)"
-ls "$root"/data/arch/*.json >/dev/null 2>&1 || die "data/arch/ has no instruction tables (generate data/ with tools/export_data.py)"
-if command -v sha256sum >/dev/null 2>&1; then sha() { sha256sum "$@"; }
-elif command -v shasum >/dev/null 2>&1; then sha() { shasum -a 256 "$@"; }
-else die "neither sha256sum nor shasum found"; fi
+[ -f "$data/uarch.json" ] || die "$data/uarch.json is missing (generate data/ with tools/export_data.py)"
+ls "$data"/arch/*.json >/dev/null 2>&1 || die "$data/arch/ has no instruction tables (generate data/ with tools/export_data.py)"
 
 rm -rf "$out"
 mkdir -p "$out/js" "$out/css" "$out/fonts" "$out/data/arch"
@@ -38,8 +44,8 @@ mkdir -p "$out/licenses"
 cp "$root/LICENSE" "$out/licenses/AGPL-3.0.txt"
 cp "$root/third_party/xed/LICENSE" "$out/licenses/XED-Apache-2.0.txt"
 [ -f "$root/assembler/LICENSE-LLVM.txt" ] && cp "$root/assembler/LICENSE-LLVM.txt" "$out/licenses/LLVM.txt"
-cp "$root/data/uarch.json" "$out/data/"
-"$root/tools/encode-tables.sh" "$root/data/arch" "$out/data/arch"
+cp "$data/uarch.json" "$out/data/"
+"$root/tools/encode-tables.sh" "$data/arch" "$out/data/arch"
 node "$root/tools/gzip-tables.mjs" "$out/data/arch"
 cp "$wasm" "$out/wuica_wasm.wasm"
 assembler=false
@@ -65,22 +71,10 @@ grep -qF "$entry" "$out/index.html" || die "index.html has no $entry"
 LINKS="$links" ENTRY="$entry" awk 'index($0, ENVIRON["ENTRY"]) { printf "%s", ENVIRON["LINKS"] } { print }' "$out/index.html" > "$out/index.html.tmp"
 mv "$out/index.html.tmp" "$out/index.html"
 
+# the engine files under hashed names, the version, manifest.json and the legacy files (web/tools/manifest.mjs)
+version="$(node "$here/tools/manifest.mjs" "$out" "$here/sw.js" "$assembler" "$mcafound" "${WUICA_LEGACY_DIR:-}")" || die "manifest.mjs failed"
 cd "$out"
-# What the page can request (not _headers and 404.html, which are for the host, nor robots.txt and sitemap.xml, which are for crawlers), in a stable order.
-files="$(find . -type f ! -name _headers ! -name 404.html ! -name robots.txt ! -name sitemap.xml | sed 's|^\./||' | LC_ALL=C sort)"
-version="$( { echo "$files" | while IFS= read -r f; do sha "$f"; done; sha "$here/sw.js"; } | sha | cut -c1-12)"
-
-{
-  printf '{\n  "version": "%s",\n  "assembler": %s,\n  "mca": %s,\n  "tables": [' "$version" "$assembler" "$mcafound"
-  sep=''
-  for t in data/arch/*.bin.gz; do n="$(basename "$t" .bin.gz)"; printf '%s"%s"' "$sep" "$n"; sep=', '; done
-  printf '],\n  "files": {\n'
-  sep=''
-  echo "$files" | while IFS= read -r f; do
-    printf '%s    "%s": %s' "$sep" "$f" "$(wc -c < "$f" | tr -d ' ')"; sep=$',\n'
-  done
-  printf '\n  }\n}\n'
-} > manifest.json
+counts="$(node -e 'const m = JSON.parse(require("fs").readFileSync("manifest.json", "utf8")); console.log(`${Object.keys(m.files).length} files, ${Object.keys(m.legacy ?? {}).length} legacy files`)')"
 
 sed "s/__WUICA_VERSION__/$version/" "$here/sw.js" > sw.js
 grep -q "'$version'" sw.js || die "could not stamp the version into sw.js"
@@ -91,4 +85,4 @@ sed "s/__WUICABLD__/$version/" index.html > index.html.tmp && mv index.html.tmp 
 grep -q "name=\"wuica-build\" content=\"$version\"" index.html || die "could not stamp the version into index.html"
 
 total="$(find . -type f -exec cat {} + | wc -c | tr -d ' ')"
-echo "web/dist: version $version, $(echo "$files" | wc -l | tr -d ' ') files, $((total / 1024)) KiB; assembler: $assembler; llvm-mca: $mcafound"
+echo "web/dist: version $version, $counts, $((total / 1024)) KiB; assembler: $assembler; llvm-mca: $mcafound"
