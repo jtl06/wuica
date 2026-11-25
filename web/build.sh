@@ -8,22 +8,25 @@
 #   web/build.sh                  then serve web/dist/ with any static file server, e.g.
 #   python3 -m http.server -d web/dist 8000
 #
-# Environment: WUICA_WASM (path of the analyzer), WUICA_ASM_WASM (path of the assembler), WUICA_MCA_WASM (llvm-mca).
+# Environment: WUICA_WASM (path of the analyzer), WUICA_ASM_WASM (path of the assembler), WUICA_MCA_WASM (llvm-mca),
+# WUICA_DATA (the data directory, default data/: uarch.json and arch/*.json), WUICA_OUT (the output directory, default
+# web/dist; it is replaced).
 # It writes manifest.json (version, files with sizes, tables) and stamps the version, a hash of all files,
 # into sw.js: a deploy with any change gives the service worker a new cache.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(dirname "$here")"
-out="$here/dist"
+out="${WUICA_OUT:-$here/dist}"
+data="${WUICA_DATA:-$root/data}"
 wasm="${WUICA_WASM:-$root/target/wasm32-unknown-unknown/release/wuica_wasm.wasm}"
 asm="${WUICA_ASM_WASM:-$root/assembler/dist/wuica_asm.wasm}"
 mca="${WUICA_MCA_WASM:-$root/mca/dist/wuica_mca.wasm}"
 
 die() { echo "web/build.sh: $*" >&2; exit 1; }
 [ -f "$wasm" ] || die "the analyzer is missing: $wasm (run ./build-wasm.sh, or set WUICA_WASM)"
-[ -f "$root/data/uarch.json" ] || die "data/uarch.json is missing (generate data/ with tools/export_data.py)"
-ls "$root"/data/arch/*.json >/dev/null 2>&1 || die "data/arch/ has no instruction tables (generate data/ with tools/export_data.py)"
+[ -f "$data/uarch.json" ] || die "$data/uarch.json is missing (generate data/ with tools/export_data.py)"
+ls "$data"/arch/*.json >/dev/null 2>&1 || die "$data/arch/ has no instruction tables (generate data/ with tools/export_data.py)"
 if command -v sha256sum >/dev/null 2>&1; then sha() { sha256sum "$@"; }
 elif command -v shasum >/dev/null 2>&1; then sha() { shasum -a 256 "$@"; }
 else die "neither sha256sum nor shasum found"; fi
@@ -38,8 +41,8 @@ mkdir -p "$out/licenses"
 cp "$root/LICENSE" "$out/licenses/AGPL-3.0.txt"
 cp "$root/third_party/xed/LICENSE" "$out/licenses/XED-Apache-2.0.txt"
 [ -f "$root/assembler/LICENSE-LLVM.txt" ] && cp "$root/assembler/LICENSE-LLVM.txt" "$out/licenses/LLVM.txt"
-cp "$root/data/uarch.json" "$out/data/"
-"$root/tools/encode-tables.sh" "$root/data/arch" "$out/data/arch"
+cp "$data/uarch.json" "$out/data/"
+"$root/tools/encode-tables.sh" "$data/arch" "$out/data/arch"
 node "$root/tools/gzip-tables.mjs" "$out/data/arch"
 cp "$wasm" "$out/wuica_wasm.wasm"
 assembler=false
