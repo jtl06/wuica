@@ -83,7 +83,55 @@ per iteration; original uiCA ICL predicts 1.48, 1.61, 1.89) and run at 0.97-1.00
 **Unexplained.** Why lane-crossing permutes cost more in mixes than their port data says: `udiv_v` without its two `vperm2i128` takes
 5.74 instead of 7.33 cycles, the model 5.00 instead of 5.20 (`r10c`); 2 `vperm2i128` + 4 `vpshufd` take 2.41 (model 2.00).
 
-## Round 10 (current model)
+## Round 11 (current model)
+
+"Before" is the fork's `improve-r10` at `7301b04` (branch `model-r10`), "after" is `improve-r11` at `7b8f800` (branch `model-r11`).
+The fork's round 11 worked from a benchmark of real hot loops (its development split) and microbenchmarks; its `CHANGES.md` lists
+the mechanisms, their sources and the development numbers. The numbers below are those of the accuracy gate (the held-out sets of
+rounds 9 and 10, the dogfood loops), which wuica reproduces exactly.
+
+### ZEN3 — measured on a Ryzen 7 7735U (Zen 3+)
+
+| Set | Loops | Tool | ≤5% | ≤10% | ≤20% | MAPE |
+|---|---:|---|---:|---:|---:|---:|
+| random loops (holdout8) | 1956 | uiCA ZEN3, before | 76.4% | 85.7% | 94.8% | 3.8% |
+|  |  | uiCA ZEN3, after | 76.9% | 86.3% | 95.2% | 3.7% |
+| real-code blocks (bhive6) | 1895 | uiCA ZEN3, before | 85.6% | 88.8% | 92.8% | 3.9% |
+|  |  | uiCA ZEN3, after | 85.9% | 89.1% | 93.0% | 3.8% |
+| random loops (holdout7) | 1960 | uiCA ZEN3, before | 75.1% | 84.6% | 93.9% | 4.2% |
+|  |  | uiCA ZEN3, after | 75.9% | 85.5% | 95.0% | 4.0% |
+| real-code blocks (bhive5) | 1941 | uiCA ZEN3, before | 85.0% | 87.7% | 93.4% | 3.9% |
+|  |  | uiCA ZEN3, after | 85.8% | 88.3% | 93.5% | 3.8% |
+
+### ADL-P — measured on a Core i7-12650H (P-core)
+
+| Set | Loops | Tool | ≤5% | ≤10% | ≤20% | MAPE |
+|---|---:|---|---:|---:|---:|---:|
+| random loops (holdout8) | 1923 | uiCA ADL-P, before | 83.8% | 90.7% | 97.0% | 2.6% |
+|  |  | uiCA ADL-P, after | 83.7% | 90.8% | 97.0% | 2.6% |
+| real-code blocks (bhive6) | 1837 | uiCA ADL-P, before | 89.2% | 91.5% | 94.1% | 3.6% |
+|  |  | uiCA ADL-P, after | 89.3% | 92.1% | 94.2% | 3.5% |
+| random loops (holdout7) | 1933 | uiCA ADL-P, before | 83.2% | 90.9% | 96.8% | 2.8% |
+|  |  | uiCA ADL-P, after | 82.9% | 90.9% | 96.8% | 2.8% |
+| real-code blocks (bhive5) | 1896 | uiCA ADL-P, before | 89.1% | 92.6% | 95.3% | 3.2% |
+|  |  | uiCA ADL-P, after | 89.2% | 93.4% | 95.3% | 3.9% |
+
+### ICX — measured on a Xeon Gold 6314U
+
+| Set | Loops | Tool | ≤5% | ≤10% | ≤20% | MAPE |
+|---|---:|---|---:|---:|---:|---:|
+| random loops (holdout8) | 1867 | uiCA ICX, before | 70.4% | 85.6% | 98.2% | 3.7% |
+|  |  | uiCA ICX, after | 70.8% | 86.0% | 98.5% | 3.6% |
+| real-code blocks (bhive6) | 1869 | uiCA ICX, before | 82.0% | 88.2% | 96.2% | 3.3% |
+|  |  | uiCA ICX, after | 81.3% | 88.6% | 96.3% | 3.3% |
+| random loops (holdout7) | 1879 | uiCA ICX, before | 70.5% | 85.8% | 97.8% | 3.9% |
+|  |  | uiCA ICX, after | 70.7% | 85.9% | 98.0% | 3.9% |
+| real-code blocks (bhive5) | 1928 | uiCA ICX, before | 82.7% | 89.7% | 96.9% | 3.0% |
+|  |  | uiCA ICX, after | 81.8% | 89.8% | 96.8% | 3.0% |
+
+The 21 dogfood loops (ZEN3, not gated): within 10 % 57.1 % before, 81.0 % after (MAPE 5.3 %).
+
+## Round 10
 
 "Before" is the fork's `improve-r9` at `640e40e` (branch `model-r9`), "after" is `improve-r10` at `7301b04` (branch `model-r10`).
 The round looked for the scheduler behavior behind two ZEN3 errors left open in round 9 (the scalar prefix sum, shuffle-heavy vector

@@ -26,7 +26,7 @@ simulated as if unrolled; the ZEN3, ADL-P and ICX models are the fork's prototyp
 | Time per analysis (WebAssembly, warm) | 0.52 ms (BHive block), 0.63 ms (random loop), 36 ms (2,949-instruction SHA-256 block) | Commit `623a117` message, measurement machine (Ryzen 7 7735U), Node 22; before model rounds 6–9 |
 | Analyzer module | 4.31 MB raw, 630 kB brotli q11 (package), 867 kB as the live site serves it | Section 7.1 |
 | First visit in assembly mode (analyzer, assembler, SKL table, page shell) | 2.19 MB as the live site serves it; the same files weigh 1.64 MB at brotli q11 (+34 % served). After 0.1.9 the default first visit does not wait for the assembler: 1.14 MB before the first result (local host, brotli q2) | Section 7.1; `docs/PORTING.md`, "Size of the modules" |
-| Accuracy of the prototypes, held out, within 10 % | ZEN3 85.7 % / 88.8 %, ADL-P 90.7 % / 91.5 %, ICX 85.6 % / 88.2 % (random loops / BHive blocks) | `docs/ACCURACY.md`, "Round 10"; guarded by `wuica:accuracy_gate` |
+| Accuracy of the prototypes, held out, within 10 % | ZEN3 86.3 % / 89.1 %, ADL-P 90.8 % / 92.1 %, ICX 86.0 % / 88.6 % (random loops / BHive blocks) | `docs/ACCURACY.md`, "Round 11"; guarded by `wuica:accuracy_gate` |
 | Python reference, same work | 40–55 ms per analysis plus interpreter start | `README.md`, "Status" |
 
 ## 3. Hard rules
@@ -179,14 +179,14 @@ Result codes everywhere: 0 ok, 1 bad request, 2 assembler error, 3 analysis fail
 The port reproduces the reference exactly, so these numbers hold for both (`docs/ACCURACY.md`). They cover only the fork's
 three models; uiCA's Intel models are unchanged by the fork's rounds and are not measured in this repository.
 
-Round 10, held-out sets (generated and measured at the start of the round, scored once at the end); share of loops within 10 %
-of measured cycles per iteration, and MAPE:
+Round 11 on the held-out sets of round 10 (generated and measured at the start of round 10); share of loops within 10 % of measured
+cycles per iteration, and MAPE (the llvm-mca and original uiCA columns are round 10's: those tools did not change):
 
 | Model (measured on) | Random loops `holdout8` | BHive blocks `bhive6` | llvm-mca, same sets | Nearest original uiCA model |
 |---|---|---|---|---|
-| ZEN3 (Ryzen 7 7735U, Zen 3+) | 1956 loops: 85.7 %, 3.8 % | 1895: 88.8 %, 3.9 % | `znver3`: 56.0 % / 71.3 % | — |
-| ADL-P (Core i7-12650H, P-core) | 1923: 90.7 %, 2.6 % | 1837: 91.5 %, 3.6 % | `alderlake`: 33.8 % / 66.2 % | RKL: 48.0 % / 70.4 % |
-| ICX (Xeon Gold 6314U) | 1867: 85.6 %, 3.7 % | 1869: 88.2 %, 3.3 % | `icelake-server`: 54.7 % / 70.1 % | ICL: 78.7 % / 84.8 % |
+| ZEN3 (Ryzen 7 7735U, Zen 3+) | 1956 loops: 86.3 %, 3.7 % | 1895: 89.1 %, 3.8 % | `znver3`: 56.0 % / 71.3 % | — |
+| ADL-P (Core i7-12650H, P-core) | 1923: 90.8 %, 2.6 % | 1837: 92.1 %, 3.5 % | `alderlake`: 33.8 % / 66.2 % | RKL: 48.0 % / 70.4 % |
+| ICX (Xeon Gold 6314U) | 1867: 86.0 %, 3.6 % | 1869: 88.6 %, 3.3 % | `icelake-server`: 54.7 % / 70.1 % | ICL: 78.7 % / 84.8 % |
 
 The random held-out sets no longer discriminate between model variants (rounds 7-10 moved them by tenths of a point), so further
 model work starts from measured real loops and an identified mechanism; the measured sets now guard what exists. The suite

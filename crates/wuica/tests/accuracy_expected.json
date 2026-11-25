@@ -6,87 +6,87 @@
   "scores": {
     "bhive5 ADL-P": {
       "loops": 1896,
-      "within5": 1690,
-      "within10": 1756,
+      "within5": 1692,
+      "within10": 1770,
       "within20": 1806,
-      "mape": 3.1751539783376033
+      "mape": 3.8988741858213967
     },
     "bhive5 ICX": {
       "loops": 1928,
-      "within5": 1595,
-      "within10": 1730,
-      "within20": 1868,
-      "mape": 3.0439923360758048
+      "within5": 1578,
+      "within10": 1731,
+      "within20": 1867,
+      "mape": 3.01422945556561
     },
     "bhive5 ZEN3": {
       "loops": 1941,
-      "within5": 1649,
-      "within10": 1702,
-      "within20": 1813,
-      "mape": 3.9124877379794323
+      "within5": 1666,
+      "within10": 1713,
+      "within20": 1815,
+      "mape": 3.7643740566335597
     },
     "bhive6 ADL-P": {
       "loops": 1837,
-      "within5": 1638,
-      "within10": 1681,
-      "within20": 1728,
-      "mape": 3.6180164414787153
+      "within5": 1640,
+      "within10": 1691,
+      "within20": 1731,
+      "mape": 3.5175523594772464
     },
     "bhive6 ICX": {
       "loops": 1869,
-      "within5": 1533,
-      "within10": 1649,
-      "within20": 1798,
-      "mape": 3.2859654994880336
+      "within5": 1519,
+      "within10": 1655,
+      "within20": 1799,
+      "mape": 3.297248357530266
     },
     "bhive6 ZEN3": {
       "loops": 1895,
-      "within5": 1623,
-      "within10": 1682,
-      "within20": 1759,
-      "mape": 3.9312810788100365
+      "within5": 1628,
+      "within10": 1688,
+      "within20": 1762,
+      "mape": 3.8249294874408437
     },
     "holdout7 ADL-P": {
       "loops": 1933,
-      "within5": 1608,
+      "within5": 1602,
       "within10": 1757,
-      "within20": 1871,
-      "mape": 2.7989619621455804
+      "within20": 1872,
+      "mape": 2.8018616810931913
     },
     "holdout7 ICX": {
       "loops": 1879,
-      "within5": 1325,
-      "within10": 1612,
-      "within20": 1837,
-      "mape": 3.9250180245997885
+      "within5": 1328,
+      "within10": 1615,
+      "within20": 1841,
+      "mape": 3.890053359541747
     },
     "holdout7 ZEN3": {
       "loops": 1960,
-      "within5": 1472,
-      "within10": 1659,
-      "within20": 1840,
-      "mape": 4.175198331007013
+      "within5": 1487,
+      "within10": 1675,
+      "within20": 1862,
+      "mape": 3.957048053023654
     },
     "holdout8 ADL-P": {
       "loops": 1923,
-      "within5": 1612,
-      "within10": 1745,
+      "within5": 1609,
+      "within10": 1746,
       "within20": 1866,
-      "mape": 2.6038349887912977
+      "mape": 2.6078116113117202
     },
     "holdout8 ICX": {
       "loops": 1867,
-      "within5": 1315,
-      "within10": 1599,
-      "within20": 1833,
-      "mape": 3.7259905150740114
+      "within5": 1322,
+      "within10": 1606,
+      "within20": 1839,
+      "mape": 3.624989676611153
     },
     "holdout8 ZEN3": {
       "loops": 1956,
-      "within5": 1495,
-      "within10": 1677,
-      "within20": 1855,
-      "mape": 3.817831844334156
+      "within5": 1504,
+      "within10": 1688,
+      "within20": 1862,
+      "mape": 3.697504100692807
     }
   }
 }

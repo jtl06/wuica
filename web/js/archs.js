@@ -30,9 +30,9 @@ export const PROTOTYPE = 'prototype';
 // real-code blocks, the "after" rows of docs/ACCURACY.md (tests-js/web_details.mjs checks that they agree).
 export const ACCURACY_URL = 'https://github.com/jtl06/wuica/blob/main/docs/ACCURACY.md';
 export const ACCURACY = Object.freeze({
-  ZEN3: { random: 85.7, real: 88.8 },
-  'ADL-P': { random: 90.7, real: 91.5 },
-  ICX: { random: 85.6, real: 88.2 },
+  ZEN3: { random: 86.3, real: 89.1 },
+  'ADL-P': { random: 90.8, real: 92.1 },
+  ICX: { random: 86.0, real: 88.6 },
 });
 // "within 10%: 84% random · 89% real code", or '' for a model without numbers
 export function accuracyNote(key) {
