@@ -4,6 +4,8 @@
 // (`InputError: ...`), which the module must report with the same text.
 // Usage: node tests-js/analyze_fixtures.mjs [EVERY_NTH=7] [WASM]
 // WUICA_DETAILS=1: the requests ask for `details` (docs/WASM-API.md); the rest of the response must be the same.
+// The `-json` trace: of the sampled cases that have one, every WUICA_TRACE_EVERY-th (default 10; 0: none) is also run with
+// `includeTrace`, and the response's `trace` must equal it (numbers by value, the order of object keys ignored, as jsoncmp::diff).
 import fs from 'node:fs'; import zlib from 'node:zlib'; import readline from 'node:readline';
 const every = Number(process.argv[2] || 7);
 // WUICA_SHARD=k/n (scripts/check.sh runs shards in parallel): only the k-th of every n sampled cases
@@ -29,17 +31,34 @@ if (!fs.existsSync(TABLES.dir)) throw new Error(`${TABLES.dir} is missing: run w
 for (const f of fs.readdirSync(TABLES.dir).filter((f) => f.endsWith(TABLES.ext))) { const r = call(TABLES.fn, f.slice(0, -TABLES.ext.length), (TABLES.gz ? zlib.gunzipSync(fs.readFileSync(`${TABLES.dir}/${f}`)) : fs.readFileSync(`${TABLES.dir}/${f}`))); if (!r.ok) throw new Error(JSON.stringify(r)); }
 const tLoad = performance.now() - t0;
 const strip = s => s.replace(/\x1b\]8;;.*?\x07/g, '');
-let n = 0, bad = 0, refErr = 0, i = 0, tAnalyze = 0;
+let n = 0, bad = 0, refErr = 0, i = 0, tAnalyze = 0, traceI = 0, traces = 0;
+const traceEvery = Number(process.env.WUICA_TRACE_EVERY ?? 10);
+// the first difference of two JSON values (numbers by value, key order ignored), or null
+function jsonDiff(a, b, path = '') {
+  if (typeof a === 'number' && typeof b === 'number') return a === b ? null : `${path}: ${a} != ${b}`;
+  if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return a === b ? null : `${path}: ${JSON.stringify(a)} != ${JSON.stringify(b)}`;
+  if (Array.isArray(a) !== Array.isArray(b)) return `${path}: array vs object`;
+  if (Array.isArray(a)) {
+    if (a.length !== b.length) return `${path}: length ${a.length} != ${b.length}`;
+    for (let k = 0; k < a.length; k++) { const d = jsonDiff(a[k], b[k], `${path}[${k}]`); if (d) return d; }
+    return null;
+  }
+  const ka = Object.keys(a), kb = Object.keys(b);
+  if (ka.length !== kb.length || ka.some((k) => !(k in b))) return `${path}: keys ${ka.sort()} != ${kb.sort()}`;
+  for (const k of ka) { const d = jsonDiff(a[k], b[k], `${path}.${k}`); if (d) return d; }
+  return null;
+}
 for (const set of ['sim_fixtures', 'extra_sim_fixtures']) {
   const rl = readline.createInterface({ input: fs.createReadStream(`fixtures/generated/${set}.jsonl.gz`).pipe(zlib.createGunzip()), crlfDelay: Infinity });
   for await (const line of rl) {
     if (i++ % every || ((i - 1) / every) % shards !== shard) continue;
-    // the large `json` field (the trace) is not needed: cut it off before parsing
+    // the large `json` field (the trace) is only parsed for the cases whose trace is compared
     const cut = line.indexOf(', "json": ');
-    const c = JSON.parse(cut < 0 ? line : line.slice(0, cut) + '}');
+    const withTrace = cut >= 0 && traceEvery > 0 && traceI++ % traceEvery === 0;
+    const c = JSON.parse(cut < 0 || withTrace ? line : line.slice(0, cut) + '}');
     const t = performance.now();
     let r;
-    try { r = call('wuica_analyze', JSON.stringify({ hex: c.hex, arch: c.arch, ...c.options, ...details })); }
+    try { r = call('wuica_analyze', JSON.stringify({ hex: c.hex, arch: c.arch, ...c.options, ...details, ...(withTrace ? { includeTrace: true } : {}) })); }
     catch (err) { r = { error: 'trap: ' + err.message }; }
     tAnalyze += performance.now() - t;
     if (c.error) {
@@ -49,9 +68,14 @@ for (const set of ['sim_fixtures', 'extra_sim_fixtures']) {
       continue;
     }
     n++;
-    if (r.error || r.tp !== c.TP || r.text !== strip(c.stdout)) { bad++; if (bad <= 5) console.log('differs:', c.file, c.arch, JSON.stringify(c.options), r.error || r.tp); }
+    if (r.error || r.tp !== c.TP || r.text !== strip(c.stdout)) { bad++; if (bad <= 5) console.log('differs:', c.file, c.arch, JSON.stringify(c.options), r.error || r.tp); continue; }
+    if (withTrace) {
+      traces++;
+      const d = jsonDiff(r.trace, c.json);
+      if (d) { bad++; if (bad <= 5) console.log('trace differs:', c.file, c.arch, JSON.stringify(c.options), d.slice(0, 300)); }
+    }
   }
 }
-console.log(`${n} cases compared (every ${every}th), ${bad} differ; ${refErr} input errors of the reference checked`);
+console.log(`${n} cases compared (every ${every}th), ${bad} differ; ${refErr} input errors of the reference checked; ${traces} traces compared`);
 console.log(`loading all tables (${TABLES.ext}): ${tLoad.toFixed(0)} ms; analysis: ${(tAnalyze / (n + refErr)).toFixed(2)} ms per case`);
 process.exit(bad ? 1 : 0);
