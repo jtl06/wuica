@@ -368,7 +368,7 @@ try {
       // (a timeout says what the view shows instead: its state, its text and the open tab)
       await until(() => document.querySelector('#deps .dp-body')?.dataset.state === 'done', 60000).catch((e) => {
         const d = document.querySelector('#deps .dp-body');
-        throw new Error(`${e.message} [deps: state ${d?.dataset.state}, hidden ${document.getElementById('deps')?.hidden}, text ${JSON.stringify((d?.textContent ?? '').slice(0, 200))}, tabs ${[...document.querySelectorAll('.view-tab')].map((t) => t.dataset.tab + (t.getAttribute('aria-selected') === 'true' ? '*' : '')).join(' ')}]`);
+        throw new Error(e.message + ' [deps: state ' + d?.dataset.state + ', hidden ' + document.getElementById('deps')?.hidden + ', text ' + JSON.stringify((d?.textContent ?? '').slice(0, 200)) + ', tabs ' + [...document.querySelectorAll('.view-tab')].map((t) => t.dataset.tab + (t.getAttribute('aria-selected') === 'true' ? '*' : '')).join(' ') + ']');
       });
       const deps = [...document.querySelectorAll('.dp-node')].map((n) => n.getAttribute('aria-label'));
       [...document.querySelectorAll('.view-tab')].find((b) => b.dataset.tab === 'bytes')?.click();
