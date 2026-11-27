@@ -540,7 +540,7 @@ function rankLoops(fn) {
     }
     // (its depth: the loops around it; not a span with a ret, which is no loop: loop-find.js leaves those out)
     const depth = 1 + loops.filter((o) => o !== l && o.start <= l.start && o.end >= l.end && !hasRet(o)).length;
-    return { inner: l.inner, depth, begin: l.start, end: l.end, instructions, vector: { width, count } };
+    return { inner: l.inner, depth, begin: l.start, end: l.end, instructions, vector: { width, count }, remainderOf: /** @type {number[]} */ ([]) };
   });
   // the remainder loops, as loop-find.js finds them (isRemainder), on the function's items (item indices as lines)
   const text = { instrs: fn.items.flatMap((it, k) => (it.kind === 'instr' ? [{ line: k, mnemonic: it.mnemonic, operands: it.operands.replace(/\s*#.*$/, ''), body: it.text,
