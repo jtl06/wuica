@@ -93,6 +93,26 @@ const j = JSON.stringify;
     check(pick(t) === now && p.auto === true && pick(t, LEGACY_AUTO) === before && preparePaste(t, { loop: LEGACY_AUTO }).auto === false,
       `default loop: ${file}: ${what}`, `${pick(t)} (the first: ${pick(t, LEGACY_AUTO)})`);
   }
+  // remainder loops (isRemainder): a loop that continues another's counter to the same bound after it stopped is not the
+  // default. clang's tail of a 2-lane FNV (unrolled ×8: 27 instructions) is the remainder of the 13-instruction main
+  // loop, in -S and in objdump; so is fnv_v2's tail of its 4-lane loop (dot4: the scalar tail of the 4-accumulator loop)
+  const tails = [['clang-fnv2.O2.haswell.s', '.LBB0_10', '.LBB0_7'], ['clang-fnv2.O2.haswell.objdump.txt', '0x30', '0xb0'], ['clang-dot4.O2.skylake.s', '.LBB0_11', '.LBB0_8']];
+  for (const [f, main, tail] of tails) {
+    const t = D(f), p = preparePaste(t);
+    const L = findLoops(scan(p.objdump ? fromObjdump(leadingSemicolons(t)).text : leadingSemicolons(t)));
+    const lab = (l) => (l.label.startsWith('.Lwuica_a') ? `0x${l.label.slice(9)}` : l.label);
+    const rel = L.flatMap((b) => b.remainderOf.map((at) => `${lab(L.find((a) => a.begin === at))}>${lab(b)}`));
+    check(pick(t) === main && j(rel) === j([`${main}>${tail}`]), `remainder: ${f}: ${tail} continues ${main}, which is the default`, j([pick(t), rel]));
+  }
+  // not remainders: a search loop then the work from where it stopped (the search has a second exit); a second loop
+  // continuing an index the first advances once per 4 elements (3/4 of n is left); the defaults as before
+  for (const [f, want] of [['clang-search.O2.haswell.s', '.LBB0_12'], ['clang-pack.O2.haswell.s', '.LBB0_6']]) {
+    const t = D(f);
+    check(pick(t) === want && findLoops(scan(leadingSemicolons(t))).every((l) => l.remainderOf.length === 0), `remainder: ${f}: no remainder, the default ${want}`, pick(t));
+  }
+  // a small constant trip count is not used: in this 8x8 transform (its loops kept by a pragma) the two 8-iteration loops
+  // are the work and the coefficient copy (a count from the stream) is not; hist4's merge loop has the same facts
+  check(pick(D('clang-idct.O2.haswell.s')) === '.LBB0_11', 'default loop: an 8x8 transform of two 8-iteration loops beats the copy loop before it', pick(D('clang-idct.O2.haswell.s')));
   // the list and its indices are as before: -loop N, the page's lp=N, the API's loop
   const sx = preparePaste(D('clang-saxpy.O3.haswell.s'));
   check(j(sx.loops.map((l) => l.label)) === j(['.LBB0_16', '.LBB0_18', '.LBB0_8', '.LBB0_12']) && sx.choice === 2 && pick(D('clang-saxpy.O3.haswell.s'), 0) === '.LBB0_16'
@@ -112,6 +132,13 @@ const j = JSON.stringify;
     && defaultLoop([{ ...L0(1, 0, 0, 5), function: null }, { ...L0(9, 512, 9, 60) }]) === 1, 'default loop: loops in no function are one group');
   const u8 = preparePaste(fs.readFileSync(new URL('tests-js/fixtures/cli/count_u8.hsw.s', root), 'utf8'));
   check(u8.loops[u8.choice].depth === 2 && u8.loops[u8.choice].inner, 'default loop: only the deepest innermost loops (clang notes)', j(u8.loops));
+  // clang's notes of a 3-deep nest run over three lines ("Parent Loop BB0_17 Depth=1", "Parent Loop BB0_18 Depth=2",
+  // "=>    This Inner Loop Header: Depth=3"): the k loop is 3 deep and the default (not the 2-deep loops clearing C, as
+  // when only the first two lines were read); the list keeps the order it had then (listDepth), so an index names
+  // the loop it named
+  const mm3 = preparePaste(D('clang-mm3.O2.haswell.s'));
+  check(j(mm3.loops.map((l) => `${l.label}:${l.depth}`)) === j(['.LBB0_8:2', '.LBB0_11:2', '.LBB0_4:2', '.LBB0_17:1', '.LBB0_28:3', '.LBB0_25:3', '.LBB0_18:2', '.LBB0_2:1'])
+    && mm3.choice === 4 && mm3.auto, 'default loop: a 3-deep nest: its depth from the whole note; the list in its old order', j(mm3.loops.map((l) => `${l.label}:${l.depth}`)));
   // the rule on made-up loops: width, then vector instructions, then instructions, then the first; only the first group
   const L = (begin, width, count, instructions, depth = 1, inner = true) => ({ begin, inner, depth, instructions, vector: { width, count } });
   check(defaultLoop([L(1, 256, 2, 5), L(9, 128, 20, 40)]) === 0 && defaultLoop([L(1, 256, 2, 5), L(9, 256, 3, 4)]) === 1 && defaultLoop([L(1, 0, 0, 5), L(9, 0, 0, 6)]) === 1

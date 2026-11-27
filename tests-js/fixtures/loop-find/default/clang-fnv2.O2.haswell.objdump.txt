@@ -1,0 +1,77 @@
+
+fnv2.o:	file format elf64-x86-64
+
+Disassembly of section .text:
+
+0000000000000000 <fnv2>:
+       0:      	movabsq	$-0x340d631b7bdddcdb, %rax # imm = 0xCBF29CE484222325
+       a:      	movabsq	$0x100000001b3, %rcx    # imm = 0x100000001B3
+      14:      	cmpq	$0x2, %rsi
+      18:      	jae	0x29 <fnv2+0x29>
+      1a:      	movabsq	$0x63d7d6ad8c66696c, %rdx # imm = 0x63D7D6AD8C66696C
+      24:      	xorl	%r8d, %r8d
+      27:      	jmp	0x6d <fnv2+0x6d>
+      29:      	leaq	-0x1(%rax), %r9
+      2d:      	xorl	%r8d, %r8d
+      30:      	movq	%r8, %r10
+      33:      	movzbl	(%rdi,%r8), %edx
+      38:      	xorq	%rdx, %rax
+      3b:      	imulq	%rcx, %rax
+      3f:      	movzbl	0x1(%rdi,%r8), %r8d
+      45:      	movq	%r9, %rdx
+      48:      	xorq	%r8, %rdx
+      4b:      	movq	%rdx, %r9
+      4e:      	imulq	%rcx, %r9
+      52:      	leaq	0x2(%r10), %r8
+      56:      	addq	$0x4, %r10
+      5a:      	cmpq	%rsi, %r10
+      5d:      	jbe	0x30 <fnv2+0x30>
+      5f:      	movabsq	$0x30000000519, %r9     # imm = 0x30000000519
+      69:      	imulq	%r9, %rdx
+      6d:      	movq	%r8, %r9
+      70:      	subq	%rsi, %r9
+      73:      	jae	0x120 <fnv2+0x120>
+      79:      	movl	%esi, %r10d
+      7c:      	subl	%r8d, %r10d
+      7f:      	andl	$0x7, %r10d
+      83:      	je	0xa4 <fnv2+0xa4>
+      85:      	nopw	%cs:(%rax,%rax)
+      8f:      	nop
+      90:      	movzbl	(%rdi,%r8), %r11d
+      95:      	xorq	%r11, %rax
+      98:      	imulq	%rcx, %rax
+      9c:      	incq	%r8
+      9f:      	decq	%r10
+      a2:      	jne	0x90 <fnv2+0x90>
+      a4:      	cmpq	$-0x8, %r9
+      a8:      	ja	0x120 <fnv2+0x120>
+      aa:      	nopw	(%rax,%rax)
+      b0:      	movzbl	(%rdi,%r8), %r9d
+      b5:      	xorq	%rax, %r9
+      b8:      	imulq	%rcx, %r9
+      bc:      	movzbl	0x1(%rdi,%r8), %eax
+      c2:      	xorq	%r9, %rax
+      c5:      	imulq	%rcx, %rax
+      c9:      	movzbl	0x2(%rdi,%r8), %r9d
+      cf:      	xorq	%rax, %r9
+      d2:      	imulq	%rcx, %r9
+      d6:      	movzbl	0x3(%rdi,%r8), %eax
+      dc:      	xorq	%r9, %rax
+      df:      	imulq	%rcx, %rax
+      e3:      	movzbl	0x4(%rdi,%r8), %r9d
+      e9:      	xorq	%rax, %r9
+      ec:      	imulq	%rcx, %r9
+      f0:      	movzbl	0x5(%rdi,%r8), %eax
+      f6:      	xorq	%r9, %rax
+      f9:      	imulq	%rcx, %rax
+      fd:      	movzbl	0x6(%rdi,%r8), %r9d
+     103:      	xorq	%rax, %r9
+     106:      	imulq	%rcx, %r9
+     10a:      	movzbl	0x7(%rdi,%r8), %eax
+     110:      	xorq	%r9, %rax
+     113:      	imulq	%rcx, %rax
+     117:      	addq	$0x8, %r8
+     11b:      	cmpq	%r8, %rsi
+     11e:      	jne	0xb0 <fnv2+0xb0>
+     120:      	xorq	%rdx, %rax
+     123:      	retq

@@ -177,7 +177,7 @@ function fakeFetch(routes) {
     'the preselected loop: the vector loop, not the peel loop first in the code', j(saLoops.map(saText)));
   // the import preselects what a paste of the same listing analyzes (loop-find.js): the function of the first deepest loop,
   // its default loop. The texts as Compiler Explorer's text output has them (no comments); several functions among them
-  for (const f of ['dogfood/multi.s', 'profiles/clang23-sum.s', 'loop-find/default/clang-saxpy.O3.haswell.s', 'loop-find/default/gcc-scale_add.O2.haswell.s', 'cli/count_u8.hsw.s']) {
+  for (const f of ['dogfood/multi.s', 'profiles/clang23-sum.s', 'loop-find/default/clang-saxpy.O3.haswell.s', 'loop-find/default/gcc-scale_add.O2.haswell.s', 'cli/count_u8.hsw.s', 'loop-find/default/clang-fnv2.O2.haswell.s']) {
     const text = fs.readFileSync(new URL(`../tests-js/fixtures/${f}`, import.meta.url), 'utf8');
     const p = preparePaste(text);
     const s0 = scan(leadingSemicolons(normalizeText(text)));
