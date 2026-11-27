@@ -254,20 +254,21 @@ function listed(instrs, k) {
   check(JSON.stringify(decodeState('#' + f)) === JSON.stringify({ ...DEFAULT_STATE, ...s }) && JSON.stringify(decodeState(f)) === JSON.stringify({ ...DEFAULT_STATE, ...s }), 'url: round trip of every field');
   const h = { ...DEFAULT_STATE, mode: 'hex', text: '48 01 d8\n   0:\t49 ff cf\tdec r15\n', arch: 'ZEN3' };
   check(JSON.stringify(decodeState(encodeState(h))) === JSON.stringify(h) && !encodeState(h).includes('m=') && !encodeState(h).includes('ip='), 'url: defaults are left out (hex: no m=)');
-  // assembly is the default input, but a link without m= is hex (links made when hex was the default keep their meaning)
+  // assembly is the default input, but a link without m= is hex (links made when hex was the default keep their meaning);
+  // assembly with the default loop writes lp=auto (a link without lp= is from before loop-find.js's defaultLoop: below)
   const a = { ...DEFAULT_STATE, text: 'add rax, 1\n' };
-  check(encodeState(a) === 'v=1&m=asm&c=YWRkIHJheCwgMQo' && JSON.stringify(decodeState(encodeState(a))) === JSON.stringify(a) && decodeState('v=1&c=OTA').mode === 'hex'
+  check(encodeState(a) === 'v=1&m=asm&lp=auto&c=YWRkIHJheCwgMQo' && JSON.stringify(decodeState(encodeState(a))) === JSON.stringify(a) && decodeState('v=1&c=OTA').mode === 'hex'
     && DEFAULT_STATE.mode === 'asm' && encodeState({ ...DEFAULT_STATE, mode: 'hex' }) === 'v=1&m=hex' && decodeState('v=1&m=hex').mode === 'hex', 'url: assembly is the default; links without m= are hex', encodeState(a));
   check(decodeState(encodeState({ ...DEFAULT_STATE, mode: 'hex', syntax: 'att', text: 'x' })).syntax === 'intel', 'url: the syntax is only kept for assembly');
   const evil = decodeState('v=1&m=evil&s=x&a=%3Cscript%3E&al=99&mi=-5&mc=1e9&ip=nope&sfe=yes&c=!!!&zzz=1');
   check(JSON.stringify(evil) === JSON.stringify({ ...DEFAULT_STATE, mode: 'hex', alignmentOffset: 63 }), 'url: bad values fall back to the defaults (no m=asm: hex)', JSON.stringify(evil));
   // the checked CPUs: a short list; the focused CPU (a=) is one of them; old links: one CPU, or all with cmpcpu=1
   const m = { ...DEFAULT_STATE, arch: 'ZEN3', cpus: 'SKL,ZEN3,ADL-P', text: 'nop\n' };
-  check(encodeState(m) === 'v=1&m=asm&a=ZEN3&as=SKL,ZEN3,ADL-P&c=bm9wCg' && JSON.stringify(decodeState(encodeState(m))) === JSON.stringify(m), 'url: the checked CPUs round trip', encodeState(m));
+  check(encodeState(m) === 'v=1&m=asm&a=ZEN3&as=SKL,ZEN3,ADL-P&lp=auto&c=bm9wCg' && JSON.stringify(decodeState(encodeState(m))) === JSON.stringify(m), 'url: the checked CPUs round trip', encodeState(m));
   // the default CPU focused, with an earlier CPU checked: a= is needed (without it the first of the list is focused)
   const d = { ...DEFAULT_STATE, cpus: 'HSW,SKL', text: 'nop\n' };
-  check(encodeState(d) === 'v=1&m=asm&a=SKL&as=HSW,SKL&c=bm9wCg' && JSON.stringify(decodeState(encodeState(d))) === JSON.stringify(d)
-    && encodeState({ ...d, cpus: 'SKL,ZEN3' }) === 'v=1&m=asm&as=SKL,ZEN3&c=bm9wCg', 'url: SKL focused with HSW checked round trips', encodeState(d));
+  check(encodeState(d) === 'v=1&m=asm&a=SKL&as=HSW,SKL&lp=auto&c=bm9wCg' && JSON.stringify(decodeState(encodeState(d))) === JSON.stringify(d)
+    && encodeState({ ...d, cpus: 'SKL,ZEN3' }) === 'v=1&m=asm&as=SKL,ZEN3&lp=auto&c=bm9wCg', 'url: SKL focused with HSW checked round trips', encodeState(d));
   check(encodeState({ ...DEFAULT_STATE, arch: 'ZEN3', cpus: 'ZEN3' }) === 'v=1&m=asm&a=ZEN3' && encodeState({ ...DEFAULT_STATE, cpus: 'all' }) === 'v=1&m=asm&as=all', 'url: one CPU needs no list; all of them is "all"');
   check(decodeState('v=1&as=HSW,ICL').arch === 'HSW' && decodeState('v=1&as=HSW,ICL').cpus === 'HSW,ICL' && decodeState('v=1&a=ZEN3').cpus === '' && decodeState('v=1&a=ZEN3&cmpcpu=1').cpus === 'all',
     'url: without a=, the first checked CPU is focused; an old link with the table of all CPUs open checks them all');
@@ -275,6 +276,17 @@ function listed(instrs, k) {
   check(decodeState('v=1&a=%E0%A4%A').arch === 'SKL' && decodeState('v=1&c=_w').text === '', 'url: malformed escapes and invalid UTF-8');
   check(decodeState('v=1&mi=0&mc=99999999').minIterations === 1 && decodeState('v=1&mi=0&mc=99999999').minCycles === 100000, 'url: numbers are clamped');
   check(clampInt('12', [0, 63], 0) === 12 && clampInt('', [0, 63], 7) === 7 && clampInt('1.5', [0, 63], 7) === 7 && clampInt(64, [0, 63], 0) === 63, 'url: clampInt');
+  // the loop of a link. Before loop-find.js's defaultLoop, the default loop was the first of the list and a link left it
+  // out: a link with assembly and without lp= opens on that loop (LEGACY_AUTO, 'auto-v1'), and keeps that meaning when it
+  // is written again; links made since say lp=auto. Explicit picks (an index, whole) are as they were.
+  const old = 'v=1&m=asm&c=YWRkIHJheCwgMQo', oldB = 'v=1&m=asm&c=bm9wCg&ab=1&bm=asm&bc=bm9wCg';
+  check(decodeState(old).loop === 'auto-v1' && encodeState(decodeState(old)) === old && decodeState(old.replace('&c=', '&lp=auto&c=')).loop === 'auto'
+    && decodeState(old.replace('&c=', '&lp=2&c=')).loop === 2 && decodeState(old.replace('&c=', '&lp=whole&c=')).loop === 'whole' && decodeState(old.replace('&c=', '&lp=x&c=')).loop === 'auto',
+    'url: an old link without lp= keeps its loop (the first of the list); lp=auto, an index and whole as written', JSON.stringify(decodeState(old)));
+  check(decodeState(oldB).bLoop === 'auto-v1' && encodeState(decodeState(oldB)) === oldB && decodeState(oldB + '&blp=auto').bLoop === 'auto' && decodeState(oldB + '&blp=1').bLoop === 1
+    && encodeState({ ...DEFAULT_STATE, text: 'nop\n', ab: true, bMode: 'asm', bText: 'nop\n' }) === 'v=1&m=asm&lp=auto&c=bm9wCg&ab=1&bm=asm&blp=auto&bc=bm9wCg', 'url: the same for side B', encodeState(decodeState(oldB)));
+  check(decodeState('v=1&c=OTA').loop === 'auto' && decodeState('v=1&m=asm&s=att').loop === 'auto' && encodeState({ ...DEFAULT_STATE, syntax: 'att' }) === 'v=1&m=asm&s=att'
+    && encodeState({ ...DEFAULT_STATE, mode: 'hex', text: '90' }) === 'v=1&c=OTA', 'url: no loop to keep without assembly (machine code, no text): auto, and no lp=');
   const big = 'x'.repeat(100000);
   check(decodeState(encodeState({ ...DEFAULT_STATE, text: big })).text === big, 'url: a large text');
 }
