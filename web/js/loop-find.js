@@ -299,9 +299,12 @@ export const isText = (args) => { const n = sectionName(args); return n === '.te
 export function scan(text) {
   const raw = String(text).split('\n');
   const lines = blankBlockComments(String(text)).split('\n');
-  // clang's loop notes on a label's line or the comment line after it ("# =>This Inner Loop Header: Depth=2",
+  // clang's loop notes on a label's line and the comment lines after it ("# =>This Inner Loop Header: Depth=2",
   // "#   in Loop: Header=BB0_4 Depth=1"): label -> text
   const notes = new Map();
+  // the note as the label's line and the one line after it (what was read before deeper nests' notes were: the list's
+  // order keeps it, findLoops)
+  const shortNotes = new Map();
   const labels = new Map(), symbols = new Set(), instrs = [], numeric = [], functions = new Set(), data = [];
   let inText = true, prev = true, directives = 0;
   const stack = [];
@@ -316,8 +319,13 @@ export function scan(text) {
         if (/^\d+$/.test(name)) numeric.push({ name, line: i + 1, inText });
         else if (!labels.has(name)) {
           labels.set(name, { line: i + 1, inText });
-          const note = `${raw[i] ?? ''} ${/^\s*#/.test(raw[i + 1] ?? '') ? raw[i + 1] : ''}`;
+          // (the note's lines that follow: as many as the nest is deep, "#   Parent Loop BB0_1 Depth=1", ...,
+          // "# =>    This Inner Loop Header: Depth=3")
+          let note = raw[i] ?? '';
+          for (let k = i + 1; k < raw.length && /^\s*#(?!\s*%bb\.).*(?:Loop|Depth=)/.test(raw[k]); k++) note += ` ${raw[k]}`;
           if (/Loop Header|in Loop:|Parent Loop/.test(note)) notes.set(name, note);
+          const short = `${raw[i] ?? ''} ${/^\s*#/.test(raw[i + 1] ?? '') ? raw[i + 1] : ''}`;
+          if (/Loop Header|in Loop:|Parent Loop/.test(short)) shortNotes.set(name, short);
         }
       }
       const body = st.text.slice(lead).trim();
@@ -356,7 +364,7 @@ export function scan(text) {
       instrs.push({ line: i + 1, col: st.at + lead, end: st.at + st.text.length, mnemonic, operands, kind, target, body });
     }
   }
-  return { labels, symbols, instrs, numeric, functions, directives, notes, data };
+  return { labels, symbols, instrs, numeric, functions, directives, notes, shortNotes, data };
 }
 
 // The line a branch target refers to (a label, or a numeric label "1b" / "1f" seen from `line`), or null.
@@ -408,16 +416,22 @@ export function findLoops(s) {
     merged = [...groups.values()].map((g) => {
       const header = `.L${g.key}`;
       const label = s.labels.has(header) ? header : g.label;
-      const note = s.notes.get(label) ?? '';
-      const d = /Loop Header: Depth=(\d+)/.exec(note) ?? /Depth=(\d+)/.exec(note);
-      return { begin: g.begin, end: g.end, label, ...(d ? { clangDepth: Number(d[1]) } : {}) };
+      const depthOf = (note) => { const d = /Loop Header: Depth=(\d+)/.exec(note) ?? /Depth=(\d+)/.exec(note); return d ? Number(d[1]) : undefined; };
+      return { begin: g.begin, end: g.end, label, clangDepth: depthOf(s.notes.get(label) ?? ''), shortDepth: depthOf(s.shortNotes?.get(label) ?? '') };
     });
   }
   for (const l of merged) {
     l.inner = !merged.some((o) => o !== l && o.begin >= l.begin && o.end <= l.end && (o.begin !== l.begin || o.end !== l.end));
     // nesting depth: 1 for a loop in no other (clang's Depth when it says)
-    l.depth = l.clangDepth ?? 1 + merged.filter((o) => o !== l && o.begin <= l.begin && o.end >= l.end && (o.begin !== l.begin || o.end !== l.end)).length;
+    const nesting = 1 + merged.filter((o) => o !== l && o.begin <= l.begin && o.end >= l.end && (o.begin !== l.begin || o.end !== l.end)).length;
+    l.depth = l.clangDepth ?? nesting;
+    // the depth the list is ordered by: as the first two lines of clang's note give it. A loop three or more deep has its
+    // "Inner Loop Header: Depth=N" on a later line, which was not read before: its listDepth is then the first line's
+    // Depth (1), so the list keeps the order it had and an index (-loop N, lp=N in a link, the API's loop) names the
+    // loop it named. depth, and the default (defaultLoop), use the note's real Depth.
+    l.listDepth = l.shortDepth ?? nesting;
     delete l.clangDepth;
+    delete l.shortDepth;
     l.instructions = s.instrs.filter((x) => x.line >= l.begin && x.line <= l.end).length;
     // the function it is in: the last label before it that is not local
     let fname = null, at = -1;
@@ -434,9 +448,10 @@ export function findLoops(s) {
     }
     l.vector = { width, count };
   }
-  // the order of the list (the indices of -loop N, lp= in the page's links, the API's loop): the innermost and deepest
-  // first, then in the order of the code. Which of them is analyzed by default is defaultLoop's choice, not the first.
-  return merged.sort((a, b) => Number(b.inner) - Number(a.inner) || b.depth - a.depth || a.begin - b.begin || a.end - b.end);
+  // the order of the list (the indices of -loop N, lp= in the page's links, the API's loop): the innermost first, the
+  // deepest of them first (by listDepth), then in the order of the code. Which of them is analyzed by default is
+  // defaultLoop's choice, not the first.
+  return merged.sort((a, b) => Number(b.inner) - Number(a.inner) || b.listDepth - a.listDepth || a.begin - b.begin || a.end - b.end);
 }
 
 // ---- the default loop ------------------------------------------------------------------------------------------------
@@ -500,7 +515,10 @@ export function vectorWidth(mnemonic, operands) {
 // The index of the loop analyzed by default (see above) in a list of findLoops (or a part of it), or -1 for none.
 export function defaultLoop(loops) {
   if (!loops.length) return -1;
-  const top = loops[0];
+  // the first of the deepest innermost loops (by depth: the list is ordered by listDepth, findLoops)
+  const inner = loops.some((l) => l.inner) ? loops.filter((l) => l.inner) : loops;
+  const deepest = Math.max(...inner.map((l) => l.depth));
+  const top = /** @type {any} */ (inner.find((l) => l.depth === deepest));
   let best = -1;
   loops.forEach((l, k) => {
     if (l.inner !== top.inner || l.depth !== top.depth || (l.function ?? null) !== (top.function ?? null)) return;

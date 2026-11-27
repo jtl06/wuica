@@ -14,6 +14,7 @@ clang_s dot_sse O2 haswell
 clang_s add3 O2 skylake-avx512
 clang_s scale_add O2 haswell
 clang_s hist4 O2 skylake
+clang_s mm3 O2 haswell
 # the baseline x86-64 (SSE2): scalar double code without VEX (andpd, xorps before cvtsi2sd)
 "$CLANG" $FLAGS -O2 -S rec.c -o clang-rec.O2.x86-64.s
 

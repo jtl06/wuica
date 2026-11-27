@@ -112,6 +112,13 @@ const j = JSON.stringify;
     && defaultLoop([{ ...L0(1, 0, 0, 5), function: null }, { ...L0(9, 512, 9, 60) }]) === 1, 'default loop: loops in no function are one group');
   const u8 = preparePaste(fs.readFileSync(new URL('tests-js/fixtures/cli/count_u8.hsw.s', root), 'utf8'));
   check(u8.loops[u8.choice].depth === 2 && u8.loops[u8.choice].inner, 'default loop: only the deepest innermost loops (clang notes)', j(u8.loops));
+  // clang's notes of a 3-deep nest run over three lines ("Parent Loop BB0_17 Depth=1", "Parent Loop BB0_18 Depth=2",
+  // "=>    This Inner Loop Header: Depth=3"): the k loop is 3 deep and the default (not the 2-deep loops clearing C, as
+  // when only the first two lines were read); the list keeps the order it had then (listDepth), so an index names
+  // the loop it named
+  const mm3 = preparePaste(D('clang-mm3.O2.haswell.s'));
+  check(j(mm3.loops.map((l) => `${l.label}:${l.depth}`)) === j(['.LBB0_8:2', '.LBB0_11:2', '.LBB0_4:2', '.LBB0_17:1', '.LBB0_28:3', '.LBB0_25:3', '.LBB0_18:2', '.LBB0_2:1'])
+    && mm3.choice === 4 && mm3.auto, 'default loop: a 3-deep nest: its depth from the whole note; the list in its old order', j(mm3.loops.map((l) => `${l.label}:${l.depth}`)));
   // the rule on made-up loops: width, then vector instructions, then instructions, then the first; only the first group
   const L = (begin, width, count, instructions, depth = 1, inner = true) => ({ begin, inner, depth, instructions, vector: { width, count } });
   check(defaultLoop([L(1, 256, 2, 5), L(9, 128, 20, 40)]) === 0 && defaultLoop([L(1, 256, 2, 5), L(9, 256, 3, 4)]) === 1 && defaultLoop([L(1, 0, 0, 5), L(9, 0, 0, 6)]) === 1
