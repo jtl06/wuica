@@ -615,8 +615,10 @@ class Wuica {
 
   // An object file (ELF or Mach-O, x86-64; objfile.js) as llvm-objdump -d's text of its code, which analyze() and
   // compare() read as `source` (the objdump path: the loop at its address, exits stubbed, the alignment from it).
-  // -> {code: 0, text, format, functions: [{name, section, address, size}]} or a failure (another architecture says how
-  // to compile for x86-64). `func`: also resolves a -func name (exact, without Mach-O's "_", or a unique part): `func`.
+  // -> {code: 0, text, format, functions: [{name, section, address, size[, symbol]}]} or a failure (another architecture
+  // says how to compile for x86-64). A name the file gives several functions is NAME.0xADDR, with `symbol` the name in
+  // the file (objfile.js uniqueNames). `func`: also resolves a -func name (exact, without Mach-O's "_", or a unique
+  // part; a repeated name is an error that lists the functions): `func`.
   /** @param {Uint8Array} bytes @param {{name?: string, func?: string | null}} [opts] @returns {any} */
   disassemble(bytes, { name = 'input', func = null } = {}) {
     const obj = readObject(bytes);
@@ -634,7 +636,7 @@ class Wuica {
     } catch (e) {
       return failure(CODES.ANALYSIS, `the decoder failed (${e.message})`);
     }
-    return { code: CODES.OK, text, format: obj.format, functions: obj.functions.map(({ name: n, section, address, size }) => ({ name: n, section, address, size })), ...(resolved !== null ? { func: resolved } : {}) };
+    return { code: CODES.OK, text, format: obj.format, functions: obj.functions.map(({ name: n, section, address, size, symbol }) => ({ name: n, section, address, size, ...(symbol !== undefined ? { symbol } : {}) })), ...(resolved !== null ? { func: resolved } : {}) };
   }
 
   get restarts() { return this.#analyzer.restarts; }
