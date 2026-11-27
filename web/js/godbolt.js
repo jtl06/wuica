@@ -523,12 +523,13 @@ export function bodyRange(fn) {
   return b ? { start: b.begin, end: b.end } : null;
 }
 
-// The loop of a function to preselect, by the default of the page's loop finder (loop-find.js, defaultLoop: among the
-// deepest innermost loops, the widest vector registers, then the most vector instructions, then the most instructions,
-// then the first), or null.
-export function defaultLoopOf(fn) {
+// The loops of a function as loop-find.js ranks them: {loops, ranked: [{inner, depth, begin, instructions, vector}],
+// order: indices of the loops loop-find.js counts (no span with a ret in it) in its list order (the innermost first, the
+// deepest of them first, then the code's)}
+function rankLoops(fn) {
   const loops = findLoops(fn);
-  const hasRet = (l) => fn.items.slice(l.start, l.end + 1).some((it) => it.kind === 'instr' && /^ret[lqw]?$/.test(it.mnemonic));
+  // a span with a ret inside it is not a loop for loop-find.js (a jump back over a function's exit)
+  const hasRet = (l) => fn.items.slice(l.start + 1, l.end).some((it) => it.kind === 'instr' && /^ret[lqw]?$/.test(it.mnemonic));
   const ranked = loops.map((l) => {
     let width = 0, count = 0, instructions = 0;
     for (const it of fn.items.slice(l.start, l.end + 1)) {
@@ -541,18 +542,35 @@ export function defaultLoopOf(fn) {
     const depth = 1 + loops.filter((o) => o !== l && o.start <= l.start && o.end >= l.end && !hasRet(o)).length;
     return { inner: l.inner, depth, begin: l.start, instructions, vector: { width, count } };
   });
-  // (findLoops' order: the innermost first; the deepest of them first, as loop-find.js lists them)
-  const order = ranked.map((r, k) => k).sort((a, b) => Number(ranked[b].inner) - Number(ranked[a].inner) || ranked[b].depth - ranked[a].depth || a - b);
+  const order = ranked.map((r, k) => k).filter((k) => !hasRet(loops[k]))
+    .sort((a, b) => Number(ranked[b].inner) - Number(ranked[a].inner) || ranked[b].depth - ranked[a].depth || a - b);
+  return { loops, ranked, order };
+}
+
+// The loop of a function to preselect, by the default of the page's loop finder (loop-find.js, defaultLoop: among the
+// function's deepest innermost loops, the widest vector registers, then the most vector instructions, then the most
+// instructions, then the first), or null.
+export function defaultLoopOf(fn) {
+  const { loops, ranked, order } = rankLoops(fn);
   const k = defaultLoop(order.map((i) => ranked[i]));
   return k < 0 ? null : loops[order[k]];
 }
 
-// What to preselect: the first function with a loop (or the first function), and its default loop (defaultLoopOf; or
-// the function's body without its prologue and epilogue, or the whole function). {fn, start, end, loop}
+// What to preselect, as a paste of the whole listing would analyze it (loop-find.js): the function of the first loop of
+// the list (the first function with an innermost loop at the greatest depth of all), and its default loop
+// (defaultLoopOf); without loops, the first function's body without its prologue and epilogue, or the whole function.
+// {fn, start, end, loop}
 export function defaultSelection(listing) {
-  for (let f = 0; f < listing.functions.length; f++) {
-    const l = defaultLoopOf(listing.functions[f]);
-    if (l) return { fn: f, start: l.start, end: l.end, loop: true };
+  let best = -1, key = null;
+  listing.functions.forEach((f, k) => {
+    const { ranked, order } = rankLoops(f);
+    if (!order.length) return;
+    const top = ranked[order[0]];
+    if (key === null || Number(top.inner) > Number(key.inner) || (top.inner === key.inner && top.depth > key.depth)) { best = k; key = top; }
+  });
+  if (best >= 0) {
+    const l = /** @type {any} */ (defaultLoopOf(listing.functions[best]));
+    return { fn: best, start: l.start, end: l.end, loop: true };
   }
   const fn = listing.functions[0];
   if (!fn) return null;

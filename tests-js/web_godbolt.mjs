@@ -10,6 +10,7 @@ import {
 import { WasmAssembler } from '../web/js/assembler.js';
 import { withRegions } from '../web/js/asm-regions.js';
 import { parseHexInput, toHex } from '../web/js/hex-input.js';
+import { preparePaste, scan, leadingSemicolons, normalizeText } from '../web/js/loop-find.js';
 
 let failed = 0, count = 0;
 function check(cond, what, detail = '') { count++; if (!cond) { failed++; console.log(`FAIL ${what}${detail ? ': ' + detail : ''}`); } }
@@ -174,6 +175,23 @@ function fakeFetch(routes) {
   const saText = (l) => saFn.items.slice(l.start, l.end + 1).filter((it) => it.kind === 'instr').map((it) => it.mnemonic);
   check(saDefault.start === saLoops[1].start && saDefault.end === saLoops[1].end && saText(saDefault).includes('vfmadd213ps') && saText(saLoops[0]).includes('vfmadd213ss') && defaultSelection(sa).start === saDefault.start,
     'the preselected loop: the vector loop, not the peel loop first in the code', j(saLoops.map(saText)));
+  // the import preselects what a paste of the same listing analyzes (loop-find.js): the function of the first deepest loop,
+  // its default loop. The texts as Compiler Explorer's text output has them (no comments); several functions among them
+  for (const f of ['dogfood/multi.s', 'profiles/clang23-sum.s', 'loop-find/default/clang-saxpy.O3.haswell.s', 'loop-find/default/gcc-scale_add.O2.haswell.s', 'cli/count_u8.hsw.s']) {
+    const text = fs.readFileSync(new URL(`../tests-js/fixtures/${f}`, import.meta.url), 'utf8');
+    const p = preparePaste(text);
+    const s0 = scan(leadingSemicolons(normalizeText(text)));
+    const paste = s0.instrs.filter((x) => x.line >= p.pick.begin && x.line <= p.pick.end).map((x) => x.mnemonic);
+    const ce = parseListing({ asm: text.split('\n').map((t) => ({ text: t.replace(/\s*#.*$/, '') })) });
+    const d = defaultSelection(ce);
+    const picked = ce.functions[d.fn].items.slice(d.start, d.end + 1).filter((it) => it.kind === 'instr').map((it) => it.mnemonic);
+    check(d.loop && j(picked) === j(paste) && ce.functions[d.fn].name === p.loops[p.choice].function, `the import and a paste agree: ${f}`, j([ce.functions[d.fn].name, picked.length, p.loops[p.choice].label, paste.length]));
+  }
+  // a nest in the second function: both take it (the deepest loop), not the first function's loop
+  const nest = 'a:\n  mov ecx, 9\n.L1:\n  add rax, 1\n  dec rcx\n  jnz .L1\n  ret\nb:\n.L2:\n  mov ecx, 9\n.L3:\n  vaddps ymm0, ymm0, ymm1\n  dec rcx\n  jnz .L3\n  dec rdx\n  jnz .L2\n  ret\n';
+  const nd = defaultSelection(parseListing({ asm: nest.split('\n').map((text) => ({ text })) }));
+  const np = preparePaste(nest);
+  check(nd.fn === 1 && np.loops[np.choice].label === '.L3' && np.loops[np.choice].function === 'b', 'the import and a paste: the function of the deepest loop', j([nd, np.loops[np.choice]]));
   const ext = extractRange(fn, d.start, d.end, L);
   const parsed = parseHexInput(ext.text);
   check(ext.mode === 'hex' && ext.instructions === 3 && ext.bytes === 9 && ext.endsInBranch && ext.startAddress === 16, 'the block: hex, 3 instructions, 9 bytes, at 0x10', j(ext));
