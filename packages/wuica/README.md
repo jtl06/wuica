@@ -94,9 +94,13 @@ On an Arm Mac, give clang `--target=x86_64-linux-gnu` (wuica analyzes x86-64 cod
   `-raw FILE` (bare machine code).
 - **Object files.** An ELF or Mach-O x86-64 object, executable or shared object is read directly: its code as
   `llvm-objdump -d` prints it (decoded by the analyzer), so `wuica dot.o` and `objdump -d dot.o | wuica` pick the same
-  loop and give the same numbers. `-func NAME` takes the symbol, without Mach-O's `_`, or a unique part of it; `-funcs`
-  lists the functions; `-loops` gives the loops' addresses; `-ffunction-sections` objects work. An arm64 object (what a
-  Mac compiles by default) says so and how to compile for x86-64 (`clang -arch x86_64 -c`, or
+  loop and give the same numbers. `-func NAME` takes the symbol, without Mach-O's `_`, or a unique part of it, and
+  analyzes that function alone (its loop, or its body if it has none); `-funcs` lists the functions; `-loops` gives the
+  loops' addresses; `-ffunction-sections` objects work. A name the file gives several functions (static functions of
+  different source files, gcc's `.cold` parts: any static executable has them) is listed as `NAME.0xADDR`, with its
+  address; `-func NAME` then lists them, and `-func NAME.0xADDR` picks one. Give a large executable a `-func`: with it
+  a 2.6 MB static executable takes 0.2 s, without it the whole file is read, which takes minutes and can fail. An
+  arm64 object (what a Mac compiles by default) says so and how to compile for x86-64 (`clang -arch x86_64 -c`, or
   `--target=x86_64-linux-gnu`); COFF is not supported yet (`llvm-objdump -d f.obj | wuica`).
 - **Several inputs** (`wuica a.s b.s c.o`, a glob, or `-files LIST` with one name per line, `-files -` from stdin):
   one process for all of them, the analyses spread over the threads. One CPU: a row per file (file, loop, TP,
@@ -172,7 +176,7 @@ markdown.report(r, { insights: w.insights(r) });          // Markdown, as wuica 
 Methods never throw for bad input: they resolve to a failure `{code, error, stderr}` (see the contract below).
 `createWuica({ dataDir })` reads the tables from another directory (`uarch.json` and the binary `arch/<NAME>.bin`,
 plain or `.br`; a uiCA export's `arch/<NAME>.json` is converted by `tools/encode-tables.sh IN_DIR OUT_DIR` of the
-repository: the analyzer that ships reads no JSON tables). `w.disassemble(bytes)` turns an object file into the text `analyze` reads. TypeScript declarations are included (`index.d.ts`).
+repository: the analyzer that ships reads no JSON tables). `w.disassemble(bytes)` turns an object file into the text `analyze` reads (`{func}`: of that function alone). TypeScript declarations are included (`index.d.ts`).
 
 `compare`, `analyzeMany(arch, requests)` and `compareMany(requests, {archs})` analyze on worker threads when the work
 is worth it: by default the number of threads comes from the work (the tables to load, the analyses and their

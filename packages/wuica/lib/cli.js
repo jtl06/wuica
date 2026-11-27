@@ -312,7 +312,10 @@ function printAnalyzed(r, err, o) {
   const syn = r.syntax ? `${r.syntax === 'att' ? 'AT&T' : 'Intel'} syntax${o.syntax === 'auto' ? ' (detected)' : ''}` : null;
   if (p && p.line) {
     const others = (p.count ?? 1) - (Number.isInteger(p.index) ? 1 : 0);
-    err.write(`analyzed: ${p.name} (${o.objectInput ? '' : `lines ${p.line}-${p.endLine}`}${p.function ? `${o.objectInput ? '' : ', '}in ${p.function}` : ''}${p.address !== undefined ? `, address 0x${p.address.toString(16)}` : ''})${syn ? `, ${syn}` : ''}`
+    // (an object file's function: the loop's, or for a body the -func it was given)
+    const fn = p.function ?? (o.objectInput ? o.objectFunc : null);
+    const where = [o.objectInput ? null : `lines ${p.line}-${p.endLine}`, fn ? `in ${fn}` : null, p.address !== undefined ? `address 0x${p.address.toString(16)}` : null].filter(Boolean);
+    err.write(`analyzed: ${p.name} (${where.join(', ')})${syn ? `, ${syn}` : ''}`
       + `${others > 0 ? `; ${others} other loop${others === 1 ? '' : 's'}: -loops lists them, -loop picks one` : ''}; -loop whole for the whole text\n`);
   } else if (syn && r.syntax === 'att' && o.syntax === 'auto') {
     err.write(`analyzed: the whole text, ${syn}; -intel forces Intel\n`);
@@ -443,7 +446,7 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
     if (o.report) err.write('-report: with several inputs (one input prints its report anyway); ignored\n');
     const input = await readInput(o, io, w);
     for (const n of input.notes) err.write(`${n}\n`);
-    if (input.object) o.objectInput = true;
+    if (input.object) { o.objectInput = true; o.objectFunc = input.request.func ?? null; }
     if (o.funcs) {
       if (!input.object) return fail(CODES.REQUEST, '-funcs: lists the functions of an object file (for assembly, -loops lists the loops with their functions)');
       const fs_ = input.object.functions;
@@ -457,7 +460,8 @@ export async function main(argv, io = { stdin: process.stdin, stdout: process.st
 
     if (o.loops) {
       if (!req.source) return fail(CODES.REQUEST, '-loops: needs assembly (not machine code)');
-      const ls = listLoops(req.source, { func: o.func ?? null });
+      // (an object file's -func as disassemble() resolved it: a part of a name, Mach-O's "_", NAME.0xADDR)
+      const ls = listLoops(req.source, { func: req.func ?? o.func ?? null });
       if (ls.error) return fail(CODES.REQUEST, ls.error);
       if (o.json) { out.write(JSON.stringify({ code: 0, loops: ls }) + '\n'); return 0; }
       if (o.md) { out.write(markdown.loops(ls)); return 0; }

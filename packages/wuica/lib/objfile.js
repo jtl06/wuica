@@ -23,22 +23,50 @@ export function objectKind(b) {
 
 const ARCH_HELP = 'compile for x86-64: clang --target=x86_64-linux-gnu -c (Linux objects) or clang -arch x86_64 -c (macOS)';
 
-// The code of an object file: {format, functions: [{name, section, address, size, bytes}]} or {error}.
+// The code of an object file: {format, functions: [{name, section, address, size, bytes[, symbol]}]} or {error}.
+// Names are unique (uniqueNames): a function whose symbol name occurs more than once has its address in its name, and
+// `symbol` is the name in the file.
 /** @returns {any} */
 export function readObject(bytes) {
   const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   const k = objectKind(b);
   if (!k) return { error: 'not an object file' };
   try {
-    if (k.kind === 'elf') return readElf(b);
-    if (k.kind === 'macho') return readMachO(b);
-    if (k.kind === 'fat') return readFat(b);
-    if (k.kind === 'macho32') return { error: `a 32-bit Mach-O file: wuica analyzes x86-64 code; ${ARCH_HELP}` };
-    if (k.kind === 'archive') return { error: 'an archive (.a): extract an object from it (ar x lib.a foo.o) and give that' };
-    return { error: `${k.kind === 'pe' ? 'a PE (Windows) executable' : 'a COFF object file'}: not supported yet; disassemble it and pipe the listing (llvm-objdump -d FILE | wuica)` };
+    const r = readContainer(b, k);
+    if (r.functions) uniqueNames(r.functions);
+    return r;
   } catch (e) {
     return { error: `a damaged or truncated object file (${e.message})` };
   }
+}
+
+// A static executable (or a relocatable object made by ld -r) has local symbols with the same name: static functions of
+// different translation units, their .cold parts, glibc's helpers. In llvm-objdump -d's text each function's header
+// ("0000000000401000 <step>:") becomes a label, and a label defined twice fails to assemble. So every function whose
+// name occurs more than once is named NAME.0xADDR (its address; a plain label as loop-find.js reads one), all of them:
+// none is the NAME of a -func, which says that NAME is ambiguous (resolveFunction). A file without repeated names keeps
+// its names: its text is llvm-objdump's, as before.
+function uniqueNames(functions) {
+  const count = new Map();
+  for (const f of functions) count.set(f.name, (count.get(f.name) ?? 0) + 1);
+  const taken = new Set(functions.map((f) => f.name));
+  for (const f of functions) {
+    if (count.get(f.name) === 1) continue;
+    let name = `${f.name}.0x${f.address.toString(16)}`;
+    for (let k = 2; taken.has(name); k++) name = `${f.name}.0x${f.address.toString(16)}.${k}`; // (a symbol of that name too)
+    taken.add(name);
+    f.symbol = f.name;
+    f.name = name;
+  }
+}
+
+function readContainer(b, k) {
+  if (k.kind === 'elf') return readElf(b);
+  if (k.kind === 'macho') return readMachO(b);
+  if (k.kind === 'fat') return readFat(b);
+  if (k.kind === 'macho32') return { error: `a 32-bit Mach-O file: wuica analyzes x86-64 code; ${ARCH_HELP}` };
+  if (k.kind === 'archive') return { error: 'an archive (.a): extract an object from it (ar x lib.a foo.o) and give that' };
+  return { error: `${k.kind === 'pe' ? 'a PE (Windows) executable' : 'a COFF object file'}: not supported yet; disassemble it and pipe the listing (llvm-objdump -d FILE | wuica)` };
 }
 
 function view(b) { return new DataView(b.buffer, b.byteOffset, b.byteLength); }
@@ -205,14 +233,24 @@ export function objdumpText(obj, decode, name = 'input') {
 }
 
 // The function a -func name means among an object's functions: exact, else without Mach-O's leading underscore, else a
-// unique part of a name. {name} or {error} (the candidates when ambiguous, the functions when none matches).
+// unique part of a name. {name} or {error} (the candidates when ambiguous, the functions when none matches). A name the
+// file gives to several functions (uniqueNames: NAME.0xADDR) is ambiguous: the error lists them with their addresses.
 export function resolveFunction(functions, func) {
   const names = [...new Set(functions.map((f) => f.name))];
   if (names.includes(func)) return { name: func };
+  for (const symbol of [func, `_${func}`]) {
+    const same = functions.filter((f) => f.symbol === symbol);
+    if (!same.length) continue;
+    const shown = same.slice(0, 10).map((f) => `0x${f.address.toString(16)}`);
+    const at = `${shown.slice(0, -1).join(', ')}${same.length > 2 ? ',' : ''} and ${shown[shown.length - 1]}${same.length > 10 ? ` (and ${same.length - 10} more: -funcs lists them)` : ''}`;
+    return { error: `func: ${JSON.stringify(func)} names ${same.length} functions of the file, at ${at} (static functions of different source files, or parts of one): give it with its address, -func ${same[0].name}${same.length === 2 ? ` or -func ${same[1].name}` : ''}` };
+  }
   const under = names.filter((n) => n === `_${func}`);
   if (under.length === 1) return { name: under[0] };
   const part = names.filter((n) => n.includes(func));
   if (part.length === 1) return { name: part[0] };
-  if (part.length > 1) return { error: `func: ${JSON.stringify(func)} is part of ${part.length} function names (${part.join(', ')}): give one of them` };
-  return { error: `func: ${JSON.stringify(func)} is not a function of the file (functions: ${names.join(', ') || 'none'})` };
+  // (a static executable has thousands of functions: a long list is left to -funcs)
+  const list = (xs) => (xs.length <= 20 ? xs.join(', ') : `${xs.slice(0, 20).join(', ')}, and ${xs.length - 20} more: -funcs lists them`);
+  if (part.length > 1) return { error: `func: ${JSON.stringify(func)} is part of ${part.length} function names (${list(part)}): give one of them` };
+  return { error: `func: ${JSON.stringify(func)} is not a function of the file (functions: ${list(names) || 'none'})` };
 }

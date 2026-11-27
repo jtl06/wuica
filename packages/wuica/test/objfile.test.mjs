@@ -1,4 +1,4 @@
-// Object files as input (lib/objfile.js; fixtures: tests-js/fixtures/obj, made by its build.sh): a .o (ELF or Mach-O),
+// Object files as input (lib/objfile.js; fixtures: tests-js/fixtures/obj, made by its build.sh and build-dup.sh): a .o (ELF or Mach-O),
 // a Mach-O executable and llvm-objdump -d of the same file give the same loop and throughput per function on SKL, ZEN3
 // and ADL-P; -ffunction-sections objects; -funcs and -func; an arm64 object, COFF and -raw on an object say what to do.
 import test from 'node:test';
@@ -85,11 +85,87 @@ test('the library: disassemble() and readObject()', async () => {
   assert.equal(d.code, 0);
   assert.equal(d.func, 'sum_mod');
   assert.deepEqual(d.functions.map((f) => f.name), FUNCS);
-  assert.match(d.text, /^0000000000000000 <dot>:$/m);
-  const r = await w.analyze('SKL', { source: d.text, func: 'dot' });
+  // (with a function, the text is that function's alone; without, every function's)
+  assert.deepEqual(d.text.match(/^[0-9a-f]{16} <[^>]+>:$/gm), ['0000000000000230 <sum_mod>:']);
+  const all = w.disassemble(fs.readFileSync(path.join(OBJ, 'kernels.elf.o')));
+  assert.match(all.text, /^0000000000000000 <dot>:$/m);
+  const r = await w.analyze('SKL', { source: all.text, func: 'dot' });
   assert.equal(r.tp, 32);
   assert.equal(w.disassemble(fs.readFileSync(path.join(OBJ, 'kernels.arm64.o'))).code, 1);
   assert.equal(readObject(new Uint8Array([1, 2, 3])).error, 'not an object file');
   assert.deepEqual(resolveFunction([{ name: '_dot' }, { name: '_psum' }], 'dot'), { name: '_dot' });
+  await w.close();
+});
+
+// Repeated names (fixtures dup.*, made by build-dup.sh from dup_a.c, dup_b.c, dup_main.c: two static functions named
+// step, each with a cold part step.cold). Before, the text of such a file defined the label step twice and every
+// analysis of it failed in the assembler ("symbol 'step' is already defined"), as on any static glibc executable.
+test('repeated names: NAME.0xADDR in -funcs and -loops; -func NAME lists them with their addresses; each one by its name', () => {
+  const funcs = run(['dup.elf.exe', '-funcs']);
+  assert.equal(funcs.code, 0);
+  assert.deepEqual(funcs.out.trim().split('\n').slice(1).map((l) => l.split(/\s+/)[0]),
+    ['step.cold.0x401000', 'step.cold.0x401006', 'step.0x401020', 'sum_a', 'step.0x4010a0', 'sum_b', 'fail', '_start']);
+  const json = JSON.parse(run(['dup.elf.exe', '-funcs', '-json']).out);
+  assert.deepEqual(json.functions.find((f) => f.address === 0x401020), { name: 'step.0x401020', section: '.text', address: 0x401020, size: 70, symbol: 'step' });
+  assert.equal(json.functions.find((f) => f.name === 'sum_a').symbol, undefined);
+  const amb = run(['dup.elf.exe', '-func', 'step']);
+  assert.equal(amb.code, 1);
+  assert.match(amb.err, /^wuica: func: "step" names 2 functions of the file, at 0x401020 and 0x4010a0 \(static functions of different source files, or parts of one\): give it with its address, -func step\.0x401020 or -func step\.0x4010a0$/m);
+  assert.match(run(['dup.elf.exe', '-func', 'step.cold']).err, /func: "step\.cold" names 2 functions of the file, at 0x401000 and 0x401006/);
+  // each step: its own loop, in it (the whole file's text no longer fails to assemble)
+  for (const [name, address] of [['step.0x401020', 0x401040], ['step.0x4010a0', 0x4010c0]]) {
+    const j = JSON.parse(run(['dup.elf.exe', '-func', name, '-arch', 'SKL', '-json']).out);
+    assert.equal(j.code, 0, name);
+    assert.equal(j.loop.function, name);
+    assert.equal(j.loop.address, address);
+    assert.equal(j.tp, 2);
+  }
+  assert.match(run(['dup.elf.exe', '-func', 'step.0x4010a0', '-loops']).out, /^ +0 +0x4010c0 +step\.0x4010a0 +\S+ +8 +1 +auto$/m);
+  const loops = run(['dup.elf.exe', '-loops']);
+  assert.equal(loops.code, 0);
+  assert.match(loops.out, /^ +\d+ +0x401040 +step\.0x401020 /m);
+  assert.equal(run(['dup.elf.exe', '-TPonly']).code, 0);
+});
+
+test('repeated names in a relocatable object (ld -r), a shared object and a Mach-O executable; a stripped executable', () => {
+  assert.match(run(['dup.elf.o', '-funcs']).out, /^step\.cold\.0x100 +\.text\.unlikely +0x100 +6$/m);
+  assert.match(run(['dup.elf.o', '-func', 'step']).err, /func: "step" names 2 functions of the file, at 0x0 and 0x80 .*-func step\.0x0 or -func step\.0x80$/m);
+  assert.equal(run(['dup.elf.o', '-func', 'step.0x80', '-TPonly']).out.trim(), '2.00');
+  assert.equal(run(['dup.elf.so', '-func', 'step.0x10c0', '-TPonly']).out.trim(), '2.00');
+  assert.match(run(['dup.elf.so', '-func', 'step.0x10c0']).err, /^analyzed: loop 0x10e0 \(in step\.0x10c0, address 0x10e0\)/m);
+  // Mach-O: the names with their "_"; -func takes them without it too
+  assert.match(run(['dup.macho.exe', '-func', 'step']).err, /func: "step" names 2 functions of the file, at 0x100000390 and 0x1000003e0 .*-func _step\.0x100000390 or -func _step\.0x1000003e0$/m);
+  assert.equal(run(['dup.macho.exe', '-func', '_step.0x1000003e0', '-TPonly']).out, run(['dup.macho.exe', '-func', 'step.0x1000003e0', '-TPonly']).out);
+  assert.match(run(['dup.macho.exe', '-func', 'step.0x1000003e0']).err, /^analyzed: loop 0x1000003f0 \(in _step\.0x1000003e0, address 0x1000003f0\)/m);
+  // stripped: no symbols at all, the code section is one function
+  assert.match(run(['dup.elf.stripped', '-funcs']).out, /^\.text +\.text +0x401000 +\d+\n$/m);
+  assert.match(run(['dup.elf.stripped', '-func', 'sum_a']).err, /func: "sum_a" is not a function of the file \(functions: \.text\)/);
+  assert.match(run(['dup.elf.stripped', '-TPonly']).err, /^analyzed: loop 0x401000 \(address 0x401000\)/m);
+});
+
+test('-func: the text of that function alone; a function without a loop is analyzed at its own body', () => {
+  const d = (file, func) => JSON.parse(run([file, '-func', func, '-arch', 'SKL', '-json']).out);
+  // (before, the body of the whole text's first function: _dot at 0x1000002f4, whatever function was named)
+  assert.match(run(['kernels.macho.exe', '-func', 'main']).err, /^analyzed: body \(in _main, address 0x1000006e4\)/m);
+  assert.equal(d('dup.elf.exe', 'sum_a').loop.address, 0x401074);
+  assert.match(run(['dup.elf.exe', '-func', 'sum_a']).err, /^analyzed: body \(in sum_a, address 0x401074\)/m);
+  // a function of one instruction (fail: jmp to itself) comes with its neighbor, so that the text reads as objdump's
+  assert.match(run(['dup.elf.exe', '-func', 'fail']).err, /^analyzed: loop 0x401110 \(in fail, address 0x401110\)/m);
+});
+
+test('the library: disassemble() with a repeated name; a long list of functions is cut', async () => {
+  const w = await createWuica();
+  const bytes = fs.readFileSync(path.join(OBJ, 'dup.elf.exe'));
+  const all = w.disassemble(bytes, { name: 'dup.elf.exe' });
+  assert.equal(all.code, 0);
+  assert.equal(all.text.match(/^[0-9a-f]{16} <[^>]+>:$/gm).length, 8);
+  assert.match(all.text, /^0000000000401020 <step\.0x401020>:$/m);
+  const one = w.disassemble(bytes, { func: 'step.0x4010a0' });
+  assert.equal(one.func, 'step.0x4010a0');
+  assert.deepEqual(one.text.match(/^[0-9a-f]{16} <[^>]+>:$/gm), ['00000000004010a0 <step.0x4010a0>:']);
+  assert.equal(one.functions.length, 8);
+  assert.equal(w.disassemble(bytes, { func: 'step' }).code, 1);
+  const many = Array.from({ length: 30 }, (_, k) => ({ name: `f${k}` }));
+  assert.match(resolveFunction(many, 'nope').error, /\(functions: f0, f1, .*, f19, and 10 more: -funcs lists them\)$/);
   await w.close();
 });

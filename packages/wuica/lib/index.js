@@ -615,8 +615,10 @@ class Wuica {
 
   // An object file (ELF or Mach-O, x86-64; objfile.js) as llvm-objdump -d's text of its code, which analyze() and
   // compare() read as `source` (the objdump path: the loop at its address, exits stubbed, the alignment from it).
-  // -> {code: 0, text, format, functions: [{name, section, address, size}]} or a failure (another architecture says how
-  // to compile for x86-64). `func`: also resolves a -func name (exact, without Mach-O's "_", or a unique part): `func`.
+  // -> {code: 0, text, format, functions: [{name, section, address, size[, symbol]}]} or a failure (another architecture
+  // says how to compile for x86-64). A name the file gives several functions is NAME.0xADDR, with `symbol` the name in
+  // the file (objfile.js uniqueNames). `func`: also resolves a -func name (exact, without Mach-O's "_", or a unique
+  // part; a repeated name is an error that lists the functions): `func`, and `text` is that function's alone.
   /** @param {Uint8Array} bytes @param {{name?: string, func?: string | null}} [opts] @returns {any} */
   disassemble(bytes, { name = 'input', func = null } = {}) {
     const obj = readObject(bytes);
@@ -628,13 +630,27 @@ class Wuica {
       if (r.error) return failure(CODES.REQUEST, r.error);
       resolved = r.name;
     }
+    // with a function: the text of that function alone. Its loops are those of the whole text's that lie in it (not a
+    // span from it into another function, which the whole text took for a loop: a branch to a .cold part placed before
+    // it), and it stays valid and small whatever else the file has (a static executable: thousands of functions,
+    // megabytes of text).
+    // A function of one instruction comes with the function after it (or before it, the last one): text with a single
+    // instruction line is not read as objdump output (loop-find.js fromObjdump)
+    const decode = (b) => this.#analyzer.decode(b, 'ALL');
     let text;
     try {
-      text = objdumpText(obj, (b) => this.#analyzer.decode(b, 'ALL'), name);
+      if (resolved === null) text = objdumpText(obj, decode, name);
+      else {
+        const k = obj.functions.findIndex((f) => f.name === resolved);
+        text = objdumpText({ ...obj, functions: [obj.functions[k]] }, decode, name);
+        const lines = (s) => s.split('\n').filter((l) => /^ *[0-9a-f]+: /.test(l)).length;
+        const other = obj.functions[k + 1] ?? obj.functions[k - 1];
+        if (lines(text) < 2 && other) text = objdumpText({ ...obj, functions: obj.functions.filter((f) => f === other || f.name === resolved) }, decode, name);
+      }
     } catch (e) {
       return failure(CODES.ANALYSIS, `the decoder failed (${e.message})`);
     }
-    return { code: CODES.OK, text, format: obj.format, functions: obj.functions.map(({ name: n, section, address, size }) => ({ name: n, section, address, size })), ...(resolved !== null ? { func: resolved } : {}) };
+    return { code: CODES.OK, text, format: obj.format, functions: obj.functions.map(({ name: n, section, address, size, symbol }) => ({ name: n, section, address, size, ...(symbol !== undefined ? { symbol } : {}) })), ...(resolved !== null ? { func: resolved } : {}) };
   }
 
   get restarts() { return this.#analyzer.restarts; }
