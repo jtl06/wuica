@@ -58,7 +58,10 @@ On an Arm Mac, give clang `--target=x86_64-linux-gnu` (wuica analyzes x86-64 cod
 - **Which loop.** A whole function or file is analyzed at one loop, by default (`auto`):
   1. only the innermost loops at the greatest depth (clang's `# =>This Inner Loop Header` notes count), and of those
      only the ones in the function of the first of them: in a file with several functions the default stays in that
-     function (`-func` picks another);
+     function (`-func` picks another); and not a remainder of another of them: a loop that continues the counter of an
+     earlier loop toward the same bound register after that loop stopped (the earlier loop's only exit is that compare,
+     and the counter comes from the register it compares), so it runs less than one of its steps: clang's scalar tail
+     of an unrolled loop, even when it has more instructions;
   2. among those, the one whose vector instructions use the widest registers (zmm, then ymm, then xmm, then none), then
      the one with more vector instructions;
   3. then the one with more instructions, then the first in the text.
@@ -72,12 +75,15 @@ On an Arm Mac, give clang `--target=x86_64-linux-gnu` (wuica analyzes x86-64 cod
   which compilers use for `fabs`, negation and `copysign` of scalars. So a vectorized loop is picked over its scalar
   remainder or peel loop wherever the compiler put them, and a scalar float loop does not beat a larger integer loop for
   touching xmm. The rule can still miss: a vectorized loop with a fixed, small trip count (merging sub-histograms)
-  beats the scalar main loop, a cleanup loop the compiler vectorized and unrolled can beat a hand-written intrinsics
-  loop, and clang's conversion of a `uint64_t` to `double` without AVX-512 (`vunpcklps`, `vsubpd`, `vshufpd` around a
+  beats the scalar main loop (a small constant trip count is not used against it: in an 8x8 transform the 8-iteration
+  loops are the work), a cleanup loop the compiler vectorized and unrolled with a counter of its own can beat a
+  hand-written intrinsics loop or a loop unrolled by hand, gcc's vectorized peel loop (`-O3`) can
+  beat the main loop, and clang's conversion of a `uint64_t` to `double` without AVX-512 (`vunpcklps`, `vsubpd`, `vshufpd` around a
   `vaddsd`) makes a scalar loop look like a 128-bit vector loop. Without clang's notes (objdump output) a loop with
   several back edges can be found as overlapping loops, so `-S` and objdump of it may differ. Stderr says what was
   picked and how many others there are;
-  `-loops` lists them (index, label, function, lines, instructions, depth, auto), `-loop N` (0-based) or
+  `-loops` lists them (index, label, function, lines, instructions, depth, auto; for a loop three or more deep in
+  clang's notes the list keeps the place it had when only the notes' first two lines were read), `-loop N` (0-based) or
   `-loop LABEL` picks one, `-func NAME` keeps one function's loops, `-loop whole` analyzes the whole text. A label
   that names loops in several functions (`1:` … `jnz 1b`) is an error that lists them; `-func` or the index picks one.
 - **Branches inside the loop.** uiCA runs the analyzed code straight through: in a loop with an if/else (or two back

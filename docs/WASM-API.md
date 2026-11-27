@@ -251,7 +251,8 @@ was analyzed. In `"auto"`:
   `ret` or another function's label (`.globl`, `.type @function`, or a call/jump target from outside) is not a loop.
   clang's notes (`# =>This Inner Loop Header: Depth=2`, `# in Loop: Header=BB0_4`) make the blocks of one header one loop
   at clang's depth. The default (`defaultLoop`): among the deepest innermost loops in the function of the first of them
-  (the default does not move to another function), the one whose vector instructions use
+  (the default does not move to another function), and not the remainder of another of them (`isRemainder`: it continues
+  that loop's counter toward the same bound register after it stopped), the one whose vector instructions use
   the widest registers (zmm, ymm, xmm, none), then the one with more vector instructions, then the one with more
   instructions, then the first in the code; unless the text is that loop already. Vector instructions (`vectorWidth`):
   those naming an xmm/ymm/zmm register except scalar floating point (`*ss`, `*sd`, `*sh` that do not start with `p`,

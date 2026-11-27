@@ -35,7 +35,8 @@ export type OtherLoop = Omit<LoopListing, 'auto'>;
 /** A loop of assembly text (listLoops; the CLI's -loops; the MCP tool list_loops). */
 export interface LoopListing {
   /** Its index for `loop` (0-based): the deepest innermost loops first, then in code order (the default, `auto`, need
-   * not be the first). */
+   * not be the first; a loop three or more deep in clang's notes keeps the place it had when only the notes' first two
+   * lines were read). */
   index: number;
   label: string;
   /** The function it is in (the last non-local label before it), or null. */
