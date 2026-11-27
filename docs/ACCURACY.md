@@ -9,6 +9,54 @@ uiCA with its own instruction data, used as a reference.
 Percentages are the share of loops whose predicted throughput is within 5, 10 or 20% of the measured one; MAPE is the mean absolute
 percentage error. All tools are compared on the same loops (those for which every tool gives a prediction).
 
+## Real hot loops
+
+The numbers to judge the models by. The benchmark is 1,844 hot loops from 175 open-source libraries (hashes, codecs, string
+functions, math kernels and more; hand-written intrinsics as well as auto-vectorized code), built in 11 configurations of gcc 15
+and clang 22 from the x86-64 baseline to x86-64-v4, and measured in place with performance counters on the three machines below.
+The libraries are split in two: a development part, which model round 11 worked from, and a held-out part, which was scored once,
+after the round was finished. A share is the share of loops predicted within 10 % of the measured cycles per iteration, at the
+loop's own alignment, averaged per library so that a library with many loops counts once.
+
+| Split | Model | Tool | Loops | ≤10% |
+|---|---|---|---:|---:|
+| held out | ADL-P | wuica | 500 | 82.8% |
+| | | llvm-mca 22, `alderlake` | 500 | 41.4% |
+| | | upstream uiCA, `RKL` | 500 | 49.6% |
+| held out | ICX | wuica | 579 | 77.1% |
+| | | llvm-mca 22, `icelake-server` | 579 | 53.6% |
+| | | upstream uiCA, `ICL` | 579 | 62.4% |
+| held out | ZEN3 | wuica | 558 | 64.2% |
+| | | llvm-mca 22, `znver3` | 558 | 45.2% |
+| development | ADL-P | wuica | 874 | 86.9% |
+| | | llvm-mca 22, `alderlake` | 874 | 54.6% |
+| development | ICX | wuica | 1029 | 77.1% |
+| | | llvm-mca 22, `icelake-server` | 1029 | 55.6% |
+| development | ZEN3 | wuica | 961 | 70.9% |
+| | | llvm-mca 22, `znver3` | 961 | 44.8% |
+
+How to read it:
+
+- **The machines.** ADL-P: Core i7-12650H, P-core. ICX: Xeon Gold 6314U. ZEN3: Ryzen 7 7735U, a Zen 3+ laptop chip; the model
+  has not been checked on a desktop or server Zen 3.
+- **llvm-mca** is LLVM 22 with `-mcpu` as shown and `-iterations=1000`, on the loop's own instructions.
+- **Upstream uiCA** has no model for these CPUs. The rows show its nearest model (Rocket Lake for Alder Lake P-cores, Ice Lake
+  client for Ice Lake server) as a reference for what the new models add; they say nothing about uiCA's accuracy on the CPUs it
+  does model.
+- **The original Intel models** are not in the table: the benchmark has only been measured on these three machines.
+- **Noise.** Re-measuring loops and swapping the accepted measurement moves a share by about 1.5 points; read differences under
+  2 points as nothing.
+- **Before round 11** the held-out shares were 76.1 % (ADL-P), 68.0 % (ICX) and 50.7 % (ZEN3). The mean absolute error per library
+  went from 8.7 to 7.3 %, from 8.5 to 6.2 % and from 12.8 to 9.8 %.
+- **The data.** The loops as prebuilt binaries (1,814 of them, from 173 of the libraries), the measurements of the three machines and
+  wuica's predictions are published with
+  [wuica-calibrate](https://github.com/jtl06/wuica-calibrate), which also runs the benchmark on any other x86-64 Linux machine.
+  The llvm-mca and upstream uiCA predictions are not published yet.
+
+The sections below are the older test sets (random loops and BHive blocks). They are easier than real loops and now serve as
+a guard against regressions. The note next to a prototype model on the web page ("within 10%: … random · … real code")
+still quotes those sets.
+
 ## Policy and the accuracy gate
 
 The random held-out sets no longer discriminate between model variants: in rounds 7 to 10 the model changes moved them by tenths of a

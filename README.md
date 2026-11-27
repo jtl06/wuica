@@ -1,79 +1,110 @@
-# wuica (WebAssembly uiCA)
+# wuica
 
 [![CI](https://github.com/jtl06/wuica/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jtl06/wuica/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/wuica-cli)](https://www.npmjs.com/package/wuica-cli)
 
-An independent Rust/WebAssembly port of [uiCA](https://github.com/andreas-abel/uiCA), which predicts the throughput of x86-64
-basic blocks with a detailed pipeline simulation. The goal is uiCA in the browser: paste assembly or machine code, get the
-prediction, with nothing sent to a server.
+Predicts how fast an x86-64 loop runs on a given CPU: cycles per iteration, what limits it, and where every uop goes. In the
+browser, on the command line, or from a coding agent.
 
-This is not the official uiCA and not its official web version (that is [uiCA.uops.info](https://uiCA.uops.info)).
-wuica follows the fork [jtl06/uiCA](https://github.com/jtl06/uiCA), which adds experimental models for AMD Zen 3,
-Alder Lake P-cores and Ice Lake server to the original Intel models.
+Paste a hot loop as assembly, as compiler output (`gcc -S`, `objdump -d`, `perf annotate`) or as machine code, and pick the
+CPUs. wuica simulates the pipeline cycle by cycle, front end included, fast enough to update as you type. Everything runs on
+your machine: the web page sends nothing to a server.
+
+[![The page: a dot product with four accumulators on five CPUs](docs/img/page.png)](https://wuica.jacen.li)
+
+The simulator is an independent Rust/WebAssembly port of [uiCA](https://github.com/andreas-abel/uiCA) (Abel and Reineke), with
+three more CPU models. See [Relation to uiCA](#relation-to-uica).
 
 ## Use it
 
-- **In the browser:** [wuica.jacen.li](https://wuica.jacen.li). Paste assembly or machine code; nothing leaves the page.
-- **From Node or the command line:** `npx wuica-cli loop.s -arch SKL`. The npm package
-  [`wuica-cli`](https://www.npmjs.com/package/wuica-cli) is a library, a command-line tool and a local MCP server; it runs
-  offline and has no dependencies. See [packages/wuica/README.md](packages/wuica/README.md).
-- **Over HTTP:** a hosted API at [api.wuica.jacen.li](https://api.wuica.jacen.li). Unlike the page, this sends your code to
-  the server.
+- **In the browser:** [wuica.jacen.li](https://wuica.jacen.li).
+- **On the command line:** `npx wuica-cli loop.s -arch SKL,ZEN3,ADL-P` (Node 20 or later, no dependencies, offline).
+
+      clang -O3 -march=haswell -S dot.c -o dot.s
+      npx wuica-cli dot.s -arch SKL,ZEN3            # the loop it picked, one row per CPU
+      npx wuica-cli diff dot.s dot4.s               # before and after
+      objdump -d dot.o | npx wuica-cli              # objdump output; perf annotate --stdio works the same way
+
+  The package [`wuica-cli`](https://www.npmjs.com/package/wuica-cli) is also a Node library. Everything it can do is in
+  [packages/wuica/README.md](packages/wuica/README.md).
+- **From a coding agent:** a local MCP server, `claude mcp add wuica -- npx -y wuica-cli mcp` (the same command works in other
+  clients). Tools: analyze, what-if, diff of two versions, compare CPUs, list loops, assemble.
+- **Over HTTP:** [api.wuica.jacen.li](https://api.wuica.jacen.li), for scripts and agents without Node; an MCP endpoint is at
+  `https://api.wuica.jacen.li/mcp`. Unlike the page and the package, this sends your code to a server.
 
       curl -s -X POST https://api.wuica.jacen.li/api/analyze/SKL -d '{"hex":"4801d84801c349ffcf75f5"}'
 
-  An MCP endpoint for agents is at `https://api.wuica.jacen.li/mcp`.
-- **Source and issues:** [github.com/jtl06/wuica](https://github.com/jtl06/wuica). The models come from the fork
-  [jtl06/uiCA](https://github.com/jtl06/uiCA) of [uiCA](https://github.com/andreas-abel/uiCA).
-- **Measure your own CPU:** [wuica-calibrate](https://github.com/jtl06/wuica-calibrate) (pre-release) runs about 1,800 real
-  loops on a Linux x86-64 machine and writes a result file you can send back to help model that CPU.
+## What you get
 
-**Status: working preview.** From machine code (or assembly) to uiCA's complete report, identical to the Python reference on
-all 18,791 simulation cases of both fixture sets (all options; 3,419 more in the optional set `more`), natively and as
-WebAssembly (counts from the logs of `scripts/check.sh full`, `target/check/wuica_end_to_end.log` and
-`target/check/analyze_fixtures_*.log`), at about 1 ms per analysis (the Python
-reference needs 40–55 ms plus startup). See [docs/DESIGN.md](docs/DESIGN.md) for the structure and the rules of the port.
+- **Cycles per iteration on up to 15 CPUs side by side**, with the bottleneck of each (front end, ports, or a loop-carried
+  dependency chain) and how far the other limits are.
+- **A table per instruction:** uops, the ports they run on, fusion, and the critical dependency chain.
+- **A cycle-by-cycle trace** of every uop through the pipeline, and a dependency view.
+- **A–B:** two versions of a loop next to each other, with what changed per instruction and per port.
+- **What-if:** the same loop unrolled, with more accumulators, or with parts of the model switched off, to see what a change
+  would buy before writing it. An alignment sweep shows the loop at each of the 64 offsets in a cache line.
+- **llvm-mca next to it**, on the same code.
+- **Input as it comes:** Intel or AT&T assembly, whole `-S` files (it finds the loops and lets you pick), `objdump -d`,
+  `perf annotate`, object files (command line), hex, or a Compiler Explorer link.
+- **Links:** the page keeps its whole state in the URL, so "Copy link" gives a link to exactly what you see. Results copy as
+  Markdown for an issue or a review.
 
-For reviewers: [docs/SPEC.md](docs/SPEC.md) states the rules, architecture, measurements, rejected ideas and known weaknesses.
+## CPU models and accuracy
 
-| Part | Where | State |
+| Models | From | Checked against hardware |
 |---|---|---|
-| Decoding (Intel XED, the version uiCA pins) | `crates/wuica-xed` | identical to Python on 3948 file × chip cases |
-| Instruction tables, configurations | `crates/wuica-core` (`data`, `config`) | loaded from `data/` (generated, see below) |
-| Instruction builder (`instructions.py`) | `crates/wuica-core` (`instr_builder`) | identical on 8,056 + 3,990 cases (`target/check/wuica-core_instr_builder_fixtures.log`) |
-| Pipeline simulator (`uiCA.py`) | `crates/wuica-core` (`sim`) | identical throughput, uop table and `-json` output |
-| Bottleneck analysis (`facile.py`, `printBottlenecks`) | `crates/wuica-core` (`facile`) | identical report text |
-| Analysis API | `crates/wuica` | the request/response of [docs/WASM-API.md](docs/WASM-API.md) |
-| Reference/test binary (not a product: the CLI to install is the npm package's) | `crates/wuica-cli` | `wuica HEX -arch SKL` prints uiCA's report; the exactness checks use it as an independent interface |
-| WebAssembly module | `crates/wuica-wasm` | 3.06 MB, 0.8 MB gzipped (binary tables only: no JSON table loader) |
-| Assembler (LLVM 22.1.2 MC, x86 only) | `assembler/` | identical bytes to `llvm-mc` on 3000 files; 3.8 MB, 0.7 MB brotli |
-| Web page | `web/` | static site, runs entirely in the browser |
+| Intel Sandy Bridge to Rocket Lake (12 models) | uiCA | by the uiCA authors (see their paper); not re-measured here |
+| AMD Zen 3 (`ZEN3`), Ice Lake server (`ICX`), Alder Lake P-core (`ADL-P`) | the fork [jtl06/uiCA](https://github.com/jtl06/uiCA), marked `prototype` | on one machine each, below |
 
-## Building
+The three prototype models are tested on a benchmark of 1,844 hot loops from 175 open-source libraries, each measured with
+performance counters. The libraries are split in two, one part to develop on and one held out. Share of held-out loops
+predicted within 10 % of the measurement, averaged per library:
 
-    scripts/check.sh                           # builds what changed, runs the tests in parallel (quick subset, ~1 min)
-    scripts/check.sh full                      # all suites: Rust, WebAssembly, web page, npm package (see docs/PORTING.md)
-    cargo test --release                       # all Rust tests (needs data/ and fixtures/generated/, see below)
-    cargo run --release -p wuica-cli -- 4801d84801c349ffcf75f5 -arch SKL   # the reference/test binary
-    ./build-wasm.sh                            # WebAssembly; needs clang with the wasm32 target (not Apple's clang)
-    node tests-js/analyze_fixtures.mjs         # the WebAssembly module against the Python reference
-    assembler/build.sh                         # the assembler (Linux; downloads LLVM and wasi-sdk), see assembler/README.md
-    web/build.sh && python3 -m http.server -d web/dist 8000
+| Model | Measured on | Loops | wuica | llvm-mca 22 |
+|---|---|---:|---:|---:|
+| `ADL-P` | Core i7-12650H, P-core | 500 | 83 % | 41 % (`alderlake`) |
+| `ICX` | Xeon Gold 6314U | 579 | 77 % | 54 % (`icelake-server`) |
+| `ZEN3` | Ryzen 7 7735U, a Zen 3+ laptop chip | 558 | 64 % | 45 % (`znver3`) |
 
-`data/` (instruction tables, configurations) and `fixtures/generated/` are generated from a uiCA installation with
-`tools/export_data.py` and `tools/export_fixtures.py`.
+Read this as: an estimate to reason with, not a measurement. A prediction says where the limit is and whether a change should
+help; check what matters with `perf`. The model assumes data in the L1 cache and perfectly predicted branches. The Zen 3 model
+has only been checked on a Zen 3+ laptop chip. Method, the development numbers and known errors: [docs/ACCURACY.md](docs/ACCURACY.md).
 
-CI (GitHub Actions, `.github/workflows/ci.yml`) runs `scripts/check.sh full` on every push to main and every pull request.
+## Measure your own CPU
 
-## How correctness is checked
+[wuica-calibrate](https://github.com/jtl06/wuica-calibrate) (pre-release) runs about 1,800 of those loops and a set of pipeline probes on a
+Linux x86-64 machine in under ten minutes, without root, and prints a report about that CPU: which model fits it best, where
+predictions miss, and what the probes say about its pipeline. The result file it writes is what a model for a new CPU is built
+from. Runs on Zen 4, Zen 5, desktop Zen 3 and recent Intel cores are the ones that would help most.
 
-The Python uiCA is the reference. `tools/` contains scripts that run it on a corpus of basic blocks and export what it computes at
-each stage (decoded instructions, instruction objects, simulation results) as fixtures; the Rust code has to reproduce them exactly.
-The reference commit is recorded in `docs/DESIGN.md`.
+## Relation to uiCA
+
+uiCA is by Andreas Abel and Jan Reineke: *uiCA: Accurate Throughput Prediction of Basic Blocks on Recent Intel
+Microarchitectures*, ICS 2022. Its official web version is [uiCA.uops.info](https://uiCA.uops.info). wuica is a separate project
+and not affiliated with it.
+
+- **The port is exact.** wuica reproduces the complete report of the Python uiCA (the fork's) on all 18,791 cases of the port's
+  test corpus, natively and as WebAssembly, and is about 40 times faster (1 ms per analysis against 40–55 ms). How that is checked:
+  [docs/VERIFICATION.md](docs/VERIFICATION.md).
+- **The Intel models are uiCA's.** The `ZEN3`, `ICX` and `ADL-P` models are prototypes of the fork
+  [jtl06/uiCA](https://github.com/jtl06/uiCA) and are not part of that work.
+- **The instruction data** (latencies, throughputs, port usage) comes from [uops.info](https://www.uops.info).
+
+## Building and contributing
+
+    scripts/check.sh            # builds what changed and runs the quick tests (about a minute)
+    scripts/check.sh full       # every suite: Rust, WebAssembly, web page, npm package
+
+Start with [docs/VERIFICATION.md](docs/VERIFICATION.md) (the parts, the build commands, how exactness is checked) and
+[docs/PORTING.md](docs/PORTING.md) (working in the repository). [docs/DESIGN.md](docs/DESIGN.md) has the structure and the rules
+of the port, [docs/SPEC.md](docs/SPEC.md) the measurements, rejected ideas and known weaknesses. A prediction that disagrees
+with a measurement is the most useful kind of [issue](https://github.com/jtl06/wuica/issues): include the loop, the CPU and
+both numbers.
 
 ## Licenses
 
-- wuica is a derivative work of uiCA and is licensed under the **GNU AGPL v3** (`LICENSE`), like uiCA.
+- wuica is a derivative work of uiCA and is licensed under the **GNU AGPL v3** (`LICENSE`), like uiCA. The license covers wuica
+  itself; the code you analyze with it stays under whatever license it has.
 - `third_party/xed` is a subset of [Intel XED](https://github.com/intelxed/xed) (Apache License 2.0, `third_party/xed/LICENSE`).
 - The assembler is a modified build of [LLVM](https://llvm.org) 22.1.2 (Apache License 2.0 with LLVM Exceptions,
   `assembler/LICENSE-LLVM.txt`; the changes are in `assembler/llvm-22.1.2-wasi.patch`).
@@ -81,7 +112,3 @@ The reference commit is recorded in `docs/DESIGN.md`.
 - The instruction data (latencies, throughputs and port usage) comes from [uops.info](https://www.uops.info) by Andreas Abel and
   Jan Reineke. It is not part of this repository: the tables are generated locally from a uiCA installation with
   `tools/export_data.py`.
-
-uiCA is described in: Andreas Abel and Jan Reineke, *uiCA: Accurate Throughput Prediction of Basic Blocks on Recent Intel
-Microarchitectures*, ICS 2022. The Intel models are uiCA's; the ZEN3, ADL-P and ICX models are prototypes of the fork
-[jtl06/uiCA](https://github.com/jtl06/uiCA) and are not part of that work.
