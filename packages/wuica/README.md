@@ -70,8 +70,11 @@ On an Arm Mac, give clang `--target=x86_64-linux-gnu` (wuica analyzes x86-64 cod
   which compilers use for `fabs`, negation and `copysign` of scalars. So a vectorized loop is picked over its scalar
   remainder or peel loop wherever the compiler put them, and a scalar float loop does not beat a larger integer loop for
   touching xmm. The rule can still miss: a vectorized loop with a fixed, small trip count (merging sub-histograms)
-  beats the scalar main loop, and a cleanup loop the compiler vectorized and unrolled can beat a hand-written
-  intrinsics loop. Stderr says what was picked and how many others there are;
+  beats the scalar main loop, a cleanup loop the compiler vectorized and unrolled can beat a hand-written intrinsics
+  loop, and clang's conversion of a `uint64_t` to `double` without AVX-512 (`vunpcklps`, `vsubpd`, `vshufpd` around a
+  `vaddsd`) makes a scalar loop look like a 128-bit vector loop. Without clang's notes (objdump output) a loop with
+  several back edges can be found as overlapping loops, so `-S` and objdump of it may differ. Stderr says what was
+  picked and how many others there are;
   `-loops` lists them (index, label, function, lines, instructions, depth, auto), `-loop N` (0-based) or
   `-loop LABEL` picks one, `-func NAME` keeps one function's loops, `-loop whole` analyzes the whole text. A label
   that names loops in several functions (`1:` … `jnz 1b`) is an error that lists them; `-func` or the index picks one.
