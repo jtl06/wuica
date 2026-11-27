@@ -337,10 +337,9 @@ try {
       $('mode-hex').click(); await settle(); out.hexPlaceholder = $('code').placeholder; $('mode-asm').click(); await settle();
       return out;`);
     const m = r.multi;
-    // multi.s: four functions; the default is popc's vectorized loop (ymm), not sum's scalar loop, the first (the default
-    // before loop-find.js's defaultLoop)
-    check(m.length === 10 && m[0].label === '.LBB0_9 · sum · 11 instr' && m[5].label === 'loop 6 of 9 · .LBB2_8 · popc · auto' && m[9].label === 'whole', 'picker: label, function and size of each loop (4 functions); the analyzed one: which of them, auto', js(m.map((o) => o.label)));
-    check(m[5].on && !m[0].on && !m.some((o) => o.attr) && m.every((o, k) => o.value === (k < 9 ? String(k) : 'whole')), 'picker: the order and the values as before; the default selected', js(m.map((o) => [o.value, o.on])));
+    // multi.s: four functions; the default stays in sum, the function of the first loop (not popc's vectorized loop)
+    check(m.length === 10 && m[0].label === 'loop 1 of 9 · .LBB0_9 · sum · auto' && m[5].label === '.LBB2_8 · popc · 43 instr' && m[9].label === 'whole', 'picker: label, function and size of each loop (4 functions); the analyzed one: which of them, auto', js(m.map((o) => o.label)));
+    check(m[0].on && !m.some((o) => o.attr) && m.every((o, k) => o.value === (k < 9 ? String(k) : 'whole')), 'picker: the order and the values as before; the default selected', js(m.map((o) => [o.value, o.on])));
     check(r.nested[0].label === 'loop 1 of 4 · .LBB0_12 · auto' && r.nested[1].label === '.LBB0_16 · 6 instr · depth 2' && r.nested[3].label === '.LBB0_4 · 79 instr' && r.nested[0].on, 'picker: one function: no name; nested loops: their depth', js(r.nested.map((o) => o.label)));
     check(r.picked[3].label === 'loop 4 of 4 · .LBB0_4' && r.picked[3].on && r.picked[0].label === '.LBB0_12 · 11 instr · depth 2' && /&lp=3&/.test(r.hash), 'picker: a loop picked by hand is not auto (lp=3 in the link)', js([r.picked.map((o) => o.label), r.hash.slice(0, 40)]));
     // (room for "loop 1 of 4 · .LBB0_12 · auto": 34ch at most, region.css; the toolbar keeps its height, region-chip.js place)

@@ -76,7 +76,7 @@ export function createLoopChip(after, pick, id = 'loop-chip', places = null) {
     if (Number.isInteger(k) && opts[k]) {
       const l = loops[k];
       opts[k].textContent = [`loop ${k + 1} of ${loops.length}`, l.label, fns && l.function ? l.function : null, loop.auto ? 'auto' : null].filter(Boolean).join(' · ');
-      if (loop.auto) opts[k].title += '\npicked by default: the innermost loop with the widest vector registers, then the most vector instructions, then the most instructions';
+      if (loop.auto) opts[k].title += '\npicked by default: of the innermost loops in this function, the one with the widest vector registers, then the most vector instructions, then the most instructions';
     }
     if (body) opts.push(h('option', { value: 'body', text: 'body' }));
     opts.push(h('option', { value: 'whole', text: 'whole' }));

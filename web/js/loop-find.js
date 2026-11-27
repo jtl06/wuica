@@ -17,7 +17,8 @@
 //     rejects what follows it (asm-regions.js: commentFixes, separatorNotes).
 //   - the loops: backward branches to a label (or to an address); innermost first, in the order of the code. A span
 //     that holds a ret or a function's label is not a loop (a tail call to an earlier function). The pick is the default
-//     loop (defaultLoop: the widest vector loop among the deepest innermost ones, else the largest), unless the text is
+//     loop (defaultLoop: among the deepest innermost loops in the function of the first of them, the widest vector loop,
+//     else the largest), unless the text is
 //     that loop already; with no loop, a compiler's function (a function label, directives, or
 //     a prologue/epilogue) that ends in ret is analyzed without its prologue, epilogue and ret (its body); a bare snippet
 //     is analyzed as typed. Region markers (LLVM-MCA-BEGIN, wuica-begin, IACA) win: no pick. loop "whole": no pick.
@@ -441,8 +442,9 @@ export function findLoops(s) {
 // ---- the default loop ------------------------------------------------------------------------------------------------
 //
 // The loop analyzed by default ("auto") among the loops of a text (findLoops' order; after -func):
-//   1. only the innermost loops at the greatest depth (clang's "Inner Loop Header: Depth=N" notes count): the first
-//      loops of the list;
+//   1. only the innermost loops at the greatest depth (clang's "Inner Loop Header: Depth=N" notes count) that are in
+//      the function of the first of them (the first loop of the list; loops in no function are one group): a text
+//      with several functions is analyzed in the function the first deepest loop is in, never at another's loop;
 //   2. among those, the one whose vector instructions use the widest registers (zmm over ymm over xmm over none), then
 //      the one with more vector instructions;
 //   3. then the one with more instructions, then the first in the text.
@@ -501,7 +503,7 @@ export function defaultLoop(loops) {
   const top = loops[0];
   let best = -1;
   loops.forEach((l, k) => {
-    if (l.inner !== top.inner || l.depth !== top.depth) return;
+    if (l.inner !== top.inner || l.depth !== top.depth || (l.function ?? null) !== (top.function ?? null)) return;
     if (best < 0 || betterDefault(l, loops[best])) best = k;
   });
   return best;

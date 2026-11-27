@@ -98,10 +98,18 @@ const j = JSON.stringify;
   check(j(sx.loops.map((l) => l.label)) === j(['.LBB0_16', '.LBB0_18', '.LBB0_8', '.LBB0_12']) && sx.choice === 2 && pick(D('clang-saxpy.O3.haswell.s'), 0) === '.LBB0_16'
     && preparePaste(D('clang-saxpy.O3.haswell.s'), { loop: 0 }).auto === false && preparePaste(D('clang-saxpy.O3.haswell.s'), { loop: 'whole' }).auto === false,
   'default loop: the order of the list (the indices) is unchanged; an explicit pick is not auto', j(sx.loops));
-  // -func: the default among that function's loops; clang's notes still make the depth (count_u8: the Depth=2 loops)
+  // several functions: the default stays in the function of the first loop of the list (sum.c: dot, though count's loop
+  // is vectorized; multi.s: sum, not popc's ymm loop; kernels: dot, not sum_mod's larger loop); -func: within that one
   const sum = fs.readFileSync(new URL('tests-js/fixtures/profiles/clang23-sum.s', root), 'utf8');
-  check(pick(sum) === '.LBB1_6' && pick(sum, 'auto') === preparePaste(sum, { func: 'count' }).loops[preparePaste(sum, { func: 'count' }).choice].label
-    && preparePaste(sum, { func: 'dot' }).loops[preparePaste(sum, { func: 'dot' }).choice].label === '.LBB0_9', 'default loop: across functions, and within one (-func)');
+  const L0 = (begin, width, count, instructions) => ({ begin, inner: true, depth: 1, instructions, vector: { width, count } });
+  const fnPick = (t, func) => { const p = preparePaste(t, { func }); return p.loops[p.choice].label; };
+  const multi = fs.readFileSync(new URL('tests-js/fixtures/dogfood/multi.s', root), 'utf8');
+  const kernels = fs.readFileSync(new URL('tests-js/fixtures/obj/kernels.elf.objdump.txt', root), 'utf8');
+  check(pick(sum) === '.LBB0_9' && fnPick(sum, 'count') === '.LBB1_6' && fnPick(sum, 'dot') === '.LBB0_9' && pick(multi) === '.LBB0_9' && fnPick(multi, 'popc') === '.LBB2_8'
+    && pick(kernels) === '0x30' && fnPick(kernels, 'sum_mod') === '0x2b5',
+  'default loop: in the function of the first loop, never another function\'s; -func ranks within its function', j([pick(sum), pick(multi), pick(kernels)]));
+  check(defaultLoop([{ ...L0(1, 0, 0, 5), function: 'a' }, { ...L0(9, 512, 9, 60), function: 'b' }, { ...L0(20, 128, 2, 7), function: 'a' }]) === 2
+    && defaultLoop([{ ...L0(1, 0, 0, 5), function: null }, { ...L0(9, 512, 9, 60) }]) === 1, 'default loop: loops in no function are one group');
   const u8 = preparePaste(fs.readFileSync(new URL('tests-js/fixtures/cli/count_u8.hsw.s', root), 'utf8'));
   check(u8.loops[u8.choice].depth === 2 && u8.loops[u8.choice].inner, 'default loop: only the deepest innermost loops (clang notes)', j(u8.loops));
   // the rule on made-up loops: width, then vector instructions, then instructions, then the first; only the first group
