@@ -27,7 +27,7 @@ const ASSUMPTIONS =
 
 const INPUT_NOTE =
   'The block: `source` (x86-64 assembly, Intel or AT&T, detected; a whole function, gcc/clang -S or objdump -d output ' +
-  'is fine: its innermost loop is analyzed; `loop` picks another: "whole", an index or a label; `func` one ' +
+  'is fine: its innermost loop is analyzed (the widest vector loop, else the largest); `loop` picks another: "whole", an index or a label; `func` one ' +
   "function's) or `hex` (machine code).";
 
 const ERRORS_NOTE = 'A failure is a tool error {code, error, stderr}: 1 bad request, 2 assembler error (positioned stderr), 3 analysis failed.';
@@ -43,7 +43,7 @@ const codeShape = {
   hex: str('machine code as hex bytes, e.g. "4801d84801c349ffcf75f5" (spaces allowed)'),
   syntax: str('syntax of `source`: "auto" (default: detected from the text), "intel" (noprefix) or "att"', { enum: ['auto', 'intel', 'att'] }),
   loop: {
-    description: 'what of `source` is analyzed: "auto" (default: the deepest loop of a whole function, else the text), "whole", the index of a loop (0-based), or its label',
+    description: 'what of `source` is analyzed: "auto" (default: of the deepest innermost loops of a whole function, the widest vector loop, then the most vector instructions, then the largest; else the text), "whole", the index of a loop (0-based), or its label',
     anyOf: [{ type: 'string', enum: ['auto', 'whole'] }, { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER }, { type: 'string', minLength: 1 }],
   },
   func: str('only the loops of this function (a label of `source`)', { minLength: 1 }),

@@ -55,9 +55,23 @@ On an Arm Mac, give clang `--target=x86_64-linux-gnu` (wuica analyzes x86-64 cod
   in the register's units: `rcx += 8 per iteration (index; ×4 bytes in [rdi+rcx*4])` is 8 elements of 4 bytes,
   `r13 += 64 per iteration (bytes; the base of [r13+0x20])` is 64 bytes (16 floats: `-per 16`), `(register step)` a
   counter no address uses.
-- **Which loop.** A whole function or file is analyzed at one loop: the deepest one (clang's
-  `# =>This Inner Loop Header` notes count), among equals the first in the code. That can be a remainder loop: clang
-  often emits it before the main loop, gcc after it. Stderr says what was picked and how many others there are;
+- **Which loop.** A whole function or file is analyzed at one loop, by default (`auto`):
+  1. only the innermost loops at the greatest depth (clang's `# =>This Inner Loop Header` notes count);
+  2. among those, the one whose vector instructions use the widest registers (zmm, then ymm, then xmm, then none), then
+     the one with more vector instructions;
+  3. then the one with more instructions, then the first in the text.
+
+  A vector instruction is an SSE/AVX/AVX-512 instruction that names an xmm, ymm or zmm register and works on several
+  elements. Scalar code uses xmm registers too, so these do not count: scalar floating point (a mnemonic, without its
+  `v`, that does not start with `p` and ends in `ss`, `sd` or `sh`: `addss`, `vfmadd231sd`, `movsd`, `cvtsi2sd`, and
+  `cvttsd2si`, but not the broadcasts), one element moved to or from a general-purpose register or memory (`movd`,
+  `movq`, `pinsr*`, `pextr*`, `insertps`, `extractps`, `movlpd`, `movhpd`), zero idioms (`vxorps xmm0, xmm0, xmm0`),
+  register-to-register copies (`movaps xmm1, xmm0`), and `andps`/`andnps`/`orps`/`xorps` (and `pd`) on xmm registers,
+  which compilers use for `fabs`, negation and `copysign` of scalars. So a vectorized loop is picked over its scalar
+  remainder or peel loop wherever the compiler put them, and a scalar float loop does not beat a larger integer loop for
+  touching xmm. The rule can still miss: a vectorized loop with a fixed, small trip count (merging sub-histograms)
+  beats the scalar main loop, and a cleanup loop the compiler vectorized and unrolled can beat a hand-written
+  intrinsics loop. Stderr says what was picked and how many others there are;
   `-loops` lists them (index, label, function, lines, instructions, depth, auto), `-loop N` (0-based) or
   `-loop LABEL` picks one, `-func NAME` keeps one function's loops, `-loop whole` analyzes the whole text. A label
   that names loops in several functions (`1:` … `jnz 1b`) is an error that lists them; `-func` or the index picks one.
@@ -372,13 +386,14 @@ Request:
   spaces, commas and `0x` are allowed).
 - `source` is read as the web page reads pasted assembly. `loop` (optional) says what of it is analyzed:
   - `"auto"` (the default): a whole function (`gcc -S`, `clang -S`, `objdump -d` lines with addresses, with or
-    without the bytes, Intel or AT&T) is analyzed at its deepest loop (clang's `Inner Loop Header` notes count;
-    among equals the first in the code, which may be a remainder loop: clang often emits it first). A span that holds a `ret` or another function's label is not a loop (a tail
+    without the bytes, Intel or AT&T) is analyzed at its default loop ("Which loop" above: among the deepest innermost
+    loops the widest vector loop, then the one with the most vector instructions, then the largest, then the first). A span that holds a `ret` or another function's label is not a loop (a tail
     call jumping back). A compiler's function without a loop (it has a function label, directives or a
     prologue/epilogue, and ends in `ret`) is analyzed at its body, without prologue, epilogue and `ret`; a bare snippet
     such as `add rax, 1` / `ret` is analyzed as typed. A text that is one loop already, or has region markers, is
     analyzed as it is.
-  - `"whole"`: the whole text, never a pick; a number: that loop (0-based: deepest first, then in code order); any
+  - `"whole"`: the whole text, never a pick; a number: that loop (0-based, in the order `listLoops` and `-loops` list
+    them: the deepest innermost first, then in code order; the default need not be 0); any
     other string: the loop with that label (`".LBB0_12"`, `"0x10"`). `func` (optional) keeps one function's loops.
 - `syntax` is `"auto"` (the default: detected from the text), `"intel"` or `"att"`; the response's `syntax` says
   which was used.

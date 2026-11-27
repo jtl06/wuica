@@ -24,8 +24,9 @@ export interface AnalysisOptions {
 /** "auto" (the default): detected from the text (%registers, $immediates: AT&T; else Intel noprefix). */
 export type Syntax = 'auto' | 'intel' | 'att';
 
-/** What of `source` is analyzed: "auto" (default: the innermost loop of a whole function, or its body if it has no
- * loop; else the text as it is), "whole", or the index of a loop (innermost first, in code order). */
+/** What of `source` is analyzed: "auto" (default: of a whole function's deepest innermost loops, the one with the
+ * widest vector registers, then the most vector instructions, then the most instructions, then the first; its body if
+ * it has no loop; else the text as it is), "whole", the index of a loop (as listLoops lists them), or its label. */
 export type LoopChoice = 'auto' | 'whole' | number | string;
 /** The named loop choices ('auto', 'whole'); a number is a loop's index (0-based), any other string its label. */
 export declare const LOOP_CHOICES: readonly ['auto', 'whole'];
@@ -33,7 +34,8 @@ export declare const LOOP_CHOICES: readonly ['auto', 'whole'];
 export type OtherLoop = Omit<LoopListing, 'auto'>;
 /** A loop of assembly text (listLoops; the CLI's -loops; the MCP tool list_loops). */
 export interface LoopListing {
-  /** Its index for `loop` (0-based): the deepest loops first, then in code order. */
+  /** Its index for `loop` (0-based): the deepest innermost loops first, then in code order (the default, `auto`, need
+   * not be the first). */
   index: number;
   label: string;
   /** The function it is in (the last non-local label before it), or null. */

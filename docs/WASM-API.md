@@ -243,15 +243,21 @@ gcc's `view` operand of `.loc`, which LLVM rejects, is dropped.
 
 For an analysis, pasted assembly goes through `web/js/loop-find.js` before the regions above (the npm package has a copy
 in `packages/wuica/lib/web`). The option is `loop`: `"auto"` (the default), `"whole"` (never a pick), the index of a
-loop (0-based: the deepest first, then in code order) or its label; `func` keeps one function's loops. The page shows the choice as a select under the input when it matters; the API
+loop (0-based: the deepest first, then in code order) or its label; `func` keeps one function's loops. The page shows the choice as a select in the input's row of controls when it matters (the analyzed loop as `loop 2 of 4 · .LBB0_4 · auto`, `auto` when the default picked it); the API
 returns `loop: {index, count, name, line, endLine, lines?, address?, alignmentOffset?}` (`lines`: the source line of each instruction) when something other than the whole text
 was analyzed. In `"auto"`:
 
 - **Loops**: backward branches to a label or an address; several branches back to one label are one loop. A span with a
   `ret` or another function's label (`.globl`, `.type @function`, or a call/jump target from outside) is not a loop.
   clang's notes (`# =>This Inner Loop Header: Depth=2`, `# in Loop: Header=BB0_4`) make the blocks of one header one loop
-  at clang's depth. The deepest innermost loop is analyzed, among equals the first in the code (clang often puts a
-  remainder loop first), unless the text is that loop already.
+  at clang's depth. The default (`defaultLoop`): among the deepest innermost loops, the one whose vector instructions use
+  the widest registers (zmm, ymm, xmm, none), then the one with more vector instructions, then the one with more
+  instructions, then the first in the code; unless the text is that loop already. Vector instructions (`vectorWidth`):
+  those naming an xmm/ymm/zmm register except scalar floating point (`*ss`, `*sd`, `*sh` that do not start with `p`,
+  conversions to and from one scalar), one-element moves (`movd`, `movq`, `pinsr*`, `pextr*`, ...), zero idioms,
+  register-to-register copies and xmm floating-point logic (`andpd` for `fabs`); the package README ("Which loop") has
+  the reasons. A page link (`lp=` in `url-state.js`) without `lp=` was made before this default and opens on the first
+  loop of the list, as it did; links write `lp=auto` for the default.
 - **No loop**: a compiler's function (a function label, directives, a prologue/epilogue, or objdump) that ends in `ret`
   is analyzed without prologue, epilogue and `ret`; a bare snippet (`add rax, 1` / `ret`) as typed.
 - **Exits**: a conditional branch to a symbol the text does not define is a short, not-taken jump to the end of the

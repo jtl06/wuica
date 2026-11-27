@@ -36,10 +36,11 @@ Input:
   -raw FILE              read the machine code from a binary file that contains only the code (not an object
                          file: for those, objdump -d FILE | wuica)
   -loops                 list the loops of the assembly (index, label, function, lines, instructions, depth, auto)
-  -loop L                what is analyzed: auto (default: the deepest loop, among equals the first; clang's
-                         "Inner Loop Header" notes count; perf annotate: the loop with the most samples of its
-                         own), whole (all the text), a loop's index (0-based, as
-                         -loops lists them) or its label (-loop .LBB0_12)
+  -loop L                what is analyzed: auto (default: of the deepest innermost loops, the one with the
+                         widest vector registers, then the most vector instructions, then the most
+                         instructions, then the first; clang's "Inner Loop Header" notes count; perf
+                         annotate: the loop with the most samples of its own), whole (all the text), a
+                         loop's index (0-based, as -loops lists them) or its label (-loop .LBB0_12)
   -func NAME             only the loops of function NAME (with -loop: its index or label among them); in an object
                          file its symbol, or a unique part of it
   -funcs                 list the functions of an object file (name, section, address, size)
