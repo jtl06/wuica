@@ -448,6 +448,8 @@ export function findLoops(s) {
     }
     l.vector = { width, count };
   }
+  // the remainder loops (remainderOf): the begin lines of the loops each one continues
+  for (const l of merged) l.remainderOf = merged.filter((a) => a !== l && isRemainder(s, a, l)).map((a) => a.begin);
   // the order of the list (the indices of -loop N, lp= in the page's links, the API's loop): the innermost first, the
   // deepest of them first (by listDepth), then in the order of the code. Which of them is analyzed by default is
   // defaultLoop's choice, not the first.
@@ -459,7 +461,8 @@ export function findLoops(s) {
 // The loop analyzed by default ("auto") among the loops of a text (findLoops' order; after -func):
 //   1. only the innermost loops at the greatest depth (clang's "Inner Loop Header: Depth=N" notes count) that are in
 //      the function of the first of them (the first loop of the list; loops in no function are one group): a text
-//      with several functions is analyzed in the function the first deepest loop is in, never at another's loop;
+//      with several functions is analyzed in the function the first deepest loop is in, never at another's loop; and
+//      not the remainder of another of them (isRemainder, below: the tail of an unrolled loop);
 //   2. among those, the one whose vector instructions use the widest registers (zmm over ymm over xmm over none), then
 //      the one with more vector instructions;
 //   3. then the one with more instructions, then the first in the text.
@@ -512,6 +515,128 @@ export function vectorWidth(mnemonic, operands) {
   return width;
 }
 
+// ---- remainder loops ------------------------------------------------------------------------------------------------
+//
+// A loop b is the remainder of a loop a (a's leftover iterations: the scalar tail after an unrolled or vectorized loop)
+// when, as the text shows: a comes first and its only exit is its back branch, a compare of a register that a writes
+// with a register x that it does not write (the bound: "cmp rsi, r15; jbe"); b's back branch compares the same x, not
+// written between the two loops, with a register c that b only advances (add, sub, inc, dec, lea of c and a constant);
+// and c's value at b comes from a: between the loops c is only advanced or copied (mov c, r: then r), and in a it is
+// the compared register itself, or differs from it by a constant (its last write copies it, or the compared register's
+// first write copies c, and both are otherwise only advanced). b then starts where a stopped and runs to the bound a stopped at, which a's last step did
+// not reach: fewer iterations than one step of a. Anything else (a call, another exit of a, a write of c that is not
+// an advance or a copy, a bound in memory) is no remainder.
+
+const GPR_FAMILY = (op) => {
+  const r = String(op).trim().replace(/^%/, '').toLowerCase();
+  let m = /^r(\d+)[dwb]?$/.exec(r);
+  if (m && Number(m[1]) >= 8 && Number(m[1]) <= 15) return `r${m[1]}`;
+  m = /^(?:[re]?([abcd])x|([abcd])[lh])$/.exec(r);
+  if (m) return m[1] ?? m[2];
+  m = /^(?:[re]?(si|di|bp|sp)|(si|di|bp|sp)l)$/.exec(r);
+  return m ? m[1] ?? m[2] : null;
+};
+const ATT = (x) => /%/.test(x.operands);
+const operandsOf = (x) => String(x.operands).split(/,(?![^[(]*[\])])/).map((o) => o.trim()).filter(Boolean);
+const NO_WRITE = /^(?:cmp\w*|test\w*|bt[lqw]?|j\w+|push\w*|nop\w*|ucomis[sd]|comis[sd]|prefetch\w*)$/i;
+const IMPLICIT = { call: ['a', 'c', 'd', 'si', 'di', 'r8', 'r9', 'r10', 'r11'], syscall: ['a', 'c', 'r11'], cpuid: ['a', 'b', 'c', 'd'],
+  rdtsc: ['a', 'd'], cqo: ['d'], cqto: ['d'], cdq: ['d'], cltd: ['d'], cltq: ['a'], cdqe: ['a'], cwtl: ['a'] };
+// the general-purpose registers an instruction writes (families: 'a', 'si', 'r8', ...); null: it may write any
+function writes(x) {
+  const mn = x.mnemonic.toLowerCase();
+  if (/^call/.test(mn)) return IMPLICIT.call;
+  if (IMPLICIT[mn]) return IMPLICIT[mn];
+  if (/^(?:rep|stos|movs|lods|scas|cmps)/.test(mn) || /^(?:rep|repe|repne)\b/.test(x.body ?? '')) return null;
+  const out = [];
+  if (/^(?:i?mul|i?div)[bwlq]?$/.test(mn) && operandsOf(x).length === 1) out.push('a', 'd');
+  if (NO_WRITE.test(mn)) return out;
+  const ops = operandsOf(x);
+  if (!ops.length) return out;
+  const dest = ATT(x) ? ops[ops.length - 1] : ops[0];
+  const f = GPR_FAMILY(dest);
+  if (f) out.push(f);
+  if (/^(?:xchg|xadd|cmpxchg)\w*$/.test(mn)) for (const o of ops) { const g = GPR_FAMILY(o); if (g) out.push(g); }
+  if (/^pop/.test(mn)) out.push('sp');
+  return out;
+}
+// "c += constant": add, sub, inc, dec of c, or lea of c and a constant into c
+function advances(x, c) {
+  const mn = x.mnemonic.toLowerCase(), ops = operandsOf(x);
+  if (/^(?:inc|dec)[bwlq]?$/.test(mn)) return ops.length === 1 && GPR_FAMILY(ops[0]) === c;
+  if (/^(?:add|sub)[bwlq]?$/.test(mn) && ops.length === 2) {
+    const [src, dst] = ATT(x) ? ops : [ops[1], ops[0]];
+    return GPR_FAMILY(dst) === c && /^\$?-?(?:0x[0-9a-f]+|\d+)$/i.test(src);
+  }
+  if (/^lea[lqw]?$/.test(mn) && ops.length === 2) {
+    const [src, dst] = ATT(x) ? ops : [ops[1], ops[0]];
+    const m = ATT(x) ? /^-?(?:0x[0-9a-f]+|\d+)?\((%\w+)\)$/i.exec(src) : /^(?:\w+\s+ptr\s+)?\[\s*(\w+)\s*(?:[+-]\s*(?:0x[0-9a-f]+|\d+))?\s*\]$/i.exec(src);
+    return GPR_FAMILY(dst) === c && !!m && GPR_FAMILY(m[1]) === c;
+  }
+  return false;
+}
+// a loop's back branch and its compare: {bound, varying, only} (only: no other branch, call or ret in the loop), or null
+function loopExit(s, l) {
+  const body = s.instrs.filter((x) => x.line >= l.begin && x.line <= l.end);
+  const back = body[body.length - 1], cmp = body[body.length - 2];
+  if (!back || !cmp || back.kind !== 'jcc' || !/^cmp[bwlq]?$/i.test(cmp.mnemonic)) return null;
+  const ops = operandsOf(cmp);
+  if (ops.length !== 2) return null;
+  const fams = ops.map(GPR_FAMILY);
+  if (fams.some((f) => !f)) return null; // (a bound in memory or an immediate: not this kind)
+  const written = new Set();
+  for (const x of body) { const w = writes(x); if (w === null) return null; for (const f of w) written.add(f); }
+  const inv = fams.filter((f) => !written.has(f)), vary = fams.filter((f) => written.has(f));
+  if (inv.length !== 1 || vary.length !== 1) return null;
+  const only = !body.slice(0, -1).some((x) => x.kind !== 'other');
+  return { bound: inv[0], varying: vary[0], only, body, written };
+}
+export function isRemainder(s, a, b) {
+  if (!(a.end < b.begin)) return false;
+  const ea = loopExit(s, a), eb = loopExit(s, b);
+  if (!ea || !eb || !ea.only || ea.bound !== eb.bound) return false;
+  const c0 = eb.varying;
+  if (!eb.body.every((x) => { const w = writes(x); return w !== null && (!w.includes(c0) || advances(x, c0)); })) return false;
+  // between the loops: the bound is not written; c is only advanced, or copied from a register the same holds for
+  let c = c0;
+  const between = s.instrs.filter((x) => x.line > a.end && x.line < b.begin);
+  for (let k = between.length - 1; k >= 0; k--) {
+    const x = between[k], w = writes(x);
+    if (w === null || w.includes(eb.bound)) return false;
+    if (!w.includes(c)) continue;
+    if (advances(x, c)) continue;
+    const ops = operandsOf(x);
+    if (/^mov[lq]?$/i.test(x.mnemonic) && ops.length === 2) {
+      const src = GPR_FAMILY(ATT(x) ? ops[0] : ops[1]);
+      if (src && src !== c) { c = src; continue; }
+    }
+    return false;
+  }
+  // c in a is a's compared register, or a copy of it or of it plus a constant (lea c, [varying + k]): its last write in a
+  return offsetOf(ea.body, c, ea.varying) || offsetOf(ea.body, ea.varying, c, true);
+}
+
+// In a loop's body (straight code), whether y ends as x plus a constant: the last write of y copies x or x plus a constant
+// (mov, lea). first: whether, instead, y's first write so copies x and y and x are otherwise only advanced.
+function offsetOf(body, y, x, first = false) {
+  if (y === x) return true;
+  const ws = body.filter((i) => (writes(i) ?? []).includes(y));
+  const copy = first ? ws[0] : ws[ws.length - 1];
+  if (!copy || !copiesPlus(copy, y, x)) return false;
+  if (!first) return true;
+  return ws.slice(1).every((i) => advances(i, y)) && body.filter((i) => (writes(i) ?? []).includes(x)).every((i) => advances(i, x));
+}
+// mov y, x or lea y, [x + k]
+function copiesPlus(i, y, x) {
+  const ops = operandsOf(i);
+  if (ops.length !== 2) return false;
+  const [src, dst] = ATT(i) ? ops : [ops[1], ops[0]];
+  if (GPR_FAMILY(dst) !== y) return false;
+  if (/^mov[lq]?$/i.test(i.mnemonic)) return GPR_FAMILY(src) === x;
+  if (!/^lea[lqw]?$/i.test(i.mnemonic)) return false;
+  const m = ATT(i) ? /^-?(?:0x[0-9a-f]+|\d+)?\((%\w+)\)$/i.exec(src) : /^(?:\w+\s+ptr\s+)?\[\s*(\w+)\s*(?:[+-]\s*(?:0x[0-9a-f]+|\d+))?\s*\]$/i.exec(src);
+  return !!m && GPR_FAMILY(m[1]) === x;
+}
+
 // The index of the loop analyzed by default (see above) in a list of findLoops (or a part of it), or -1 for none.
 export function defaultLoop(loops) {
   if (!loops.length) return -1;
@@ -522,6 +647,8 @@ export function defaultLoop(loops) {
   let best = -1;
   loops.forEach((l, k) => {
     if (l.inner !== top.inner || l.depth !== top.depth || (l.function ?? null) !== (top.function ?? null)) return;
+    // the remainder of another of these loops is not the default
+    if (l.remainderOf?.some((at) => loops.some((a) => a.begin === at && a.inner === top.inner && a.depth === top.depth && (a.function ?? null) === (top.function ?? null)))) return;
     if (best < 0 || betterDefault(l, loops[best])) best = k;
   });
   return best;

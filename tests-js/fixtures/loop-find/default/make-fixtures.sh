@@ -15,6 +15,10 @@ clang_s add3 O2 skylake-avx512
 clang_s scale_add O2 haswell
 clang_s hist4 O2 skylake
 clang_s mm3 O2 haswell
+clang_s fnv2 O2 haswell
+clang_s search O2 haswell
+clang_s pack O2 haswell
+clang_s idct O2 haswell
 # the baseline x86-64 (SSE2): scalar double code without VEX (andpd, xorps before cvtsi2sd)
 "$CLANG" $FLAGS -O2 -S rec.c -o clang-rec.O2.x86-64.s
 
@@ -41,4 +45,6 @@ gcc_s parse O2 haswell
 "$OBJDUMP" -d --no-show-raw-insn saxpy.o > clang-saxpy.O3.haswell.objdump.txt
 "$CLANG" --target=x86_64-linux-gnu -c gcc-scale_add.O2.haswell.s -o scale_add.o
 "$OBJDUMP" -d -M intel scale_add.o > gcc-scale_add.O2.haswell.objdump-intel.txt
-rm -f saxpy.o scale_add.o
+"$CLANG" --target=x86_64-linux-gnu -c clang-fnv2.O2.haswell.s -o fnv2.o
+"$OBJDUMP" -d --no-show-raw-insn fnv2.o > clang-fnv2.O2.haswell.objdump.txt
+rm -f saxpy.o scale_add.o fnv2.o

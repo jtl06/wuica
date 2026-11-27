@@ -93,6 +93,26 @@ const j = JSON.stringify;
     check(pick(t) === now && p.auto === true && pick(t, LEGACY_AUTO) === before && preparePaste(t, { loop: LEGACY_AUTO }).auto === false,
       `default loop: ${file}: ${what}`, `${pick(t)} (the first: ${pick(t, LEGACY_AUTO)})`);
   }
+  // remainder loops (isRemainder): a loop that continues another's counter to the same bound after it stopped is not the
+  // default. clang's tail of a 2-lane FNV (unrolled ×8: 27 instructions) is the remainder of the 13-instruction main
+  // loop, in -S and in objdump; so is fnv_v2's tail of its 4-lane loop (dot4: the scalar tail of the 4-accumulator loop)
+  const tails = [['clang-fnv2.O2.haswell.s', '.LBB0_10', '.LBB0_7'], ['clang-fnv2.O2.haswell.objdump.txt', '0x30', '0xb0'], ['clang-dot4.O2.skylake.s', '.LBB0_11', '.LBB0_8']];
+  for (const [f, main, tail] of tails) {
+    const t = D(f), p = preparePaste(t);
+    const L = findLoops(scan(p.objdump ? fromObjdump(leadingSemicolons(t)).text : leadingSemicolons(t)));
+    const lab = (l) => (l.label.startsWith('.Lwuica_a') ? `0x${l.label.slice(9)}` : l.label);
+    const rel = L.flatMap((b) => b.remainderOf.map((at) => `${lab(L.find((a) => a.begin === at))}>${lab(b)}`));
+    check(pick(t) === main && j(rel) === j([`${main}>${tail}`]), `remainder: ${f}: ${tail} continues ${main}, which is the default`, j([pick(t), rel]));
+  }
+  // not remainders: a search loop then the work from where it stopped (the search has a second exit); a second loop
+  // continuing an index the first advances once per 4 elements (3/4 of n is left); the defaults as before
+  for (const [f, want] of [['clang-search.O2.haswell.s', '.LBB0_12'], ['clang-pack.O2.haswell.s', '.LBB0_6']]) {
+    const t = D(f);
+    check(pick(t) === want && findLoops(scan(leadingSemicolons(t))).every((l) => l.remainderOf.length === 0), `remainder: ${f}: no remainder, the default ${want}`, pick(t));
+  }
+  // a small constant trip count is not used: in this 8x8 transform (its loops kept by a pragma) the two 8-iteration loops
+  // are the work and the coefficient copy (a count from the stream) is not; hist4's merge loop has the same facts
+  check(pick(D('clang-idct.O2.haswell.s')) === '.LBB0_11', 'default loop: an 8x8 transform of two 8-iteration loops beats the copy loop before it', pick(D('clang-idct.O2.haswell.s')));
   // the list and its indices are as before: -loop N, the page's lp=N, the API's loop
   const sx = preparePaste(D('clang-saxpy.O3.haswell.s'));
   check(j(sx.loops.map((l) => l.label)) === j(['.LBB0_16', '.LBB0_18', '.LBB0_8', '.LBB0_12']) && sx.choice === 2 && pick(D('clang-saxpy.O3.haswell.s'), 0) === '.LBB0_16'
