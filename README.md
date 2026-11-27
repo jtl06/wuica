@@ -105,7 +105,7 @@ from. Runs on Zen 4, Zen 5, desktop Zen 3 and recent Intel cores are the ones th
 
 ## Relation to uiCA
 
-uiCA is by Andreas Abel and Jan Reineke: *uiCA: Accurate Throughput Prediction of Basic Blocks on Recent Intel
+[uiCA](https://github.com/andreas-abel/uiCA) is by Andreas Abel and Jan Reineke: *uiCA: Accurate Throughput Prediction of Basic Blocks on Recent Intel
 Microarchitectures*, ICS 2022. Its official web version is [uiCA.uops.info](https://uiCA.uops.info). wuica is a separate project
 and not affiliated with it.
 
