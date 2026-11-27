@@ -24,7 +24,7 @@ export interface AnalysisOptions {
 /** "auto" (the default): detected from the text (%registers, $immediates: AT&T; else Intel noprefix). */
 export type Syntax = 'auto' | 'intel' | 'att';
 
-/** What of `source` is analyzed: "auto" (default: of a whole function's deepest innermost loops, the one with the
+/** What of `source` is analyzed: "auto" (default: of the deepest innermost loops in the function of the first of them, the one with the
  * widest vector registers, then the most vector instructions, then the most instructions, then the first; its body if
  * it has no loop; else the text as it is), "whole", the index of a loop (as listLoops lists them), or its label. */
 export type LoopChoice = 'auto' | 'whole' | number | string;

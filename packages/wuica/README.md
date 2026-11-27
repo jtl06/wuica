@@ -56,7 +56,9 @@ On an Arm Mac, give clang `--target=x86_64-linux-gnu` (wuica analyzes x86-64 cod
   `r13 += 64 per iteration (bytes; the base of [r13+0x20])` is 64 bytes (16 floats: `-per 16`), `(register step)` a
   counter no address uses.
 - **Which loop.** A whole function or file is analyzed at one loop, by default (`auto`):
-  1. only the innermost loops at the greatest depth (clang's `# =>This Inner Loop Header` notes count);
+  1. only the innermost loops at the greatest depth (clang's `# =>This Inner Loop Header` notes count), and of those
+     only the ones in the function of the first of them: in a file with several functions the default stays in that
+     function (`-func` picks another);
   2. among those, the one whose vector instructions use the widest registers (zmm, then ymm, then xmm, then none), then
      the one with more vector instructions;
   3. then the one with more instructions, then the first in the text.
@@ -390,7 +392,8 @@ Request:
 - `source` is read as the web page reads pasted assembly. `loop` (optional) says what of it is analyzed:
   - `"auto"` (the default): a whole function (`gcc -S`, `clang -S`, `objdump -d` lines with addresses, with or
     without the bytes, Intel or AT&T) is analyzed at its default loop ("Which loop" above: among the deepest innermost
-    loops the widest vector loop, then the one with the most vector instructions, then the largest, then the first). A span that holds a `ret` or another function's label is not a loop (a tail
+    loops, in the function of the first of them, the widest vector loop, then the one with the most vector instructions,
+    then the largest, then the first). A span that holds a `ret` or another function's label is not a loop (a tail
     call jumping back). A compiler's function without a loop (it has a function label, directives or a
     prologue/epilogue, and ends in `ret`) is analyzed at its body, without prologue, epilogue and `ret`; a bare snippet
     such as `add rax, 1` / `ret` is analyzed as typed. A text that is one loop already, or has region markers, is
