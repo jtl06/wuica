@@ -16,8 +16,10 @@
 //   - a ';' that starts a line is a comment (as '#'); one after a statement stays a separator unless the assembler
 //     rejects what follows it (asm-regions.js: commentFixes, separatorNotes).
 //   - the loops: backward branches to a label (or to an address); innermost first, in the order of the code. A span
-//     that holds a ret or a function's label is not a loop (a tail call to an earlier function). The pick is the first
-//     one, unless the text is that loop already; with no loop, a compiler's function (a function label, directives, or
+//     that holds a ret or a function's label is not a loop (a tail call to an earlier function). The pick is the default
+//     loop (defaultLoop: among the deepest innermost loops in the function of the first of them, the widest vector loop,
+//     else the largest), unless the text is
+//     that loop already; with no loop, a compiler's function (a function label, directives, or
 //     a prologue/epilogue) that ends in ret is analyzed without its prologue, epilogue and ret (its body); a bare snippet
 //     is analyzed as typed. Region markers (LLVM-MCA-BEGIN, wuica-begin, IACA) win: no pick. loop "whole": no pick.
 //   - conditional branches to a symbol the text does not define (the loop's exits: jae .Lout) are "not taken": the
@@ -43,6 +45,9 @@ export const OUTSIDE_PREFIX = '.Lwuica_x';
 // directives after which the lines of a text are not its instructions one to one
 const STRUCTURAL = /^[ \t]*(?:[\w.$@]+:[ \t]*)*(\.(?:rept|irpc?|macro|if\w*))\b/im; // an objdump branch to an address that is not in the text
 const ADDR_LABEL = (a) => `.Lwuica_a${a.toString(16)}`;
+// The page's links made before the default loop was defaultLoop's (a link without lp=) pick what "auto" picked then: the
+// first loop of findLoops' list (url-state.js). Not a label (a label has no '-').
+export const LEGACY_AUTO = 'auto-v1';
 
 // Splits a line (block comments already removed) into its statements outside comments: [{at, text}] (at: the column
 // of the statement's first character, 0-based). '#' and '//' start a comment, ';' separates statements; quotes kept.
@@ -366,8 +371,9 @@ function targetLine(s, target, line) {
   return l && l.inText ? l.line : null;
 }
 
-// The loops: [{begin, end, label, inner}] (begin: the label's line, end: the last branch back to it; 1-based), innermost first,
-// then the deepest, then in the order of the code (which may put a remainder loop first: clang often does).
+// The loops: [{begin, end, label, inner, depth, instructions, function, vector: {width, count}}] (begin: the label's line,
+// end: the last branch back to it; 1-based), innermost first, then the deepest, then in the order of the code (which may
+// put a remainder loop first: clang often does). defaultLoop picks one of them.
 export function findLoops(s) {
   const loops = [];
   for (const ins of s.instrs) {
@@ -418,9 +424,95 @@ export function findLoops(s) {
     for (const [name, d] of s.labels) if (d.line <= l.begin && d.line > at && !name.startsWith('.L') && !/^\d+$/.test(name) && !name.startsWith('wuica')) { fname = name; at = d.line; }
     l.function = fname;
   }
-  // the innermost and deepest first; among equals, the first in the code (gcc puts the main loop first, clang often its
-  // remainder loop: -loops lists them all)
+  for (const l of merged) {
+    // the vector instructions (vectorWidth) and the widest of their registers: the default's preference (defaultLoop)
+    let width = 0, count = 0;
+    for (const x of s.instrs) {
+      if (x.line < l.begin || x.line > l.end) continue;
+      const w = vectorWidth(x.mnemonic, x.operands);
+      if (w) { count++; width = Math.max(width, w); }
+    }
+    l.vector = { width, count };
+  }
+  // the order of the list (the indices of -loop N, lp= in the page's links, the API's loop): the innermost and deepest
+  // first, then in the order of the code. Which of them is analyzed by default is defaultLoop's choice, not the first.
   return merged.sort((a, b) => Number(b.inner) - Number(a.inner) || b.depth - a.depth || a.begin - b.begin || a.end - b.end);
+}
+
+// ---- the default loop ------------------------------------------------------------------------------------------------
+//
+// The loop analyzed by default ("auto") among the loops of a text (findLoops' order; after -func):
+//   1. only the innermost loops at the greatest depth (clang's "Inner Loop Header: Depth=N" notes count) that are in
+//      the function of the first of them (the first loop of the list; loops in no function are one group): a text
+//      with several functions is analyzed in the function the first deepest loop is in, never at another's loop;
+//   2. among those, the one whose vector instructions use the widest registers (zmm over ymm over xmm over none), then
+//      the one with more vector instructions;
+//   3. then the one with more instructions, then the first in the text.
+// A compiler's vectorized loop comes with a scalar remainder, sometimes a peel loop before it or a narrower vector
+// epilogue, often first in the text (clang): rule 2 picks the vector loop. A function without vector code gets its
+// largest loop (rule 3), as one whose scalar floating-point code touches xmm registers does (vectorWidth).
+//
+// A vector instruction (vectorWidth): an SSE, AVX or AVX-512 instruction that works on several elements of a vector
+// register. It names an xmm, ymm or zmm register and is none of these, which scalar code uses (gcc and clang compile
+// scalar float and double code to them, so they do not make a loop a vector loop):
+//   - scalar floating point: a mnemonic (without its v) that does not start with p and ends in ss, sd or sh (addss,
+//     vmulsd, vfmadd231sd, movss, ucomisd, sqrtsd, cvtss2sd, vcvtsi2sd, cvtsi2sdq), and the conversions of one value to
+//     an integer register (cvttsd2si, vcvtss2usi); not the broadcasts (vbroadcastss fills a whole register);
+//   - one element moved between a general-purpose register or memory and a vector register: movd, movq, pinsr*,
+//     pextr*, insertps, extractps, movlpd, movhpd (and their v forms, vmovw);
+//   - zero idioms (xorps xmm0, xmm0; vpxor xmm1, xmm1, xmm1: the same register throughout): what compilers put before
+//     a cvtsi2sd to break its dependency;
+//   - copies from register to register (movaps xmm1, xmm0; vmovdqa64 zmm1, zmm2 without a mask): no work on elements;
+//   - the floating-point logic of xmm registers (andps, andnps, orps, xorps and their pd forms): fabs, negation and
+//     copysign of a scalar (andpd xmm0, [mask]). On ymm and zmm they count (no compiler uses those for scalars); a
+//     128-bit vector loop always has other vector instructions (its loads, stores, arithmetic).
+// MMX registers (mm0-mm7) and mask registers (k0-k7) do not make an instruction vector by themselves.
+
+const VREG = /(?:^|[^\w])%?([xyz])mm([0-9]|[12][0-9]|3[01])(?![\w])/gi;
+const WIDTH = { x: 128, y: 256, z: 512 };
+const ELEMENT = /^(?:movd|movq|movw|pinsr[bwdq]|pextr[bwdq]|insertps|extractps|movlpd|movhpd)$/;
+const ZERO = /^(?:xorp[sd]|pxor[dq]?|psub[bwdq]|pcmpgt[bwdq]|andnp[sd]|pandn[dq]?)$/;
+const COPY = /^mov(?:ap[sd]|up[sd]|dq[au](?:8|16|32|64)?)$/;
+const FP_LOGIC = /^(?:andn?p[sd]|orp[sd]|xorp[sd])$/;
+
+// The width (128, 256 or 512) of the widest vector register of a vector instruction (see above), or 0 if it is not one.
+export function vectorWidth(mnemonic, operands) {
+  let width = 0;
+  const regs = [];
+  for (const m of String(operands ?? '').matchAll(VREG)) {
+    width = Math.max(width, WIDTH[m[1].toLowerCase()]);
+    regs.push(`${m[1]}mm${m[2]}`.toLowerCase());
+  }
+  if (!width) return 0;
+  const mn = String(mnemonic).toLowerCase();
+  const base = mn.startsWith('v') ? mn.slice(1) : mn;
+  if (!base.startsWith('p') && !base.startsWith('broadcast') && /(?:ss|sd|sh)$/.test(base.replace(/^(cvtu?si2s[sdh])[lq]$/, '$1'))) return 0;
+  if (/^cvtt?s[sdh]2u?si[lq]?$/.test(base)) return 0;
+  if (ELEMENT.test(base)) return 0;
+  const ops = String(operands ?? '').split(/,(?![^[(]*[\])])/).map((o) => o.trim()).filter(Boolean);
+  const regOnly = ops.every((o) => /^%?[xyz]mm\d+$/i.test(o)); // (no memory operand, no immediate, no mask)
+  if (ZERO.test(base) && regOnly && ops.length >= 2 && new Set(regs).size === 1) return 0;
+  if (COPY.test(base) && regOnly && ops.length === 2) return 0;
+  if (FP_LOGIC.test(base) && width === 128) return 0;
+  return width;
+}
+
+// The index of the loop analyzed by default (see above) in a list of findLoops (or a part of it), or -1 for none.
+export function defaultLoop(loops) {
+  if (!loops.length) return -1;
+  const top = loops[0];
+  let best = -1;
+  loops.forEach((l, k) => {
+    if (l.inner !== top.inner || l.depth !== top.depth || (l.function ?? null) !== (top.function ?? null)) return;
+    if (best < 0 || betterDefault(l, loops[best])) best = k;
+  });
+  return best;
+}
+
+// a before b as the default (rules 2 and 3 above)
+function betterDefault(a, b) {
+  const va = a.vector ?? { width: 0, count: 0 }, vb = b.vector ?? { width: 0, count: 0 };
+  return (va.width - vb.width || va.count - vb.count || (a.instructions ?? 0) - (b.instructions ?? 0) || b.begin - a.begin) > 0;
 }
 
 const PROLOGUE = [
@@ -487,7 +579,7 @@ export function preparePaste(text, { loop = 'auto', func = null } = {}) {
   }
   const named = (l) => (l.label.startsWith('.Lwuica_a') ? `0x${l.label.slice(9)}` : l.label);
   // a loop by its label ("-loop .LBB0_12", "-loop 0x10"): as its index
-  if (typeof loop === 'string' && loop !== 'auto' && loop !== 'whole') {
+  if (typeof loop === 'string' && loop !== 'auto' && loop !== 'whole' && loop !== LEGACY_AUTO) {
     const name = loop;
     const hits = loops.flatMap((l, i) => (named(l) === name || l.label === name || named(l) === `.${name}` || (/^0x/i.test(name) && named(l).toLowerCase() === name.toLowerCase()) ? [i] : []));
     const k = hits.length ? hits[0] : -1;
@@ -505,8 +597,8 @@ export function preparePaste(text, { loop = 'auto', func = null } = {}) {
   }
   /** @type {any} */
   const out = { text: asm, objdump: od.objdump, loops: loops.map((l) => ({ begin: l.begin, end: l.end, label: named(l), function: l.function, instructions: l.instructions, depth: l.depth, inner: l.inner })),
-    choice: null, choosable: false, pick: null, body: null, alignment: null, address: null, stubs: [], notes: [], fallback: new Map() };
-  if (loop !== 'auto' && loop !== 'whole' && !(Number.isInteger(loop) && loop >= 0)) {
+    choice: null, auto: false, choosable: false, pick: null, body: null, alignment: null, address: null, stubs: [], notes: [], fallback: new Map() };
+  if (loop !== 'auto' && loop !== 'whole' && loop !== LEGACY_AUTO && !(Number.isInteger(loop) && loop >= 0)) {
     out.error = `loop: ${JSON.stringify(loop)} is not "auto", "whole", the index of a loop (0-based) or its label`;
     return out;
   }
@@ -531,7 +623,9 @@ export function preparePaste(text, { loop = 'auto', func = null } = {}) {
   if (pf.unweighted) out.notes.push({ line: null, column: null, severity: 'note', message: 'perf annotate: a symbol\'s header has no sample count, so the samples are each symbol\'s own percentages (not of all the samples)' });
   // perf annotate with several loops: "auto" picks the one whose own instructions (not those of a loop nested in it)
   // have the most samples, the first of equals
-  if (pf.perf && loop === 'auto' && loops.length > 1) {
+  // the pick is the default (out.auto: the page says so; not for LEGACY_AUTO, a link's own pick)
+  const automatic = loop === 'auto';
+  if (pf.perf && (loop === 'auto' || loop === LEGACY_AUTO) && loops.length > 1) {
     const inside = (a, b) => a !== b && a.begin >= b.begin && a.end <= b.end;
     const heat = loops.map((l) => code.filter((x) => x.line >= l.begin && x.line <= l.end && !loops.some((n) => inside(n, l) && x.line >= n.begin && x.line <= n.end))
       .reduce((n, x) => n + (pf.samples.get(x.line) ?? 0), 0));
@@ -554,7 +648,7 @@ export function preparePaste(text, { loop = 'auto', func = null } = {}) {
     }
     if (out.choosable && loop !== 'whole') {
       if (loops.length) {
-        const k = Number.isInteger(loop) ? loop : 0;
+        const k = Number.isInteger(loop) ? loop : loop === LEGACY_AUTO ? 0 : defaultLoop(loops);
         out.choice = k;
         out.pick = { begin: loops[k].begin, end: loops[k].end };
       } else {
@@ -563,6 +657,7 @@ export function preparePaste(text, { loop = 'auto', func = null } = {}) {
       }
       // the source line of each instruction of the pick (caveats.js names lines with them)
       out.pick = { ...out.pick, lines: code.filter((x) => x.line >= out.pick.begin && x.line <= out.pick.end).map((x) => x.line) };
+      out.auto = automatic;
     }
   }
   // data directives among the analyzed instructions (the pick's, or the whole text's): their bytes are instructions of
@@ -594,8 +689,8 @@ export function preparePaste(text, { loop = 'auto', func = null } = {}) {
   return out;
 }
 
-// A text that replaces an editor's text (a paste over most of it, an example, an import) starts with the first loop again (the page's
-// pick goes back to auto).
+// A text that replaces an editor's text (a paste over most of it, an example, an import) starts with the default loop again (the
+// page's pick goes back to auto).
 // Not an edit: what the old and the new text share at their start and end is less than half of the old one.
 export function replacesText(before, after) {
   if (before === after) return false;

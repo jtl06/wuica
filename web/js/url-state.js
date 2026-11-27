@@ -1,12 +1,14 @@
 // The state of the page in the URL fragment: input, mode, the checked CPUs, options, the open panels, the selected row and side B of an A–B comparison. The fragment, never the query string:
 // a fragment is not sent to the server. No DOM; btoa/atob exist in browsers and in Node.
 
+import { LEGACY_AUTO } from './loop-find.js';
+
 /**
  * The page's state (app.js keeps one, the URL fragment holds it).
- * @typedef {{mode: 'asm' | 'hex', syntax: 'intel' | 'att', arch: string, cpus: string, text: string, loop: 'auto' | 'whole' | number,
+ * @typedef {{mode: 'asm' | 'hex', syntax: 'intel' | 'att', arch: string, cpus: string, text: string, loop: 'auto' | 'auto-v1' | 'whole' | number,
  *   alignmentOffset: number, initPolicy: 'diff' | 'same' | 'stack', simpleFrontEnd: boolean, noMicroFusion: boolean,
  *   noMacroFusion: boolean, minIterations: number, minCycles: number, cmpSweep: boolean, ab: boolean, bMode: 'asm' | 'hex',
- *   bSyntax: 'intel' | 'att', bArch: string, bText: string, bLoop: 'auto' | 'whole' | number, aWork: number, bWork: number, abSide: 'a' | 'b', cost: boolean,
+ *   bSyntax: 'intel' | 'att', bArch: string, bText: string, bLoop: 'auto' | 'auto-v1' | 'whole' | number, aWork: number, bWork: number, abSide: 'a' | 'b', cost: boolean,
  *   costNop: boolean, trace: boolean, waits: boolean, sel: number, bound: boolean, whatif: boolean, codemap: boolean,
  *   deps: boolean, srcmap: boolean, mca: boolean}} PageState
  */
@@ -17,7 +19,8 @@ export const DEFAULT_STATE = Object.freeze({
   arch: 'SKL',            // the focused CPU: its detailed result (and side A of an A–B comparison)
   cpus: '',               // the checked CPUs: '' = only arch; 'all'; or keys separated by commas (app.js orders them)
   text: '',
-  loop: 'auto',           // what of pasted assembly is analyzed (loop-find.js): 'auto', 'whole' or a loop's index
+  loop: 'auto',           // what of pasted assembly is analyzed (loop-find.js): 'auto', 'whole' or a loop's index;
+                          // 'auto-v1' (LEGACY_AUTO): a link from before the default of loop-find.js's defaultLoop (below)
   alignmentOffset: 0,     // 0..63
   initPolicy: 'diff',     // 'diff' | 'same' | 'stack'
   simpleFrontEnd: false,
@@ -111,6 +114,7 @@ export function encodeState(state) {
   for (const [k, name] of Object.entries(VIEWS)) if (s[name]) p.push(`${k}=1`);
   if (Number.isInteger(s.sel) && s.sel >= 0) p.push(`sel=${s.sel}`);
   if (s.loop === 'whole' || Number.isInteger(s.loop)) p.push(`lp=${s.loop}`);
+  else if (s.loop === 'auto' && s.mode === 'asm' && s.text !== '') p.push('lp=auto'); // (see loopOf)
   if (s.aWork !== DEFAULT_STATE.aWork) p.push(`aw=${s.aWork}`); // (single mode too: per element)
   if (s.text !== '') p.push(`c=${toBase64Url(s.text)}`);
   if (s.ab) { // side B, only in A–B mode: a single-mode link stays as it was
@@ -120,12 +124,23 @@ export function encodeState(state) {
     if (s.bArch) p.push(`ba=${encodeURIComponent(s.bArch)}`);
     if (s.bWork !== DEFAULT_STATE.bWork) p.push(`bw=${s.bWork}`);
     if (s.bMode === 'asm' && (s.bLoop === 'whole' || Number.isInteger(s.bLoop))) p.push(`blp=${s.bLoop}`); // (machine code has no loops to pick)
+    else if (s.bMode === 'asm' && s.bLoop === 'auto' && s.bText !== '') p.push('blp=auto');
     if (s.abSide === 'b') p.push('sd=b');
     if (s.bText !== '') p.push(`bc=${toBase64Url(s.bText)}`);
   }
   if (s.mode === 'asm' && p.length) p.unshift('m=asm');
   if (s.mode === 'hex' && !p.length) p.push('m=hex'); // only the format differs from the defaults
   return p.length ? 'v=1&' + p.join('&') : '';
+}
+
+// A side's pick from its lp= (blp=): 'whole', a loop's index, 'auto'. A link with assembly and no lp= was made before
+// the default loop became defaultLoop's (loop-find.js: the widest vector loop, then the largest): it opens on what it
+// showed then, the first loop of the list (LEGACY_AUTO). Links made since write lp=auto for the default (encodeState),
+// which a page from before reads as its own default (not a number).
+function loopOf(v, mode, text) {
+  if (v === 'whole') return 'whole';
+  if (v !== undefined && v !== 'auto') { const n = clampInt(v, LIMITS.loop, null); if (n !== null) return n; }
+  return v === undefined && mode === 'asm' && text !== '' ? LEGACY_AUTO : 'auto';
 }
 
 // The state in a fragment (with or without "#"); null if there is none. Everything is validated: a link is
@@ -163,8 +178,7 @@ export function decodeState(fragment) {
   for (const [k, name] of Object.entries(FLAGS)) if (q.get(k) === '1') s[name] = true;
   for (const [k, name] of Object.entries(VIEWS)) if (q.get(k) === '1') s[name] = true;
   if (q.has('sel')) s.sel = clampInt(q.get('sel'), LIMITS.sel, DEFAULT_STATE.sel);
-  if (q.get('lp') === 'whole') s.loop = 'whole';
-  else if (q.has('lp')) s.loop = clampInt(q.get('lp'), LIMITS.loop, DEFAULT_STATE.loop);
+
   const text = (k) => {
     try {
       const t = fromBase64Url(q.get(k));
@@ -173,6 +187,7 @@ export function decodeState(fragment) {
   };
   if (q.has('aw')) s.aWork = clampInt(q.get('aw'), LIMITS.aWork, DEFAULT_STATE.aWork);
   if (q.has('c')) s.text = text('c');
+  s.loop = loopOf(q.get('lp'), s.mode, s.text);
   if (q.get('ab') === '1') {
     s.ab = true;
     s.bMode = q.get('bm') === 'asm' ? 'asm' : 'hex';
@@ -185,10 +200,10 @@ export function decodeState(fragment) {
     }
     if (q.has('bk')) s.bWork = clampInt(q.get('bk'), [1, 64], DEFAULT_STATE.bWork); // older links: B unrolled ×N
     if (q.has('bw')) s.bWork = clampInt(q.get('bw'), LIMITS.bWork, DEFAULT_STATE.bWork);
-    if (q.get('blp') === 'whole') s.bLoop = 'whole';
-    else if (q.has('blp')) s.bLoop = clampInt(q.get('blp'), LIMITS.loop, DEFAULT_STATE.bLoop);
+
     if (q.get('sd') === 'b') s.abSide = 'b';
     if (q.has('bc')) s.bText = text('bc');
+    s.bLoop = loopOf(q.get('blp'), s.bMode, s.bText);
   }
   return s;
 }

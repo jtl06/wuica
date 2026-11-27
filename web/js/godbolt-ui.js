@@ -7,7 +7,7 @@
 
 import { h } from './render.js';
 import {
-  parseCeLink, isCeLink, resolveShortLink, compilersOf, compilePane, parseListing, findLoops, defaultSelection,
+  parseCeLink, isCeLink, resolveShortLink, compilersOf, compilePane, parseListing, findLoops, defaultSelection, defaultLoopOf,
   extractRange, sourceAsAssembly, compilerMessages, targetProblem, is32bit, rangeLines,
 } from './godbolt.js';
 
@@ -194,7 +194,7 @@ export function createCeImport(api) {
         fnSel.value = String(s.sel.fn);
         fnSel.addEventListener('change', () => {
           const f = listing.functions[Number(fnSel.value)];
-          const l = findLoops(f)[0];
+          const l = defaultLoopOf(f);
           const first = f.items.findIndex((it) => it.kind === 'instr');
           s.sel = { ...s.sel, fn: Number(fnSel.value), ...(l ? { start: l.start, end: l.end, anchor: l.start } : { start: first, end: f.items.length - 1, anchor: first }) };
           paintPicker(s);

@@ -139,8 +139,9 @@ const HELPERS = `
   const instrRows = () => [...document.querySelectorAll('table.uops tbody tr:not(.extra)')];
   const chip = () => { const c = $('region-chip'); return c && !c.hidden ? c.textContent : null; };
   const setCode = (v) => { const c = $('code'); c.value = v; c.dispatchEvent(new Event('input', { bubbles: true })); };
-  // a loop chip's option as "loop LABEL" ('whole', 'body'): the menu shows "LABEL · function · N instr" (region-chip.js)
-  const loopName = (o) => (!o ? null : o.value === 'whole' || o.value === 'body' ? o.text : 'loop ' + o.text.split(' · ')[0]);
+  // a loop chip's option as "loop LABEL" ('whole', 'body'): the menu shows "LABEL · function · N instr", the analyzed loop
+  // "loop K of N · LABEL · auto" (region-chip.js)
+  const loopName = (o) => (!o ? null : o.value === 'whole' || o.value === 'body' ? o.text : 'loop ' + o.text.replace(/^loop \\d+ of \\d+ · /, '').split(' · ')[0]);
   const loopChip = () => { const c = $('loop-chip'); return c && !c.hidden ? loopName(c.options[c.selectedIndex]) : null; };
   const pickLoop = (v) => { const c = $('loop-chip'); c.value = v; c.dispatchEvent(new Event('change', { bubbles: true })); };
 `;
@@ -293,7 +294,8 @@ try {
     check(got.SKL.caveats.join() === 'split loads? (7)' && got.ZEN3.arch === 'ZEN3' && got.ZEN3.caveats.length === 0, 'split loads: SKL warns, ZEN3 (splitLoadCycles 2) does not', JSON.stringify(got));
   }
 
-  // --- a branch inside the picked loop (clang's sum_mod remainder loop): "both paths", its title naming the source line
+  // --- a branch inside the picked loop (clang's sum_mod main loop, unrolled 4 times: the default since loop-find.js's
+  // defaultLoop; before, its remainder loop, branch at line 46): "both paths", its title naming the source lines
   // (the picked loop's lines from the assembler result, app.js) ----------------------------------------------------------
   {
     const DIVMOD = fs.readFileSync(path.join(here, 'fixtures/cli/divmod.hsw.s'), 'utf8');
@@ -305,7 +307,7 @@ try {
       await done(() => $('run').click());
       const cv = document.querySelector('.cv-line .cv[data-cv="paths"]');
       return { text: cv?.textContent, title: cv?.title, all: [...document.querySelectorAll('.cv-line .cv')].map((x) => x.textContent) };`);
-    check(p.text === 'both paths' && /^both sides of the branch at line 46 \(jnz\) are simulated/.test(p.title) && p.all.join() === 'both paths,exit mispredict', 'a branch inside the loop: both paths, at its source line', JSON.stringify(p));
+    check(p.text === 'both paths' && /^both sides of the branches at lines 95, 112, 129, 146 \(jz, jnz\) are simulated/.test(p.title) && p.all.join() === 'both paths,exit mispredict', 'a branch inside the loop: both paths, at its source line', JSON.stringify(p));
     check(page.problems.length === 0, 'no console errors (both paths)', page.problems.join('\n'));
     await page.cmd('Page.close');
   }
@@ -349,7 +351,7 @@ try {
       out.edited = [loopChip(), $('opt-align').value];
       // a new text (plain assembly): no inherited offset, the pick back to auto
       setCode(${JSON.stringify(PLAIN)}); await done(() => $('run').click());
-      out.plain = [$('opt-align').value, /lp=/.test(location.hash)];
+      out.plain = [$('opt-align').value, /lp=(?!auto)/.test(location.hash)];
       // by hand, then the objdump again: its addresses (a new text); then by hand for that text: kept on a pick
       const a = $('opt-align'); a.value = '8'; a.dispatchEvent(new Event('change', { bubbles: true })); await wait(50);
       setCode(${JSON.stringify(TWO)}); await done(() => $('run').click());
@@ -362,7 +364,7 @@ try {
       await done(() => pickLoop('1'));
       out.fn = [loopChip(), instrRows().length];
       await done(() => { const s = $('examples'); s.value = 'chain'; s.dispatchEvent(new Event('change', { bubbles: true })); });
-      out.example = [/lp=/.test(location.hash), loopChip()];
+      out.example = [/lp=(?!auto)/.test(location.hash), loopChip()];
       // a pick that does not assemble: the chip stays, so "whole" is reachable
       setCode('f:\\n  mov ecx, 9\\n.L1:\\n  addd rax, 1\\n  dec rcx\\n  jnz .L1\\n  ret\\n'); $('run').click();
       await until(() => $('input-messages').textContent.includes('addd'));

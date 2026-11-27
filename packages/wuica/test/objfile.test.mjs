@@ -45,7 +45,9 @@ test('-ffunction-sections: each .text.NAME laid out at a multiple of 64; -funcs 
   assert.match(f.out, /^dot +\.text\.dot +0x0 +196$/m);
   assert.match(f.out, /^psum +\.text\.psum +0x100 +\d+$/m);
   assert.equal(run(['kernels.fs.o', '-func', 'dot', '-TPonly']).out, run(['kernels.elf.o', '-func', 'dot', '-TPonly']).out);
-  assert.equal(run(['kernels.fs.o', '-func', 'mod', '-TPonly']).out.trim(), '21.00');
+  // (sum_mod's default: its largest loop, the unrolled one, in the same function as its first loop; the first, 21.00, was
+  // the default before loop-find.js's defaultLoop)
+  assert.equal(run(['kernels.fs.o', '-func', 'mod', '-TPonly']).out.trim(), '72.00');
   assert.match(run(['kernels.elf.o', '-func', 'sum']).err, /func: "sum" is part of 2 function names \(psum, sum_mod\): give one of them/);
   assert.match(run(['kernels.elf.o', '-func', 'nope']).err, /func: "nope" is not a function of the file \(functions: dot, psum, hist, sum_mod, walk\)/);
   assert.equal(run(['kernels.macho.o', '-func', 'dot', '-TPonly']).out.trim(), '32.00'); // _dot
@@ -72,6 +74,7 @@ test('other architectures and formats: what they are and how to get x86-64; -raw
   fs.rmSync(dir, { recursive: true, force: true });
   const b = run(['kernels.elf.o', 'kernels.arm64.o', '../cli/dot.hsw.s', '-TPonly']);
   assert.equal(b.code, 1);
+  // (kernels.elf.o: the default stays in dot, the function of the first loop; dot's loop is the larger of its two)
   assert.equal(b.out, 'kernels.elf.o\t32.00\nkernels.arm64.o\terror\n../cli/dot.hsw.s\t32.00\n');
   assert.match(b.err, /^kernels\.arm64\.o: an arm64 Mach-O file/m);
 });

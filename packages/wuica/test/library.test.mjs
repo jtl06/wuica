@@ -342,6 +342,7 @@ test('clang 23 -S output as is: .prefalign is read as the .p2align clang 22 wrot
   assert.match(s, /^\t\.prefalign\t4, \.Lfunc_end0, nop$/m);
   const r = await w.analyze('SKL', { source: s });
   assert.equal(r.code, 0, r.error);
+  // the default stays in the function of the first loop (dot), though count's loop is vectorized (loop-find.js, defaultLoop)
   assert.equal(r.loop.function, 'dot');
   const p2 = await w.analyze('SKL', { source: s.replace(/\.prefalign\t(\d+).*$/gm, '.p2align $1') });
   assert.equal(r.tp, p2.tp);

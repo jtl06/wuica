@@ -307,6 +307,19 @@ test('CORS: any origin, GET/POST, preflight, no credentials', async () => {
   assert.equal((await post(s.base, '/api/analyze/K8', { hex: HEX })).headers.get('access-control-allow-origin'), '*');
 });
 
+test('the default loop of a vectorized function: the vector loop (as the library and the page pick it); an index picks another', async () => {
+  // clang -O3 -march=haswell saxpy: a scalar remainder loop first in the text, the ymm loop third in the list
+  const fn = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/loop-find/default/clang-saxpy.O3.haswell.s'), 'utf8');
+  const a = await post(s.base, '/api/analyze/SKL', { source: fn, syntax: 'att' });
+  assert.equal(a.status, 200);
+  assert.deepEqual([a.json.loop.name, a.json.loop.index, a.json.loop.count], ['loop .LBB0_8', 2, 4]);
+  assert.equal(a.json.hex, (await w.analyze('SKL', { source: fn, syntax: 'att' })).hex);
+  const first = await post(s.base, '/api/analyze/SKL', { source: fn, syntax: 'att', loop: 0 });
+  assert.equal(first.json.loop.name, 'loop .LBB0_16'); // (the default before loop-find.js's defaultLoop)
+  const c = await post(s.base, '/api/compare', { source: fn, syntax: 'att', archs: ['SKL', 'ZEN3'] });
+  assert.equal(c.json.loop.name, 'loop .LBB0_8');
+});
+
 test('a whole function: its loop (`loop`), as the library reads it; a bad `loop` is a 400; compare keeps it in its parts', async () => {
   const fn = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/loop-find/crc_a.s'), 'utf8');
   const a = await post(s.base, '/api/analyze/ZEN3', { source: fn });

@@ -8,7 +8,7 @@
 
 /* the loop chip (a select: what of pasted assembly is analyzed) */
 select.loop-chip { margin-left: 0.6ch; font: inherit; font-size: 0.9em; cursor: pointer; }
-.toolbar select.loop-chip, .ab-b-head select.loop-chip, .ab-switch + select.loop-chip { margin: 0; max-width: 14ch; } /* (in the side's row of controls) */
+.toolbar select.loop-chip, .ab-b-head select.loop-chip, .ab-switch + select.loop-chip { margin: 0; max-width: 34ch; } /* (in the side's row of controls: room for "loop 2 of 4 · .LBB0_4 · auto") */
 .ab-switch + select.loop-chip { margin-block: -0.2rem; }
 .messages + select.loop-chip { display: block; width: max-content; margin: 0.3rem 0 0; } /* (no room in the row: under the editor) */
 

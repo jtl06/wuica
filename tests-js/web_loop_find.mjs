@@ -2,10 +2,11 @@
 // gcc -S, objdump -d output (with and without the bytes, Intel and AT&T, addresses with hex letters), the exits taken as
 // not taken (also to a non-local symbol), ';' comments, the alignment offset from the addresses, a function without a
 // loop (its body), and that nothing changes for a text that is one loop already (the built-in examples). The fixtures in
-// tests-js/fixtures/loop-find are from the 0.1.4 dogfood run (gcc 16.2 -O3 -march=native).
+// tests-js/fixtures/loop-find are from the 0.1.4 dogfood run (gcc 16.2 -O3 -march=native); those of the default loop
+// (loop-find/default) are clang 23 and gcc 16.2 output of the C files there (make-fixtures.sh).
 // Usage: node tests-js/web_loop_find.mjs
 import fs from 'node:fs';
-import { preparePaste, fromObjdump, leadingSemicolons, findLoops, scan, replacesText, detectSyntax } from '../web/js/loop-find.js';
+import { preparePaste, fromObjdump, leadingSemicolons, findLoops, scan, replacesText, detectSyntax, vectorWidth, defaultLoop, LEGACY_AUTO } from '../web/js/loop-find.js';
 import { withRegions } from '../web/js/asm-regions.js';
 import { WasmAssembler } from '../web/js/assembler.js';
 import { EXAMPLES, CLASSIC_EXAMPLES } from '../web/js/examples.js';
@@ -64,6 +65,75 @@ const j = JSON.stringify;
   check(od2.alignment === 0 && od2.pick === null, "objdump 'whole': the alignment of the first instruction");
   const hexLetters = preparePaste('  1c:\tjne 10 <psum+0x10>\n  1e:\tret\n');
   check(hexLetters.objdump && /jne \.Lwuica_x10/.test(hexLetters.text) && hexLetters.stubs[0] === '.Lwuica_x10', 'objdump: 1c: (hex letters) and a target outside the text', hexLetters.text);
+}
+
+// --- the default loop (defaultLoop, vectorWidth) ---------------------------------------------------------------------------
+{
+  const D = (name) => fs.readFileSync(new URL(`tests-js/fixtures/loop-find/default/${name}`, root), 'utf8');
+  const pick = (t, loop = 'auto') => { const p = preparePaste(t, { loop }); return Number.isInteger(p.choice) ? p.loops[p.choice].label : p.choice; };
+  // [file, the default, the loop the default was before (the first of the list), what it shows]
+  const cases = [
+    ['clang-saxpy.O3.haswell.s', '.LBB0_8', '.LBB0_16', 'clang: the ymm loop, not the scalar remainder first in the text, its 8-way unrolled part or the xmm epilogue'],
+    ['clang-saxpy.O3.haswell.objdump.txt', '0x140', '0x40', 'the same code as llvm-objdump -d (AT&T, no bytes): the same loop'],
+    ['clang-dot4.O2.skylake.s', '.LBB0_11', '.LBB0_11', '4 accumulators as vfmadd231ps on xmm (2 vector instructions) beat the 19-instruction scalar tail (vmovss, vfmadd231ss)'],
+    ['clang-dot_sse.O2.haswell.s', '.LBB0_5', '.LBB0_5', 'SSE intrinsics (xmm) beat the larger scalar cleanup, whose vandps (fabsf) does not count'],
+    ['clang-add3.O2.skylake-avx512.s', '.LBB0_5', '.LBB0_5', 'zmm before ymm, ymm before none'],
+    ['clang-rec.O2.x86-64.s', '.LBB0_15', '.LBB0_10', 'scalar double code (andpd, xorps x,x, cvtsi2sdl, mulsd) is not vector: the larger integer loop'],
+    ['gcc-rec.O2.haswell.s', '.L5', '.L3', 'gcc: the same with vandpd and vcvtsi2sdl'],
+    ['gcc-scale_add.O2.haswell.s', '.L14', '.L4', 'gcc: the AVX2 loop, not the scalar peel loop before it'],
+    ['gcc-scale_add.O2.haswell.objdump-intel.txt', '0x80', '0x20', 'the same code as llvm-objdump -d -M intel with the bytes: the same loop'],
+    ['gcc-parse.O2.haswell.s', '.L6', '.L11', 'no vector code: the larger loop (the digits, not the blanks)'],
+    // where the rule misses the main loop (the docs say so)
+    ['clang-hist4.O2.skylake.s', '.LBB0_9', '.LBB0_2', 'a miss: the vectorized merge of the 4 sub-histograms (8 iterations) wins over the scalar histogram loop'],
+    ['clang-scale_add.O2.haswell.s', '.LBB0_16', '.LBB0_2', 'a miss: clang vectorizes the scalar cleanup (×4: 12 vector instructions) past the intrinsics loop .LBB0_7 (3)'],
+  ];
+  for (const [file, now, before, what] of cases) {
+    const t = D(file);
+    const p = preparePaste(t);
+    check(pick(t) === now && p.auto === true && pick(t, LEGACY_AUTO) === before && preparePaste(t, { loop: LEGACY_AUTO }).auto === false,
+      `default loop: ${file}: ${what}`, `${pick(t)} (the first: ${pick(t, LEGACY_AUTO)})`);
+  }
+  // the list and its indices are as before: -loop N, the page's lp=N, the API's loop
+  const sx = preparePaste(D('clang-saxpy.O3.haswell.s'));
+  check(j(sx.loops.map((l) => l.label)) === j(['.LBB0_16', '.LBB0_18', '.LBB0_8', '.LBB0_12']) && sx.choice === 2 && pick(D('clang-saxpy.O3.haswell.s'), 0) === '.LBB0_16'
+    && preparePaste(D('clang-saxpy.O3.haswell.s'), { loop: 0 }).auto === false && preparePaste(D('clang-saxpy.O3.haswell.s'), { loop: 'whole' }).auto === false,
+  'default loop: the order of the list (the indices) is unchanged; an explicit pick is not auto', j(sx.loops));
+  // several functions: the default stays in the function of the first loop of the list (sum.c: dot, though count's loop
+  // is vectorized; multi.s: sum, not popc's ymm loop; kernels: dot, not sum_mod's larger loop); -func: within that one
+  const sum = fs.readFileSync(new URL('tests-js/fixtures/profiles/clang23-sum.s', root), 'utf8');
+  const L0 = (begin, width, count, instructions) => ({ begin, inner: true, depth: 1, instructions, vector: { width, count } });
+  const fnPick = (t, func) => { const p = preparePaste(t, { func }); return p.loops[p.choice].label; };
+  const multi = fs.readFileSync(new URL('tests-js/fixtures/dogfood/multi.s', root), 'utf8');
+  const kernels = fs.readFileSync(new URL('tests-js/fixtures/obj/kernels.elf.objdump.txt', root), 'utf8');
+  check(pick(sum) === '.LBB0_9' && fnPick(sum, 'count') === '.LBB1_6' && fnPick(sum, 'dot') === '.LBB0_9' && pick(multi) === '.LBB0_9' && fnPick(multi, 'popc') === '.LBB2_8'
+    && pick(kernels) === '0x30' && fnPick(kernels, 'sum_mod') === '0x2b5',
+  'default loop: in the function of the first loop, never another function\'s; -func ranks within its function', j([pick(sum), pick(multi), pick(kernels)]));
+  check(defaultLoop([{ ...L0(1, 0, 0, 5), function: 'a' }, { ...L0(9, 512, 9, 60), function: 'b' }, { ...L0(20, 128, 2, 7), function: 'a' }]) === 2
+    && defaultLoop([{ ...L0(1, 0, 0, 5), function: null }, { ...L0(9, 512, 9, 60) }]) === 1, 'default loop: loops in no function are one group');
+  const u8 = preparePaste(fs.readFileSync(new URL('tests-js/fixtures/cli/count_u8.hsw.s', root), 'utf8'));
+  check(u8.loops[u8.choice].depth === 2 && u8.loops[u8.choice].inner, 'default loop: only the deepest innermost loops (clang notes)', j(u8.loops));
+  // the rule on made-up loops: width, then vector instructions, then instructions, then the first; only the first group
+  const L = (begin, width, count, instructions, depth = 1, inner = true) => ({ begin, inner, depth, instructions, vector: { width, count } });
+  check(defaultLoop([L(1, 256, 2, 5), L(9, 128, 20, 40)]) === 0 && defaultLoop([L(1, 256, 2, 5), L(9, 256, 3, 4)]) === 1 && defaultLoop([L(1, 0, 0, 5), L(9, 0, 0, 6)]) === 1
+    && defaultLoop([L(1, 0, 0, 6), L(9, 0, 0, 6)]) === 0 && defaultLoop([L(1, 0, 0, 5, 2), L(9, 512, 9, 60, 1)]) === 0 && defaultLoop([]) === -1,
+  'default loop: zmm/ymm/xmm, then vector instructions, then instructions, then the first; never a shallower loop');
+  // vectorWidth: [mnemonic, operands, width]
+  const W = [
+    ['addss', 'xmm0, xmm1', 0], ['vmulsd', 'xmm0, xmm1, xmm2', 0], ['vfmadd231sd', 'xmm0, xmm1, qword ptr [rdi]', 0], ['movss', 'xmm0, dword ptr [rdi]', 0],
+    ['movsd', 'xmm0, qword ptr [rdi]', 0], ['cvtsi2sd', 'xmm0, eax', 0], ['cvtsi2sdq', '%rax, %xmm0', 0], ['vcvtsi2sdl', '(%rsi), %xmm15, %xmm6', 0],
+    ['cvttsd2siq', '%xmm0, %rax', 0], ['vcvtss2usi', 'eax, xmm1', 0], ['ucomisd', 'xmm0, xmm1', 0], ['cmpsd', 'xmm0, xmm1, 1', 0], ['vmovsd', 'xmm0, xmm1, xmm2', 0],
+    ['vbroadcastss', 'ymm0, xmm1', 256], ['vbroadcastss', 'xmm0, dword ptr [rdi]', 128], ['pabsd', 'xmm0, xmm1', 128], ['pminsd', 'xmm0, xmm1', 128],
+    ['vpdpbusd', 'zmm0, zmm1, zmm2', 512], ['vpcompressd', 'zmm0 {k1}, zmm1', 512],
+    ['movd', 'xmm0, eax', 0], ['vmovq', '%xmm0, %r8', 0], ['pinsrq', 'xmm0, rax, 1', 0], ['vpextrq', '$1, %xmm3, %rax', 0], ['extractps', 'eax, xmm0, 1', 0], ['movlpd', 'xmm0, qword ptr [rdi]', 0],
+    ['xorps', 'xmm0, xmm0', 0], ['vxorps', '%xmm0, %xmm0, %xmm0', 0], ['vpxor', 'ymm1, ymm1, ymm1', 0], ['pxor', 'xmm0, xmm1', 128], ['vpxor', '%ymm3, %ymm0, %ymm3', 256],
+    ['movaps', 'xmm1, xmm0', 0], ['vmovdqa64', 'zmm1, zmm2', 0], ['vmovdqa64', 'zmm1 {k1}, zmm2', 512], ['movaps', 'xmm0, xmmword ptr [rdi]', 128],
+    ['andpd', 'xmm0, xmmword ptr [rip + .LCPI0_0]', 0], ['vandps', '%xmm1, %xmm7, %xmm7', 0], ['vandps', 'ymm0, ymm1, ymm2', 256],
+    ['mulps', 'xmm0, xmm1', 128], ['vfmadd231ps', '%xmm4, %xmm2, %xmm0', 128], ['pmovmskb', 'eax, xmm0', 128], ['vpmovzxbq', '(%rdi,%rcx), %ymm3', 256], ['movhps', 'xmm0, qword ptr [rdi]', 128],
+    ['vextracti128', '$1, %ymm3, %xmm1', 256], ['vcvtdq2pd', 'ymm0, xmm1', 256], ['vpcmpeqb', 'k1, zmm0, zmmword ptr [rdi]', 512],
+    ['add', 'rax, rbx', 0], ['paddb', 'mm0, mm1', 0], ['kmovw', 'k1, eax', 0],
+  ];
+  const bad = W.filter(([m, o, w]) => vectorWidth(m, o) !== w);
+  check(bad.length === 0, 'vectorWidth: packed instructions count with their widest register; scalar float, element moves, zero idioms, copies and xmm FP logic do not', j(bad.map(([m, o]) => [m, o, vectorWidth(m, o)])));
 }
 
 // --- with the real assembler ---------------------------------------------------------------------------------------------

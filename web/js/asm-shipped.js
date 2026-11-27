@@ -9,21 +9,22 @@
 // tests-js/web_asm_shipped.mjs assembles every example both ways: the same bytes, the same result and the same analysis.
 import { assembleMarked } from './asm-regions.js';
 import { hexToBytes } from './hex-input.js';
+import { LEGACY_AUTO } from './loop-find.js';
 
 // examples: [{id, hex, text: {intel, att}}]. Returns shipped(text, syntax, loop): a promise of assembleMarked's result for
 // that text (as with the assembler), or of null (not an example's text, another loop picked, or not answerable).
 export function createShipped(examples) {
   const memo = new Map();
   return async function shipped(text, syntax, loop = 'auto') {
-    if (loop !== 'auto' || (syntax !== 'intel' && syntax !== 'att')) return null;
+    if ((loop !== 'auto' && loop !== LEGACY_AUTO) || (syntax !== 'intel' && syntax !== 'att')) return null;
     const ex = examples.find((e) => typeof e.hex === 'string' && e.hex !== '' && e.text?.[syntax] === text);
     if (!ex) return null;
-    const key = `${syntax}\n${text}`;
+    const key = `${syntax}\n${loop}\n${text}`;
     if (!memo.has(key)) {
       memo.set(key, (async () => {
         const bytes = hexToBytes(ex.hex);
         let calls = 0;
-        const r = await assembleMarked(async () => { calls++; return { ok: true, bytes: bytes.slice(), diagnostics: [] }; }, text, { loop: 'auto' });
+        const r = await assembleMarked(async () => { calls++; return { ok: true, bytes: bytes.slice(), diagnostics: [] }; }, text, { loop });
         return calls === 1 && r.ok ? r : null;
       })());
     }

@@ -348,8 +348,8 @@ export function separatorNotes(text) {
 // count} | null) and source ({text: null, file, spans: [{off, line}]} | null). assemble(text) -> promise of that result.
 // A ';' comment after a statement is retried as '#' (above).
 // opts.loop ('auto', 'whole' or a loop's index): the text is assembled for an analysis (loop-find.js): objdump lines,
-// the loop or the body of a function, the exits as not taken. The result then also has loop ({index, count, name, line,
-// endLine, address, alignment} | null: what was picked), loops ([{begin, end, label}]: the choices), body ({begin, end}
+// the loop or the body of a function, the exits as not taken. The result then also has loop ({index, count, name, auto,
+// line, endLine, address, alignment} | null: what was picked; auto: the default picked it), loops ([{begin, end, label}]: the choices), body ({begin, end}
 // | null), choosable (a choice matters: code around the loop or the body) and alignment (from
 // the text's addresses, or null), and the notes (exits, undefined jump targets) among its diagnostics.
 export async function assembleMarked(assemble, text, opts = {}) {
@@ -380,7 +380,7 @@ export async function assembleMarked(assemble, text, opts = {}) {
   }
   if (!prep) return r;
   const loop = prep.choice === null ? null : {
-    index: prep.choice === 'body' ? null : prep.choice, count: prep.loops.length, name: loopName(prep),
+    index: prep.choice === 'body' ? null : prep.choice, count: prep.loops.length, name: loopName(prep), auto: !!prep.auto,
     line: prep.pick.begin, endLine: prep.pick.end, lines: prep.pick.lines, address: prep.address, alignment: prep.alignment,
   };
   // the source line of each analyzed instruction: of the pick, or of the whole text (not with a marked region)

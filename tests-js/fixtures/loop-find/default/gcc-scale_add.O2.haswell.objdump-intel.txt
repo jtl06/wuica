@@ -1,0 +1,58 @@
+
+scale_add.o:	file format elf64-x86-64
+
+Disassembly of section .text:
+
+0000000000000000 <scale_add>:
+       0: 49 89 d0                     	mov	r8, rdx
+       3: 48 85 d2                     	test	rdx, rdx
+       6: 0f 8e cc 00 00 00            	jle	0xd8 <scale_add+0xd8>
+       c: 48 89 fa                     	mov	rdx, rdi
+       f: 31 c0                        	xor	eax, eax
+      11: eb 2c                        	jmp	0x3f <scale_add+0x3f>
+      13: 66 2e 0f 1f 84 00 00 00 00 00	nop	word ptr cs:[rax + rax]
+      1d: 0f 1f 00                     	nop	dword ptr [rax]
+      20: c5 fa 10 0a                  	vmovss	xmm1, dword ptr [rdx]
+      24: c4 e2 79 a9 0c 86            	vfmadd213ss	xmm1, xmm0, dword ptr [rsi + 4*rax] # xmm1 = (xmm0 * xmm1) + mem
+      2a: 48 ff c0                     	inc	rax
+      2d: 48 83 c2 04                  	add	rdx, 0x4
+      31: c5 fa 11 4a fc               	vmovss	dword ptr [rdx - 0x4], xmm1
+      36: 49 39 c0                     	cmp	r8, rax
+      39: 0f 84 99 00 00 00            	je	0xd8 <scale_add+0xd8>
+      3f: f6 c2 1f                     	test	dl, 0x1f
+      42: 75 dc                        	jne	0x20 <scale_add+0x20>
+      44: 48 8d 50 07                  	lea	rdx, [rax + 0x7]
+      48: 49 39 d0                     	cmp	r8, rdx
+      4b: 0f 8e 88 00 00 00            	jle	0xd9 <scale_add+0xd9>
+      51: 49 8d 50 f8                  	lea	rdx, [r8 - 0x8]
+      55: 48 8d 48 08                  	lea	rcx, [rax + 0x8]
+      59: c4 e2 7d 18 d0               	vbroadcastss	ymm2, xmm0
+      5e: 48 29 c2                     	sub	rdx, rax
+      61: 48 83 e2 f8                  	and	rdx, -0x8
+      65: 48 01 ca                     	add	rdx, rcx
+      68: eb 1a                        	jmp	0x84 <scale_add+0x84>
+      6a: 66 2e 0f 1f 84 00 00 00 00 00	nop	word ptr cs:[rax + rax]
+      74: 66 2e 0f 1f 84 00 00 00 00 00	nop	word ptr cs:[rax + rax]
+      7e: 66 90                        	nop
+      80: 48 83 c1 08                  	add	rcx, 0x8
+      84: c5 fc 28 0c 87               	vmovaps	ymm1, ymmword ptr [rdi + 4*rax]
+      89: c4 e2 6d a8 0c 86            	vfmadd213ps	ymm1, ymm2, ymmword ptr [rsi + 4*rax] # ymm1 = (ymm2 * ymm1) + mem
+      8f: c5 fc 29 0c 87               	vmovaps	ymmword ptr [rdi + 4*rax], ymm1
+      94: 48 89 c8                     	mov	rax, rcx
+      97: 48 39 d1                     	cmp	rcx, rdx
+      9a: 75 e4                        	jne	0x80 <scale_add+0x80>
+      9c: c5 f8 77                     	vzeroupper
+      9f: 49 39 d0                     	cmp	r8, rdx
+      a2: 7e 34                        	jle	0xd8 <scale_add+0xd8>
+      a4: 66 2e 0f 1f 84 00 00 00 00 00	nop	word ptr cs:[rax + rax]
+      ae: 66 2e 0f 1f 84 00 00 00 00 00	nop	word ptr cs:[rax + rax]
+      b8: 0f 1f 84 00 00 00 00 00      	nop	dword ptr [rax + rax]
+      c0: c5 fa 10 0c 97               	vmovss	xmm1, dword ptr [rdi + 4*rdx]
+      c5: c4 e2 79 a9 0c 96            	vfmadd213ss	xmm1, xmm0, dword ptr [rsi + 4*rdx] # xmm1 = (xmm0 * xmm1) + mem
+      cb: c5 fa 11 0c 97               	vmovss	dword ptr [rdi + 4*rdx], xmm1
+      d0: 48 ff c2                     	inc	rdx
+      d3: 49 39 d0                     	cmp	r8, rdx
+      d6: 75 e8                        	jne	0xc0 <scale_add+0xc0>
+      d8: c3                           	ret
+      d9: 48 89 c2                     	mov	rdx, rax
+      dc: eb c1                        	jmp	0x9f <scale_add+0x9f>

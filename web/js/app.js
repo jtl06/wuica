@@ -67,9 +67,10 @@ const el = {
 const codeColors = attachHighlight(el.code, { mode: () => state.mode, syntax: () => state.syntax });
 
 const HINTS = { hex: 'hex or objdump -d', asm: '' };
+// what can be pasted, one line per mode (a Compiler Explorer link in either: godbolt-ui.js)
 const PLACEHOLDERS = {
-  hex: '48 83 c0 01 49 ff cf 75 f7',
-  asm: 'loop:\n  add rax, 1\n  dec r15\n  jnz loop',
+  hex: 'hex bytes · objdump -d · Compiler Explorer link',
+  asm: 'assembly · gcc/clang -S · objdump -d · Compiler Explorer link',
 };
 
 // ---- state ---------------------------------------------------------------------------------------------------

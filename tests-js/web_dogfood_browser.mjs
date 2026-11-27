@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { findChrome, launch, serve, copyDist, Page, HELPERS, checker, ROOT } from './cdp.mjs';
+import { encodeState } from '../web/js/url-state.js';
 
 const chrome = findChrome();
 if (!fs.existsSync(path.join(ROOT, 'web/dist/manifest.json'))) { console.log('web/dist is missing: run web/build.sh first'); process.exit(1); }
@@ -212,7 +213,7 @@ try {
     await page.close();
   }
 
-  // ---- a link whose loop picks (lp=, blp=) its texts do not have: the first loop, and the result is current -----------
+  // ---- a link whose loop picks (lp=, blp=) its texts do not have: the default loop, and the result is current ---------
   {
     const { encodeState } = await import(new URL('../web/js/url-state.js', import.meta.url).href);
     const frag = encodeState({ mode: 'asm', syntax: 'att', text: fx('saxpy.s'), loop: 9, ab: true, bMode: 'asm', bSyntax: 'att', bText: fx('saxpy.s'), bLoop: 9 });
@@ -221,7 +222,8 @@ try {
     await page.waitFor(`document.getElementById('results').dataset.run && document.querySelector('#result-body .ab-tp')`, 'the A–B result', 60000);
     const r = await page.eval(`${W} await wait(1500); await until(() => !$('results').hasAttribute('aria-busy'));
       return { stale: $('result-body').classList.contains('stale'), a: $('loop-chip')?.selectedOptions[0]?.value, b: $('loop-chip-b')?.selectedOptions[0]?.value, hash: location.hash };`);
-    check(!r.stale && r.a === '0' && r.b === '0' && !/[&#]b?lp=9/.test(r.hash), 'a link with lp=9, blp=9 (4 loops): the first loops, the result current (not stale), the link updated', js({ ...r, hash: r.hash.slice(0, 80) }));
+    // (back to auto: the default loop, saxpy's ymm loop, the third of the list; the first before loop-find.js's defaultLoop)
+    check(!r.stale && r.a === '2' && r.b === '2' && !/[&#]b?lp=9/.test(r.hash) && /[&#]lp=auto&/.test(r.hash), 'a link with lp=9, blp=9 (4 loops): the default loops, the result current (not stale), the link updated', js({ ...r, hash: r.hash.slice(0, 80) }));
     check(page.take().length === 0, 'stale picks: no errors', '');
     await page.close();
   }
@@ -318,22 +320,49 @@ try {
     await page.close();
   }
 
-  // ---- the loop picker: label · function · size (· depth), the loop picked by default unchanged --------------------------
+  // ---- the loop picker: label · function · size (· depth); the analyzed loop: "loop K of N · LABEL · auto" ---------------
   {
     const page = await fresh();
     const r = await page.eval(`${W}
       // (the option's own text: every browser shows it, closed and open; no label attribute)
       const opts = () => [...$('loop-chip').options].map((o) => ({ label: o.text, attr: o.hasAttribute('label'), value: o.value, on: o.selected }));
+      const out = { placeholder: $('code').placeholder };
       pasteInto($('code'), ${js(fx('multi.s'))}); await settle();
-      const multi = opts();
+      out.multi = opts();
       pasteInto($('code'), ${js(fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/cli/count_u8.hsw.s'), 'utf8'))}); await settle();
-      return { multi, nested: opts(), width: $('loop-chip').getBoundingClientRect().width };`);
+      out.nested = opts(); out.width = $('loop-chip').getBoundingClientRect().width;
+      // a pick by hand: no "auto"; the link says which (lp=N)
+      pick('loop-chip', '3'); await settle();
+      out.picked = opts(); out.hash = location.hash;
+      $('mode-hex').click(); await settle(); out.hexPlaceholder = $('code').placeholder; $('mode-asm').click(); await settle();
+      return out;`);
     const m = r.multi;
-    check(m.length === 10 && m[0].label === '.LBB0_9 · sum · 11 instr' && m[5].label === '.LBB2_8 · popc · 43 instr' && m[9].label === 'whole', 'picker: label, function and size of each loop (4 functions)', js(m.map((o) => o.label)));
-    check(m[0].on && m[0].value === '0' && !m.some((o) => o.attr) && m.every((o, k) => o.value === (k < 9 ? String(k) : 'whole')), 'picker: the order, the values and the default as before', js(m.map((o) => [o.value, o.on])));
-    check(r.nested[0].label === '.LBB0_12 · 11 instr · depth 2' && r.nested[3].label === '.LBB0_4 · 79 instr' && r.nested[0].on, 'picker: one function: no name; nested loops: their depth', js(r.nested.map((o) => o.label)));
-    check(r.width < 200, 'picker: the closed menu stays narrow (the toolbar keeps its height)', String(r.width));
+    // multi.s: four functions; the default stays in sum, the function of the first loop (not popc's vectorized loop)
+    check(m.length === 10 && m[0].label === 'loop 1 of 9 · .LBB0_9 · sum · auto' && m[5].label === '.LBB2_8 · popc · 43 instr' && m[9].label === 'whole', 'picker: label, function and size of each loop (4 functions); the analyzed one: which of them, auto', js(m.map((o) => o.label)));
+    check(m[0].on && !m.some((o) => o.attr) && m.every((o, k) => o.value === (k < 9 ? String(k) : 'whole')), 'picker: the order and the values as before; the default selected', js(m.map((o) => [o.value, o.on])));
+    check(r.nested[0].label === 'loop 1 of 4 · .LBB0_12 · auto' && r.nested[1].label === '.LBB0_16 · 6 instr · depth 2' && r.nested[3].label === '.LBB0_4 · 79 instr' && r.nested[0].on, 'picker: one function: no name; nested loops: their depth', js(r.nested.map((o) => o.label)));
+    check(r.picked[3].label === 'loop 4 of 4 · .LBB0_4' && r.picked[3].on && r.picked[0].label === '.LBB0_12 · 11 instr · depth 2' && /&lp=3&/.test(r.hash), 'picker: a loop picked by hand is not auto (lp=3 in the link)', js([r.picked.map((o) => o.label), r.hash.slice(0, 40)]));
+    // (room for "loop 1 of 4 · .LBB0_12 · auto": 34ch at most, region.css; the toolbar keeps its height, region-chip.js place)
+    check(r.width < 320, 'picker: the closed menu stays narrow', String(r.width));
+    check(r.placeholder === 'assembly · gcc/clang -S · objdump -d · Compiler Explorer link' && r.hexPlaceholder === 'hex bytes · objdump -d · Compiler Explorer link', 'the input says what can be pasted', js([r.placeholder, r.hexPlaceholder]));
     await page.close();
+  }
+
+  // ---- links and the default loop: a link from before it opens on the loop it showed (the first), not auto ---------------
+  {
+    const t = fx('saxpy.s');
+    const now = encodeState({ mode: 'asm', syntax: 'att', text: t }), before = now.replace('&lp=auto', '');
+    check(/&lp=auto&/.test(now), 'link: the default loop is written as lp=auto', now.slice(0, 40));
+    const out = [];
+    for (const frag of [now, before]) {
+      const page = await fresh();
+      await page.goto(`${srv.origin}/?nosw=1#${frag}`);
+      out.push(await page.eval(`${W} await until(() => $('loop-chip') && !$('loop-chip').hidden && document.querySelector('.tp .value')); await settle();
+        return { loop: $('loop-chip').selectedOptions[0].text, tp: document.querySelector('.tp .value').textContent, hash: location.hash.includes('lp=') };`));
+      await page.close();
+    }
+    check(out[0].loop === 'loop 3 of 4 · .LBB0_8 · auto' && out[1].loop === 'loop 1 of 4 · .LBB0_16' && out[0].tp !== out[1].tp && out[0].hash && !out[1].hash,
+      'link: a new link opens on the default (.LBB0_8, auto); one without lp= on the first loop, as before, and stays without lp=', js(out));
   }
 
   // ---- keyboard: the uop table is one tab stop (the focused row, then its link); j/k and the arrows inside -----------------

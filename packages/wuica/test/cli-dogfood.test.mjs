@@ -105,7 +105,7 @@ test('3b. code a CPU cannot run (AVX-512 on SKL, ZEN3): not a result in text, Ma
   assert.match(d.out, /^SKL: A 38\.00 {2}B 38\.00 cycles per iteration {2}\(not comparable: A needs AVX-512, B needs AVX-512\)$/m);
 });
 
-test('4. -loops, -loop LABEL, -func; the deepest loop first (clang notes); 0-based indices', () => {
+test('4. -loops, -loop LABEL, -func; the deepest loops first (clang notes), auto by the default rule; 0-based indices', () => {
   const ls = run(['-loops', fx('count_u8.hsw.s')]);
   assert.match(ls.out, /^ {2}0 {2}\.LBB0_12 {2}count_byte {2}87-99 +11 +2 {2}auto$/m);
   assert.match(ls.out, /^ {2}3 {2}\.LBB0_4 +count_byte {2}39-142 +79 +1 *$/m);
@@ -118,7 +118,10 @@ test('4. -loops, -loop LABEL, -func; the deepest loop first (clang notes); 0-bas
   assert.match(nine.err, /0-based; the text has 4: 0 to 3/);
   assert.match(run(['-h']).out, /index \(0-based/);
   const j = JSON.parse(run(['-loops', '-json', fx('divmod.hsw.s')]).out);
-  assert.deepEqual(j.loops.map((l) => [l.label, l.function, l.auto]), [['.LBB0_7', 'sum_mod', true], ['.LBB0_13', 'sum_mod', false]]);
+  // two scalar loops at one depth: the larger is auto (the unrolled main loop; its remainder .LBB0_7, first in the list and
+  // in the text, was auto before loop-find.js's defaultLoop); the indices stay in the list's order
+  assert.deepEqual(j.loops.map((l) => [l.label, l.function, l.auto]), [['.LBB0_7', 'sum_mod', false], ['.LBB0_13', 'sum_mod', true]]);
+  assert.match(run([fx('divmod.hsw.s'), '-TPonly']).err, /^analyzed: loop \.LBB0_13 \(lines 78-152, in sum_mod\).*; 1 other loop: -loops lists them/m);
   assert.match(run([fx('divmod.hsw.s'), '-func', 'sum_mod', '-loop', '1', '-TPonly']).err, /analyzed: loop \.LBB0_13/);
   assert.match(run([fx('divmod.hsw.s'), '-func', 'nope']).err, /func: "nope" is not a label/);
 });
