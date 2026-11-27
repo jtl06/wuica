@@ -139,8 +139,9 @@ const HELPERS = `
   const instrRows = () => [...document.querySelectorAll('table.uops tbody tr:not(.extra)')];
   const chip = () => { const c = $('region-chip'); return c && !c.hidden ? c.textContent : null; };
   const setCode = (v) => { const c = $('code'); c.value = v; c.dispatchEvent(new Event('input', { bubbles: true })); };
-  // a loop chip's option as "loop LABEL" ('whole', 'body'): the menu shows "LABEL · function · N instr" (region-chip.js)
-  const loopName = (o) => (!o ? null : o.value === 'whole' || o.value === 'body' ? o.text : 'loop ' + o.text.split(' · ')[0]);
+  // a loop chip's option as "loop LABEL" ('whole', 'body'): the menu shows "LABEL · function · N instr", the analyzed loop
+  // "loop K of N · LABEL · auto" (region-chip.js)
+  const loopName = (o) => (!o ? null : o.value === 'whole' || o.value === 'body' ? o.text : 'loop ' + o.text.replace(/^loop \d+ of \d+ · /, '').split(' · ')[0]);
   const loopChip = () => { const c = $('loop-chip'); return c && !c.hidden ? loopName(c.options[c.selectedIndex]) : null; };
   const pickLoop = (v) => { const c = $('loop-chip'); c.value = v; c.dispatchEvent(new Event('change', { bubbles: true })); };
 `;

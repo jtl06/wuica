@@ -70,6 +70,14 @@ export function createLoopChip(after, pick, id = 'loop-chip', places = null) {
       deep && l.depth > 1 ? `depth ${l.depth}` : null].filter(Boolean).join(' · ');
     const opts = loops.map((l, k) => h('option', { value: String(k), text: shown(l),
       title: `${l.inner ? 'innermost loop' : 'loop'} ${l.label}${l.function ? ` in ${l.function}` : ''}: ${l.instructions ?? '?'} instructions, lines ${l.begin}–${l.end}` }));
+    // the analyzed loop says which of them it is and whether the page picked it ("loop 2 of 4 · .LBB0_4 · auto": the
+    // default of loop-find.js, defaultLoop); the menu is the same select
+    const k = loop?.index;
+    if (Number.isInteger(k) && opts[k]) {
+      const l = loops[k];
+      opts[k].textContent = [`loop ${k + 1} of ${loops.length}`, l.label, fns && l.function ? l.function : null, loop.auto ? 'auto' : null].filter(Boolean).join(' · ');
+      if (loop.auto) opts[k].title += '\npicked by default: the innermost loop with the widest vector registers, then the most vector instructions, then the most instructions';
+    }
     if (body) opts.push(h('option', { value: 'body', text: 'body' }));
     opts.push(h('option', { value: 'whole', text: 'whole' }));
     sel.replaceChildren(...opts);
