@@ -49,6 +49,32 @@ three more CPU models. See [Relation to uiCA](#relation-to-uica).
 - **Links:** the page keeps its whole state in the URL, so "Copy link" gives a link to exactly what you see. Results copy as
   Markdown for an issue or a review.
 
+## A worked example
+
+A random-number generator (xoshiro256++) filling an array, its state in a struct passed by pointer:
+
+```c
+void fill(rng *r, uint64_t *out, long n) {
+    for (long i = 0; i < n; i++)
+        out[i] = next(r);            // reads and updates r->s[0..3]
+}
+```
+
+`out` could point into `r->s`, so gcc reloads the four state words in every iteration and stores them back: 25 instructions,
+4 loads, 5 stores. wuica predicts 9.04 cycles per number on Ice Lake server and 4.00 on the other two CPUs: on the Xeon each
+reload waits for the store of the iteration before. The fix is one word, `uint64_t *restrict out`, which keeps the state in
+registers. Cycles per number, before → after:
+
+| CPU | wuica | measured | llvm-mca 22 |
+|---|---|---|---|
+| `ICX`, Xeon Gold 6314U | 9.04 → 3.63 | 8.91 → 3.78 | 4.18 → 3.50 |
+| `ADL-P`, Core i7-12650H | 4.00 → 3.32 | 4.04 → 3.26 | 4.69 → 4.01 |
+| `ZEN3`, Ryzen 7 7735U | 4.00 → 3.49 | 4.54 → 4.01 | 5.01 → 2.76 |
+
+So the change is worth 2.4 times on the Xeon and 13 to 24 % elsewhere, and wuica says so before it is made. It is not exact:
+it is 12 % low on the Ryzen, and its report names no bottleneck for the slow loop, only the number. [Open the comparison on
+the page](https://wuica.jacen.li/#v=1&m=asm&s=att&a=ICX&as=ICX,ADL-P,ZEN3&c=LkwzOgoJbW92cQkoJXJkaSksICVyY3gKCW1vdnEJOCglcmRpKSwgJXJkeAoJYWRkcQkkOCwgJXI4Cgltb3ZxCTE2KCVyZGkpLCAlcjkKCW1vdnEJMjQoJXJkaSksICVyYXgKCW1vdnEJJXJkeCwgJXIxMAoJeG9ycQklcmN4LCAlcjkKCW1vdnEJJXJheCwgJXJzaQoJYWRkcQklcmN4LCAlcmF4Cgl4b3JxCSVyOSwgJXIxMAoJeG9ycQklcmR4LCAlcnNpCglyb2xxCSQyMywgJXJheAoJbW92cQklcjEwLCA4KCVyZGkpCglzYWxxCSQxNywgJXJkeAoJbW92cQklcmN4LCAlcjEwCglhZGRxCSVyY3gsICVyYXgKCXhvcnEJJXJzaSwgJXIxMAoJeG9ycQklcjksICVyZHgKCXJvcnEJJDE5LCAlcnNpCgltb3ZxCSVyMTAsICglcmRpKQoJbW92cQklcmR4LCAxNiglcmRpKQoJbW92cQklcnNpLCAyNCglcmRpKQoJbW92cQklcmF4LCAtOCglcjgpCgljbXBxCSVyOCwgJXIxMQoJam5lCS5MMwo&ab=1&bm=asm&bs=att&bc=Lkw4OgoJbGVhcQkoJXJheCwlcmRpKSwgJXJkeAoJbW92cQklcjgsICVyOQoJeG9ycQklcmRpLCAlcmN4Cgl4b3JxCSVyOCwgJXJheAoJcm9scQkkMjMsICVyZHgKCXNhbHEJJDE3LCAlcjkKCWFkZHEJJDgsICVyc2kKCXhvcnEJJXJjeCwgJXI4CglhZGRxCSVyZGksICVyZHgKCXhvcnEJJXI5LCAlcmN4Cgl4b3JxCSVyYXgsICVyZGkKCXJvcnEJJDE5LCAlcmF4Cgltb3ZxCSVyZHgsIC04KCVyc2kpCgljbXBxCSVyc2ksICVyMTEKCWpuZQkuTDgK), or see [the sources, the method and a second case](docs/worked-example/README.md).
+
 ## CPU models and accuracy
 
 | Models | From | Checked against hardware |
