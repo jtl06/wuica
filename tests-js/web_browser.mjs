@@ -220,7 +220,8 @@ try {
       && r.footer[1] === 'https://github.com/andreas-abel/uiCA https://www.uops.info/ https://github.com/jtl06/wuica' && r.footer[2] === 'Source on GitHub https://github.com/jtl06/wuica' && r.footer[3] === '', 'mock: the footer (credit, the repository, versions; no license or font text); GitHub at the right end of the top bar', JSON.stringify(r.footer));
     check(r.focusable && r.labelled.length === 0, 'mock: controls are focusable and labelled', JSON.stringify(r.labelled));
     check(r.empty[0] === '2.00' && r.empty[1] === '1', 'mock: a fresh visit analyzes the first example once', JSON.stringify(r.empty));
-    check(/script-src 'self' 'wasm-unsafe-eval';/.test(r.csp) && /connect-src 'self' https:\/\/godbolt\.org;/.test(r.csp) && !/unsafe-inline|cloudflare/.test(r.csp), 'mock: the CSP allows the page\'s own origin and Compiler Explorer (link import), no third-party script', r.csp);
+    check(r.csp === "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://godbolt.org; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'",
+      'mock: the CSP, exactly: the page\'s own origin, Compiler Explorer (link import) and the host\'s analytics script (its reports go to the page\'s own origin); nothing inline', r.csp);
     check(r.tp === '2.00' && /cycles\/iteration/.test(r.meta) && r.mode === 'loop' && /mock data/.test(r.meta) && /Dependencies/.test(r.meta), 'mock: Ctrl+Enter gives the result of the first example', r.meta.slice(0, 300));
     check(r.listing[0] === CHAIN && !r.listing[1], 'mock: the objdump listing (closed for hex input)', JSON.stringify(r.listing));
     check(r.copyVisible && r.copied[0] === CHAIN && r.copied[1] === 'copied' && r.copied[2] === 'Copy objdump', 'mock: the listing copies as text', JSON.stringify(r.copied));

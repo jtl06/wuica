@@ -38,7 +38,7 @@ A suggestion that breaks one of these will not be taken, whatever it gains. Each
 | 1 | **Bit-identical to the Python reference** on the fixture corpus: same throughput, same report text, same uop table, same `-json` trace (numbers by value, key order ignored; terminal hyperlinks in the report are stripped before comparing, `tests-js/analyze_fixtures.mjs`) | The project's claim is "uiCA, exactly"; any drift makes every prediction suspect and hides model bugs behind port bugs | Fixtures at three boundaries (section 7.6); `docs/DESIGN.md`, "Fixtures: the three boundaries" |
 | 2 | **The rules for an exact port** (`docs/DESIGN.md`, "Rules for an exact port"): keep Python's iteration order (never iterate a `HashMap`/`HashSet`; Python sets that are iterated get a defined order); `//` and `%` round toward −∞ (`div_euclid`/`rem_euclid`); `min`/`max` return the first of equals, `sorted` is stable; keep the order of float operations, `round(x, 2)` rounds half to even on the binary value; port substring tests on names literally; operands are compared by identity, not by register name; known quirks of the reference are ported as they are and fixed in the Python reference first | Each is a place where a direct translation gave different results | Rule 1's fixtures; `crates/wuica-core/src/fasthash.rs` documents that its maps are lookup-only |
 | 3 | **Optimizations change no output**, including fields the fixture tests do not compare | Rule 1 | `crates/wuica/examples/golden.rs` writes every fixture response for a before/after diff (`docs/PORTING.md`, "Speed") |
-| 4 | **Nothing the user types into the page leaves the browser** (the hosted REST/MCP server of course receives what is sent to it). The one exception: pasting a Compiler Explorer link imports it from `godbolt.org` (short links are resolved there, and the source inside the link is sent to its compile API: `web/js/godbolt.js`, `compilePane`) | The page's main promise; users paste proprietary code | CSP in `web/index.html` (`connect-src 'self' https://cloudflareinsights.com https://godbolt.org`); page state lives in the URL fragment, which is not sent to servers (`web/js/url-state.js`); `tests-js/web_browser.mjs` checks the CSP |
+| 4 | **Nothing the user types into the page leaves the browser** (the hosted REST/MCP server of course receives what is sent to it). The one exception: pasting a Compiler Explorer link imports it from `godbolt.org` (short links are resolved there, and the source inside the link is sent to its compile API: `web/js/godbolt.js`, `compilePane`). The host's analytics script, which the policy allows, reports a visit and its load timings to the page's own origin, with the page's address without the fragment (10.6, "Analytics") | The page's main promise; users paste proprietary code | CSP in `web/index.html` and, as a response header, in `web/_headers` (`script-src 'self' 'wasm-unsafe-eval' https://static.cloudflareinsights.com`, `connect-src 'self' https://godbolt.org`); page state lives in the URL fragment, which is not sent to servers (`web/js/url-state.js`); `tests-js/web_browser.mjs` and `tests-js/web_host_browser.mjs` check the CSP, exactly; `scripts/beacon-capture.mjs` checks what the analytics script sends |
 | 5 | **The npm package has zero runtime dependencies** | One package to audit; `npx wuica-cli` installs one package (2.4 MB) | `packages/wuica/package.json` (only `devDependencies`); the MCP stdio server is hand-written (`packages/wuica/lib/mcp.js`) |
 | 6 | **AGPL-3.0-only, with attribution** to uiCA (paper citation), uops.info (data), Intel XED, LLVM | wuica is a derivative work of uiCA, which is AGPL-3.0; the bundled XED/LLVM licenses require it | `LICENSE`, `README.md` "Licenses", licenses shipped in `web/dist/licenses/` and `packages/wuica/licenses/` |
 | 7 | **Nothing implies endorsement** by the uiCA or uops.info authors; "unofficial port" | It is not their work | Page footer, READMEs |
@@ -436,12 +436,17 @@ Check this table before suggesting an optimization. "Identical results" means ru
 - Single maintainer. The reference fork, the port and the measurements are done by the same person.
 - Licensing of the instruction tables: they are derived from uops.info data via uiCA and generated locally; the repository
   does not state a license for them.
-- Analytics: the live 0.1.8 page loads no analytics script (the served HTML has none, and at run time there are no external
-  script elements and no requests to `cloudflareinsights.com`), so nothing is sent today. The CSP would still allow the
-  host's beacon if the host injected it (`script-src https://static.cloudflareinsights.com`, `connect-src
-  https://cloudflareinsights.com`; `web/index.html`), and what it would send, in particular whether it includes the URL
-  fragment that holds the user's code, is not established. Open question: should the CSP allow it at all?
-- The CSP is a `<meta>` tag, not a header (`web/_headers` sets no CSP).
+- Analytics: the host (Cloudflare) injects its Web Analytics script into the served page, and the CSP allows it
+  (`script-src https://static.cloudflareinsights.com`). Up to 0.1.11 the CSP blocked it, because what it sends was not
+  established and the URL fragment holds the user's code. Captured on 2026-11-27 with `scripts/beacon-capture.mjs`
+  (script `beacon.min.js/vce701823e78c4301a35b7e07294d87301792088814092`, config `version 2024.11.0, r 1, spa 2`): it posts
+  to `/cdn-cgi/rum` on the page's own origin (covered by `connect-src 'self'`), one report after the load and one when the
+  page is hidden or left, none while the code is edited; the address it sends is `https://wuica.jacen.li/`, without
+  fragment or query, also for a visit by a link that holds code; the other fields are load timings, web vitals with the
+  CSS path of the element concerned, browser engine and version, and heap size. No part of the fragment was in any
+  report. The host chooses the script and its version: run the capture again before each release, and when the injected
+  `src` changes. It is not part of `check.sh`, since it needs the live page and a script the host can change.
+- The CSP is a `<meta>` tag and, with `frame-ancestors 'none'` added, a response header (`web/_headers`).
 
 ### 10.7 Where the docs and the code disagree (the code wins)
 

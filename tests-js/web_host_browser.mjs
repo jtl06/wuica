@@ -76,7 +76,8 @@ const stop = () => new Promise((r) => { for (const s of sockets) s.destroy(); se
   { // one policy, in the page and as a header (the header adds frame-ancestors, which a meta element cannot set)
     const meta = index.match(/http-equiv="Content-Security-Policy" content="([^"]*)"/)?.[1];
     const header = r.headers.get('content-security-policy');
-    check(!!meta && header === `${meta}; frame-ancestors 'none'` && !/cloudflare|unsafe-inline/.test(header), 'host: the security policy as a response header equals the page\'s, plus frame-ancestors', JSON.stringify([meta, header]));
+    check(!!meta && header === `${meta}; frame-ancestors 'none'` && !/unsafe-inline/.test(header) && [...header.matchAll(/https:\/\/[^\s;]+/g)].map((m) => m[0]).join(' ') === 'https://static.cloudflareinsights.com https://godbolt.org',
+      'host: the security policy as a response header equals the page\'s, plus frame-ancestors; two other hosts (the analytics script, Compiler Explorer)', JSON.stringify([meta, header]));
   }
   r = await get(`/${JSON.parse(fs.readFileSync(path.join(dist, 'manifest.json'), 'utf8')).engine['wuica_wasm.wasm'].path}`); // (its name holds a hash: the manifest's)
   check(r.status === 200 && r.headers.get('content-type') === 'application/wasm', 'host: the analyzer as application/wasm', r.headers.get('content-type'));

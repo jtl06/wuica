@@ -207,10 +207,14 @@ given); the suite `web_version` runs it in every check. Bump them together.
 The site's release (from a clean checkout of the release commit with the data of its CI asset; only reads from the live site):
 
     scripts/check.sh full                                            # the gate (web/dist without legacy files)
+    node scripts/beacon-capture.mjs                                  # what the host's analytics script sends (SPEC 10.6)
     rm -rf target/legacy && scripts/fetch-legacy.sh target/legacy    # the live build's engine files, checked
     WUICA_LEGACY_DIR=$PWD/target/legacy web/build.sh                 # web/dist again, with them (the same build id)
     cd web && cf deploy ./dist && cd ..                              # the deploy (by hand)
     scripts/smoke-live.sh VERSION
+
+`scripts/beacon-capture.mjs` loads the live page under this checkout's content policy, lets nothing of the analytics script's
+reports through, and fails if one holds any part of the URL fragment (the user's code) or if editing sends reports.
 
 A deploy of a build without its legacy files (a plain `web/build.sh`, or a check run after the build with them, which
 builds web/dist again) leaves the live build's open pages without their files: errors instead of results until they reload
