@@ -10,8 +10,10 @@
 // whether or not the deployed policy allows it, and a violation of the checkout's policy fails the run.
 // --deployed-policy keeps the deployed policy. It pauses every request. The page's own files and the injected script go
 // through; everything else (the beacon's reports, wherever they go) is recorded and answered with 204, so nothing
-// reaches the host. Three cases: a visit, edits of the code, and leaving the page. It fails (exit 1) if a report
-// holds any part of the fragment (the user's code), or if editing sends reports.
+// reaches the host. The cases: a visit, edits of the code, leaving the page, a visit by a link that holds code, and
+// moves within the tab (another link's fragment, a history entry, back), where the address before could be sent as
+// the referrer. It fails (exit 1) if a report holds any part of the fragment (the user's code), or if editing sends
+// reports.
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
@@ -116,7 +118,17 @@ try {
   await p.goto(BASE.href + fragments.at(-1));
   await p.ready(); await settled(p);
   await sleep(3000);
-  p.phase = 'link-leave';
+  // 3: moves within the tab: another link's fragment (as from the address bar or a bookmark), a new history entry, back.
+  // A move may send a report (a "page view"); what matters is that neither its address nor its referrer has a fragment.
+  p.phase = 'moves';
+  const frag = (i) => JSON.stringify(fragments[i]);
+  await p.eval(`location.hash = ${frag(0)};`); await sleep(400); await settled(p); await sleep(1500);
+  await p.eval(`history.pushState(null, '', location.pathname + ${frag(1)}); window.dispatchEvent(new HashChangeEvent('hashchange'));`); await sleep(400); await settled(p); await sleep(1500);
+  await p.eval(`location.hash = ${frag(2)};`); await sleep(400); await settled(p); await sleep(1500);
+  await p.eval(`history.back();`); await sleep(400); await settled(p); await sleep(1500);
+  const visited = await p.eval('return [location.hash, history.length];');
+  if (visited[1] < 4) fail(`the moves did not make history entries: ${JSON.stringify(visited)}`);
+  p.phase = 'moves-leave';
   await leave(p);
   await p.close();
 
@@ -156,7 +168,7 @@ try {
     script: [...scripts],
     config: tag?.config ?? null,
     reportsTo: [...new Set(posts.map((r) => { const u = new URL(r.url); return `${r.method} ${u.origin}${u.pathname}`; }))],
-    reports: Object.fromEntries(['visit', 'edit', 'leave', 'link', 'link-leave'].map((w) => [w, reports.filter((r) => r.when === w).length])),
+    reports: Object.fromEntries(['visit', 'edit', 'leave', 'link', 'link-leave', 'moves', 'moves-leave'].map((w) => [w, reports.filter((r) => r.when === w).length])),
     fields: [...keys].sort(),
     addressesSent: [...locations],
     policy: POLICY ? 'this checkout\'s: ' + policy : 'the deployed one: ' + policy,

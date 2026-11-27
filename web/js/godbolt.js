@@ -9,7 +9,7 @@
 //   https://godbolt.org/#z:OYLghAFBqd5...   the same, compressed with lz-string (base64)
 //   https://godbolt.org/clientstate/<b64>   base64 JSON in CE's "client state" format (what short links resolve to)
 //   also gcc.godbolt.org, compiler-explorer.com, the embedded view (/e#...), and legacy states (versions 1 to 3).
-// Every request goes to https://godbolt.org (the only third-party origin the page's CSP allows), and only when
+// Every request goes to https://godbolt.org (the only third-party origin the page's CSP lets it connect to), and only when
 // the user imports something.
 
 import { functionBody, defaultLoop, vectorWidth, isRemainder, JCC, JMP } from './loop-find.js';

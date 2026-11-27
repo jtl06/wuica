@@ -444,7 +444,9 @@ Check this table before suggesting an optimization. "Identical results" means ru
   page is hidden or left, none while the code is edited; the address it sends is `https://wuica.jacen.li/`, without
   fragment or query, also for a visit by a link that holds code; the other fields are load timings, web vitals with the
   CSS path of the element concerned, browser engine and version, and heap size. No part of the fragment was in any
-  report. The host chooses the script and its version: run the capture again before each release, and when the injected
+  report; moving to another fragment in the same tab (another link, a history entry, back) sends none, and no report
+  had a referrer. Only a browser's first visit is counted: once the service worker serves the page, it serves its own
+  copy, which has no injected script (checked on the live 0.1.11 page: the cached `index.html` and a reload). The host chooses the script and its version: run the capture again before each release, and when the injected
   `src` changes. It is not part of `check.sh`, since it needs the live page and a script the host can change.
 - The CSP is a `<meta>` tag and, with `frame-ancestors 'none'` added, a response header (`web/_headers`).
 
