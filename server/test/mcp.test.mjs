@@ -57,6 +57,16 @@ const calls = [
   ['assemble', { source: 'mov rax, [' }],
 ];
 
+test('list_loops and analyze: the default loop (auto) of a vectorized function is its vector loop, remote as local', async () => {
+  const fn = fs.readFileSync(path.join(ROOT, 'tests-js/fixtures/loop-find/default/clang-saxpy.O3.haswell.s'), 'utf8');
+  const ls = await remote.callTool({ name: 'list_loops', arguments: { source: fn } });
+  assert.deepEqual(ls, await local.callTool({ name: 'list_loops', arguments: { source: fn } }));
+  const { loops } = JSON.parse(ls.content[0].text);
+  assert.deepEqual(loops.map((l) => [l.label, l.auto]), [['.LBB0_16', false], ['.LBB0_18', false], ['.LBB0_8', true], ['.LBB0_12', false]]);
+  const a = await remote.callTool({ name: 'analyze', arguments: { arch: 'SKL', source: fn, format: 'json' } });
+  assert.equal(JSON.parse(a.content[0].text).loop.name, 'loop .LBB0_8');
+});
+
 for (const [name, args] of calls) {
   test(`tools/call ${name} ${JSON.stringify(args).slice(0, 60)}: same result as the stdio server`, async () => {
     const r = await remote.callTool({ name, arguments: args });
