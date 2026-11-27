@@ -336,7 +336,8 @@ export interface Wuica {
    * it). Another architecture or format is a Failure that says what it is and how to get x86-64. `func` is resolved
    * (exact, without Mach-O's "_", or a unique part of a name) and returned as `func`. A name the file gives several
    * functions (static functions of different source files, .cold parts) is NAME.0xADDR, `symbol` the name in the file;
-   * `func` set to that name alone is a Failure that lists them. */
+   * `func` set to that name alone is a Failure that lists them. With `func`, `text` is that function's alone (a
+   * function of one instruction: with its neighbor), whose loops are the whole text's loops that lie in it. */
   disassemble(bytes: Uint8Array, options?: { name?: string; func?: string | null }): { code: 0; text: string; format: string; functions: { name: string; section: string; address: number; size: number; symbol?: string }[]; func?: string } | Failure;
   /** GET /api/archs: in order of release (uiCA's ablation variants, ids with "_", are left out). */
   archs(): ArchInfo[];
