@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import { findChrome, launch, Page, checker, ROOT, sleep, testConditions } from './cdp.mjs';
+import { findChrome, launch, Page, checker, ROOT, sleep, testConditions, TIMING_SLACK } from './cdp.mjs';
 import { hostHandler } from './static-host.mjs';
 
 const chrome = findChrome();
@@ -100,13 +100,21 @@ try {
     const quiet = await f.read(`return { note: !document.getElementById('update-note').hidden, mark: sessionStorage.getItem('wuica-update-reload') };`);
     check(!quiet.note && quiet.mark === null, 'a first visit: its own worker taking the page is no update (no note, no reload)', JSON.stringify(quiet));
     root = B;
-    await f.eval(`await (await navigator.serviceWorker.getRegistration()).update().catch(() => {}); return 1;`);
+    // (what the check says when it fails: whether the update check itself failed, how long the wait was, and the state of the
+    // registration, the caches and the reload mark at the end)
+    const updated = await f.eval(`return await (await navigator.serviceWorker.getRegistration()).update().then(() => 'ok', (e) => 'update() failed: ' + e.message);`);
+    const t1 = Date.now();
     let s1 = null;
-    for (let k = 0; k < 120 && !(s1 && s1.html === vB); k++) {
+    for (let k = 0; k < 120 * TIMING_SLACK && !(s1 && s1.html === vB); k++) {
       await sleep(250);
       try { s1 = await f.read(`return { html: document.querySelector('meta[name="wuica-build"]').content, note: !document.getElementById('update-note').hidden };`, { ready: `document.getElementById('run')?.disabled === false && document.getElementById('update-note')`, ms: 5000 }); } catch { /* reloading */ }
     }
-    check(s1?.html === vB, 'a page of a first visit: a later deploy takes it into the new build', JSON.stringify({ ...s1, html: name(s1?.html) }));
+    let state1 = null;
+    if (s1?.html !== vB) {
+      state1 = await f.eval(`const r = await navigator.serviceWorker.getRegistration(); const st = (w) => (w ? w.state : null);
+        return { installing: st(r?.installing), waiting: st(r?.waiting), active: st(r?.active), controller: !!navigator.serviceWorker.controller, caches: (await caches.keys()).length, mark: sessionStorage.getItem('wuica-update-reload') };`).catch((e) => e.message);
+    }
+    check(s1?.html === vB, 'a page of a first visit: a later deploy takes it into the new build', JSON.stringify({ ...s1, html: name(s1?.html), updated, seconds: Math.round((Date.now() - t1) / 1000), state: state1 }));
     await browser.send('Target.disposeBrowserContext', { browserContextId: ctx });
   }
 
