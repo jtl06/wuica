@@ -213,7 +213,7 @@ try {
     await page.close();
   }
 
-  // ---- a link whose loop picks (lp=, blp=) its texts do not have: the first loop, and the result is current -----------
+  // ---- a link whose loop picks (lp=, blp=) its texts do not have: the default loop, and the result is current ---------
   {
     const { encodeState } = await import(new URL('../web/js/url-state.js', import.meta.url).href);
     const frag = encodeState({ mode: 'asm', syntax: 'att', text: fx('saxpy.s'), loop: 9, ab: true, bMode: 'asm', bSyntax: 'att', bText: fx('saxpy.s'), bLoop: 9 });
@@ -222,7 +222,8 @@ try {
     await page.waitFor(`document.getElementById('results').dataset.run && document.querySelector('#result-body .ab-tp')`, 'the A–B result', 60000);
     const r = await page.eval(`${W} await wait(1500); await until(() => !$('results').hasAttribute('aria-busy'));
       return { stale: $('result-body').classList.contains('stale'), a: $('loop-chip')?.selectedOptions[0]?.value, b: $('loop-chip-b')?.selectedOptions[0]?.value, hash: location.hash };`);
-    check(!r.stale && r.a === '0' && r.b === '0' && !/[&#]b?lp=9/.test(r.hash), 'a link with lp=9, blp=9 (4 loops): the first loops, the result current (not stale), the link updated', js({ ...r, hash: r.hash.slice(0, 80) }));
+    // (back to auto: the default loop, saxpy's ymm loop, the third of the list; the first before loop-find.js's defaultLoop)
+    check(!r.stale && r.a === '2' && r.b === '2' && !/[&#]b?lp=9/.test(r.hash) && /[&#]lp=auto&/.test(r.hash), 'a link with lp=9, blp=9 (4 loops): the default loops, the result current (not stale), the link updated', js({ ...r, hash: r.hash.slice(0, 80) }));
     check(page.take().length === 0, 'stale picks: no errors', '');
     await page.close();
   }
@@ -340,7 +341,7 @@ try {
     // before loop-find.js's defaultLoop)
     check(m.length === 10 && m[0].label === '.LBB0_9 · sum · 11 instr' && m[5].label === 'loop 6 of 9 · .LBB2_8 · popc · auto' && m[9].label === 'whole', 'picker: label, function and size of each loop (4 functions); the analyzed one: which of them, auto', js(m.map((o) => o.label)));
     check(m[5].on && !m[0].on && !m.some((o) => o.attr) && m.every((o, k) => o.value === (k < 9 ? String(k) : 'whole')), 'picker: the order and the values as before; the default selected', js(m.map((o) => [o.value, o.on])));
-    check(r.nested[0].label === 'loop 1 of 4 · .LBB0_12 · auto' && r.nested[1].label === '.LBB0_16 · 11 instr · depth 2' && r.nested[3].label === '.LBB0_4 · 79 instr' && r.nested[0].on, 'picker: one function: no name; nested loops: their depth', js(r.nested.map((o) => o.label)));
+    check(r.nested[0].label === 'loop 1 of 4 · .LBB0_12 · auto' && r.nested[1].label === '.LBB0_16 · 6 instr · depth 2' && r.nested[3].label === '.LBB0_4 · 79 instr' && r.nested[0].on, 'picker: one function: no name; nested loops: their depth', js(r.nested.map((o) => o.label)));
     check(r.picked[3].label === 'loop 4 of 4 · .LBB0_4' && r.picked[3].on && r.picked[0].label === '.LBB0_12 · 11 instr · depth 2' && /&lp=3&/.test(r.hash), 'picker: a loop picked by hand is not auto (lp=3 in the link)', js([r.picked.map((o) => o.label), r.hash.slice(0, 40)]));
     // (room for "loop 1 of 4 · .LBB0_12 · auto": 34ch at most, region.css; the toolbar keeps its height, region-chip.js place)
     check(r.width < 320, 'picker: the closed menu stays narrow', String(r.width));

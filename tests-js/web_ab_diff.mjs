@@ -131,7 +131,7 @@ const resp = (rows, extra = {}) => ({ arch: 'SKL', tp: 1, mode: 'loop', decodeEr
     && decodeState(encodeState({ ...DEFAULT_STATE, ab: true, bMode: 'asm', bLoop: 'whole', bText: 'x' })).bLoop === 'whole', 'url: blp= only for B\'s assembly');
   const s = { ...DEFAULT_STATE, ab: true, text: 'add rax, 1\n', mode: 'asm', bMode: 'asm', bSyntax: 'att', bArch: 'ADL-P', bText: 'loop:\n  addq $2, %rax ✓\n', aWork: 8, bWork: 32, abSide: 'b' };
   const f = encodeState(s);
-  check(/^[A-Za-z0-9=&_-]+$/.test(f) && f.includes('&aw=8&c=') && f.includes('&ab=1&bm=asm&bs=att&ba=ADL-P&bw=32&sd=b&bc=') && encodeState({ ...DEFAULT_STATE, mode: 'hex', text: '90', aWork: 4 }) === 'v=1&aw=4&c=OTA', 'url: side B in the fragment', f);
+  check(/^[A-Za-z0-9=&_-]+$/.test(f) && f.includes('&lp=auto&aw=8&c=') && f.includes('&ab=1&bm=asm&bs=att&ba=ADL-P&bw=32&blp=auto&sd=b&bc=') && encodeState({ ...DEFAULT_STATE, mode: 'hex', text: '90', aWork: 4 }) === 'v=1&aw=4&c=OTA', 'url: side B in the fragment', f);
   check(j(decodeState(f)) === j(s), 'url: round trip of both sides', j(decodeState(f)));
   check(decodeState('v=1&ab=1&bm=x&bs=y&ba=%3Cx%3E&bk=999&bc=!!').bWork === 64 && decodeState('v=1&ab=1&aw=0&bw=99999999').bWork === 65536 && j(decodeState('v=1&ab=1&bm=x&bs=y&ba=%3Cx%3E&bk=0&aw=x&bc=!!')) === j({ ...DEFAULT_STATE, mode: 'hex', ab: true, bMode: 'hex' }), 'url: bad B values fall back to the defaults');
   check(decodeState('v=1&ab=1&bk=4').bWork === 4 && decodeState('v=1&ab=1&bk=4').aWork === 1, 'url: an older link\'s B unrolled ×4 is B doing 4 elements per iteration of A');
