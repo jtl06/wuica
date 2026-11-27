@@ -12,7 +12,7 @@
 // Every request goes to https://godbolt.org (the only third-party origin the page's CSP allows), and only when
 // the user imports something.
 
-import { functionBody } from './loop-find.js';
+import { functionBody, defaultLoop, vectorWidth } from './loop-find.js';
 
 export const CE_ORIGIN = 'https://godbolt.org';
 const HOST = /^(?:[a-z0-9-]+\.)*(?:godbolt\.org|compiler-explorer\.com)$/i;
@@ -523,12 +523,36 @@ export function bodyRange(fn) {
   return b ? { start: b.begin, end: b.end } : null;
 }
 
-// What to preselect: the function with the first innermost loop (or the first function), and that loop (or the
-// function's body without its prologue and epilogue, or the whole function). {fn, start, end, loop}
+// The loop of a function to preselect, by the default of the page's loop finder (loop-find.js, defaultLoop: among the
+// deepest innermost loops, the widest vector registers, then the most vector instructions, then the most instructions,
+// then the first), or null.
+export function defaultLoopOf(fn) {
+  const loops = findLoops(fn);
+  const hasRet = (l) => fn.items.slice(l.start, l.end + 1).some((it) => it.kind === 'instr' && /^ret[lqw]?$/.test(it.mnemonic));
+  const ranked = loops.map((l) => {
+    let width = 0, count = 0, instructions = 0;
+    for (const it of fn.items.slice(l.start, l.end + 1)) {
+      if (it.kind !== 'instr') continue;
+      instructions++;
+      const w = vectorWidth(it.mnemonic, it.operands.replace(/\s*#.*$/, '')); // (not a comment's registers: "# ymm3 = mem[0],...")
+      if (w) { count++; width = Math.max(width, w); }
+    }
+    // (its depth: the loops around it; not a span with a ret, which is no loop: loop-find.js leaves those out)
+    const depth = 1 + loops.filter((o) => o !== l && o.start <= l.start && o.end >= l.end && !hasRet(o)).length;
+    return { inner: l.inner, depth, begin: l.start, instructions, vector: { width, count } };
+  });
+  // (findLoops' order: the innermost first; the deepest of them first, as loop-find.js lists them)
+  const order = ranked.map((r, k) => k).sort((a, b) => Number(ranked[b].inner) - Number(ranked[a].inner) || ranked[b].depth - ranked[a].depth || a - b);
+  const k = defaultLoop(order.map((i) => ranked[i]));
+  return k < 0 ? null : loops[order[k]];
+}
+
+// What to preselect: the first function with a loop (or the first function), and its default loop (defaultLoopOf; or
+// the function's body without its prologue and epilogue, or the whole function). {fn, start, end, loop}
 export function defaultSelection(listing) {
   for (let f = 0; f < listing.functions.length; f++) {
-    const loops = findLoops(listing.functions[f]);
-    if (loops.length) return { fn: f, start: loops[0].start, end: loops[0].end, loop: true };
+    const l = defaultLoopOf(listing.functions[f]);
+    if (l) return { fn: f, start: l.start, end: l.end, loop: true };
   }
   const fn = listing.functions[0];
   if (!fn) return null;

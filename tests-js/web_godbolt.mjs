@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import {
   risonDecode, unrisonify, lzDecompressFromBase64, unminifyLayout, decodeFragment, parseCeLink, isCeLink, fromClientState,
   resolveShortLink, compilersOf, compilePane, compileRequest, outputModes, ceRequest, CeError, compilerMessages,
-  parseListing, findLoops, defaultSelection, bodyRange, extractRange, sourceAsAssembly, targetProblem, is32bit, CE_ORIGIN, gasToLlvmIntel,
+  parseListing, findLoops, defaultSelection, defaultLoopOf, bodyRange, extractRange, sourceAsAssembly, targetProblem, is32bit, CE_ORIGIN, gasToLlvmIntel,
 } from '../web/js/godbolt.js';
 import { WasmAssembler } from '../web/js/assembler.js';
 import { withRegions } from '../web/js/asm-regions.js';
@@ -167,6 +167,13 @@ function fakeFetch(routes) {
   check(je.target !== null && fn.items[je.target].address === 0x20, 'listing: a forward jump is resolved too');
   const d = defaultSelection(L);
   check(d.fn === 0 && d.start === loops[0].start && d.end === loops[0].end && d.loop, 'the innermost loop is preselected');
+  // the loop preselected is the page's default (loop-find.js, defaultLoop): gcc's scale_add has a scalar peel loop, the
+  // AVX2 loop and a scalar cleanup loop (the first, the peel loop, was preselected before)
+  const sa = parseListing({ asm: fs.readFileSync(new URL('../tests-js/fixtures/loop-find/default/gcc-scale_add.O2.haswell.s', import.meta.url), 'utf8').split('\n').map((text) => ({ text })) });
+  const saFn = sa.functions.find((f) => f.name === 'scale_add'), saLoops = findLoops(saFn), saDefault = defaultLoopOf(saFn);
+  const saText = (l) => saFn.items.slice(l.start, l.end + 1).filter((it) => it.kind === 'instr').map((it) => it.mnemonic);
+  check(saDefault.start === saLoops[1].start && saDefault.end === saLoops[1].end && saText(saDefault).includes('vfmadd213ps') && saText(saLoops[0]).includes('vfmadd213ss') && defaultSelection(sa).start === saDefault.start,
+    'the preselected loop: the vector loop, not the peel loop first in the code', j(saLoops.map(saText)));
   const ext = extractRange(fn, d.start, d.end, L);
   const parsed = parseHexInput(ext.text);
   check(ext.mode === 'hex' && ext.instructions === 3 && ext.bytes === 9 && ext.endsInBranch && ext.startAddress === 16, 'the block: hex, 3 instructions, 9 bytes, at 0x10', j(ext));
