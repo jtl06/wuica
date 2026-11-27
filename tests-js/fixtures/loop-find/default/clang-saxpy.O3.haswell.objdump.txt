@@ -1,0 +1,110 @@
+
+saxpy.o:	file format elf64-x86-64
+
+Disassembly of section .text:
+
+0000000000000000 <saxpy>:
+       0:      	testq	%rdi, %rdi
+       3:      	jle	0x112 <saxpy+0x112>
+       9:      	cmpq	$0x4, %rdi
+       d:      	jb	0x2b <saxpy+0x2b>
+       f:      	leaq	(%rdx,%rdi,4), %rax
+      13:      	leaq	(%rsi,%rdi,4), %rcx
+      17:      	cmpq	%rcx, %rdx
+      1a:      	setb	%cl
+      1d:      	cmpq	%rax, %rsi
+      20:      	setb	%al
+      23:      	testb	%al, %cl
+      25:      	je	0x116 <saxpy+0x116>
+      2b:      	xorl	%eax, %eax
+      2d:      	movl	%edi, %r8d
+      30:      	subl	%eax, %r8d
+      33:      	movq	%rax, %rcx
+      36:      	andl	$0x7, %r8d
+      3a:      	je	0x58 <saxpy+0x58>
+      3c:      	movq	%rax, %rcx
+      3f:      	nop
+      40:      	vmovss	(%rsi,%rcx,4), %xmm1
+      45:      	vfmadd213ss	(%rdx,%rcx,4), %xmm0, %xmm1 # xmm1 = (xmm0 * xmm1) + mem
+      4b:      	vmovss	%xmm1, (%rdx,%rcx,4)
+      50:      	incq	%rcx
+      53:      	decq	%r8
+      56:      	jne	0x40 <saxpy+0x40>
+      58:      	subq	%rdi, %rax
+      5b:      	cmpq	$-0x8, %rax
+      5f:      	ja	0x112 <saxpy+0x112>
+      65:      	nopw	%cs:(%rax,%rax)
+      6f:      	nop
+      70:      	vmovss	(%rsi,%rcx,4), %xmm1
+      75:      	vfmadd213ss	(%rdx,%rcx,4), %xmm0, %xmm1 # xmm1 = (xmm0 * xmm1) + mem
+      7b:      	vmovss	%xmm1, (%rdx,%rcx,4)
+      80:      	vmovss	0x4(%rsi,%rcx,4), %xmm1
+      86:      	vfmadd213ss	0x4(%rdx,%rcx,4), %xmm0, %xmm1 # xmm1 = (xmm0 * xmm1) + mem
+      8d:      	vmovss	%xmm1, 0x4(%rdx,%rcx,4)
+      93:      	vmovss	0x8(%rsi,%rcx,4), %xmm1
+      99:      	vfmadd213ss	0x8(%rdx,%rcx,4), %xmm0, %xmm1 # xmm1 = (xmm0 * xmm1) + mem
+      a0:      	vmovss	%xmm1, 0x8(%rdx,%rcx,4)
+      a6:      	vmovss	0xc(%rsi,%rcx,4), %xmm1
+      ac:      	vfmadd213ss	0xc(%rdx,%rcx,4), %xmm0, %xmm1 # xmm1 = (xmm0 * xmm1) + mem
+      b3:      	vmovss	%xmm1, 0xc(%rdx,%rcx,4)
+      b9:      	vmovss	0x10(%rsi,%rcx,4), %xmm1
+      bf:      	vfmadd213ss	0x10(%rdx,%rcx,4), %xmm0, %xmm1 # xmm1 = (xmm0 * xmm1) + mem
+      c6:      	vmovss	%xmm1, 0x10(%rdx,%rcx,4)
+      cc:      	vmovss	0x14(%rsi,%rcx,4), %xmm1
+      d2:      	vfmadd213ss	0x14(%rdx,%rcx,4), %xmm0, %xmm1 # xmm1 = (xmm0 * xmm1) + mem
+      d9:      	vmovss	%xmm1, 0x14(%rdx,%rcx,4)
+      df:      	vmovss	0x18(%rsi,%rcx,4), %xmm1
+      e5:      	vfmadd213ss	0x18(%rdx,%rcx,4), %xmm0, %xmm1 # xmm1 = (xmm0 * xmm1) + mem
+      ec:      	vmovss	%xmm1, 0x18(%rdx,%rcx,4)
+      f2:      	vmovss	0x1c(%rsi,%rcx,4), %xmm1
+      f8:      	vfmadd213ss	0x1c(%rdx,%rcx,4), %xmm0, %xmm1 # xmm1 = (xmm0 * xmm1) + mem
+      ff:      	vmovss	%xmm1, 0x1c(%rdx,%rcx,4)
+     105:      	addq	$0x8, %rcx
+     109:      	cmpq	%rcx, %rdi
+     10c:      	jne	0x70 <saxpy+0x70>
+     112:      	vzeroupper
+     115:      	retq
+     116:      	movabsq	$0x7fffffffffffffe0, %rcx # imm = 0x7FFFFFFFFFFFFFE0
+     120:      	cmpq	$0x20, %rdi
+     124:      	jae	0x12d <saxpy+0x12d>
+     126:      	xorl	%eax, %eax
+     128:      	jmp	0x1ad <saxpy+0x1ad>
+     12d:      	movq	%rdi, %rax
+     130:      	andq	%rcx, %rax
+     133:      	vbroadcastss	%xmm0, %ymm1
+     138:      	xorl	%r8d, %r8d
+     13b:      	nopl	(%rax,%rax)
+     140:      	vmovups	(%rsi,%r8,4), %ymm2
+     146:      	vmovups	0x20(%rsi,%r8,4), %ymm3
+     14d:      	vmovups	0x40(%rsi,%r8,4), %ymm4
+     154:      	vmovups	0x60(%rsi,%r8,4), %ymm5
+     15b:      	vfmadd213ps	(%rdx,%r8,4), %ymm1, %ymm2 # ymm2 = (ymm1 * ymm2) + mem
+     161:      	vfmadd213ps	0x20(%rdx,%r8,4), %ymm1, %ymm3 # ymm3 = (ymm1 * ymm3) + mem
+     168:      	vfmadd213ps	0x40(%rdx,%r8,4), %ymm1, %ymm4 # ymm4 = (ymm1 * ymm4) + mem
+     16f:      	vfmadd213ps	0x60(%rdx,%r8,4), %ymm1, %ymm5 # ymm5 = (ymm1 * ymm5) + mem
+     176:      	vmovups	%ymm2, (%rdx,%r8,4)
+     17c:      	vmovups	%ymm3, 0x20(%rdx,%r8,4)
+     183:      	vmovups	%ymm4, 0x40(%rdx,%r8,4)
+     18a:      	vmovups	%ymm5, 0x60(%rdx,%r8,4)
+     191:      	addq	$0x20, %r8
+     195:      	cmpq	%r8, %rax
+     198:      	jne	0x140 <saxpy+0x140>
+     19a:      	cmpq	%rax, %rdi
+     19d:      	je	0x112 <saxpy+0x112>
+     1a3:      	testb	$0x1c, %dil
+     1a7:      	je	0x2d <saxpy+0x2d>
+     1ad:      	movq	%rax, %r8
+     1b0:      	addq	$0x1c, %rcx
+     1b4:      	movq	%rcx, %rax
+     1b7:      	andq	%rdi, %rax
+     1ba:      	vbroadcastss	%xmm0, %xmm1
+     1bf:      	nop
+     1c0:      	vmovups	(%rsi,%r8,4), %xmm2
+     1c6:      	vfmadd213ps	(%rdx,%r8,4), %xmm1, %xmm2 # xmm2 = (xmm1 * xmm2) + mem
+     1cc:      	vmovups	%xmm2, (%rdx,%r8,4)
+     1d2:      	addq	$0x4, %r8
+     1d6:      	cmpq	%r8, %rax
+     1d9:      	jne	0x1c0 <saxpy+0x1c0>
+     1db:      	cmpq	%rax, %rdi
+     1de:      	je	0x112 <saxpy+0x112>
+     1e4:      	jmp	0x2d <saxpy+0x2d>

@@ -21,17 +21,20 @@ const run = (args, input = '') => {
 };
 
 test('N1. a branch inside the picked loop: "both paths" in text, JSON, the table, MCP; not for a plain loop', async () => {
-  const r = run([fx('divmod.hsw.s')]);
+  // the remainder loop .LBB0_7, picked by its label (it was the default before loop-find.js's defaultLoop, which takes the
+  // unrolled main loop .LBB0_13): its one branch at line 46
+  const D = [fx('divmod.hsw.s'), '-loop', '.LBB0_7'];
+  const r = run(D);
   assert.equal(r.code, 0, r.err);
   assert.match(r.out, /^Not modelled: both paths: both sides of the branch at line 46 \(jnz\) are simulated, one after the other; a real iteration takes one, so the cycles per iteration \(and the step\) count both\. To analyze one side, put # wuica-begin and # wuica-end around it$/m);
   assert.match(r.out, /^Not modelled: exit mispredict:/m); // the je to .LBB0_11 is an exit: its own caveat
-  const j = JSON.parse(run([fx('divmod.hsw.s'), '-json']).out);
+  const j = JSON.parse(run([...D, '-json']).out);
   assert.deepEqual(j.insights.caveats.map((c) => [c.id, c.instructions]), [['paths', [10]], ['exit', [5]]]);
-  assert.match(run([fx('divmod.hsw.s'), '-arch', 'SKL,ZEN3']).out, /^SKL .* both paths; exit mispredict$/m);
+  assert.match(run([...D, '-arch', 'SKL,ZEN3']).out, /^SKL .* both paths; exit mispredict$/m);
   assert.doesNotMatch(run([fx('dot.hsw.s')]).out, /both paths/);
   // MCP: the analyze tool's summary
   const w = await createWuica();
-  const out = await callTool(mcpTools(w), 'analyze', { source: fs.readFileSync(fx('divmod.hsw.s'), 'utf8'), arch: 'SKL', format: 'json' });
+  const out = await callTool(mcpTools(w), 'analyze', { source: fs.readFileSync(fx('divmod.hsw.s'), 'utf8'), loop: '.LBB0_7', arch: 'SKL', format: 'json' });
   const caveats = JSON.parse(out.content[0].text).insights.caveats;
   assert.equal(caveats[0].id, 'paths');
   assert.match(caveats[0].title, /at line 46/);

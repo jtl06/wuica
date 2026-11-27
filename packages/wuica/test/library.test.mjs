@@ -342,7 +342,9 @@ test('clang 23 -S output as is: .prefalign is read as the .p2align clang 22 wrot
   assert.match(s, /^\t\.prefalign\t4, \.Lfunc_end0, nop$/m);
   const r = await w.analyze('SKL', { source: s });
   assert.equal(r.code, 0, r.error);
-  assert.equal(r.loop.function, 'dot');
+  // the default: count's vectorized loop (xmm), not dot's scalar float loop, the first in the text (the default before
+  // loop-find.js's defaultLoop)
+  assert.equal(r.loop.function, 'count');
   const p2 = await w.analyze('SKL', { source: s.replace(/\.prefalign\t(\d+).*$/gm, '.p2align $1') });
   assert.equal(r.tp, p2.tp);
   assert.equal(r.hex, p2.hex);
@@ -377,15 +379,16 @@ test('clang -g -S output (NULs in the .debug_str comments): the library, the CLI
     const text = fs.readFileSync(path.join(ROOT, file), 'utf8');
     assert.ok(text.includes('\0'), `${file} has NUL characters`);
     assert.equal((await w.assemble(text)).code, 0, file);
-    const r = await w.analyze('SKL', { source: text });
+    // dot's loop (sum.c's count has the vectorized loop, the default since loop-find.js's defaultLoop)
+    const r = await w.analyze('SKL', { source: text, func: 'dot' });
     assert.equal(r.code, 0, `${file}: ${r.error}`);
     assert.equal(r.loop.function, 'dot');
     const instr = r.rows.filter((x) => x.kind === 'instr');
     assert.ok(instr.every((x) => Number.isInteger(x.line) && /^(dot|sum)\.c:[34]$/.test(x.loc)), file);
     assert.deepEqual([...new Set(instr.map((x) => x.loc))], [`${src}:4`, `${src}:3`], 'written out: the loop body, then the loop control');
-    const cli = JSON.parse(execFileSync(process.execPath, [path.join(DIR, 'bin/wuica.js'), path.join(ROOT, file), '-json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
+    const cli = JSON.parse(execFileSync(process.execPath, [path.join(DIR, 'bin/wuica.js'), path.join(ROOT, file), '-func', 'dot', '-json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
     assert.equal(cli.tp, r.tp, `${file}: the CLI`);
-    const m = await callTool(mcpTools(w), 'analyze', { source: text, format: 'json' });
+    const m = await callTool(mcpTools(w), 'analyze', { source: text, func: 'dot', format: 'json' });
     assert.ok(!m.isError, `${file}: the MCP tool`);
     assert.deepEqual(JSON.parse(m.content[0].text).instructions.map((x) => x.loc), instr.map((x) => x.loc));
   }

@@ -19,6 +19,8 @@ const run = (args, input = '') => {
   return { code: r.status, out: r.stdout, err: r.stderr };
 };
 const json = (args, input) => { const r = run([...args, '-json'], input); return { code: r.code, doc: JSON.parse(r.out) }; };
+// (divmod.hsw.s: the default is its unrolled main loop, .LBB0_13, the larger of two scalar loops; .LBB0_7, its remainder,
+// was the default before loop-find.js's defaultLoop: 22.00 on SKL, 13.00 on ZEN3)
 const GOOD = ['dot.hsw.s', 'divmod.hsw.s', 'hist.hsw.s'];
 
 test('one CPU: a row per file; a failing file says why, and the worst status is the exit status', () => {
@@ -27,7 +29,7 @@ test('one CPU: a row per file; a failing file says why, and the worst status is 
   const lines = r.out.split('\n');
   assert.match(lines[0], /^File +Loop +TP +Bottlenecks +Notes$/);
   assert.match(lines[1], /^dot\.hsw\.s +\.LBB0_9 \(dot\) +32\.00 +Dependencies$/);
-  assert.match(lines[2], /^divmod\.hsw\.s +\.LBB0_7 \(sum_mod\) +22\.00 +- \(nearest Issue\) +both paths; exit mispredict$/);
+  assert.match(lines[2], /^divmod\.hsw\.s +\.LBB0_13 \(sum_mod\) +94\.00 +- \(nearest Issue\) +both paths; exit mispredict$/);
   assert.match(lines[4], /^nope\.s +- +- +error: no such file: nope\.s$/);
   assert.match(lines[5], /^mixed\.s +- +- +error: assembly failed: line 3: unknown token in expression$/);
   assert.match(r.err, /^nope\.s: no such file: nope\.s$/m);
@@ -60,16 +62,16 @@ test('several CPUs: a row per file and CPU; -TPonly: tab-separated lines; -repor
   assert.match(lines[2], /^ +ZEN3 +32\.00 +Dependencies +\[prototype\]$/);
   // 80 columns but for the notes, which come last (two caveats and [prototype] can be longer)
   assert.ok(lines.every((l) => l.replace(/ {2}(?:both paths|store forwarding|\[prototype\]).*$/, '').length <= 80), lines.find((l) => l.length > 80));
-  assert.equal(run(['dot.hsw.s', 'divmod.hsw.s', '-TPonly']).out, 'dot.hsw.s\t32.00\ndivmod.hsw.s\t22.00\n');
+  assert.equal(run(['dot.hsw.s', 'divmod.hsw.s', '-TPonly']).out, 'dot.hsw.s\t32.00\ndivmod.hsw.s\t94.00\n');
   assert.equal(run(['dot.hsw.s', 'divmod.hsw.s', '-TPonly', '-arch', 'SKL,ZEN3', '-per', '2']).out,
-    'dot.hsw.s\tSKL\t32.00\t16.00\ndot.hsw.s\tZEN3\t32.00\t16.00\ndivmod.hsw.s\tSKL\t22.00\t11.00\ndivmod.hsw.s\tZEN3\t13.00\t6.50\n');
+    'dot.hsw.s\tSKL\t32.00\t16.00\ndot.hsw.s\tZEN3\t32.00\t16.00\ndivmod.hsw.s\tSKL\t94.00\t47.00\ndivmod.hsw.s\tZEN3\t52.00\t26.00\n');
   const wt = run(['dot.hsw.s', 'nope.s', '-TPonly', '-whatif']).out.split('\n');
   assert.equal(wt[0], 'dot.hsw.s\t32.00');
   assert.ok(wt.includes('dot.hsw.s\tacc2\t16.00') && wt.includes('nope.s\terror'), wt.join('|'));
   const rep = run(['dot.hsw.s', 'divmod.hsw.s', '-report']).out;
   assert.match(rep, /\n==> dot\.hsw\.s <==\nThroughput \(in cycles per iteration\): 32\.00\n/);
-  assert.match(rep, /\n==> divmod\.hsw\.s <==\nThroughput \(in cycles per iteration\): 22\.00\n/);
-  assert.match(run(['dot.hsw.s', 'divmod.hsw.s', '-report', '-arch', 'SKL,ZEN3']).out, /\n==> divmod\.hsw\.s \(ZEN3\) <==\nThroughput \(in cycles per iteration\): 13\.00\n/);
+  assert.match(rep, /\n==> divmod\.hsw\.s <==\nThroughput \(in cycles per iteration\): 94\.00\n/);
+  assert.match(run(['dot.hsw.s', 'divmod.hsw.s', '-report', '-arch', 'SKL,ZEN3']).out, /\n==> divmod\.hsw\.s \(ZEN3\) <==\nThroughput \(in cycles per iteration\): 52\.00\n/);
   assert.match(run(['dot.hsw.s', 'divmod.hsw.s', '-whatif']).out, /\n==> dot\.hsw\.s <==\nWhat if \(SKL\), cycles per original iteration \(base 32\.00\):\n/);
 });
 
@@ -77,8 +79,8 @@ test('-files LIST and -files -: the names from a file or stdin, with the argumen
   const dir = tmpDir('wuica-files-');
   const list = path.join(dir, 'list.txt');
   fs.writeFileSync(list, `# kernels\n${path.join(FX, 'divmod.hsw.s')}\n\n${path.join(FX, 'hist.hsw.s')}\n`);
-  assert.equal(run(['dot.hsw.s', '-files', list, '-TPonly']).out, `dot.hsw.s\t32.00\n${path.join(FX, 'divmod.hsw.s')}\t22.00\n${path.join(FX, 'hist.hsw.s')}\t11.95\n`);
-  assert.equal(run(['-files', '-', '-TPonly'], 'dot.hsw.s\ndivmod.hsw.s\n').out, 'dot.hsw.s\t32.00\ndivmod.hsw.s\t22.00\n');
+  assert.equal(run(['dot.hsw.s', '-files', list, '-TPonly']).out, `dot.hsw.s\t32.00\n${path.join(FX, 'divmod.hsw.s')}\t94.00\n${path.join(FX, 'hist.hsw.s')}\t11.95\n`);
+  assert.equal(run(['-files', '-', '-TPonly'], 'dot.hsw.s\ndivmod.hsw.s\n').out, 'dot.hsw.s\t32.00\ndivmod.hsw.s\t94.00\n');
   assert.equal(run(['-files', '-', '-', '-TPonly'], 'x').code, 1); // stdin once
   fs.writeFileSync(list, '\n# none\n');
   assert.match(run(['-files', list]).err, /no file names in it/);
