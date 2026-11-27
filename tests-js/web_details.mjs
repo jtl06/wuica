@@ -114,23 +114,20 @@ const near = (a, b, eps = 1e-9) => Math.abs(a - b) < eps;
   check(await d.get(v3) === null && calls === 3, 'fetcher: mock responses are not analyzed');
 }
 
-// --- the accuracy numbers: the "after" rows of docs/ACCURACY.md ---------------------------------------------------------
+// --- the accuracy numbers: the held-out "wuica" rows of "Real hot loops" in docs/ACCURACY.md --------------------------------
 {
   const doc = fs.readFileSync(new URL('docs/ACCURACY.md', root), 'utf8');
-  const after = new Map(); // "ZEN3" -> [random, real]
-  let set = null;
-  for (const line of doc.split('\n')) {
+  const section = doc.slice(doc.indexOf('## Real hot loops'), doc.indexOf('## Policy and the accuracy gate'));
+  const held = new Map(); // "ZEN3" -> the share within 10 %
+  for (const line of section.split('\n')) {
     const cells = line.split('|').map((c) => c.trim());
-    if (cells.length < 8) continue;
-    if (/random/.test(cells[1])) set = 'random'; else if (/real/.test(cells[1])) set = 'real';
-    const m = /^uiCA (\S+), after$/.exec(cells[3]);
-    if (m && set) { const e = after.get(m[1]) ?? {}; e[set] ??= parseFloat(cells[5]); after.set(m[1], e); } // the first: the current round
+    if (cells.length === 7 && cells[1] === 'held out' && cells[3] === 'wuica') held.set(cells[2], parseFloat(cells[5]));
   }
   for (const [k, a] of Object.entries(ACCURACY)) {
-    check(after.get(k)?.random === a.random && after.get(k)?.real === a.real, `accuracy ${k} as in docs/ACCURACY.md`, JSON.stringify([a, after.get(k)]));
+    check(held.get(k) === a.real, `accuracy ${k} as in docs/ACCURACY.md`, JSON.stringify([a, held.get(k)]));
   }
-  check(after.size === Object.keys(ACCURACY).length, 'accuracy: every model of the document', [...after.keys()].join());
-  check(accuracyNote('ZEN3') === `within 10%: ${Math.round(ACCURACY.ZEN3.random)}% random · ${Math.round(ACCURACY.ZEN3.real)}% real code` && accuracyNote('SKL') === '', 'accuracy note');
+  check(held.size === Object.keys(ACCURACY).length && held.size === 3, 'accuracy: every model of the document', [...held.keys()].join());
+  check(accuracyNote('ZEN3') === `within 10% on ${Math.round(ACCURACY.ZEN3.real)}% of real loops` && accuracyNote('ZEN3') === 'within 10% on 64% of real loops' && accuracyNote('SKL') === '', 'accuracy note');
 }
 
 // --- the examples on every CPU, with the details of the analyzer -----------------------------------------------------------

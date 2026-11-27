@@ -11,7 +11,7 @@ percentage error. All tools are compared on the same loops (those for which ever
 
 ## Real hot loops
 
-The numbers to judge the models by. The benchmark is 1,844 hot loops from 175 open-source libraries (hashes, codecs, string
+The numbers to judge the models by, and the ones the web page quotes next to a prototype model (the held-out "wuica" rows). The benchmark is 1,844 hot loops from 175 open-source libraries (hashes, codecs, string
 functions, math kernels and more; hand-written intrinsics as well as auto-vectorized code), built in 11 configurations of gcc 15
 and clang 22 from the x86-64 baseline to x86-64-v4, and measured in place with performance counters on the three machines below.
 The libraries are split in two: a development part, which model round 11 worked from, and a held-out part, which was scored once,
@@ -54,8 +54,7 @@ How to read it:
   The llvm-mca and upstream uiCA predictions are not published yet.
 
 The sections below are the older test sets (random loops and BHive blocks). They are easier than real loops and now serve as
-a guard against regressions. The note next to a prototype model on the web page ("within 10%: … random · … real code")
-still quotes those sets.
+a guard against regressions.
 
 ## Policy and the accuracy gate
 
