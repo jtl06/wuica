@@ -3,12 +3,12 @@
 [![CI](https://github.com/jtl06/wuica/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jtl06/wuica/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/wuica-cli)](https://www.npmjs.com/package/wuica-cli)
 
-Predicts how fast an x86-64 loop runs on a given CPU: cycles per iteration, what limits it, and where every uop goes. In the
-browser, on the command line, or from a coding agent.
+wuica predicts how fast an x86-64 loop runs on a given CPU: cycles per iteration, what limits it, and where every uop goes.
+It runs in the browser, on the command line, or from a coding agent.
 
-Paste a hot loop as assembly, as compiler output (`gcc -S`, `objdump -d`, `perf annotate`) or as machine code, and pick the
-CPUs. wuica simulates the pipeline cycle by cycle, front end included, fast enough to update as you type. Everything runs on
-your machine: the web page sends nothing to a server.
+Give it a hot loop as assembly, as the output of `gcc -S`, `objdump -d` or `perf annotate`, or as machine code, and pick the
+CPUs. wuica simulates the pipeline cycle by cycle, front end included, fast enough to update as you type. The web page and
+the command-line tool run on your machine: the web page sends nothing to a server.
 
 [![The page: a dot product with four accumulators on five CPUs](docs/img/page.png)](https://wuica.jacen.li)
 
@@ -18,36 +18,37 @@ three more CPU models. See [Relation to uiCA](#relation-to-uica).
 ## Use it
 
 - **In the browser:** [wuica.jacen.li](https://wuica.jacen.li).
-- **On the command line:** `npx wuica-cli loop.s -arch SKL,ZEN3,ADL-P` (Node 20 or later, no dependencies, offline).
+- **On the command line:** `npx wuica-cli loop.s -arch SKL,ZEN3,ADL-P` (Node 20 or later, no dependencies; offline once
+  downloaded). `-list` prints the CPU names.
 
       clang -O3 -march=haswell -S dot.c -o dot.s
       npx wuica-cli dot.s -arch SKL,ZEN3            # the loop it picked, one row per CPU
       npx wuica-cli diff dot.s dot4.s               # before and after
       objdump -d dot.o | npx wuica-cli              # objdump output; perf annotate --stdio works the same way
 
-  The package [`wuica-cli`](https://www.npmjs.com/package/wuica-cli) is also a Node library. Everything it can do is in
+  The package [`wuica-cli`](https://www.npmjs.com/package/wuica-cli) is also a Node library. Its full documentation is in
   [packages/wuica/README.md](packages/wuica/README.md).
-- **From a coding agent:** a local MCP server, `claude mcp add wuica -- npx -y wuica-cli mcp` (the same command works in other
-  clients). Tools: analyze, what-if, diff of two versions, compare CPUs, list loops, assemble.
+- **From a coding agent:** a local MCP server, `claude mcp add wuica -- npx -y wuica-cli mcp` (other clients start the same
+  server, `npx -y wuica-cli mcp`). Tools: analyze, what-if, diff two versions, compare CPUs, list loops, assemble.
 - **Over HTTP:** [api.wuica.jacen.li](https://api.wuica.jacen.li), for scripts and agents without Node; an MCP endpoint is at
-  `https://api.wuica.jacen.li/mcp`. Unlike the page and the package, this sends your code to a server.
+  `https://api.wuica.jacen.li/mcp`. Unlike the web page and `wuica-cli`, this sends your code to a server.
 
       curl -s -X POST https://api.wuica.jacen.li/api/analyze/SKL -d '{"hex":"4801d84801c349ffcf75f5"}'
 
 ## Features
 
 - **Cycles per iteration on up to 15 CPUs side by side**, with the bottleneck of each (front end, ports, or a loop-carried
-  dependency chain) and how far the other limits are.
-- **A table per instruction:** uops, the ports they run on, fusion, and the critical dependency chain.
+  dependency chain) and the value of the other limits.
+- **A row per instruction:** uops, the ports they run on, fusion, and the critical dependency chain.
 - **A cycle-by-cycle trace** of every uop through the pipeline, and a dependency view.
-- **A–B:** two versions of a loop next to each other, with what changed per instruction and per port.
+- **A–B comparison:** two versions of a loop side by side, with what changed per instruction and per port.
 - **What-if:** the same loop unrolled, with more accumulators, or with parts of the model switched off, to see what a change
-  would buy before writing it. An alignment sweep shows the loop at each of the 64 offsets in a cache line.
-- **llvm-mca next to it**, on the same code.
-- **Input as it comes:** Intel or AT&T assembly, whole `-S` files (it finds the loops and lets you pick), `objdump -d`,
+  would gain before you write it. An alignment sweep shows the loop at each of the 64 offsets in a cache line.
+- **llvm-mca on the same code**, next to wuica's result. It runs in the browser too.
+- **Input formats:** Intel or AT&T assembly, whole `-S` files (it finds the loops and lets you pick), `objdump -d`,
   `perf annotate`, object files (command line), hex, or a Compiler Explorer link.
-- **Links:** the page keeps its whole state in the URL, so "Copy link" gives a link to exactly what you see. Results copy as
-  Markdown for an issue or a review.
+- **Sharing:** the web page keeps its whole state in the URL, so "Copy link" gives a link to exactly what you see. Results
+  can be copied as Markdown for an issue or a review.
 
 ## A worked example
 
@@ -87,8 +88,8 @@ count but names no bottleneck.
 | AMD Zen 3 (`ZEN3`), Ice Lake server (`ICX`), Alder Lake P-core (`ADL-P`) | the fork [jtl06/uiCA](https://github.com/jtl06/uiCA), marked `prototype` | on one machine each, below |
 
 The three prototype models are tested on a benchmark of 1,844 hot loops from 175 open-source libraries, each measured with
-performance counters. The libraries are split in two, one part to develop on and one held out. Share of held-out loops
-predicted within 10 % of the measurement, averaged per library:
+performance counters. The libraries are split into a development set and a held-out set. Share of held-out loops predicted
+within 10 % of the measurement, averaged per library:
 
 | Model | Measured on | Loops | wuica | llvm-mca 22 |
 |---|---|---:|---:|---:|
@@ -96,16 +97,17 @@ predicted within 10 % of the measurement, averaged per library:
 | `ICX` | Xeon Gold 6314U | 579 | 77 % | 54 % (`icelake-server`) |
 | `ZEN3` | Ryzen 7 7735U, a Zen 3+ laptop chip | 558 | 64 % | 45 % (`znver3`) |
 
-Read this as: an estimate to reason with, not a measurement. A prediction says where the limit is and whether a change should
-help; check what matters with `perf`. The model assumes data in the L1 cache and perfectly predicted branches. The Zen 3 model
-has only been checked on a Zen 3+ laptop chip. Method, the development numbers and known errors: [docs/ACCURACY.md](docs/ACCURACY.md).
+Treat a prediction as an estimate to reason with, not as a measurement. It says where the limit is and whether a change
+should help; check the changes that matter with `perf`. The model assumes data in the L1 cache and perfectly predicted
+branches. The Zen 3 model has only been checked on a Zen 3+ laptop chip. The method, the development-set numbers and the
+known errors are in [docs/ACCURACY.md](docs/ACCURACY.md).
 
 ## Measure your own CPU
 
 [wuica-calibrate](https://github.com/jtl06/wuica-calibrate) (pre-release) runs about 1,800 of those loops and a set of pipeline probes on a
-Linux x86-64 machine in under ten minutes, without root, and prints a report about that CPU: which model fits it best, where
-predictions miss, and what the probes say about its pipeline. The result file it writes is what a model for a new CPU is built
-from. Runs on Zen 4, Zen 5, desktop Zen 3 and recent Intel cores are the ones that would help most.
+Linux x86-64 machine in under ten minutes, without root. It prints a report about that CPU: which model fits it best, where
+predictions miss, and what the probes say about its pipeline. A model for a new CPU is built from the result file it writes.
+Runs on Zen 4, Zen 5, desktop Zen 3 and recent Intel cores would help most.
 
 ## Relation to uiCA
 
@@ -113,10 +115,10 @@ from. Runs on Zen 4, Zen 5, desktop Zen 3 and recent Intel cores are the ones th
 Microarchitectures*, ICS 2022. Its official web version is [uiCA.uops.info](https://uiCA.uops.info). wuica is a separate project
 and not affiliated with it.
 
-- **The port is exact.** wuica reproduces the complete report of the Python uiCA (the fork's) on all 18,791 cases of the port's
-  test corpus, natively and as WebAssembly, and is about 40 times faster (1 ms per analysis against 40–55 ms). How that is checked:
-  [docs/VERIFICATION.md](docs/VERIFICATION.md).
-- **The Intel models are uiCA's.** The `ZEN3`, `ICX` and `ADL-P` models are prototypes of the fork
+- **The port is exact.** wuica reproduces the complete report of the Python uiCA, in the fork's version, on all 18,791 cases
+  of the port's test corpus, natively and as WebAssembly. It is about 40 times faster (1 ms per analysis against 40–55 ms).
+  How that is checked: [docs/VERIFICATION.md](docs/VERIFICATION.md).
+- **The 12 models from Sandy Bridge to Rocket Lake are uiCA's.** The `ZEN3`, `ICX` and `ADL-P` models are prototypes of the fork
   [jtl06/uiCA](https://github.com/jtl06/uiCA) and are not part of that work.
 - **The instruction data** (latencies, throughputs, port usage) comes from [uops.info](https://www.uops.info).
 
@@ -127,7 +129,7 @@ and not affiliated with it.
 
 Start with [docs/VERIFICATION.md](docs/VERIFICATION.md) (the parts, the build commands, how exactness is checked) and
 [docs/PORTING.md](docs/PORTING.md) (working in the repository). [docs/DESIGN.md](docs/DESIGN.md) has the structure and the rules
-of the port, [docs/SPEC.md](docs/SPEC.md) the measurements, rejected ideas and known weaknesses. A prediction that disagrees
+of the port; [docs/SPEC.md](docs/SPEC.md) has the measurements, the rejected ideas and the known weaknesses. A prediction that disagrees
 with a measurement is the most useful kind of [issue](https://github.com/jtl06/wuica/issues): include the loop, the CPU and
 both numbers.
 
