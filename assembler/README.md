@@ -1,17 +1,17 @@
 # wuica_asm: an x86-64 assembler for the browser
 
 `dist/wuica_asm.wasm` is LLVM's x86 assembler (the MC layer of LLVM 22.1.2) compiled to WebAssembly. It turns
-assembly text into machine code inside the page. The bytes are exactly the ones that
+assembly text into machine code in the browser. It produces exactly the bytes that
 
 ```
 llvm-mc -triple=x86_64-unknown-linux-gnu -filetype=obj in.s -o in.o
 llvm-objcopy -O binary --only-section=.text in.o in.bin
 ```
 
-produce. The text goes through the real X86 assembly parser and the ELF object writer (`MCAssembler`), into an
-object file in memory, and the contents of `.text` are returned. Branches to labels are relaxed (short or near)
-the same way, fixups are applied the same way, and alignment padding and `.nops` come out the same. Instruction
-lengths therefore match the native assembler, which matters for the throughput analysis.
+produce. The text goes through LLVM's own X86 assembly parser and ELF object writer (`MCAssembler`) into an object file
+in memory, and the module returns the contents of `.text`. Branches to labels are relaxed (short or near), fixups are
+applied, and alignment padding and `.nops` are emitted, all exactly as in native `llvm-mc`. Instruction lengths therefore
+match the native assembler, which matters for the throughput analysis.
 
 | file | what it is |
 |---|---|
@@ -43,10 +43,11 @@ gave a byte-identical file.
 WASM_OPT=1 ./build.sh      # also run wasm-opt -Oz (not recommended, see Size)
 ```
 
-Everything goes into `work/` next to the script (about 3 GB; override with `WUICA_ASM_WORK`, downloads with
-`WUICA_ASM_DL`, the job count with `JOBS`). If the script is interrupted, run it again: downloads, extraction and
-the ninja build resume where they stopped. A clean build with the downloads already present took about 2 minutes on 16
-cores; only the X86 MC libraries are built (no code generator, no tools). The script fails if the linked module has any imports.
+Everything goes into `work/` next to the script (about 3 GB). `WUICA_ASM_WORK` sets another work directory,
+`WUICA_ASM_DL` sets another download directory, and `JOBS` sets the job count. If the script is interrupted, run it again:
+downloads, extraction and the ninja build resume where they stopped. Only the X86 MC libraries are built (no code
+generator, no tools). A clean build with the downloads already present took about 2 minutes on 16 cores. The script fails
+if the linked module has any imports.
 
 What `build.sh` does:
 
@@ -110,12 +111,13 @@ int wuica_assemble(const char *text, int syntax, unsigned char *out, unsigned ou
 const char *wuica_fatal_message(void);
 ```
 
-Behaviour:
+Behavior:
 
-* The default CPU is used with no `-mattr`, as with plain `llvm-mc -triple=x86_64`. The parser accepts every ISA
-  extension, including AVX-512 and APX.
-* Intel mode (`syntax = 0`) behaves like `llvm-mc` on a file that starts with `.intel_syntax noprefix`, and line
-  numbers are not shifted. A text that already starts with that directive gives the same result in either mode.
+* The module assembles for the default CPU with no `-mattr`, as plain `llvm-mc -triple=x86_64` does. The parser
+  accepts every ISA extension, including AVX-512 and APX.
+* Intel mode (`syntax = 0`) behaves like `llvm-mc` on a file that starts with `.intel_syntax noprefix`, but the line
+  numbers are not shifted by that extra line. A text that already starts with that directive gives the same result in
+  either mode.
 * `.include` and `.incbin` always fail with the assembler's usual error
   (`<input>:1:9: error: Could not find incbin file '/etc/passwd'`). The source manager has a file system with no
   files, and the module cannot reach any file anyway, since it has no imports.
@@ -170,10 +172,10 @@ Rules:
   constructors. The X86 target itself is registered lazily on the first `wuica_assemble` call.
 * Pointers are offsets into `instance.exports.memory`. Create typed-array views *after* each call, because the
   memory may grow during the call and that detaches older views.
-* A **trap** (`WebAssembly.RuntimeError`) means a fatal LLVM error. This is in practice only running out of memory,
-  since the module's memory is capped at 256 MiB, and an input like `.fill 400000000, 1, 0` triggers it. After a
-  trap, read `wuica_fatal_message()` if you like, then **throw the instance away** and instantiate the (cached)
-  module again. Ordinary assembly errors never trap.
+* A **trap** (`WebAssembly.RuntimeError`) means a fatal LLVM error. In practice the only one is running out of
+  memory: the module's memory is capped at 256 MiB, and an input like `.fill 400000000, 1, 0` triggers it. After a
+  trap, you can read `wuica_fatal_message()`; then **throw the instance away** and instantiate the (cached) module
+  again. Ordinary assembly errors never trap.
 * The module is single-threaded and the call is synchronous. A 100-line input takes under 1 ms, so the main thread
   is fine for typical inputs. Use a Worker if users can paste very large files.
 * The module uses clang 23's default wasm32 feature set (bulk memory, nontrapping float-to-int, sign extension,
@@ -192,8 +194,8 @@ Rules:
 | after `wasm-opt -Oz` (binaryen 133): raw | 3,536,354 (−7.0 %) |
 | after `wasm-opt -Oz`: gzip -9 / brotli -q 11 | 1,040,645 (+1.5 %) / 708,948 (+3.1 %) |
 
-`wasm-opt -Oz` makes the raw file smaller but the compressed file larger, and the file will be served compressed.
-So the build does not run it unless `WASM_OPT=1` is set.
+`wasm-opt -Oz` makes the raw file smaller but the compressed file larger. The file will be served compressed, so the
+build runs `wasm-opt` only when `WASM_OPT=1` is set.
 
 What each size option does, measured by linking the current wrapper against each build tree:
 
@@ -204,7 +206,7 @@ What each size option does, measured by linking the current wrapper against each
 | `-Oz`, full LTO, printers registered | 4,249,694 (−4.1 %) | 1,132,698 |
 | `-Oz`, full LTO, `LLVM_X86_MC_ASSEMBLER_ONLY` (final) | 3,802,001 (−10.5 %) | 1,024,828 |
 
-Of the final module, the code section is 0.97 MB and the data section is 2.83 MB. The data section is mostly
+In the final module, the code section is 0.97 MB and the data section is 2.83 MB. The data section is mostly
 TableGen tables: instruction descriptions, the AT&T and Intel matcher tables, register and instruction names, and
 the CPU scheduling models. The scheduling models and the instruction names are not used for assembling, but they
 cannot be removed without changing the generated code.
@@ -228,7 +230,8 @@ Linear memory after the whole test suite is 3.9 MiB.
 
 `node test.mjs` checks every input byte for byte against the native assembler. On aethia it runs as
 `TMPDIR=~/wuica-asm/tmp /usr/bin/node test.mjs`, with `llvm-mc-22` and `llvm-objcopy-22` 22.1.2 as the reference.
-`TMPDIR` is needed there because the test otherwise writes its scratch files to the system temp directory. Last full run, on the shipped module (`ee66811d…`):
+`TMPDIR` is needed there because the test otherwise writes its scratch files to the system temp directory. Last full
+run, on the shipped module (`ee66811d…`):
 
 ```
 corpus     3000 files from ~/uica-zen/uiCA/zenbench/out_fuzz/holdout2, 146.3 s
@@ -239,10 +242,10 @@ cases      26 hand-written cases compared, 0 mismatches; 14 error cases
 PASS: 33186 checks, 0 failures
 ```
 
-The corpus files are checked in several ways, and each must behave exactly like `llvm-mc`. The file is used as it
-is, with `syntax` = Intel and = AT&T, and again with the `.intel_syntax noprefix` line removed and `syntax` = Intel.
-Then the same is done with the GNU `{load}`/`{store}` hints stripped. Where `llvm-mc` fails, the module must
-return −1 with identical diagnostics, with only the file name differing (`<input>`).
+Each corpus file is checked in several variants, and in each one the module must behave exactly like `llvm-mc`. The file
+is used as it is with `syntax` = Intel and with `syntax` = AT&T, and again with its `.intel_syntax noprefix` line removed
+and `syntax` = Intel. The same runs are then repeated with the GNU `{load}`/`{store}` hints stripped. Where `llvm-mc`
+fails, the module must return −1 with identical diagnostics; only the file name differs (`<input>`).
 
 The 26 hand-written cases cover:
 * forward and backward branches, both short and relaxed to near, including the exact ±127/128 limits and a
@@ -266,7 +269,7 @@ The 14 error cases cover:
 * `.incbin "/etc/passwd"`, a relative `.incbin`, and `.include` with an absolute and a relative path;
 * an undefined symbol in `.if`, a layout-time error, and `.error`.
 
-After each error case, the next call must work. The suite also checks warnings, a too-small output buffer (−2), a
+After each error case, the next call must succeed. The suite also checks warnings, a too-small output buffer (−2), a
 truncated long diagnostic, an invalid `syntax` (−3), and an out-of-memory trap with its fatal message.
 
 Options: `--limit N`, `--corpus DIR`, `--wasm FILE`, `--min-corpus N`. Environment: `LLVM_MC`, `LLVM_OBJCOPY`.
@@ -275,7 +278,7 @@ Options: `--limit N`, `--corpus DIR`, `--wasm FILE`, `--min-corpus N`. Environme
 
 * **The corpus's `{load}`/`{store}` hints are rejected.** The corpus was written for GNU as, and LLVM 22's
   assembler does not know these hints (`error: unknown prefix`). So 2907 of the 3000 corpus files fail as they are,
-  natively and in the module alike. If the page should accept such text, it has to strip `{load} `/`{store} ` at
+  natively and in the module alike. If the page is to accept such text, it has to strip `{load} `/`{store} ` at
   the start of a line before calling the module. With the hints removed, all 2980 files that assemble match
   `llvm-mc` byte for byte, but they do **not** always match what GNU as produces *with* the hints. Compared with
   `as` (binutils on aethia), 94 files are identical, 2857 have the same length but different bytes, and
@@ -283,12 +286,13 @@ Options: `--limit N`, `--corpus DIR`, `--wasm FILE`, `--min-corpus N`. Environme
   instruction. For VEX moves this can force the 3-byte VEX prefix: GNU as encodes `{load} vmovaps xmm1, xmm8` as
   `c4 c1 78 28 c8` (5 bytes), while LLVM encodes the unhinted line as `c5 78 29 c1` (4 bytes). Where the
   analysis depends on instruction lengths, these inputs give LLVM's lengths, not GNU as's.
-* 20 corpus files use mnemonics that only GNU as accepts (`pcmpestriq`, `vpcmpestrmq`, ...). They fail as in `llvm-mc`.
+* 20 corpus files use mnemonics that only GNU as accepts (`pcmpestriq`, `vpcmpestrmq`, ...). They fail in the module
+  as they do in `llvm-mc`.
 * Output is `.text` only. There is no symbol table, no relocations and no listing.
 * A trap (out of memory) leaves the instance unusable, so it has to be re-instantiated (see Rules).
 * The build script runs only on x86_64 Linux, because the pinned wasi-sdk is the x86_64 Linux build.
-* Two branches of `build.sh` have not been run through the script: `WASM_OPT=1` and building `llvm-tblgen` when no
-  22.1.2 one is installed. The `wasm-opt` output was only measured for size; it was not run through `test.mjs`.
+* Two code paths of `build.sh` have not been run: `WASM_OPT=1`, and building `llvm-tblgen` when no 22.1.2 one is
+  installed. The `wasm-opt` output was only measured for size; it was not run through `test.mjs`.
   A full rebuild in a fresh directory has not been compared for bit-identical output; only a relink was.
 * The extra export `wuica_fatal_message` is not in the original interface sketch.
 

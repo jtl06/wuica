@@ -3,17 +3,17 @@
 wuica is an exact port of the fork [jtl06/uiCA](https://github.com/jtl06/uiCA), branch `crash-fixes` (based on `perf`); the
 fork is based on [andreas-abel/uiCA](https://github.com/andreas-abel/uiCA) `master` at `6ebeeab` (2024-01-14). This document
 lists every difference from upstream that changes a result or an error for an input that upstream also accepts: what upstream
-does, what the fork and wuica do, and why. The fork's `CHANGES.md` has all of its changes, including those that change no
-result (speed, refactoring, the experimental models); commit hashes below refer to the fork.
+does, what the fork and wuica do, and why. The fork's `CHANGES.md` lists all of its changes, including those that change no
+result (speed, refactoring, the experimental models). Commit hashes below refer to the fork.
 
-New microarchitecture models (`ZEN3`, `ADL-P`, `ICX`) are not differences: upstream has no such `-arch`. Fixes that only affect
-those models are listed where they change what happens to an input (a crash that becomes a result).
+New microarchitecture models (`ZEN3`, `ADL-P`, `ICX`) are not listed as differences, because upstream has no such `-arch`.
+Fixes that affect only those models are listed when they change what happens to an input (a crash that becomes a result).
 
 ## Inputs on which upstream raises an exception
 
-Upstream fails with a Python exception on these inputs. The fork fixes the cause where the CPU can run the code and the answer is
-well defined; otherwise it raises `InputError` with a message that names the problem. wuica gives the same result, or an error
-with the same message. Before these fixes, wuica returned "the reference implementation fails for this input: ...".
+Upstream fails with a Python exception on these inputs. The fork fixes the cause when the CPU can run the code and the answer is
+well defined; otherwise it raises `InputError` with a message that names the problem. wuica gives the same result as the fork,
+or an error with the same message. Before these fixes, wuica returned "the reference implementation fails for this input: ...".
 
 | Input | Upstream | Fork and wuica | Commit |
 |---|---|---|---|
@@ -24,25 +24,26 @@ with the same message. Before these fixes, wuica returned "the reference impleme
 | `-json` output for code with an instruction with a fractional throughput limit (measured microcoded instructions of the fork's models: `cpuid`, `lock` instructions, `rep` string instructions, ... on ADL-P, ICX, ZEN3) | (no such models) the fork's own models failed with `TypeError: list indices must be integers or slices, not float` while writing the file, after the analysis | the `executed` event of a uop goes to the cycle in which its fractional cycle lies; the text output was already correct | `4351920` |
 | Fork-only models with `renameImmediateFolding` and move elimination (ADL-P, about 1 % of random loops) | (no such models) | a `KeyError` in the renamer is fixed | `917878c` |
 
-In the fixtures (`fixtures/generated`), these were the 202 cases with an `error` (83, 8 and 111 cases for the first two rows and
-the `-json` row); they now have results, and every other case is byte-identical to the export from `adf62ae` (see
-`docs/PORTING.md`). The cases of the other rows were found with the fuzzer (`crates/wuica/examples/fuzz.rs`) and by reading the
+In the fixtures (`fixtures/generated`), the 202 cases with an `error` came from the first two rows and the `-json` row (83, 8
+and 111 cases). These cases now have results, and every other case is byte-identical to the export from `adf62ae` (see
+`docs/PORTING.md`). The inputs of the other rows were found with the fuzzer (`crates/wuica/examples/fuzz.rs`) and by reading the
 code; blocks for them are in `fixtures/extra-src` (`x_dsb_fused_mid*.s`, `x_push_mem_pair.s`).
 
-Inputs that exhaust time or memory: `wbinvd`, whose port data has about 10^6 uops (956,045 on IVB, 1,180,985 on SKL, 5,354,354
-on ADL-P; 172,044 of IVB's are loads), makes the reference run for hours. The reference has no bound; wuica has a **work budget**:
-a block with more than 250,000 uops per iteration (`analyze::MAX_UOPS_PER_ITERATION`, counted from the port data and the retire
-slots before the uops are expanded: `instr_builder::expanded_uops`) is refused at once ("the block has N uops per iteration, more
-than the 250000 wuica simulates ...", result code 3). The largest block of the fixture corpus has 1,227 uops per iteration and
-the SHA-256 showcase 3,289; no fixture case is refused and every output is unchanged. Below the budget, wuica rejects a uop with
+Some inputs exhaust time or memory. `wbinvd`, whose port data has about 10^6 uops (956,045 on IVB, 1,180,985 on SKL, 5,354,354
+on ADL-P; 172,044 of IVB's are loads), makes the reference run for hours. The reference has no bound. wuica has a **work
+budget**: it refuses at once a block with more than 250,000 uops per iteration ("the block has N uops per iteration, more than
+the 250000 wuica simulates ...", result code 3). The limit is `analyze::MAX_UOPS_PER_ITERATION`, and the uops are counted from
+the port data and the retire slots before they are expanded (`instr_builder::expanded_uops`). The largest block of the fixture
+corpus has 1,227 uops per iteration and the SHA-256 showcase has 3,289; no fixture case is refused and every output is
+unchanged. Below the budget, wuica rejects a uop with
 more than 65,535 operands ("invalid input: too many operands"), stops after 10^8 cycles ("invalid input: the simulation does not
 terminate"), and can still run out of memory on very large blocks with large `minIterations`/`minCycles` (see
 `docs/WASM-API.md`, "Failures and traps").
 
-An `alignmentOffset` beyond ±2^62 is refused ("alignmentOffset ... is out of range (at most 2^62 in magnitude)"; a request
-error): addresses are 64-bit integers in wuica and unbounded in Python, and such an offset could make them wrap (before, an
-offset of 2^63 - 1 wrapped silently). The offsets anyone uses are 0 to 63; the result depends on the offset only through
-addresses modulo 64.
+wuica refuses an `alignmentOffset` beyond ±2^62 with a request error ("alignmentOffset ... is out of range (at most 2^62 in
+magnitude)"). Addresses are 64-bit integers in wuica and unbounded in Python, and such an offset could make them wrap; before
+this check, an offset of 2^63 - 1 wrapped silently. Offsets in practical use are 0 to 63, and the result depends on the offset
+only through addresses modulo 64.
 
 ## Results that differ from upstream
 
@@ -54,8 +55,8 @@ addresses modulo 64.
 | Library use | the random seed and the uop counter were not reset between calls of `runSimulation`, so a call could depend on earlier calls in the same process | each simulation starts from a fresh state, as in a new process | `49c6b2a` |
 | Instruction tables | `convertXML.py` ignored the `min_cycles_*` latencies of instructions with a value-dependent latency (memory latency 1: `divpd xmm5, [rax]` 4 instead of 13 cycles per iteration), and newer uops.info data uses 113 iform names that the bundled XED does not know (BMI1/BMI2/TBM, `movzx`/`movsx r, m16` got no data) | both read (14 instruction forms on SKL, 52 on ICL/RKL); the tables in `data/arch` are generated with the fork's `convertXML.py` | `aa9f2c7`, `9a2007c` |
 
-The tables in `data/arch` are generated from the uops.info data that `tools/export_data.py` was given, which can be newer than
-the tables that upstream ships; results for instructions whose measurements changed differ accordingly.
+The tables in `data/arch` are generated from the uops.info data given to `tools/export_data.py`. That data can be newer than the
+tables that upstream ships; results for instructions whose measurements changed differ accordingly.
 
 ## wuica and the fork
 

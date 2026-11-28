@@ -38,12 +38,12 @@ scp /tmp/wuica-api.tgz wuica-api:/tmp/
 ```
 
 `build.sh` needs `data/` (the tables exported from uiCA) and `assembler/dist/wuica_asm.wasm`. In a worktree, `data`
-can be a symlink to the main checkout's.
+can be a symlink to `data/` in the main checkout.
 
 ## 2. Install Node.js (on the VM)
 
-Use Node 22 or later. These commands install the current Node 24 LTS for linux-arm64 from nodejs.org, after checking
-its SHA-256:
+Use Node 22 or later. These commands download the current Node 24 LTS for linux-arm64 from nodejs.org, check its SHA-256
+and install it:
 
 ```sh
 NODE_MAJOR=24
@@ -92,7 +92,7 @@ journalctl -u wuica-api -f                 # one JSON line per request
 
 Settings are environment variables in the unit (`WUICA_*`, listed with their defaults in `server/lib/config.js`). After
 changing them, run `sudo systemctl daemon-reload && sudo systemctl restart wuica-api`. A restart is graceful: the server
-stops accepting, finishes the running requests (up to 15 s), then exits.
+stops accepting new requests, finishes the running requests (up to 15 s), then exits.
 
 ## 5. Create the Cloudflare tunnel
 
@@ -142,14 +142,15 @@ also has a certificate for `wuica.jacen.li` and `*.wuica.jacen.li`, which covers
 The steps above, with these differences:
 
 - Node.js is Ubuntu's `nodejs` package (22.22, security updates through apt), so `ExecStart` is `/usr/bin/node`.
-- The bundle was built with `COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata` (macOS tar otherwise adds `._*`
-  files), with `npm ci --omit=dev --ignore-scripts` run on the Mac before packing (no native modules).
-- The tunnel was created without `cloudflared tunnel login`: `cf tunnels create --name wuica-api --config-source local
-  --tunnel-secret <32 random bytes, base64>`, and the credentials file `/etc/cloudflared/<TUNNEL_ID>.json`
-  (`{"AccountTag", "TunnelSecret", "TunnelID"}`, mode 0600) was written from the result. The DNS record is a proxied
-  CNAME `api.wuica.jacen.li` → `<TUNNEL_ID>.cfargotunnel.com`, made with `cf dns records create -z jacen.li --body ...`.
-- Checked from outside: `/healthz`, `/api/archs`, analyze, MCP `tools/list`; a burst of POSTs from one address gets
-  429 after about 60 while another address still gets 200 (the limit is per client IP).
+- The bundle was packed with `COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata`, because macOS tar otherwise adds
+  `._*` files. `npm ci --omit=dev --ignore-scripts` was run on the Mac before packing (there are no native modules).
+- The tunnel was created without `cloudflared tunnel login`, using `cf tunnels create --name wuica-api --config-source local
+  --tunnel-secret <32 random bytes, base64>`. The credentials file `/etc/cloudflared/<TUNNEL_ID>.json`
+  (`{"AccountTag", "TunnelSecret", "TunnelID"}`, mode 0600) was written from that command's output. The DNS record is a
+  proxied CNAME `api.wuica.jacen.li` → `<TUNNEL_ID>.cfargotunnel.com`, made with
+  `cf dns records create -z jacen.li --body ...`.
+- These were checked from outside: `/healthz`, `/api/archs`, analyze, MCP `tools/list`. A burst of POSTs from one address
+  gets 429 after about 60 requests while another address still gets 200 (the limit is per client IP).
 
 ## Client IP and rate limit
 

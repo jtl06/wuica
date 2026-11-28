@@ -1,19 +1,19 @@
 # How the port is verified
 
-wuica is a port: its job is to compute exactly what the Python uiCA computes. This page says how that is checked and what
-state each part is in. How close the models are to real CPUs is a separate question, answered in [ACCURACY.md](ACCURACY.md).
+wuica is a port: it must compute exactly what the Python uiCA computes. This page describes how that is checked and the state
+of each part. How close the models are to real CPUs is a separate question, answered in [ACCURACY.md](ACCURACY.md).
 
-From machine code (or assembly) to uiCA's complete report, identical to the Python reference on
-all 18,791 simulation cases of both fixture sets (all options; 3,419 more in the optional set `more`), natively and as
-WebAssembly (counts from the logs of `scripts/check.sh full`, `target/check/wuica_end_to_end.log` and
-`target/check/analyze_fixtures_*.log`), at about 1 ms per analysis (the Python
-reference needs 40–55 ms plus startup). See [DESIGN.md](DESIGN.md) for the structure and the rules of the port.
+wuica turns machine code (or assembly) into uiCA's complete report in about 1 ms per analysis; the Python reference needs
+40–55 ms plus startup. Natively and as WebAssembly, the report is identical to the Python reference on all 18,791 simulation
+cases of both fixture sets (all options) and on 3,419 more in the optional set `more`. The counts are from the logs of
+`scripts/check.sh full`: `target/check/wuica_end_to_end.log` and `target/check/analyze_fixtures_*.log`. See
+[DESIGN.md](DESIGN.md) for the structure and the rules of the port.
 
 ## The method
 
 The Python uiCA is the reference. `tools/` contains scripts that run it on a corpus of basic blocks and export what it computes at
-each stage (decoded instructions, instruction objects, simulation results) as fixtures; the Rust code has to reproduce them exactly.
-The reference commit is recorded in `docs/DESIGN.md`.
+each stage (decoded instructions, instruction objects, simulation results) as fixtures. The Rust code has to reproduce them
+exactly. The reference commit is recorded in `docs/DESIGN.md`.
 
 ## The parts
 
@@ -46,5 +46,5 @@ The reference commit is recorded in `docs/DESIGN.md`.
 
 CI (GitHub Actions, `.github/workflows/ci.yml`) runs `scripts/check.sh full` on every push to main and every pull request.
 
-More on working in the repository: [PORTING.md](PORTING.md). The rules, architecture, measurements, rejected ideas and known
-weaknesses are in [SPEC.md](SPEC.md).
+[PORTING.md](PORTING.md) has more on working in the repository. The rules, architecture, measurements, rejected ideas and
+known weaknesses are in [SPEC.md](SPEC.md).

@@ -2,8 +2,8 @@
 
 wuica reproduces the Python uiCA of the fork [jtl06/uiCA](https://github.com/jtl06/uiCA) exactly, so these numbers hold for both.
 They cover the three models that the fork adds: **ZEN3** (AMD Zen 3), **ADL-P** (Alder Lake P-cores) and **ICX** (Ice Lake
-server). Each was measured on one machine. The rounds below do not change the original Intel models of uiCA (their predictions on
-the test corpus are identical before and after), and they are not measured here; "original uiCA" in the tables is the upstream
+server). Each was measured on one machine. The rounds below do not change uiCA's original Intel models: their predictions on the
+test corpus are identical before and after. Those models are not measured here. "Original uiCA" in the tables is the upstream
 uiCA with its own instruction data, used as a reference.
 
 Percentages are the share of loops whose predicted throughput is within 5, 10 or 20% of the measured one; MAPE is the mean absolute
@@ -11,11 +11,12 @@ percentage error. All tools are compared on the same loops (those for which ever
 
 ## Real hot loops
 
-The numbers to judge the models by, and the ones the web page quotes next to a prototype model (the held-out "wuica" rows). The benchmark is 1,844 hot loops from 175 open-source libraries (hashes, codecs, string
-functions, math kernels and more; hand-written intrinsics as well as auto-vectorized code), built in 11 configurations of gcc 15
-and clang 22 from the x86-64 baseline to x86-64-v4, and measured in place with performance counters on the three machines below.
-The libraries are split in two: a development part, which model round 11 worked from, and a held-out part, which was scored once,
-after the round was finished. A share is the share of loops predicted within 10 % of the measured cycles per iteration, at the
+These are the numbers to judge the models by. The web page quotes the held-out "wuica" rows next to each prototype model. The
+benchmark is 1,844 hot loops from 175 open-source libraries (hashes, codecs, string functions, math kernels and more;
+hand-written intrinsics as well as auto-vectorized code), built in 11 configurations of gcc 15 and clang 22 from the x86-64
+baseline to x86-64-v4, and measured in place with performance counters on the three machines below. The libraries are split in
+two: a development part, which model round 11 worked from, and a held-out part, which was scored once, after the round was
+finished. Each share in the table is the share of loops predicted within 10 % of the measured cycles per iteration, at the
 loop's own alignment, averaged per library so that a library with many loops counts once.
 
 | Split | Model | Tool | Loops | ≤10% |
@@ -44,47 +45,47 @@ How to read it:
   client for Ice Lake server) as a reference for what the new models add; they say nothing about uiCA's accuracy on the CPUs it
   does model.
 - **The original Intel models** are not in the table: the benchmark has only been measured on these three machines.
-- **Noise.** Re-measuring loops and swapping the accepted measurement moves a share by about 1.5 points; read differences under
-  2 points as nothing.
+- **Noise.** Re-measuring loops and swapping the accepted measurement moves a share by about 1.5 points; treat differences under
+  2 points as noise.
 - **Before round 11** the held-out shares were 76.1 % (ADL-P), 68.0 % (ICX) and 50.7 % (ZEN3). The mean absolute error per library
   went from 8.7 to 7.3 %, from 8.5 to 6.2 % and from 12.8 to 9.8 %.
-- **The data.** The loops as prebuilt binaries (1,814 of them, from 173 of the libraries), the measurements of the three machines and
-  wuica's predictions are published with
-  [wuica-calibrate](https://github.com/jtl06/wuica-calibrate), which also runs the benchmark on any other x86-64 Linux machine.
-  The llvm-mca and upstream uiCA predictions are not published yet.
+- **The data.** [wuica-calibrate](https://github.com/jtl06/wuica-calibrate) publishes the loops as prebuilt binaries (1,814 of
+  them, from 173 of the libraries), the measurements from the three machines and wuica's predictions. It also runs the benchmark
+  on any other x86-64 Linux machine. The llvm-mca and upstream uiCA predictions are not published yet.
 
-The sections below are the older test sets (random loops and BHive blocks). They are easier than real loops and now serve as
-a guard against regressions.
+The rounds below are scored on the older test sets (random loops and BHive blocks). These sets are easier than real loops and
+are now a guard against regressions.
 
 ## Policy and the accuracy gate
 
 The random held-out sets no longer discriminate between model variants: in rounds 7 to 10 the model changes moved them by tenths of a
-point (round 10: ZEN3 holdout8 85.6 -> 85.7 %, nothing else). Further model work therefore starts from measured real loops and an
-identified mechanism (a loop benchmark that isolates it, as in "Known errors" below), not from tuning against the random sets; the
-sets remain the guard against regressions.
+point (round 10: ZEN3 holdout8 85.6 -> 85.7 %, no other held-out set moved). Further model work therefore starts from measured
+real loops and an identified mechanism, isolated by a loop benchmark as in "Known errors" below, and not from tuning against the
+random sets. The random sets remain the guard against regressions.
 
-The guard is automatic: `crates/wuica/tests/accuracy_gate.rs` (suite `wuica:accuracy_gate` of `scripts/check.sh`, and so of CI)
-predicts the 7,925 measured loops of `fixtures/generated/accuracy.jsonl.gz` (the held-out sets of rounds 9 and 10 for ZEN3, ADL-P and
-ICX and the 21 dogfood loops, with their machine code and measured cycles; generated by the fork's `microbench/accuracy_export.py`, in
-the CI data asset) and compares, per set and CPU, the share within 5/10/20 % and the MAPE with `crates/wuica/tests/accuracy_expected.json`.
-It reproduces the tables of this document exactly (the same loops, the throughput rounded to 2 decimals as the command-line tool prints
-it). It fails when a share moves by more than 0.1 point (2 loops in about 1,900) or the MAPE by more than 0.02 point, in either
-direction; an intended change is accepted with `WUICA_ACCURACY_ACCEPT=1 cargo test --release -p wuica --test accuracy_gate`. The
-dogfood loops are printed loop by loop but not gated. It takes about 2 s (22,905 predictions on all cores of the development Mac).
+The guard is automatic. `crates/wuica/tests/accuracy_gate.rs` (suite `wuica:accuracy_gate` of `scripts/check.sh`, and so of CI)
+predicts the 7,925 measured loops of `fixtures/generated/accuracy.jsonl.gz` and compares, per set and CPU, the share within
+5/10/20 % and the MAPE with `crates/wuica/tests/accuracy_expected.json`. The loops are the held-out sets of rounds 9 and 10 for
+ZEN3, ADL-P and ICX and the 21 dogfood loops, with their machine code and measured cycles; the fork's
+`microbench/accuracy_export.py` generates the file, which is in the CI data asset. The gate reproduces the tables of this
+document exactly: the same loops, and the throughput rounded to 2 decimals as the command-line tool prints it. It fails when a
+share moves by more than 0.1 point (2 loops in about 1,900) or the MAPE by more than 0.02 point, in either direction. An intended
+change is accepted with `WUICA_ACCURACY_ACCEPT=1 cargo test --release -p wuica --test accuracy_gate`. The dogfood loops are
+printed loop by loop but not gated. The gate takes about 2 s (22,905 predictions on all cores of the development Mac).
 
 ## Known errors and what was ruled out
 
-Two ZEN3 errors remain after round 10. The loop benchmarks that reproduce them are in the fork: `microbench/lb/r9a.txt`, `r9b.txt`,
-`r9c.txt`, `r10a.txt` to `r10d.txt` (built and measured with `microbench/lb/lb.py`, predicted with `lb/lbpred.py`), the measurements in
-`microbench/measurements/lb/`, the comparison of the policies in `microbench/measurements/lb/r10_policies.txt`, and the dogfood loops in
-`microbench/dogfood/`.
+Two ZEN3 errors remain after round 10. The loop benchmarks that reproduce them are in the fork: `microbench/lb/r9a.txt`,
+`r9b.txt`, `r9c.txt` and `r10a.txt` to `r10d.txt`, built and measured with `microbench/lb/lb.py` and predicted with
+`lb/lbpred.py`. Their measurements are in `microbench/measurements/lb/`, the comparison of the policies in
+`microbench/measurements/lb/r10_policies.txt`, and the dogfood loops in `microbench/dogfood/`.
 
 ### Scalar chains that share the ALUs (prefix sum, sum reduction)
 
-**Symptom.** `add edx, [rdi+rax*4]; mov [rsi+rax*4], edx; inc rax; cmp rcx, rax; jne` (prefix sum) runs at 1.00 cycles per iteration
-on the Ryzen 7 7735U and is predicted 1.36, bottleneck "unknown"; the reduction without the store: 1.07 measured, 1.55 predicted; two
-accumulators (`q_s2`): 1.00 measured, 1.80 predicted. In the model the index chain (`inc rax`) loses ALU ports to the older accumulator
-chain, which waits for the loads; the loads then come late.
+**Symptom.** `add edx, [rdi+rax*4]; mov [rsi+rax*4], edx; inc rax; cmp rcx, rax; jne` (prefix sum) runs at 1.00 cycles per
+iteration on the Ryzen 7 7735U and is predicted at 1.36, with bottleneck "unknown". The reduction without the store: 1.07
+measured, 1.55 predicted; with two accumulators (`q_s2`): 1.00 measured, 1.80 predicted. In the model, the index chain (`inc rax`)
+loses ALU ports to the older accumulator chain, which waits for the loads, so the loads come late.
 
 **Tested and ruled out.**
 - *ALU-port contention as the cause.* One more macro-op that needs no ALU makes the prefix sum as slow as one more ALU op: a `nop` 1.34,
@@ -100,21 +101,24 @@ chain, which waits for the loads; the loads then come late.
   issue slot; least occupancy at the start of the cycle; dispatch to any free ALU (round 9: random sets -1.4 to -2.4 points); steering
   a uop to its producer's port (-20 points). None reproduces both the 1.00 of the prefix sum and the 1.34 with a `nop`.
 - *Store-queue backpressure* (the reviewer's reading of "without the store it is slower"): with the store's data taken off the chain
-  (`mov [rsi+rax*4], r12d`) the loop stays at 1.00 (`q_ps_sti`); adding a `nop` to the store-less reduction does not change it (1.09 ->
-  1.07, `q_s_nop1`), so it is not the number of macro-ops per dispatch cycle either.
+  (`mov [rsi+rax*4], r12d`) the loop stays at 1.00 (`q_ps_sti`). Adding a `nop` to the store-less reduction does not change its
+  speed (1.09 -> 1.07, `q_s_nop1`), so the cause is not the number of macro-ops per dispatch cycle either.
 
 **Unexplained.** What makes a loop with one or two load-op accumulator chains slow down by a third when it gets a fifth macro-op that
-does not execute. On Intel the same loops really are slow on the Xeon 6314U (sum 1.39, prefix sum 1.43, two accumulators 1.72 cycles
-per iteration; original uiCA ICL predicts 1.48, 1.61, 1.89) and run at 0.97-1.00 on the i7-12650H (ADL-P predicts 1.00).
+does not execute. On Intel the same loops really are slow on the Xeon Gold 6314U (sum 1.39, prefix sum 1.43, two accumulators
+1.72 cycles per iteration; original uiCA ICL predicts 1.48, 1.61, 1.89) and run at 0.97-1.00 on the Core i7-12650H (ADL-P
+predicts 1.00).
 
 ### FP mixes and lane-crossing permutes
 
 **Symptom.** Shuffle-heavy vector loops are 13-29 % optimistic: dogfood `fir8_s` 5.20 measured / 4.51 predicted, `fir8_s2` 6.66 /
-5.41, `udiv_v` 7.31 / 5.33, `udiv_v2` 2.69 / 2.24, `psum_v2` 4.22 / 3.32; the three FIR variants are ranked `fir8_s` < `fir8_s2` <
-`fir8` instead of `fir8_s` < `fir8` < `fir8_s2`. Single-instruction latencies and port counts match the measurements.
+5.41, `udiv_v` 7.31 / 5.33, `udiv_v2` 2.69 / 2.24, `psum_v2` 4.22 / 3.32. The model ranks the three FIR variants `fir8_s` <
+`fir8_s2` < `fir8`; the measured order is `fir8_s` < `fir8` < `fir8_s2`. Single-instruction latencies and port counts match the
+measurements.
 
 **Found and modeled.** A bypass delay of one cycle between the vector integer, floating-point and lane-crossing-permute domains
-(round 10: chains 4.0 -> 8.0 cycles, measured 8.0); it changes the targets by less than 0.15 cycles.
+(round 10: chains 4.0 -> 8.0 cycles, measured 8.0). It changes the predictions for the dogfood loops above by less than 0.15
+cycles.
 
 **Tested and ruled out or not supported.**
 - *A perfectly balancing unified FP scheduler* (the model): 8 `vmulps` + 6 `vpalignr` take 5.58 cycles, not 4.67 (`f_mix`).
@@ -125,18 +129,20 @@ per iteration; original uiCA ICL predicts 1.48, 1.61, 1.89) and run at 0.97-1.00
 - *A flat throughput limit for `vpermd`* (tried in round 9): 1, 2, 4, 8 in a row take 1.00, 2.65, 5.35, 10.64 cycles, but 2 and 4 with
   `vaddps` between them take 2.00 and 3.91 (`r10d`).
 - *A dispatch burst of `vpermd`* (the reviewer's H4): `nop`s between them do not help (4 with `nop`s: 5.35).
-- *The FP non-scheduling-queue window as the main cause*: it explains long FMA chains (round 9) but moves the targets by tenths.
+- *The FP non-scheduling-queue window as the main cause*: it explains long FMA chains (round 9) but moves the predictions for
+  the dogfood loops above by tenths.
 
 **Unexplained.** Why lane-crossing permutes cost more in mixes than their port data says: `udiv_v` without its two `vperm2i128` takes
-5.74 instead of 7.33 cycles, the model 5.00 instead of 5.20 (`r10c`); 2 `vperm2i128` + 4 `vpshufd` take 2.41 (model 2.00).
+5.74 instead of 7.33 cycles, and the model predicts 5.00 instead of 5.20 (`r10c`); 2 `vperm2i128` + 4 `vpshufd` take 2.41
+(model 2.00).
 
 ## Round 11 (current model)
 
-"Before" is the fork's `improve-r10` at `7301b04` (branch `model-r10`), "after" is `improve-r11` at `5429430` (branch `model-r11`; its predictions are those of `7b8f800`, which only lacked
-the name of ZEN3's port `q`).
-The fork's round 11 worked from a benchmark of real hot loops (its development split) and microbenchmarks; its `CHANGES.md` lists
-the mechanisms, their sources and the development numbers. The numbers below are those of the accuracy gate (the held-out sets of
-rounds 9 and 10, the dogfood loops), which wuica reproduces exactly.
+"Before" is the fork's `improve-r10` at `7301b04` (branch `model-r10`), "after" is `improve-r11` at `5429430` (branch
+`model-r11`). The predictions of `5429430` are those of `7b8f800`, which only lacked the name of ZEN3's port `q`.
+The fork's round 11 worked from the development split of the real hot loops and from microbenchmarks; the fork's `CHANGES.md`
+lists the mechanisms, their sources and the development numbers. The numbers below are those of the accuracy gate (the held-out
+sets of rounds 9 and 10, the dogfood loops), which wuica reproduces exactly.
 
 ### ZEN3 — measured on a Ryzen 7 7735U (Zen 3+)
 
@@ -182,9 +188,9 @@ The 21 dogfood loops (ZEN3, not gated): within 10 % 57.1 % before, 81.0 % after 
 ## Round 10
 
 "Before" is the fork's `improve-r9` at `640e40e` (branch `model-r9`), "after" is `improve-r10` at `7301b04` (branch `model-r10`).
-The round looked for the scheduler behavior behind two ZEN3 errors left open in round 9 (the scalar prefix sum, shuffle-heavy vector
-loops) with loop benchmarks on the Ryzen (`microbench/lb/r10a.txt` to `r10d.txt`). One mechanism was found and modeled (a bypass
-delay between vector domains); the two errors themselves are not fixed.
+With loop benchmarks on the Ryzen (`microbench/lb/r10a.txt` to `r10d.txt`), the round looked for the scheduler behavior behind two
+ZEN3 errors left open in round 9: the scalar prefix sum and the shuffle-heavy vector loops. One mechanism was found and modeled (a
+bypass delay between vector domains); the two errors themselves are not fixed.
 
 ### ZEN3 — measured on a Ryzen 7 7735U (Zen 3+)
 
@@ -229,11 +235,12 @@ ADL-P and ICX are unchanged by construction (the change is in the ZEN3 configura
 
 ### Change in round 10
 
-- ZEN3: a vector value that passes between the integer domain (`vpaddd`, `vpalignr`, shifts, blends, `vpmuludq`, ...), the
-  floating-point domain (`vmulps`, `vmaxps`, `vandps`, FMA, ...) and the lane-crossing permutes `vperm2i128`/`vperm2f128` arrives one
-  cycle later (`domainBypassDelay`). Measured: 4-op chains alternating `vpaddd`/`vmaxps`, `vpalignr`/`vmaxps` or `vpalignr`/`vandps`
-  take 8.0 cycles per iteration (predicted 4.0 before, 8.0 now), `vperm2i128`/`vpaddd` twice 12.95 (8.0 -> 12.0); chains within one
-  domain stay at 4.0. Development sets: dev13, dev11 and holdout5 +0.1 point each (7 loops fixed, none broken).
+- ZEN3: a vector value arrives one cycle later (`domainBypassDelay`) when it passes between the integer domain (`vpaddd`,
+  `vpalignr`, shifts, blends, `vpmuludq`, ...), the floating-point domain (`vmulps`, `vmaxps`, `vandps`, FMA, ...) and the
+  lane-crossing permutes `vperm2i128`/`vperm2f128`. Measured: 4-op chains alternating `vpaddd`/`vmaxps`, `vpalignr`/`vmaxps` or
+  `vpalignr`/`vandps` take 8.0 cycles per iteration (predicted 4.0 before, 8.0 now), `vperm2i128`/`vpaddd` twice 12.95
+  (8.0 -> 12.0); chains within one domain stay at 4.0. Development sets: dev13, dev11 and holdout5 +0.1 point each (7 loops
+  fixed, none broken).
 
 ### Not fixed
 
@@ -248,14 +255,14 @@ Dogfood loops (ZEN3, measured / before / after): `fir8_s` 5.20 / 4.51 / 4.51, `f
   (seed 6, 250 per program, none in `bhive1`-`bhive5`), generated and measured on all three machines at the start of the round, scored
   once at the end. Measurement as in round 7.
 - **Development**: loop benchmarks measured for this round (`microbench/lb/r10a.txt`-`r10d.txt`, loops called from C on buffers, the
-  slope per iteration from perf cycles), the dogfood loops, and the earlier development and check sets (`dev13`, `dev11`, `holdout5`,
-  the development half of `bhive1`, `bhive3`) and hand-written sets, against which the bypass delay was checked (none got worse).
+  slope per iteration from perf cycles) and the dogfood loops. The bypass delay was checked against the earlier development and
+  check sets (`dev13`, `dev11`, `holdout5`, the development half of `bhive1`, `bhive3`) and hand-written sets; none got worse.
 
 ## Round 9
 
 "Before" is the fork's `improve-r8` at `c899be7` (the model of the previous wuica data, branch `model-r8`), "after" is `improve-r9`
 at `640e40e` (the model of the branch `model-r9`). This round fixed bugs that two dogfood runs of wuica found by measuring real loops
-on the Ryzen; the held-out sets measure that nothing else got worse, the dogfood loops and new loop benchmarks measure the fixes.
+on the Ryzen. The held-out sets check that nothing else got worse; the dogfood loops and new loop benchmarks measure the fixes.
 
 ### ZEN3 — measured on a Ryzen 7 7735U (Zen 3+)
 
@@ -296,9 +303,9 @@ on the Ryzen; the held-out sets measure that nothing else got worse, the dogfood
 |  |  | uiCA ICL (original uiCA) | 79.5% | 85.6% | 93.4% | 4.8% |
 |  |  | llvm-mca `icelake-server` | 65.5% | 69.5% | 77.7% | 11.9% |
 
-On the held-out sets nothing changed: no prediction of holdout7 changed, 20 ZEN3 predictions of bhive5 changed without moving a block
-across the 10% line. The random loops load size-aligned addresses, store through registers that are not rewritten between the stores
-and have no long FP dependency chains, so this round's rules do not apply to them.
+On the held-out sets no share changed: no prediction of holdout7 changed, and 20 ZEN3 predictions of bhive5 changed without moving
+a block across the 10 % line. The random loops load from size-aligned addresses, store through registers that are not rewritten
+between the stores and have no long FP dependency chains, so this round's rules do not apply to them.
 
 ### Changes in round 9
 
@@ -306,13 +313,14 @@ and have no long FP dependency chains, so this round's rules do not apply to the
   iteration (a version per register and an offset from added immediates), not their names. A byte histogram with 8
   `inc dword ptr [rsp+rdx*4+D]` and `movzx edx, ...` between them (dogfood `hist_c`): 8.00 cycles per iteration measured, predicted
   6.08 before (both store-data ports), 8.00 now.
-- ZEN3, ADL-P, ICX: loads that cross a 64-byte line block their load port for 2, 3 and 2 cycles (`splitLoadCycles`), where the
-  loop's addresses make the crossing knowable: for loads whose address registers only change by adding immediates, the offsets and
-  the stride are known, and the start address is assumed to have the alignment with the fewest crossings. gcc's 8-tap FIR (8 unaligned
-  ymm loads, 3.7 crossing per iteration by `ls_misal_loads.ma64`): 5.85 measured, 4.10 -> 5.71; the same loads from a 64-byte aligned
-  pointer: ZEN3 6.00 (4.00 -> 5.78), ADL-P 5.07 (2.67 -> 5.02), ICX 6.00 (4.00 -> 6.00). The three FIR variants are now ranked
-  with the right winner (the 2-aligned-loads + shuffle variant). Loads at constant addresses are not modeled, and neither is the
-  longer latency of crossing loads (+1 cycle on the Ryzen, +6 to +7 on the Intel CPUs). The original Intel models are unchanged.
+- ZEN3, ADL-P, ICX: loads that cross a 64-byte line block their load port for 2, 3 and 2 cycles (`splitLoadCycles`). The rule
+  applies where the loop's addresses make the crossing knowable: for loads whose address registers only change by adding
+  immediates, the offsets and the stride are known, and the start address is assumed to have the alignment with the fewest
+  crossings. gcc's 8-tap FIR (8 unaligned ymm loads, of which 3.7 cross a line per iteration as counted by
+  `ls_misal_loads.ma64`): 5.85 measured, 4.10 -> 5.71; the same loads from a 64-byte aligned pointer: ZEN3 6.00 (4.00 -> 5.78),
+  ADL-P 5.07 (2.67 -> 5.02), ICX 6.00 (4.00 -> 6.00). The three FIR variants are now ranked with the right winner (the
+  2-aligned-loads + shuffle variant). Loads at constant addresses are not modeled, and neither is the longer latency of crossing
+  loads (+1 cycle on the Ryzen, +6 to +7 on the Intel CPUs). The original Intel models are unchanged.
 - ZEN3: at most 56 uops for the FP pipes wait in the FP scheduler; younger ones wait in order in the non-scheduling queue and cannot be
   dispatched before they enter it (`fpSchedulerSize`). A chain of 16 / 24 FMAs per iteration: 10.09 / 18.86 cycles measured,
   8.33 / 12.00 -> 9.12 / 18.27. Dogfood: AVX2 prefix sum 4.22 measured, 3.04 -> 3.35; vectorized division 7.31, 5.02 -> 5.20.
@@ -328,7 +336,8 @@ Not fixed (measured, see the fork's `microbench/lb/` and `microbench/measurement
   producer lowered them by 20 points.
 - Shuffle-heavy vector loops are still 13–29% optimistic (dogfood `fir8_s`, `fir8_s2`, `udiv_v`, `udiv_v2`, `psum_v2`). Measured:
   8 `vmulps` + 6 `vpalignr` take 5.58 cycles (the model balances them over FP0-FP2 perfectly: 4.67); `vpermd` costs 1.33 cycles when
-  two or more are in a loop, 1.00 alone, and less next to `vpaddd` (a throughput limit fit the first and broke the others, not kept).
+  two or more are in a loop, 1.00 alone, and less next to `vpaddd` (a throughput limit fit the loops with two or more and broke the
+  others; not kept).
 
 ### Method of round 9
 
@@ -385,9 +394,9 @@ at `c899be7` (the model of the branch `model-r8`).
 Within 10% on the random loops: ZEN3 +0.3, ICX +0.2 points, ADL-P unchanged (no ADL-P change in this round); on the real-code
 blocks ZEN3 +0.1, the others unchanged (the changes concern microcoded instructions and read-modify-write forms that are rare in
 BHive). These are new sets, so the "before" numbers differ from round 7's "after" numbers on holdout5 and bhive3. On the development
-set (dev13, not held out) the changes gave ZEN3 83.2 -> 84.2%, ICX 86.5 -> 86.9%, and on the earlier random sets ZEN3 dev11 81.7 ->
-82.9, holdout5 83.1 -> 83.4, holdout4 84.6 -> 85.0, ICX dev11 87.2 -> 87.5, holdout4 85.8 -> 86.1. The fork's ICL model (the original
-Intel model with the fork's instruction data) gives identical results before and after.
+set (dev13, not held out) the changes gave ZEN3 83.2 -> 84.2 %, ICX 86.5 -> 86.9 %. On the earlier random sets they gave ZEN3
+dev11 81.7 -> 82.9, holdout5 83.1 -> 83.4, holdout4 84.6 -> 85.0, ICX dev11 87.2 -> 87.5, holdout4 85.8 -> 86.1. The fork's ICL
+model (the original Intel model with the fork's instruction data) gives identical results before and after.
 
 ### Changes in round 8
 
@@ -403,13 +412,14 @@ Intel model with the fork's instruction data) gives identical results before and
 
 Tried and not kept: the 7-cycle chain also for shifts and rotates on 8/16-bit memory on ZEN3, and the shorter forwarding delay for
 all shifts and rotates on memory on ICX. Both helped the random loops of dev13 (ZEN3 +0.4, ICX +0.5 points) but made the hand-written
-read-modify-write loops worse (ZEN3 82.9 -> 65.9%, ICX 79.1 -> 58.9% within 10%): alone or in short loops these chains are longer than
-in random loops (on ICX the forwarding latency depends on timing, see round 4). Also tried: a limit of 3 or 5 macro-ops after
-microcode (dev13 83.3 / 83.6% instead of 84.0%), 8 cycles for the narrow chains, forwarding delay 3 for RCL/RCR on ICX, and a lower
-latency through memory for ZEN3 CMPXCHG, CMPXCHG8B and CMPXCHG16B (measured 9.1-9.3, 9.7 and 14.5 cycles per iteration, predicted
-12, 11 and 18): lowering uops.info's memory latency by 3 or 4 changed no prediction, so the chain that the model builds for these
-instructions comes from elsewhere (not found in this round). No ADL-P change was found in the time of this round (its mispredicted
-loops of dev13 are spread thinly over many instructions); `microbench/fuzz/ablate.py` was not run.
+read-modify-write loops worse (ZEN3 82.9 -> 65.9 %, ICX 79.1 -> 58.9 % within 10 %), because alone or in short loops these chains
+are longer than in random loops (on ICX the forwarding latency depends on timing, see round 4). Also tried: a limit of 3 or 5
+macro-ops after microcode (dev13 83.3 / 83.6 % instead of 84.0 %), 8 cycles for the narrow chains, forwarding delay 3 for RCL/RCR
+on ICX, and a lower latency through memory for ZEN3 CMPXCHG, CMPXCHG8B and CMPXCHG16B (measured 9.1-9.3, 9.7 and 14.5 cycles per
+iteration, predicted 12, 11 and 18). For these CMPXCHG forms, lowering uops.info's memory latency by 3 or 4 changed no prediction,
+so the chain that the model builds for them comes from elsewhere; this round did not find where. This round also found no ADL-P
+change in the time it had: the mispredicted ADL-P loops of dev13 are spread thinly over many instructions.
+`microbench/fuzz/ablate.py` was not run.
 
 ### Method of round 8
 
@@ -420,10 +430,10 @@ loops of dev13 are spread thinly over many instructions); `microbench/fuzz/ablat
   machine, each run under an exclusive lease of the machine; unstable loops excluded).
 - **Held out**: both sets were generated before any model change of this round, measured during the round without being looked at,
   and scored once, at the end (before and after), after the model was frozen. The changes were made on the development set
-  `dev13` (seed 13): grouping its mispredicted loops by probe instruction, and hand-written loops (`microbench/mb/mc8.txt`); each was
-  checked on the earlier random sets (`dev11`, `dev9`, `fresh`, `holdout4`, `holdout5`), the development half of `bhive1`, `bhive2`,
-  `bhive3` and the hand-written sets (`clean3.py` read-modify-write sets, `mb/*.txt`). The full tables and reports are in the fork:
-  `microbench/measurements/fuzz/{holdout6,bhive4}_table_r8.txt`.
+  `dev13` (seed 13), by grouping its mispredicted loops by probe instruction, and with hand-written loops
+  (`microbench/mb/mc8.txt`). Each change was checked on the earlier random sets (`dev11`, `dev9`, `fresh`, `holdout4`,
+  `holdout5`), the development half of `bhive1`, `bhive2`, `bhive3` and the hand-written sets (`clean3.py` read-modify-write sets,
+  `mb/*.txt`). The full tables and reports are in the fork: `microbench/measurements/fuzz/{holdout6,bhive4}_table_r8.txt`.
 
 ## Round 7
 
@@ -474,9 +484,9 @@ instruction data) gives identical results before and after.
 
 ### Changes in round 7
 
-- ADL-P: a shift or rotate (also SHLX, SHRX, SARX, RORX) gets a register whose value the renamer computed (immediate folding: 64-bit
-  add/sub with an 8-bit immediate, inc, dec, lea with base and displacement) two cycles later (`foldedShiftDelay`). Measured: 'add
-  r13, 2; shl r13, 5' takes 3 cycles per iteration, 'add r13, 2; and r13, r8' 1.
+- ADL-P: when the renamer computed a register's value (immediate folding: 64-bit add/sub with an 8-bit immediate, inc, dec, lea
+  with base and displacement), a shift or rotate (also SHLX, SHRX, SARX, RORX) gets that register two cycles later
+  (`foldedShiftDelay`). Measured: 'add r13, 2; shl r13, 5' takes 3 cycles per iteration, 'add r13, 2; and r13, r8' 1.
 - ICX: store-to-load forwarding into the load of a load-op instruction ('add rdx, [rsi]') takes 5 cycles instead of 4
   (`loadOpForwardDelay`).
 - ZEN3: a move from a vector to a general-purpose register (pmovmskb, pextr*, cvt*2si, movd/movq r, xmm, ...) uses three more slots
@@ -499,14 +509,15 @@ additional ALU slots for ZEN3 vector-to-GPR moves.
   machine; unstable loops excluded).
 - **Held out**: both sets were generated and measured before any model change of this round and scored once, at the end (before and
   after). The changes were made on the development set `dev11` (seed 11), found by grouping its mispredicted loops by probe
-  instruction and with `microbench/fuzz/ablate.py`, and confirmed with hand-written loops (`microbench/mb/instr7.txt`, `fold7.txt`);
-  each was checked on the earlier random sets (`dev9`, `fresh`, `holdout2`-`holdout4`), the development half of `bhive1`, `bhive2`
-  and the hand-written sets. The full tables and reports are in the fork: `microbench/measurements/fuzz/{holdout5,bhive3}_table_r7.txt`.
+  instruction and with `microbench/fuzz/ablate.py`, and confirmed with hand-written loops (`microbench/mb/instr7.txt`, `fold7.txt`).
+  Each change was checked on the earlier random sets (`dev9`, `fresh`, `holdout2`-`holdout4`), the development half of `bhive1`,
+  `bhive2` and the hand-written sets. The full tables and reports are in the fork:
+  `microbench/measurements/fuzz/{holdout5,bhive3}_table_r7.txt`.
 
 ## Round 6
 
 "Before" is the fork at `adf62ae` (the model of the earlier wuica data), "after" is `improve-r6` at `9bed908` (the model of
-the branch `model-r6`; its merge with the crash fixes, `21b0b17`, gives the same predictions on all these loops).
+the branch `model-r6`). The merge of `9bed908` with the crash fixes, `21b0b17`, gives the same predictions on all these loops.
 
 ### ZEN3 — measured on a Ryzen 7 7735U (Zen 3+)
 
@@ -549,8 +560,9 @@ the branch `model-r6`; its merge with the crash fixes, `21b0b17`, gives the same
 
 - ZEN3: an instruction with more than two macro-ops is microcoded; it ends its op-cache entry, and the front end delivers nothing
   else while the microcode sequencer delivers its macro-ops (4 per cycle).
-- ADL-P: uops.info's port data for indexed memory operands lacks the non-memory uops of about 3200 instruction forms; the ports
-  of the non-indexed form are used instead. Store-to-load forwarding into loads that are not memory-renamed: 5 cycles instead of 4.
+- ADL-P: uops.info's port data for indexed memory operands lacks the non-memory uops of about 3200 instruction forms; for these
+  forms the ports of the non-indexed form are used instead. Store-to-load forwarding into loads that are not memory-renamed takes 5
+  cycles instead of 4.
 - ICX: measured latencies on the Xeon for horizontal add/subtract (+1 cycle) and dot products (DPPS +2, DPPD +1).
 
 ### Method of round 6

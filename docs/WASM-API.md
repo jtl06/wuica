@@ -18,8 +18,8 @@ by the module. All text is UTF-8; structured values are JSON.
 | `wuica_load_arch_bin(name, name_len, bin, len) -> len` | loads the binary form of the table, `data/arch/<name>.bin`, into the same tables as the JSON (what the site, the npm package and the server ship; written at build time by `tools/encode-tables.sh`; layout in `crates/wuica-core/src/table_bin.rs`: the magic `WUICATBL`, a format version, five streams); a file of another format version is an error that says so; result as above |
 | `wuica_analyze(request, len) -> len` | runs an analysis; result: a response object (below) |
 
-Each function returns the length of its result; read it at `wuica_result_ptr()` *after* the call (the memory can have grown:
-create typed-array views after the call, not before).
+The functions that return `len` return the length of their result. Read the result at `wuica_result_ptr()` *after* the
+call, and create typed-array views only then: the call can have grown the memory.
 
 ## Analysis request
 
@@ -38,22 +38,22 @@ create typed-array views after the call, not before).
 }
 ```
 
-Only `hex` and `arch` are required; the other values shown are the defaults. `arch` is a key of `configs` in `uarch.json`; a
-configuration has the fields of uiCA's `MicroArchConfig`, among them `name` (the instruction table it needs), `XEDName` and
-`experimental` (true for the models added by the fork: ZEN3, ADL-P, ICX; keys that contain `_` are uiCA's ablation variants). The
-instruction table that the configuration needs (`configs[arch].name`) and `uarch.json` must have been loaded. `initPolicy` is
-`"diff"`, `"same"` or `"stack"`.
+Only `hex` and `arch` are required; the other values shown are the defaults. `arch` is a key of `configs` in `uarch.json`;
+keys that contain `_` are uiCA's ablation variants. A configuration has the fields of uiCA's `MicroArchConfig`, among them
+`name` (the instruction table it needs), `XEDName` and `experimental` (true for the models added by the fork: ZEN3, ADL-P,
+ICX). `uarch.json` and the instruction table that the configuration needs (`configs[arch].name`) must have been loaded.
+`initPolicy` is `"diff"`, `"same"` or `"stack"`.
 
 ## Failures and traps
 
-wuica reproduces the fork of uiCA with its crash fixes (`docs/DEVIATIONS.md`): every input on which upstream uiCA raises an
-exception either gets a result or an error that says what is wrong with the input (the same text as the fork's `InputError`, e.g.
-"no iteration was completed (minIterations must be at least 1, or minCycles larger)"). No error says "the reference
-implementation fails" for any known input; the checks that would give it remain in the simulator, each with the reason why no
-input reaches it.
+wuica reproduces the fork of uiCA, including its crash fixes (`docs/DEVIATIONS.md`). Every input on which upstream uiCA raises
+an exception gets either a result or an error that says what is wrong with the input. The error text is the same as the fork's
+`InputError`, e.g. "no iteration was completed (minIterations must be at least 1, or minCycles larger)". No known input gets
+the error "the reference implementation fails"; the checks that would give it remain in the simulator, each with the reason
+why no input reaches it.
 
-No known input makes the module panic: a fuzzer (`crates/wuica/examples/fuzz.rs`, and the suite `wuica:fuzz_short` of
-`scripts/check.sh`) analyzes random blocks of real encodings with random options on all 15 CPUs and checks this.
+No known input makes the module panic. A fuzzer (`crates/wuica/examples/fuzz.rs`, and the suite `wuica:fuzz_short` of
+`scripts/check.sh`) checks this: it analyzes random blocks of real encodings with random options on all 15 CPUs.
 
 A call can still **trap** (the module throws a `WebAssembly.RuntimeError`) when it runs out of memory: e.g. 200 × `div rcx` with
 `minIterations` 10000 and `minCycles` 100000, or a 5,000-instruction block at the server's limits (about 2 GB). After a trap, the
@@ -62,9 +62,9 @@ web page keeps the bytes of the loaded tables for this; the hosts' recovery stay
 
 **Work budget.** A block with more than 250,000 uops per iteration is refused before it is simulated, with result code 3 and the
 error "the block has N uops per iteration, more than the 250000 wuica simulates (a work budget: ...)". `wbinvd` has about 10^6
-uops in the tables (956,045 on IVB to 5,354,354 on ADL-P): it fails at once instead of taking 40 s to several minutes or running
-out of memory (before the budget, seen on SKL, SKX, KBL, CFL and CLX); the reference takes hours. The largest block of the fixture
-corpus has 1,227 uops per iteration, the SHA-256 showcase 3,289. The reference has no such bound (`docs/DEVIATIONS.md`).
+uops in the tables (956,045 on IVB to 5,354,354 on ADL-P), so it fails at once. Before the budget, it took 40 s to several
+minutes or ran out of memory (seen on SKL, SKX, KBL, CFL and CLX); the reference takes hours. The largest block of the fixture
+corpus has 1,227 uops per iteration, and the SHA-256 showcase has 3,289. The reference has no such bound (`docs/DEVIATIONS.md`).
 
 ## Analysis response
 
@@ -108,7 +108,7 @@ On success:
 - `decodeErrors`: number of positions in the input that could not be decoded; the instructions that were decoded are analyzed.
 - `bottlenecks`: names from uiCA's "Bottleneck(s)" line; can be empty.
 - `limits`: uiCA's "throughputs that could be achieved if the given property were the only bottleneck", in its order; entries
-  that do not apply are absent (e.g. `"LSD"` or `"DSB"` only for loops served from there).
+  that do not apply are absent (e.g. `"LSD"` or `"DSB"` appear only for loops served from there).
 - `columns` / `rows[].values`: the uop table. `values[i]` belongs to `columns[i]`; numbers are averages per iteration. The port
   columns are named as uiCA prints them (`"Port 0"`, or names such as `"ALU0"`, `"AGU1"`, `"FP2"` for Zen 3). `"Div"` is only
   present if a divider is used.
@@ -119,7 +119,7 @@ On success:
 - `text`: the complete report as the command-line tool prints it (without terminal escape sequences).
 - `trace`: with `"includeTrace": true`, the content of uiCA's `-json` output (`{parameters, instructions, cycles}`: the events of
   every cycle); otherwise `null`. It is large.
-- `criticalPath` (optional; present only if the `"Dependencies"` limit is not 0): the loop-carried dependency cycle that gives
+- `criticalPath` (present only if the `"Dependencies"` limit is not 0): the loop-carried dependency cycle that gives
   that limit (`edgesOnMaxCycle` of uiCA's `computeMaximumLatencyForGraph`), in terms of the rows of the uop table:
 
   ```json
@@ -132,19 +132,21 @@ On success:
   }
   ```
 
-  (for `add rax, 1; add rax, 1; dec r15; jnz`). Each edge says that the instruction in row `from` (an index into `rows`) produces
-  a value that the instruction in row `to` reads: `operand` is the register as written in the reading instruction (`"RAX"`,
-  `"EAX"`, `"XMM1"`, ...), `"mem"` (a value passed through memory) or `"flags"`; `latency` is the number of cycles from the input
-  of `from` on the cycle to that input of `to`; `carried` is true if `to` is in the next iteration. The edges are in the order of
-  the cycle (`edges[k].to == edges[k+1].from`, and the last edge leads back to the first), starting after a carried edge.
+  (for `add rax, 1; add rax, 1; dec r15; jnz`). Each edge says that the instruction in row `from` (an index into `rows`)
+  produces a value that the instruction in row `to` reads. `operand` is the register as written in the reading instruction
+  (`"RAX"`, `"EAX"`, `"XMM1"`, ...), `"mem"` (a value passed through memory) or `"flags"`. `latency` is the number of cycles
+  from the input of `from` that is on the dependency cycle to the input of `to` that is on it. `carried` is true if `to` is in
+  the next iteration. The edges are in the order of the dependency cycle (`edges[k].to == edges[k+1].from`, and the last edge
+  leads back to the first), starting after a carried edge.
   `ratio` = sum of the latencies / number of carried edges (the iterations the cycle spans) = the `"Dependencies"` limit before
   rounding.
 
 ## Details (`"details": true`)
 
-Not in uiCA. With `"details": true` in the request, the response has one more field, `details`; every other field is the same
-as without it, byte for byte (`crates/wuica/tests/details.rs` checks this on every case of the simulation fixtures, and
-`WUICA_DETAILS=1 node tests-js/analyze_fixtures.mjs` on the module). Without the flag, nothing is computed or recorded.
+This field is not in uiCA. With `"details": true` in the request, the response has one more field, `details`. Every other
+field is byte for byte the same as without the flag: `crates/wuica/tests/details.rs` checks this on every case of the
+simulation fixtures, and `WUICA_DETAILS=1 node tests-js/analyze_fixtures.mjs` checks it on the module. Without the flag,
+nothing is computed or recorded.
 
 ```json
 "details": {
@@ -173,43 +175,48 @@ as without it, byte for byte (`crates/wuica/tests/details.rs` checks this on eve
 
 (for `add rax, [rsi]; dec r15; jnz` on SKL; shortened).
 
-- `rows`: one entry per row of the uop table (`null` for the register merge and stack sync rows): the instruction's data as the
-  model uses it (uops.info's tables, after uiCA's adjustments). `portData`: the allowed ports and the number of uops for each set
-  (uops.info writes `1*p0156+1*p23`); ports are named as the columns of the uop table. `uopList`: the unfused-domain uops, each
-  with its allowed ports (`null`: no port), its inputs and its outputs with the latency to each. `latencies`: the instruction's
-  latency for each (input, output) pair. `uops`: unfused-domain uops; `retireSlots`: fused-domain uops (issue slots). Operands are registers (`"RAX"`), address registers (`"[RSI]"`), `"flags (C)"` /
+- `rows`: one entry per row of the uop table, `null` for the register merge and stack sync rows. Each entry holds the
+  instruction's data as the model uses it (uops.info's tables, after uiCA's adjustments). `portData`: the sets of allowed ports
+  and the number of uops for each set (uops.info writes `1*p0156+1*p23`), with ports named as in the columns of the uop table.
+  `uopList`: the unfused-domain uops, each with its allowed ports (`null`: no port), its inputs and its outputs with the latency
+  to each. `latencies`: the instruction's latency for each (input, output) pair. `uops`: unfused-domain uops; `retireSlots`:
+  fused-domain uops (issue slots). Operands are registers (`"RAX"`), address registers (`"[RSI]"`), `"flags (C)"` /
   `"flags (SPAZO)"`, `"mem"`, and `"pseudo"` (a value passed between the uops of one instruction). `tpTable`: the reciprocal
-  throughput from the tables, if it limits the instruction. Front end: `length` in bytes, `offset` of the first byte from the
-  64-byte boundary before the first iteration (the alignment offset plus the position in the block), `crosses` the 16-, 32- and
-  64-byte boundaries it crosses there, `lcp` a length-changing prefix (a predecoder stall), `microcoded` uops from the microcode
-  sequencer, `complexDecoder` needs the complex decoder, `macroFusedWithPrev` / `macroFusedWithNext`.
-- `ports`: the set of ports behind the `"Ports"` limit (Facile's port model as uiCA computes it: of the unions of two allowed port
-  sets, the one with the most uops per port; the first such union on a tie), the uops per iteration that can only use these
-  ports, `tp` = uops / number of ports (the `"Ports"` limit before rounding), and per row its uops on the set. `null` if no uop
-  needs a port.
-- `issue`: the issue slots of the steady state (the cycles from the one that issued the end of the first relevant round to the
-  one that issued the end of the last one; `iterations` rounds): per iteration, the issued fused-domain uops and the lost slots
-  (issue width − issued, per cycle) by the cause the simulation had: `frontEnd` (the IDQ ran empty), `rob` (the reorder buffer
-  was full), `rs` (the scheduler was full), `other` (the next uop did not fit into the cycle, a serializing instruction waited,
-  or register merge uops were inserted). `issued` and `cause` list the cycles of the window one by one (at most 4096, from
-  cycle `first`): `"."` for a cycle that issued the full width, else `F`, `R`, `S` or `O`. `null` if the simulation has no
-  steady-state window (one round). Issue runs ahead of retirement until the reorder buffer or the scheduler is full, and the
-  simulation of `minCycles` often ends before that (about a quarter of random blocks, e.g. `mov rax, [rax]; dec rcx; jnz` on
-  ADL-P: 48 iterations issued in 16 cycles). Then, without `includeTrace`, the log is that of a longer simulation (8 or 64
-  times `minCycles`, at most 250,000 instructions simulated, and only if longer than the simulation was; the rest of the response is still that of the simulation of
-  `minCycles`): `cycles / iterations` is the throughput (within 3 % and two cycles) but in about 1 % of random blocks. With
-  `includeTrace`, the log is that of the trace's cycles (`first` is a cycle of the trace), also when it is warm-up.
+  throughput from the tables, if it limits the instruction. Front end: `length` in bytes; `offset`, the distance of the first
+  byte from the 64-byte boundary before the first iteration (the alignment offset plus the position in the block); `crosses`,
+  the 16-, 32- and 64-byte boundaries the instruction crosses there; `lcp`, has a length-changing prefix (a predecoder stall);
+  `microcoded`, has uops from the microcode sequencer; `complexDecoder`, needs the complex decoder; `macroFusedWithPrev` /
+  `macroFusedWithNext`.
+- `ports`: the set of ports behind the `"Ports"` limit (`ports`), the uops per iteration that can only use these ports
+  (`uops`), `tp` = uops / number of ports (the `"Ports"` limit before rounding), and per row its uops on the set (`rows`). The
+  set follows Facile's port model as uiCA computes it: of the unions of two allowed port sets, the one with the most uops per
+  port, and the first such union on a tie. `null` if no uop needs a port.
+- `issue`: the issue slots of the steady-state window. The window runs from the cycle that issued the end of the first relevant
+  round to the cycle that issued the end of the last one, over `iterations` rounds. `slots` gives, per iteration, the issued
+  fused-domain uops and the lost slots (issue width − issued, per cycle) by the cause the simulation had: `frontEnd` (the IDQ
+  ran empty), `rob` (the reorder buffer was full), `rs` (the scheduler was full) and `other` (the next uop did not fit into
+  the cycle, a serializing instruction waited, or register merge uops were inserted). `issued` and `cause` list the cycles of
+  the window one by one (at most 4096, from cycle `first`). In `cause`, a cycle that issued the full width is `"."`, any other
+  is `F`, `R`, `S` or `O`. `issue` is `null` if the simulation has no steady-state window (one round).
+  Issue runs ahead of retirement until the reorder buffer or the scheduler is full, and the simulation of `minCycles` often
+  ends before that: for about a quarter of random blocks, e.g. `mov rax, [rax]; dec rcx; jnz` on ADL-P (48 iterations issued
+  in 16 cycles). In that case, without `includeTrace`, `issue` comes from a longer simulation: 8 or 64 times `minCycles`, at
+  most 250,000 instructions simulated, and only if that is longer than the simulation of `minCycles` was. The rest of the
+  response still comes from the simulation of `minCycles`. `cycles / iterations` is then the throughput within 3 % and two
+  cycles, except in about 1 % of random blocks. With `includeTrace`, `issue` covers the trace's cycles (`first` is a cycle of
+  the trace), also when they are warm-up.
   With `simpleFrontEnd`, the front end delivers the unfused uops one by one (as uiCA's simple front end): `issued` counts
   them, and can be more than the uop table's `Issued` (fused uops).
-- `portData` is the table's (uops.info); `uopList` the uops the model builds from it. They differ for a few instructions
-  (cpuid, `ret imm16`, in/out/ins, enter, wrmsr): uiCA pairs store-address and store-data uops and drops the rest, so
-  `uopList` (and the uop table) have fewer uops than `portData` (and the `Ports` limit, which uses `portData`).
+- `portData` comes from the table (uops.info); `uopList` holds the uops the model builds from it. The two differ for a few
+  instructions (cpuid, `ret imm16`, in/out/ins, enter, wrmsr): uiCA pairs store-address and store-data uops and drops the
+  rest, so `uopList` and the uop table have fewer uops than `portData` and the `Ports` limit, which uses `portData`.
 
-Speed (`crates/wuica/examples/phases.rs` with `DETAILS=1`; `tests-js/analyze_fixtures.mjs` with `WUICA_DETAILS=1`): about 8 %
-more time per analysis natively and 11 % in WebAssembly for small blocks, about 27 % for the 2,949-instruction SHA-256
-example (18.5 → 23.5 ms natively: building the details, and their JSON); a request without the flag is as fast as before.
-A block whose issue had not reached the steady state takes one or two longer simulations more (8 and 64 times `minCycles`,
-limited to 250,000 instructions simulated: a few tens of ms natively; the page's examples: under 2 ms).
+Speed, measured with `crates/wuica/examples/phases.rs` and `DETAILS=1` and with `tests-js/analyze_fixtures.mjs` and
+`WUICA_DETAILS=1`: details add about 8 % to the time per analysis natively and 11 % in WebAssembly for small blocks, and
+about 27 % for the 2,949-instruction SHA-256 example (18.5 → 23.5 ms natively: building the details, and their JSON).
+A request without the flag is as fast as before. A block whose issue has not reached the steady state needs one or two more,
+longer simulations (8 and 64 times `minCycles`, limited to 250,000 instructions simulated): a few tens of ms natively, and
+under 2 ms for the page's examples.
 
 ## Assembler
 
@@ -218,9 +225,10 @@ is described in `assembler/README.md`. The page passes the resulting bytes to `w
 
 ### Marked regions and `.loc` lines (the page)
 
-Before the assembler, the page looks for region markers in pasted assembly (`web/js/asm-regions.js`); without any, the text is
-assembled as it is. With a marked region, only its bytes are analyzed (the first region, if there are several; a chip `▣ name 1/3`
-under the input names it, its tooltip lists the markers, a click selects its BEGIN line). Markers:
+Before assembling, the page looks for region markers in pasted assembly (`web/js/asm-regions.js`); if there are none, it
+assembles the text unchanged. With a marked region, only its bytes are analyzed; if there are several regions, only the first.
+A chip `▣ name 1/3` under the input names the region: its tooltip lists the markers, and a click on it selects the region's
+BEGIN line. Markers:
 
 | Convention | Start | End |
 |---|---|---|
@@ -228,63 +236,68 @@ under the input names it, its tooltip lists the markers, a click selects its BEG
 | wuica | `# wuica-begin [name]` | `# wuica-end` |
 | IACA / OSACA (bytes) | `mov ebx, 111` + `.byte 0x64, 0x67, 0x90` | `mov ebx, 222` + `.byte 0x64, 0x67, 0x90` |
 
-Comment markers may start with `#`, `//` or `;`, in Intel or AT&T syntax (AT&T IACA: `movl $111, %ebx`); the IACA markers
-themselves are not part of the region. An END without a name, or with the region's name, ends it; a region without an END runs
-to the end of the code. The whole text is still assembled (labels, directives and branches outside the region keep their
-meaning and their encodings): local labels at the region's ends and a trailer at the end of `.text` give the offsets, and are
-cut off again. A region outside `.text`, or without instructions, is an error at its BEGIN line.
+Comment markers may start with `#`, `//` or `;`. Markers work in Intel or AT&T syntax (AT&T IACA: `movl $111, %ebx`); the
+IACA markers themselves are not part of the region. An END without a name, or with the region's name, ends the region; a
+region without an END runs to the end of the code. The whole text is still assembled, so labels, directives and branches
+outside the region keep their meaning and their encodings. Local labels at the region's ends and a trailer at the end of
+`.text` give the offsets, and are removed after assembly. A region outside `.text`, or without instructions, is an error
+at its BEGIN line.
 
-Compiler output with debug lines (`gcc -g -S`, `clang -g -S`: `.file N ["dir"] "name" [md5 …]`, `.loc N LINE …`) gives each
-instruction the line of the `.loc` before it, the same way; the cost per source line (`src=1`, `web/js/srcmap.js`) then shows
-`file:line` rows (the source text is not in the listing) for the main file, the one with the most lines in the analyzed code.
-gcc's `view` operand of `.loc`, which LLVM rejects, is dropped.
+In compiler output with debug lines (`gcc -g -S`, `clang -g -S`: `.file N ["dir"] "name" [md5 …]`, `.loc N LINE …`), each
+instruction gets the line of the `.loc` before it, the same way. The cost per source line (`src=1`, `web/js/srcmap.js`) then
+shows `file:line` rows for the main file, which is the file with the most lines in the analyzed code; the source text itself
+is not in the listing. gcc's `view` operand of `.loc`, which LLVM rejects, is dropped.
 
 ### The loop of a whole function (the page, the library, REST, MCP, the package's CLI)
 
 For an analysis, pasted assembly goes through `web/js/loop-find.js` before the regions above (the npm package has a copy
-in `packages/wuica/lib/web`). The option is `loop`: `"auto"` (the default), `"whole"` (never a pick), the index of a
-loop (0-based: the deepest first, then in code order) or its label; `func` keeps one function's loops. The page shows the choice as a select in the input's row of controls when it matters (the analyzed loop as `loop 2 of 4 · .LBB0_4 · auto`, `auto` when the default picked it); the API
-returns `loop: {index, count, name, line, endLine, lines?, address?, alignmentOffset?}` (`lines`: the source line of each instruction) when something other than the whole text
-was analyzed. In `"auto"`:
+in `packages/wuica/lib/web`). The option is `loop`: `"auto"` (the default), `"whole"` (never pick a loop), the index of a
+loop (0-based: the deepest first, then in code order) or its label; `func` keeps only one function's loops. When the choice
+matters, the page shows it as a select in the input's row of controls, with the analyzed loop as
+`loop 2 of 4 · .LBB0_4 · auto` (`auto` when the default picked it). When something other than the whole text was analyzed,
+the API returns `loop: {index, count, name, line, endLine, lines?, address?, alignmentOffset?}`, where `lines` is the source
+line of each instruction. In `"auto"`:
 
 - **Loops**: backward branches to a label or an address; several branches back to one label are one loop. A span with a
   `ret` or another function's label (`.globl`, `.type @function`, or a call/jump target from outside) is not a loop.
   clang's notes (`# =>This Inner Loop Header: Depth=2`, `# in Loop: Header=BB0_4`) make the blocks of one header one loop
-  at clang's depth. The default (`defaultLoop`): among the deepest innermost loops in the function of the first of them
-  (the default does not move to another function), and not the remainder of another of them (`isRemainder`: it continues
-  that loop's counter toward the same bound register after it stopped), the one whose vector instructions use
-  the widest registers (zmm, ymm, xmm, none), then the one with more vector instructions, then the one with more
-  instructions, then the first in the code; unless the text is that loop already. Vector instructions (`vectorWidth`):
-  those naming an xmm/ymm/zmm register except scalar floating point (`*ss`, `*sd`, `*sh` that do not start with `p`,
-  conversions to and from one scalar), one-element moves (`movd`, `movq`, `pinsr*`, `pextr*`, ...), zero idioms,
-  register-to-register copies and xmm floating-point logic (`andpd` for `fabs`); the package README ("Which loop") has
-  the reasons. A page link (`lp=` in `url-state.js`) without `lp=` was made before this default and opens on the first
-  loop of the list, as it did; links write `lp=auto` for the default.
+  at clang's depth. The default (`defaultLoop`) considers the deepest innermost loops in the function of the first of them;
+  it does not move to another function. It skips a loop that is the remainder of another of them (`isRemainder`: the loop
+  continues the other loop's counter toward the same bound register after that loop stopped). Among the rest it picks the
+  one whose vector instructions use the widest registers (zmm, ymm, xmm, none), then the one with more vector
+  instructions, then the one with more instructions, then the first in the code; unless the text is that loop already.
+  Vector instructions (`vectorWidth`) are those that name an xmm/ymm/zmm register, except scalar floating point (`*ss`,
+  `*sd`, `*sh` that do not start with `p`, conversions to and from one scalar), one-element moves (`movd`, `movq`,
+  `pinsr*`, `pextr*`, ...), zero idioms, register-to-register copies and xmm floating-point logic (`andpd` for `fabs`);
+  the package README ("Which loop") has the reasons. A page link without `lp=` (`url-state.js`) predates this default
+  and opens on the first loop of the list, as it did; links write `lp=auto` for the default.
 - **No loop**: a compiler's function (a function label, directives, a prologue/epilogue, or objdump) that ends in `ret`
-  is analyzed without prologue, epilogue and `ret`; a bare snippet (`add rax, 1` / `ret`) as typed.
-- **Exits**: a conditional branch to a symbol the text does not define is a short, not-taken jump to the end of the
-  analyzed code (a note); an undefined `jmp` target is a warning.
-- **objdump**: recognised by a header, a byte column or `<sym+off>` targets, else only if every line is address-prefixed
+  is analyzed without prologue, epilogue and `ret`; a bare snippet (`add rax, 1` / `ret`) is analyzed as typed.
+- **Exits**: a conditional branch to a symbol the text does not define becomes a short, not-taken jump to the end of the
+  analyzed code (with a note); an undefined `jmp` target is a warning.
+- **objdump**: recognized by a header, a byte column or `<sym+off>` targets, else only if every line is address-prefixed
   (three or more, with steps that fit the instructions). Targets are addresses (`jne 1b <f+0x1b>` is 0x1b). Lines with
-  bytes are assembled as those bytes; a line the assembler rejects is left out only outside the analyzed loop (padding),
-  inside it is an error. The alignment offset is the analyzed code's address mod 64 unless one is given (the page: for
-  each pick; an offset set by hand, in a link or by an import stays for that text).
+  bytes are assembled as those bytes. A line the assembler rejects is left out if it is outside the analyzed loop
+  (padding) and is an error inside it. The alignment offset is the analyzed code's address mod 64 unless one is given.
+  The page computes it for each pick; an offset set by hand, in a link or by an import stays for that text.
 - **Sections**: `.text.*` (gcc's `main` in `.text.startup`, `-ffunction-sections`) is analyzed as `.text`.
 - **Line ends**: CRLF and a lone CR are line feeds.
-- **Syntax**: the API's `syntax` defaults to `"auto"` (`loop-find.js`, `detectSyntax`: `%registers`, `$immediates`,
-  `(%base,…)` against `ptr [` and `[register…]`; a leading `.att_syntax` / `.intel_syntax` decides); the page's select
-  follows a pasted text unless the user picked it.
-- **`;`**: at the start of a line, a comment. After a statement, what assembles is assembled (a note names it, unless the
-  `;` follows the statement without a space: `dec rcx; jnz 1b`); what does not is a comment (a note if it starts with a
-  mnemonic). Nothing after a `;` makes a valid line an error.
+- **Syntax**: the API's `syntax` defaults to `"auto"`, which counts `%registers`, `$immediates` and `(%base,…)` against
+  `ptr [` and `[register…]` (`detectSyntax` in `loop-find.js`); a leading `.att_syntax` / `.intel_syntax` decides. The
+  page's select follows the pasted text unless the user has picked a syntax.
+- **`;`**: at the start of a line, `;` starts a comment. After a statement, the text after `;` is assembled if it
+  assembles, with a note that names it unless the `;` follows the statement without a space (`dec rcx; jnz 1b`).
+  Otherwise it is a comment, with a note if it starts with a mnemonic. Nothing after a `;` makes a valid line an error.
 
 Only the package's CLI takes `-loop`; the reference/test binary (`crates/wuica-cli`, not a product) reads machine code only.
 
 ### Derived fields (the npm package, REST, MCP)
 
-Not in this module's response; the package computes them (`packages/wuica/README.md`, "Compact form"):
-`insights.binding` (exactly `bottlenecks`, `Divider` included), `insights.largest` (when `bottlenecks` is empty: the
-largest limit, the nearest bound), `insights.caveats` (known blind spots the block meets: `rmw-index`, `paths` (a branch inside the block: both sides simulated), `exit`, `split`;
-`split` depends on the CPU's `splitLoadCycles`), and `what_if`'s `acc2`/`acc3`/`acc4`/`acc8` variants (N
-accumulators: the chain's register renamed in each unrolled copy; refused, with a reason, for a chain through memory,
-flags, an implicit operand, the induction variable, or a register also used off the chain) with `accumulators.best`.
+These fields are not in this module's response; the package computes them (`packages/wuica/README.md`, "Compact form").
+`insights.binding` is exactly `bottlenecks`, `Divider` included. `insights.largest` is, when `bottlenecks` is empty, the
+largest limit (the nearest bound). `insights.caveats` lists the known blind spots the block meets: `rmw-index`, `paths` (a
+branch inside the block, with both sides simulated), `exit` and `split`; `split` depends on the CPU's `splitLoadCycles`.
+The package also computes the `acc2`/`acc3`/`acc4`/`acc8` variants of `what_if`, with `accumulators.best`. A variant with N
+accumulators renames the
+chain's register in each unrolled copy; it is refused, with a reason, for a chain through memory, flags, an implicit
+operand, the induction variable, or a register also used off the chain.

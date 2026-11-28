@@ -9,14 +9,15 @@ comes from. Paths are relative to the repository root.
 wuica ("WebAssembly uiCA") is an unofficial Rust/WebAssembly port of the Python x86-64 throughput simulator uiCA, as modified
 by the fork `jtl06/uiCA`. For a block of x86-64 code and one of 15 microarchitectures it predicts the steady-state throughput
 in core cycles per iteration, with uiCA's complete report (bottlenecks, per-instruction port usage, optional cycle-by-cycle
-trace), and must give results identical to the Python reference (section 3, rule 1). It ships as a static website
+trace). Its results must be identical to the Python reference (section 3, rule 1). It ships as a static website
 (`https://wuica.jacen.li`; everything runs in the browser), an npm package `wuica-cli` (CLI `wuica`, a library, a stdio MCP
 server; no runtime dependencies) and a hosted REST + MCP server (`https://api.wuica.jacen.li`, code in `server/`). It is for
 people tuning small hot loops by hand or with an agent. It is **not** the official uiCA (that is uiCA.uops.info and
 `andreas-abel/uiCA`), not a general CPU emulator, and not a profiler. The model's own limits, as the page states them
-(`web/index.html`, section "Limitations"; `packages/wuica/README.md`, "What the numbers mean"): all data in L1, no branch
-mispredictions, nothing else on the core; a block that ends in a branch is a loop whose branch is taken, any other block is
-simulated as if unrolled; the ZEN3, ADL-P and ICX models are the fork's prototypes and less validated.
+(`web/index.html`, section "Limitations"; `packages/wuica/README.md`, "What the numbers mean"): all data is in L1, there
+are no branch mispredictions, and nothing else runs on the core. A block that ends in a branch is simulated as a loop whose
+branch is taken; any other block is simulated as if unrolled. The ZEN3, ADL-P and ICX models are the fork's prototypes and
+less validated.
 
 ## 2. Headline numbers
 
@@ -73,8 +74,8 @@ A suggestion that breaks one of these will not be taken, whatever it gains. Each
                                                  packages/wuica/lib/{insights,whatif}.js
 ```
 
-The Python file each Rust module mirrors: `instructions.py` → `instr_builder.rs`; `uiCA.py` → `sim/`; `facile.py` and
-`printBottlenecks` → `facile.rs`; `microArchConfigs.py` → `config.rs` (original sources: `reference/uiCA/`).
+Each Rust module mirrors a Python file (originals in `reference/uiCA/`): `instructions.py` → `instr_builder.rs`; `uiCA.py`
+→ `sim/`; `facile.py` and `printBottlenecks` → `facile.rs`; `microArchConfigs.py` → `config.rs`.
 
 ### 4.2 What is Rust, what is JavaScript, and why
 
@@ -93,8 +94,8 @@ The Python file each Rust module mirrors: `instructions.py` → `instr_builder.r
 | CLI, library, stdio MCP | JavaScript (Node ≥ 20) | `packages/wuica/{bin,lib}`, `index.d.ts` | Same wasm modules as the page |
 | REST + remote MCP | JavaScript (Node ≥ 22) on `node:http` + MCP SDK | `server/lib/` | Uses the npm package; the SDK and zod are dependencies here only |
 
-Simulator data layout: flat arrays per entity kind with `u32` indices instead of Python's object graph; nothing is freed
-during a simulation (`docs/DESIGN.md`, "Data layout in the simulator").
+The simulator keeps each kind of entity in a flat array with `u32` indices instead of Python's object graph, and frees
+nothing during a simulation (`docs/DESIGN.md`, "Data layout in the simulator").
 
 ### 4.3 The three WebAssembly modules
 
@@ -104,8 +105,9 @@ during a simulation (`docs/DESIGN.md`, "Data layout in the simulator").
 | `wuica_asm.wasm` (assembler) | `assembler/build.sh` (x86-64 Linux; `-Oz`, full LTO, a size patch) | `_initialize`, `malloc`, `free`, `wuica_assemble`, `wuica_fatal_message` | max 256 MiB | Page: at start in assembly mode (the default), else on first use. Package: on first assembly |
 | `wuica_mca.wasm` (llvm-mca) | `mca/build.sh` | `wuica_mca_run`, `wuica_mca_output`, … | max 1 GiB | Page only, when the `mca` tab is first opened |
 
-None of the three has imports. A trap (in practice: out of memory) makes an instance unusable; every host drops it,
-instantiates again and reloads the tables (`docs/WASM-API.md`, "Failures and traps"; `packages/wuica/lib/wasm.js`).
+None of the three has imports. A trap (in practice, running out of memory) makes an instance unusable; every host drops
+the instance, instantiates the module again and reloads the tables (`docs/WASM-API.md`, "Failures and traps";
+`packages/wuica/lib/wasm.js`).
 
 ### 4.4 Data files
 
@@ -116,8 +118,9 @@ instantiates again and reloads the tables (`docs/WASM-API.md`, "Failures and tra
 | `fixtures/decode_fixtures*.jsonl.gz` (in git) and `fixtures/generated/*.jsonl.gz` (not in git; 1.4 GB uncompressed for the simulation set) | What the reference computes at each boundary | `tools/export_decode_fixtures.py`, `tools/export_fixtures.py`, `tools/export_all.sh` |
 
 `data/` and `fixtures/generated/` are generated locally and not committed (`.gitignore`). CI downloads them, with the
-assembler and llvm-mca modules, from a GitHub pre-release named in `ci/data-asset.txt` (`ci-data-v9`), checked by sha256. The
-tables are derived from uops.info data via uiCA and generated locally; the repository does not state a license for them.
+assembler and llvm-mca modules, from a GitHub pre-release named in `ci/data-asset.txt` (`ci-data-v9`) and checks them by
+sha256. The tables are derived from uops.info data via uiCA and generated locally; the repository does not state a license
+for them.
 The reference commit whose model and data are shipped is recorded once, in `ci/data-asset.txt` (`uica_commit=5429430
 (improve-r11)`), and reported by `wuica --version -json` and `GET /api/version`.
 
@@ -133,29 +136,32 @@ The reference commit whose model and data are shipped is recorded once, in `ci/d
 
 - `web/build.sh` copies files into `web/dist/`, writes the engine files (analyzer, `uarch.json`, tables) under names that hold
   a hash of their content, writes `manifest.json` (file sizes, table list, the engine files' paths, sizes and sha256) and stamps
-  a hash of all files into `sw.js`. A page computes only with its own build's engine files: their paths come from its own
-  build's manifest and each is checked (size, sha256) before use; one that is gone (a later deploy) or not its own is an error
-  in the result and the status line, and the update path reloads the page, never a number of a mix of builds. A release ships
-  the live build's engine files at their paths too (legacy files, `scripts/fetch-legacy.sh`), so its open pages keep their
-  own; `tests-js/web_upgrade_browser.mjs` checks the upgrade scenarios (`docs/PORTING.md`, "The site"). The service worker precaches everything except the tables, the assembler, llvm-mca and the showcase's
-  assembly, serves cache-first, and fetches and caches lazy files on use; a new deploy is a new cache. After the first result
-  the page prefetches all tables and the assembler when idle, unless Save-Data is set (`web/js/app.js`, `prefetchTables`).
-  The build is also stamped into `index.html` (after the hash, over a placeholder of the same length): the page knows its
-  own build (`PAGE_BUILD`), so a newer build's worker that takes over while the page starts (another tab's update check,
-  a slow start), and then answers its `manifest.json`, still makes it reload itself or show the note
+  a hash of all files into `sw.js`. A page computes only with its own build's engine files. Their paths come from its own
+  build's manifest, and each file is checked (size, sha256) before use. A file that is gone (after a later deploy) or is not
+  the page's own is an error in the result and the status line, and the update path reloads the page; the page never shows
+  a number computed from a mix of builds. A release also ships the engine files of the build that is live, at
+  their paths (legacy files, `scripts/fetch-legacy.sh`), so pages still open from that build keep their own files;
+  `tests-js/web_upgrade_browser.mjs` checks the upgrade scenarios (`docs/PORTING.md`, "The site"). The service worker
+  precaches everything except the tables, the assembler, llvm-mca and the showcase's assembly, serves cache-first, and
+  fetches and caches lazy files on use; a new deploy is a new cache. After the first result the page prefetches all tables
+  and the assembler when idle, unless Save-Data is set (`web/js/app.js`, `prefetchTables`). The build is also stamped into
+  `index.html` (after the hash, over a placeholder of the same length), so the page knows its own build (`PAGE_BUILD`). If
+  a newer build's service worker takes over while the page starts (after another tab's update check, or on a slow start)
+  and answers the page's request for `manifest.json`, the page still reloads itself or shows the update note in the footer
   (`tests-js/web_sw_update_browser.mjs`).
-- A built-in example's assembly is answered from its machine code until the assembler has loaded (`web/js/asm-shipped.js`;
-  the same result as assembling it, `tests-js/web_asm_shipped.mjs`), so a fresh visit's first result needs only the
-  analyzer and one table. The assembler is fetched after that result, at once when a link holds other assembly, or on the
-  first focus, edit or paste of an editor; anything else that needs it (other code, A–B, what-if variants, a Compiler
-  Explorer import, converting other code between assembly and hex) waits for it, with its download in the status line.
-- A long block stays responsive (`tests-js/web_lag_browser.mjs`, the SHA-256 showcase: no main-thread task over 50 ms
-  measured here for any interaction): the uop tables, A–B's Δ table and the dependency graph draw only the rows near the
-  view (`web/js/vrows.js`; a browser's find-in-page sees only those rows), the trace's model and the dependency graph are
-  made in the analyzer's worker, a large answer of the worker comes in parts, a tab shown again is not built again, and
-  the long texts (objdump, uiCA report) go into the page when opened.
-  `tests-js/web_host_browser.mjs` checks this against a host emulation (`tests-js/static-host.mjs`) that redirects like the
-  real host (Cloudflare static assets).
+- Until the assembler has loaded, a built-in example's assembly is not assembled: the page uses the example's machine code
+  (`web/js/asm-shipped.js`; the same result as assembling it, `tests-js/web_asm_shipped.mjs`). So a fresh visit's first
+  result needs only the analyzer and one table. The assembler is fetched after that result, or at once when a link holds
+  other assembly, or when an editor is first focused, edited or pasted into. Anything else that needs the assembler (other
+  code, A–B, what-if variants, a Compiler Explorer import, converting other code between assembly and hex) waits for it,
+  with its download in the status line.
+- A long block stays responsive: on the SHA-256 showcase, no interaction caused a main-thread task over 50 ms, measured
+  here (`tests-js/web_lag_browser.mjs`). The uop tables, A–B's Δ table and the dependency graph draw only the rows near the
+  view (`web/js/vrows.js`; a browser's find-in-page sees only those rows). The trace's model and the dependency graph are
+  built in the analyzer's worker, a large answer from the worker arrives in parts, a tab shown again is not rebuilt, and
+  the long texts (objdump, uiCA report) are put into the page only when opened.
+  `tests-js/web_host_browser.mjs` checks the service worker and deploys against a host emulation
+  (`tests-js/static-host.mjs`) that redirects like the real host (Cloudflare static assets).
 - Copying as text (`web/js/copy-view.js`): a control at the end of the tab row copies the shown view as Markdown
   (Shift+click CSV, Alt+click JSON where the view has them; the key `c` does the same), and one next to the headline
   copies the whole result. The text comes from each view's model through `web/js/markdown.js` (shared with the npm
@@ -184,8 +190,9 @@ Result codes everywhere: 0 ok, 1 bad request, 2 assembler error, 3 analysis fail
 The port reproduces the reference exactly, so these numbers hold for both (`docs/ACCURACY.md`). They cover only the fork's
 three models; uiCA's Intel models are unchanged by the fork's rounds and are not measured in this repository.
 
-Round 11 on the held-out sets of round 10 (generated and measured at the start of round 10); share of loops within 10 % of measured
-cycles per iteration, and MAPE (the llvm-mca and original uiCA columns are round 10's: those tools did not change):
+Round 11 on the held-out sets of round 10, which were generated and measured at the start of round 10: the share of loops
+within 10 % of the measured cycles per iteration, and the MAPE. The llvm-mca and original uiCA columns are from round 10,
+since those tools did not change.
 
 | Model (measured on) | Random loops `holdout8` | BHive blocks `bhive6` | llvm-mca, same sets | Nearest original uiCA model |
 |---|---|---|---|---|
@@ -194,12 +201,12 @@ cycles per iteration, and MAPE (the llvm-mca and original uiCA columns are round
 | ICX (Xeon Gold 6314U) | 1867: 86.0 %, 3.6 % | 1869: 88.6 %, 3.3 % | `icelake-server`: 54.7 % / 70.1 % | ICL: 78.7 % / 84.8 % |
 
 The random held-out sets no longer discriminate between model variants (rounds 7-10 moved them by tenths of a point), so further
-model work starts from measured real loops and an identified mechanism; the measured sets now guard what exists. The suite
-`wuica:accuracy_gate` (`crates/wuica/tests/accuracy_gate.rs`) predicts 7,925 measured loops (the held-out sets of rounds 9 and 10 on
-all three CPUs and the 21 dogfood loops, `fixtures/generated/accuracy.jsonl.gz` from the CI data asset), reproduces the tables of
-`docs/ACCURACY.md` exactly, and fails when a share within 5/10/20 % moves by more than 0.1 point or the MAPE by more than 0.02
-(`crates/wuica/tests/accuracy_expected.json`; about 2 s). The remaining errors and the explanations that measurements ruled out are in
-`docs/ACCURACY.md`, "Known errors and what was ruled out".
+model work starts from measured real loops and an identified mechanism; the measured sets now guard the existing models.
+The suite `wuica:accuracy_gate` (`crates/wuica/tests/accuracy_gate.rs`) predicts 7,925 measured loops: the held-out sets of
+rounds 9 and 10 on all three CPUs and the 21 dogfood loops (`fixtures/generated/accuracy.jsonl.gz`, from the CI data asset).
+It reproduces the tables of `docs/ACCURACY.md` exactly and fails when a share within 5/10/20 % moves by more than 0.1 point
+or the MAPE by more than 0.02 (`crates/wuica/tests/accuracy_expected.json`). It takes about 2 s. The remaining errors and
+the explanations that measurements ruled out are in `docs/ACCURACY.md`, "Known errors and what was ruled out".
 
 Method (`docs/ACCURACY.md`, "Method of round 10", "Method of round 6"): `perf stat` user-mode cycles, pinned to one core, best
 of three runs, nothing else on the machine; loops whose two fastest runs differ by more than 2 % are dropped. Random loops
@@ -239,8 +246,8 @@ site sent with `Accept-Encoding: br, gzip` (`curl -s -o /dev/null -w '%{size_dow
   attributed yet (an audit is in progress, section 9).
 - First visit in assembly mode, before the first result: analyzer + assembler + SKL table + shell (HTML, `uarch.json`, all JS,
   CSS, fonts) = 2,190,673 bytes served (866,526 + 941,580 + 42,085 + 340,482); the same files at brotli q11 are 1,639,934
-  bytes (629,775 + 687,897 + 28,369 + 293,893), so the host's compression costs 551 kB (+34 %). The other
-  14 tables (about 1.24 MB served) are prefetched after it; llvm-mca (1.1 MB) only on use.
+  bytes (629,775 + 687,897 + 28,369 + 293,893), so the host's compression costs 551 kB (+34 %). The other 14 tables
+  (about 1.24 MB served) are prefetched after the first result; llvm-mca (1.1 MB) is loaded only on use.
 - Whole site: 111 files, 27.7 MB on disk (`du -sk web/dist`).
 - npm package 0.1.8 (`npm pack` of `packages/wuica` after `build.sh`): tarball 2,105,320 bytes, unpacked 2,375,054 bytes, 47
   files. Installed from that local tarball into an empty project: 1 package, 48 files, 2.4 MB (`du -sk node_modules`), 0.28 s
@@ -310,16 +317,18 @@ Counts from the last local `scripts/check.sh full` run (development machine, 202
 | Page logic in Node (36 suites) | `tests-js/web_*.mjs` without a browser | 21,050 checks |
 | Page in headless Chrome (28 suites) | `tests-js/web_*_browser.mjs`, `web_browser*.mjs` via `tests-js/cdp.mjs` | 1,728 checks |
 
-Corpus: 329 files of random loops, BHive blocks, uiCA's microbenchmarks and blocks of 10/100/1000 instructions (main set,
-9,899 simulation cases), plus 42 hand-written blocks for paths the main set misses (`fixtures/extra-src/x_*.s`: ZMM, stack,
-high-8 registers, LCP, lock, rep, fences, microcode, x87, crash fixes; 7,182 cases), each over all configurations and option
-variants (`docs/DESIGN.md`, `docs/PORTING.md`, "Fixtures"). The fixtures come from the reference with its crash fixes; the
-inputs on which upstream uiCA raises an exception and what the fork does instead are listed in `docs/DEVIATIONS.md`.
+The corpus has 329 files of random loops, BHive blocks, uiCA's microbenchmarks and blocks of 10/100/1000 instructions (the
+main set, 9,899 simulation cases). Another 42 hand-written blocks (`fixtures/extra-src/x_*.s`, 7,182 cases) cover paths the
+main set misses: ZMM, stack, high-8 registers, LCP, lock, rep, fences, microcode, x87 and crash fixes. Each file is run over
+all configurations and option variants (`docs/DESIGN.md`, `docs/PORTING.md`, "Fixtures"). The fixtures come from the
+reference with its crash fixes; the inputs on which upstream uiCA raises an exception and what the fork does instead are
+listed in `docs/DEVIATIONS.md`.
 
 CI (`.github/workflows/ci.yml`): every push to main and every pull request runs `scripts/check.sh full --no-skip` on
-ubuntu-latest (Rust 1.100, Node 22, the runner's clang and Chrome, 1 Chrome suite at a time); a skipped suite fails. It does
-not run the optional set `more` (not in the data asset, `ci/make-data-asset.sh`), does not build the assembler or llvm-mca
-(downloaded), and does not measure on real hardware (the accuracy gate compares with measurements recorded in the data asset).
+ubuntu-latest (Rust 1.100, Node 22, the runner's clang and Chrome, 1 Chrome suite at a time); a skipped suite fails the run.
+It does not run the optional set `more` (not in the data asset, `ci/make-data-asset.sh`), does not build the assembler or
+llvm-mca (downloaded), and does not measure on real hardware (the accuracy gate compares with measurements recorded in the
+data asset).
 
 ## 8. Already done, and tried and rejected
 
@@ -382,11 +391,12 @@ Check this table before suggesting an optimization. "Identical results" means ru
 
 - **Remaining ZEN3 errors** (`docs/ACCURACY.md`, "Known errors and what was ruled out", with every explanation that measurements
   ruled out and the loop benchmarks that reproduce them): the scalar prefix sum (`add edx, [rdi+rax*4]; mov [rsi+rax*4], edx; inc
-  rax; cmp rcx, rax; jne`) is predicted 1.36 cycles per iteration against 1.00 measured (a sum reduction: 1.55 vs 1.07); on the
-  hardware one more macro-op that does not execute (a `nop`) makes it 1.34, so it is not ALU-port contention, and none of eight
-  port-assignment policies reproduces it. Shuffle-heavy vector loops are 13-29 % optimistic (8 `vmulps` + 6 `vpalignr`: 4.67
-  predicted, 5.58 measured, 5.22 when interleaved; `vpermd` costs 1.33 cycles back to back, 1.00 with `vaddps` between them;
-  lane-crossing permutes cost more in mixes than their port data says). The fixes tried are in section 8.2.
+  rax; cmp rcx, rax; jne`) is predicted 1.36 cycles per iteration against 1.00 measured (a sum reduction: 1.55 vs 1.07). On
+  the hardware, one more macro-op that does not execute (a `nop`) makes the prefix sum 1.34 cycles, so the cause is not
+  ALU-port contention, and none of eight port-assignment policies reproduces the measurement. Shuffle-heavy vector loops are
+  13-29 % optimistic: a loop of 8 `vmulps` + 6 `vpalignr` is predicted at 4.67 cycles and measured at 5.58, or 5.22 when
+  interleaved. `vpermd` costs 1.33 cycles back to back and 1.00 with `vaddps` between them; lane-crossing permutes cost
+  more in mixes than their port data says. The fixes tried are in section 8.2.
 - **Not modelled**: cache misses, branch mispredictions, frequency changes; loads at constant addresses crossing a line; the
   extra latency of line-crossing loads (+1 cycle on the Ryzen, +6 to +7 on the Intel CPUs); store forwarding through an
   indexed read-modify-write whose address depends on data. A branch inside the loop body makes uiCA simulate both sides one
@@ -397,9 +407,10 @@ Check this table before suggesting an optimization. "Identical results" means ru
 
 ### 10.2 Payload and start-up
 
-- The page needs about 2.2 MB (served) before its first result in assembly mode, over 80 % of it the analyzer and the
-  assembler (a fresh visit's built-in example no longer waits for the assembler: section 4.6). The live host compresses on the fly at a lower ratio than the package's precompressed brotli q11: 867 kB vs
-  630 kB for the analyzer, 942 kB vs 688 kB for the assembler, 1.28 MB vs 0.68 MB for the tables (section 7.1).
+- The page needs about 2.2 MB (served) before its first result in assembly mode; over 80 % of it is the analyzer and the
+  assembler (a fresh visit's built-in example no longer waits for the assembler: section 4.6). The live host compresses on
+  the fly at a lower ratio than the package's precompressed brotli q11: 867 kB vs 630 kB for the analyzer, 942 kB vs 688 kB
+  for the assembler, 1.28 MB vs 0.68 MB for the tables (section 7.1).
 - XED's decoder accounts for 54 % of the analyzer's code bytes; the 1.13 MB data section is unattributed.
 - The JSON tables are parsed with `serde_json` on every load (2–15 ms each, 80 ms for all); the 0.1.9 binary form targets this.
 - 61 unbundled JavaScript modules (no build step); their load order and request count have not been measured.
@@ -414,12 +425,13 @@ Check this table before suggesting an optimization. "Identical results" means ru
 
 ### 10.4 Interfaces
 
-- **The reference/test binary (Rust, not a product) takes machine code only**: syntax detection, loop finding, regions, what-if, caveats and insights
-  exist only in JavaScript. A Rust user or a future native server gets less than `npx wuica-cli`.
+- **The reference/test binary (Rust, not a product) takes machine code only**: syntax detection, loop finding, regions,
+  what-if, caveats and insights exist only in JavaScript. A Rust user or a future native server gets less than
+  `npx wuica-cli`.
 - The package's `insights.js` and `whatif.js` re-implement the page's `bound.js` and `whatif.js`; agreement is tested on the
   built-in examples only (`tests-js/web_bound.mjs`, `web_whatif.mjs`).
-- The option ranges are the library's everywhere; the MCP tools and the servers cap `minIterations` and `minCycles`, the page clamps
-  (`packages/wuica/README.md`, "Option ranges per interface").
+- The option ranges are the library's everywhere, except that the MCP tools and the servers cap `minIterations` and
+  `minCycles` and the page clamps the options to its own ranges (`packages/wuica/README.md`, "Option ranges per interface").
 
 ### 10.5 Tests
 
@@ -468,9 +480,9 @@ Answer any of these; cite the file and function.
 2. **Model design for the open ZEN3 errors** (section 10.1): what mechanism explains a prefix sum at 1.00 cycles with one
    load, one store and a 1-cycle add chain, given that "dispatch to any free ALU" fixed it but cost 1.4–2.4 points on random
    loops? What would explain `vpermd` at 1.33 cycles only when two or more are present?
-3. **Payload and cold start**: given section 7.1, what would cut the first-visit 2.2 MB without breaking rules 1, 4 and 5 —
-   e.g. serving the precompressed brotli files, splitting XED's decoder tables, loading the assembler later, the name
-   section? Is the trade in section 8.3 right?
+3. **Payload and cold start**: given section 7.1, what would cut the first-visit 2.2 MB without breaking rules 1, 4 and 5
+   (e.g. serving the precompressed brotli files, splitting XED's decoder tables, loading the assembler later, stripping the
+   name section)? Is the trade in section 8.3 right?
 4. **API design for agents**: are the CLI's `-json` shapes, the MCP tools' schemas and the compact form
    (`packages/wuica/lib/{mcp,core,insights}.js`, `index.d.ts`) what an agent needs? What is missing (e.g. several inputs,
    a diff of two blocks, source-line mapping)?
@@ -503,9 +515,10 @@ docs' wording.
 
 ### 12.2 Build and check
 
-Needs Rust 1.100 with `wasm32-unknown-unknown`, a clang with the wasm32 target (not Apple's), Node 22, Chrome for the
-browser suites, and the generated `data/` and `fixtures/generated/` (from a uiCA checkout with `tools/export_all.sh`, or the
-CI data asset named in `ci/data-asset.txt`). The assembler and llvm-mca modules come from the same asset.
+Building and checking need Rust 1.100 with `wasm32-unknown-unknown`, a clang with the wasm32 target (not Apple's), Node
+22, Chrome for the browser suites, and the generated `data/` and `fixtures/generated/` (from a uiCA checkout with
+`tools/export_all.sh`, or the CI data asset named in `ci/data-asset.txt`). The assembler and llvm-mca modules come from the
+same asset.
 
     scripts/check.sh full          # builds what changed (module, site, package) and runs every suite in parallel
     scripts/check.sh               # quick subset, about a minute

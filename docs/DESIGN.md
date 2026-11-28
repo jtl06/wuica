@@ -3,59 +3,62 @@
 ## Goal
 
 uiCA's predictions, bit for bit, from a Rust core that runs natively and as WebAssembly in a browser.
-"Bit for bit" means: for the same machine code and microarchitecture, the same throughput and the same detailed results
-(port usage per instruction, bottlenecks, cycle-by-cycle events) as the Python reference.
+"Bit for bit" means that for the same machine code and microarchitecture, wuica gives the same throughput and the same
+detailed results (port usage per instruction, bottlenecks, cycle-by-cycle events) as the Python reference.
 
 ## Reference
 
 The reference ("oracle") is the Python uiCA of the fork [jtl06/uiCA](https://github.com/jtl06/uiCA). The commit whose model and
-data wuica ships is written in one place, `ci/data-asset.txt` (`uica_commit`; at the time of writing `5429430` on the branch
-`improve-r11`); `wuica --version -json` and `GET /api/version` report it, and `docs/PORTING.md` ("The reference") lists the
-branches it builds on.
+data wuica ships is written in one place, the `uica_commit` line of `ci/data-asset.txt` (at the time of writing `5429430` on the
+branch `improve-r11`). `wuica --version -json` and `GET /api/version` report this commit, and `docs/PORTING.md` ("The
+reference") lists the branches it builds on.
 
-History: the first reference was the branch `perf`, commit `8f24bd3` (improve-r4 `a5ef6c2` plus the determinism fix `9b69d9d`,
-which the port depends on: before it, the scheduler iterated over a set of objects and results could differ between runs), with
-the fixes of the inputs on which it raised an exception: branch `crash-fixes` (`docs/DEVIATIONS.md`, `docs/PORTING.md`). The
-current fixtures are exported from the shipped reference above.
+History: the first reference was the branch `perf` at commit `8f24bd3` with the fixes for the inputs on which it raised an
+exception, in the branch `crash-fixes` (`docs/DEVIATIONS.md`, `docs/PORTING.md`). `8f24bd3` is improve-r4 `a5ef6c2` plus the
+determinism fix `9b69d9d`. The port depends on that fix: before it, the scheduler iterated over a set of objects, so results could
+differ between runs. The current fixtures are exported from the shipped reference above.
 
-On the branch `model-r7`, the reference is the fork's branch `improve-r7` (model at `f4a7868`: the model changes of round 7 on top
-of `improve-r6`, `21b0b17`, which merged the round-6 model with `crash-fixes`; see docs/ACCURACY.md); its data and fixtures are
-exported with `tools/export_all.sh`. The sources in `reference/uiCA/` are still those of `8f24bd3`; the model changes since then are
-in `uiCA.py` (`FrontEnd`: `microcodeBusyCycles`; `Renamer`/`Scheduler`: `foldedInputs`, `getFoldedInputDelay`; load uops:
-`loadOpForwardDelay`), `microArchConfigs.py` (`microcodeOps`, `microcodeWidth`, `foldedShiftDelay`, `loadOpForwardDelay`; ADL-P
-`storeForwardDelay`) and the instruction data (`convertXML.py`: ZEN3 vector-to-GPR moves, `INSTR_CORRECTIONS`).
+On the branch `model-r7`, the reference is the fork's branch `improve-r7`, with the model at `f4a7868`: the model changes of
+round 7 (see docs/ACCURACY.md) on top of `improve-r6` (`21b0b17`), which merged the round-6 model with `crash-fixes`. Its data
+and fixtures are exported with `tools/export_all.sh`. The sources in `reference/uiCA/` are still those of `8f24bd3`; the model
+changes since then are in `uiCA.py` (`FrontEnd`: `microcodeBusyCycles`; `Renamer`/`Scheduler`: `foldedInputs`,
+`getFoldedInputDelay`; load uops: `loadOpForwardDelay`), `microArchConfigs.py` (`microcodeOps`, `microcodeWidth`,
+`foldedShiftDelay`, `loadOpForwardDelay`; ADL-P `storeForwardDelay`) and the instruction data (`convertXML.py`: ZEN3
+vector-to-GPR moves, `INSTR_CORRECTIONS`).
 
 On the branch `model-r8`, the reference is the fork's branch `improve-r8` (model at `c899be7`: the changes of round 8 on top of
 `improve-r7`). New since round 7: `FrontEnd.afterMicrocode` with `microcodeNextEntryOps` (ZEN3: the first op-cache entry after a
-microcoded instruction holds at most 4 macro-ops), `rotateCarryRMWForwardDelay` (ICX: store-forwarding delay of the loads of
-read-modify-write RCL/RCR) and in the instruction data `AMD_NARROW_RMW_MEM_LATENCY` (ZEN3: ADC/SBB on 8/16-bit memory).
+microcoded instruction holds at most 4 macro-ops), `rotateCarryRMWForwardDelay` (ICX: store-forwarding delay for the loads of
+read-modify-write RCL/RCR) and, in the instruction data, `AMD_NARROW_RMW_MEM_LATENCY` (ZEN3: ADC/SBB on 8/16-bit memory).
 
 On the branch `model-r9`, the reference is the fork's branch `improve-r9` (the changes of round 9 on top of `improve-r8`). New since
-round 8, in `instructions.py`: `registerVersions` / `addressLineKey` (the values of the address registers within an iteration, as a
-version and an offset; ZEN3's store-line rule `storeLineRestrictedPorts` now compares them instead of the register names) and
-`splitLoadPatterns` with `splitLoadCycles` (ZEN3 2, ADL-P 3, ICX 2: a load that crosses a 64-byte line in some iterations, where the
-loop's addresses make it knowable, blocks its load port for that many cycles in those iterations; `Instr.splitLoadPattern`, exported
-in the instruction fixtures only when set); in `uiCA.py` the FP non-scheduling queue (`fpSchedulerSize` 56 and `fpSchedulerPorts` for
-ZEN3: at most that many uops for the FP ports wait in the scheduler, younger ones wait in order and are not dispatched before they
-enter it). Ported in `instr_builder.rs` (`register_versions`, `address_line_key`, `split_load_patterns`) and `sim/scheduler.rs`.
+round 8, in `instructions.py`: `registerVersions` / `addressLineKey` give the values of the address registers within an iteration
+as a version and an offset, and ZEN3's store-line rule `storeLineRestrictedPorts` now compares these instead of the register names.
+`splitLoadPatterns` with `splitLoadCycles` (ZEN3 2, ADL-P 3, ICX 2) cover a load that crosses a 64-byte line in some iterations:
+where the loop's addresses make this knowable, the load blocks its load port for that many cycles in those iterations
+(`Instr.splitLoadPattern`, exported in the instruction fixtures only when set). New in `uiCA.py` is the FP non-scheduling queue
+(`fpSchedulerSize` 56 and `fpSchedulerPorts` for ZEN3): at most `fpSchedulerSize` uops for the FP ports wait in the scheduler,
+and younger ones wait in order and are not dispatched before they enter the scheduler. Ported in `instr_builder.rs`
+(`register_versions`, `address_line_key`, `split_load_patterns`) and `sim/scheduler.rs`.
 
 On the branch `model-r10`, the reference is the fork's branch `improve-r10` (the changes of round 10 on top of `improve-r9`). New
-since round 9, in `uiCA.py`: `vectorDomain` and `domainBypassDelay` (ZEN3: 1): a vector instruction of the integer domain (P...),
-the floating-point domain (...PS/PD/SS/SD, FMA) or the lane-crossing domain (VPERM2I128/VPERM2F128) that reads a register written by
-an instruction of another domain (not a load) gets it that many cycles later; store-data uops are exempt. Ported in `sim/prep.rs`
-(`vector_domain`, the instruction flags `DOMAIN_*`) and `sim/scheduler.rs` (`get_ready_for_dispatch_cycle`).
+since round 9, in `uiCA.py`: `vectorDomain` and `domainBypassDelay` (ZEN3: 1). When a vector instruction of the integer domain
+(P...), the floating-point domain (...PS/PD/SS/SD, FMA) or the lane-crossing domain (VPERM2I128/VPERM2F128) reads a register
+written by an instruction of another domain (not a load), it gets the value `domainBypassDelay` cycles later; store-data uops are
+exempt. Ported in `sim/prep.rs` (`vector_domain`, the instruction flags `DOMAIN_*`) and `sim/scheduler.rs`
+(`get_ready_for_dispatch_cycle`).
 
 On the branch `model-r11`, the reference is the fork's branch `improve-r11` at `5429430` (the changes of round 11 on top of
 `improve-r10`; pushed). Every new behavior is a configuration parameter whose default keeps the old one; ZEN3, ICX and ADL-P switch
-them on, the Intel models are unchanged. New since round 10:
+them on, and the original Intel models are unchanged. New since round 10:
 - register files (`vecRegFileSize`, `gprRegFileSize`, `vecRegFreeDelay`, `gprRegFreeDelay`; `ReorderBuffer`): fused uops that write a
   vector or general-purpose register are counted at issue and freed at retirement plus a delay; issue stops when a full group would
   not fit. `sim/frontend.rs` (`RegFiles`, `rob_is_full`, `rob_cycle`; per uop property `pf::WRITES_VEC` / `WRITES_GPR` in `sim/prep.rs`);
 - store forwarding (`storeForwardOverlap`, `vectorStoreForwardDelay`, `storeForwardFailInterval`): a load reads from the most recent
-  store with the same base, index and scale whose bytes contain its first byte, fails if it is wider than the rest of the store, and
-  failing loads are serialized through one shared cell (`failSerial`) when their ready cycle is first computed; an extra forwarding
-  delay into xmm/ymm. `sim/renamer.rs` (`StoresByBase`), `sim/mod.rs` (`compute_ready_cycle`), `instr_builder.rs`
-  (`compute_uop_properties`);
+  store with the same base, index and scale whose bytes contain the load's first byte. Forwarding fails if the load is wider than
+  the rest of the store, and failing loads are serialized through one shared cell (`failSerial`) when their ready cycle is first
+  computed. Loads into xmm/ymm get an extra forwarding delay. `sim/renamer.rs` (`StoresByBase`), `sim/mod.rs`
+  (`compute_ready_cycle`), `instr_builder.rs` (`compute_uop_properties`);
 - branch units and AMD fusion (`branchPorts`, `fusedALUBranchPorts`, `amdBranchFusionRules`; `fusibleMemForm` in `instructions.py`):
   `instr_builder.rs` (`known_instr`, `fusible_mem_form`, `get_instructions`);
 - `moveElimBlockedSlots` (`sim/renamer.rs`), `lsdLineDelivery` (`sim/frontend.rs`), `schedulerQueues` and `fastAddBypassDelay`
@@ -106,12 +109,12 @@ basic blocks, all microbench microbenchmarks, blocks of 10/100/1000 instructions
 | instruction objects | `fixtures/generated/instr_fixtures.jsonl.gz` (8056 cases: file × configuration × options that affect them): every field of every `Instr` after `getInstructions`, `adjustLatenciesAndAddMergeUops` and `computeUopProperties`; the JSON form of `wuica_core::model::InstrList` | `tools/export_fixtures.py` | `crates/wuica-core/tests/model_fixtures.rs` (the model holds everything), builder test |
 | simulation result | `fixtures/generated/sim_fixtures.jsonl.gz` (9899 cases: file × configuration, and 8 option variants for 24 files): throughput and the detailed text output; the `-json` output for 1121 cases (and 988 of the 8892 cases of the extra set, `docs/PORTING.md`) | `tools/export_fixtures.py` | simulator test |
 
-The fixtures in `fixtures/generated/` and the tables in `data/` are generated (they are large): run `tools/export_data.py` and
-`tools/export_fixtures.py` against a uiCA installation. No case has an `error` field: the four cases on which the unfixed
-reference raised an exception (two in the `-json` output for ADL-P/ICX, where a fractional throughput limit makes a cycle number a
-float; two in stock uiCA for SNB/IVB) have results since the fixes of `docs/DEVIATIONS.md`.
+The fixtures in `fixtures/generated/` and the tables in `data/` are large, so they are generated rather than committed: run
+`tools/export_data.py` and `tools/export_fixtures.py` against a uiCA installation. No case has an `error` field. The unfixed
+reference raised an exception on four cases: two in the `-json` output for ADL-P/ICX, where a fractional throughput limit makes a
+cycle number a float, and two in stock uiCA for SNB/IVB. Since the fixes of `docs/DEVIATIONS.md`, these four have results.
 
-Both sides always get the same raw bytes (the hex string in the fixture).
+wuica and the reference always get the same raw bytes (the hex string in the fixture).
 
 ## Rules for an exact port
 
@@ -119,9 +122,9 @@ These are the places where a straightforward translation gives different results
 
 1. **Iteration order.** Python dicts iterate in insertion order, and the code relies on it (`portData`, `regOperands`, `rw`,
    `latencies`, the rename dictionaries). Use `Vec` of pairs or `IndexMap`; never iterate over a `HashMap`/`HashSet`. The
-   hash maps of the core are `fasthash::LookupMap`/`LookupSet` (the simulator's `FxHashMap`/`FxHashSet`, `FastMap`, the binary
-   tables' string index, the loaded tables of `crates/wuica`): newtypes without `iter`, `keys`, `values`, `into_iter`, `drain`
-   or `retain`, so the compiler checks this rule. (When they were introduced, no code iterated one.)
+   hash maps of the core (the simulator's `FxHashMap`/`FxHashSet`, `FastMap`, the binary tables' string index, the loaded tables
+   of `crates/wuica`) are `fasthash::LookupMap`/`LookupSet`, newtypes without `iter`, `keys`, `values`, `into_iter`, `drain` or
+   `retain`, so the compiler checks this rule. (When they were introduced, no code iterated one.)
    Python *sets* that are iterated must be given a defined order that matches the reference (after `9b69d9d`, the only such
    place, `pendingUops`, is sorted by uop index).
 2. **Integer division and modulo.** `//` and `%` round toward negative infinity (`disp // 64` with a negative displacement);
@@ -131,9 +134,9 @@ These are the places where a straightforward translation gives different results
 4. **Numbers.** Latencies and throughput limits can be fractions (`TP`, `blockedResources`): Python mixes `int` and `float`
    freely. Keep the order of floating-point operations, and use `f64` where the Python value can be a float. The final
    throughput is `round(x, 2)`: Python rounds half to even on the exact binary value; check against the fixtures. The
-   one helper, `facile::py_round2`, is checked against CPython for every `k / n`, `n <= 1000`, `k <= 3n`
-   (`crates/wuica-core/tests/round2.rs`, `fixtures/round2.bin.gz`, `tools/export_round2_fixture.py`). Integers: Python's are
-   unbounded; the table below lists where a fixed width meets a user-controlled size.
+   rounding is done by one helper, `facile::py_round2`, which is checked against CPython for every `k / n`, `n <= 1000`,
+   `k <= 3n` (`crates/wuica-core/tests/round2.rs`, `fixtures/round2.bin.gz`, `tools/export_round2_fixture.py`). Python's
+   integers are unbounded; the table below lists where a fixed width meets a user-controlled size.
 5. **Strings as data.** Much logic tests substrings of names (`'MM' in reg`, `'MOV' in instrStr`, `'I64' in instrStr`).
    Port these tests literally first; replace them with enums only where the fixture tests cover the difference.
 6. **Identity vs. equality.** Operands (`RegOperand('RAX')`) are compared and used as dict keys by *identity* in Python: two
