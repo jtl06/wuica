@@ -6,7 +6,7 @@
 //   console.log(r.code, r.tp, r.bottlenecks, r.text);
 //
 // The request/response shapes follow Compiler Explorer's API style and are the contract for a REST server with the
-// same shape (README.md, "API contract"): list = archs(), POST /api/analyze/<arch> = analyze(arch, request), etc.
+// same shape (API.md): list = archs(), POST /api/analyze/<arch> = analyze(arch, request), etc.
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

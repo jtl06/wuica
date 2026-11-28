@@ -293,7 +293,7 @@ Only the package's CLI takes `-loop`; the reference/test binary (`crates/wuica-c
 
 ### Derived fields (the npm package, REST, MCP)
 
-These fields are not in this module's response; the package computes them (`packages/wuica/README.md`, "Compact form").
+These fields are not in this module's response; the package computes them (`packages/wuica/API.md`, "Compact form").
 `insights.binding` is exactly `bottlenecks`, `Divider` included. `insights.largest` is, when `bottlenecks` is empty, the
 largest limit (the nearest bound). `insights.caveats` lists the known blind spots the block meets: `rmw-index`, `paths` (a
 branch inside the block, with both sides simulated), `exit` and `split`; `split` depends on the CPU's `splitLoadCycles`.

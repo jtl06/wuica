@@ -1,6 +1,6 @@
 // GET /api/version: the versions of the server, the library, the analyzer's components and the instruction data.
 // The deployed server has no repository docs, so the component versions are constants here; test/version.test.mjs
-// checks them against the repository (third_party/xed/README.md, the package README). The uiCA reference (the fork's
+// checks them against the repository (third_party/xed/README.md, the package's API.md). The uiCA reference (the fork's
 // commit whose data and model the package has) is the package's dist/manifest.json, which its build.sh writes from
 // ci/data-asset.txt (uica_commit), the one place it is written down.
 

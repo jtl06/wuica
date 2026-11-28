@@ -35,12 +35,12 @@ test('the SDK client: initialize, ping, tools/list, every tool, errors', async (
   const bad = await client.callTool({ name: 'analyze', arguments: { hex: '4801d8', bogus: 1 } });
   assert.equal(bad.isError, true);
   assert.equal(bad.content[0].text, 'Invalid arguments for tool analyze: arguments: unknown key "bogus" (known: arch, source, hex, syntax, loop, func, options, format, details)');
-  // the option ranges are the library's (README, "Option ranges per interface"): any integer, not a fraction
+  // the option ranges are the library's (API.md, "Option ranges per interface"): any integer, not a fraction
   const range = await client.callTool({ name: 'analyze', arguments: { hex: '4801d8', options: { alignmentOffset: 1.5 } } });
   assert.equal(range.content[0].text, 'Invalid arguments for tool analyze: options.alignmentOffset: expected an integer, got 1.5');
   const far = await client.callTool({ name: 'analyze', arguments: { hex: '4801d8', format: 'json', options: { alignmentOffset: 64 } } });
   assert.equal(JSON.parse(far.content[0].text).tp, 1);
-  // the MCP tools keep caps on the simulation length (README: the third difference)
+  // the MCP tools keep caps on the simulation length (API.md: the third difference)
   const long = await client.callTool({ name: 'analyze', arguments: { hex: '4801d8', options: { minCycles: 10000000 } } });
   assert.equal(long.content[0].text, 'Invalid arguments for tool analyze: options.minCycles: expected at most 1000000, got 10000000');
   const it = await client.callTool({ name: 'analyze', arguments: { hex: '4801d8', options: { minIterations: 100001 } } });

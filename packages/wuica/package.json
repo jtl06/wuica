@@ -26,7 +26,8 @@
     "licenses/",
     "index.d.ts",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "API.md"
   ],
   "engines": {
     "node": ">=20"

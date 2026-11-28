@@ -1,4 +1,4 @@
-// The HTTP server: the public REST API (Compiler Explorer style, the contract in packages/wuica/README.md) and the
+// The HTTP server: the public REST API (Compiler Explorer style, the contract in packages/wuica/API.md) and the
 // remote MCP endpoint (Streamable HTTP, stateless), on Node's http module.
 //
 //   GET  /                       index
@@ -78,7 +78,7 @@ function index() {
     name: 'wuica API',
     description: 'x86-64 basic-block throughput prediction (uiCA, in WebAssembly). Not the official uiCA (https://uiCA.uops.info).',
     site: SITE,
-    docs: 'https://github.com/jtl06/wuica/blob/main/packages/wuica/README.md#api-contract',
+    docs: 'https://github.com/jtl06/wuica/blob/main/packages/wuica/API.md',
     endpoints: {
       'GET /api/archs[?fields=id,name]': 'microarchitectures',
       'POST /api/analyze/<arch>': 'analysis: {source | hex, syntax?, options?}',

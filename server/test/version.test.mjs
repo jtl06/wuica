@@ -14,7 +14,7 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
 test('version constants match the repository', () => {
   assert.ok(read('third_party/xed/README.md').includes(`\`${COMPONENTS.xed}\``));
-  assert.ok(read('packages/wuica/README.md').includes(`LLVM ${COMPONENTS.llvm}`));
+  assert.ok(read('packages/wuica/API.md').includes(`LLVM ${COMPONENTS.llvm}`));
   assert.ok(fs.existsSync(path.join(ROOT, `assembler/llvm-${COMPONENTS.llvm}-wasi.patch`)));
   const v = versionInfo();
   assert.equal(v.wuica, JSON.parse(read('packages/wuica/package.json')).version);

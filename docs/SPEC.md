@@ -171,7 +171,7 @@ The reference commit whose model and data are shipped is recorded once, in `ci/d
 
 ## 5. Interfaces
 
-Full contracts: `docs/WASM-API.md` (module), `packages/wuica/README.md` ("API contract", "Option ranges per interface").
+Full contracts: `docs/WASM-API.md` (module), `packages/wuica/API.md` (including "Option ranges per interface").
 
 | Interface | Input | Can | Cannot |
 |---|---|---|---|
@@ -183,7 +183,7 @@ Full contracts: `docs/WASM-API.md` (module), `packages/wuica/README.md` ("API co
 | REST (`server/`) | `GET /api/archs`, `POST /api/analyze/<arch>`, `POST /api/compare`, `POST /api/what-if/<arch>`, `POST /api/diff/<arch>`, `POST /api/assemble`, `GET /api/version`; `Accept: text/plain` gives the report, `text/markdown` Markdown | Compiler Explorer–style shapes; `insights` in the response | Source ≤ 64 KB, ≤ 10,000 instructions, `minIterations` ≤ 1000, `minCycles` ≤ 20,000 |
 | Remote MCP (`/mcp`, Streamable HTTP, stateless) | Same tool table as stdio (`mcpTools` in `packages/wuica/lib/mcp.js`) via the SDK | The same tools | As REST |
 
-Result codes everywhere: 0 ok, 1 bad request, 2 assembler error, 3 analysis failed (`packages/wuica/README.md`, "Failures").
+Result codes everywhere: 0 ok, 1 bad request, 2 assembler error, 3 analysis failed (`packages/wuica/API.md`, "Failures").
 
 ## 6. Accuracy (model, not port)
 
@@ -431,7 +431,7 @@ Check this table before suggesting an optimization. "Identical results" means ru
 - The package's `insights.js` and `whatif.js` re-implement the page's `bound.js` and `whatif.js`; agreement is tested on the
   built-in examples only (`tests-js/web_bound.mjs`, `web_whatif.mjs`).
 - The option ranges are the library's everywhere, except that the MCP tools and the servers cap `minIterations` and
-  `minCycles` and the page clamps the options to its own ranges (`packages/wuica/README.md`, "Option ranges per interface").
+  `minCycles` and the page clamps the options to its own ranges (`packages/wuica/API.md`, "Option ranges per interface").
 
 ### 10.5 Tests
 

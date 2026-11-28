@@ -1,4 +1,4 @@
-// Type declarations for the wuica package. The shapes are the API contract of README.md ("API contract").
+// Type declarations for the wuica package. The shapes are the API contract of API.md.
 
 /** Simulation options (as in uiCA); the defaults are shown. */
 export interface AnalysisOptions {
