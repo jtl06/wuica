@@ -51,7 +51,7 @@ three more CPU models. See [Relation to uiCA](#relation-to-uica).
 
 ## A worked example
 
-This loop fills an array with random numbers (xoshiro256++). The generator's state is a struct of four words:
+This loop fills an array with random numbers from xoshiro256++, whose state is a struct of four 64-bit words:
 
 ```c
 void fill(rng *r, uint64_t *out, long n) {
@@ -60,9 +60,9 @@ void fill(rng *r, uint64_t *out, long n) {
 }
 ```
 
-Nothing tells the compiler that `out` does not point into `r->s`, so gcc loads the four state words from memory and stores
-them back in every iteration: 25 instructions, 4 loads, 5 stores. With `uint64_t *restrict out` the state stays in
-registers. Cycles per number, before → after:
+Because `out` might point into `r->s`, gcc loads the four state words from memory and stores them back on every iteration
+(25 instructions, 4 loads, 5 stores). Changing the parameter to `uint64_t *restrict out` keeps the state in registers.
+Cycles per number, without → with `restrict`:
 
 | CPU | wuica | measured | llvm-mca 22 |
 |---|---|---|---|
@@ -70,14 +70,14 @@ registers. Cycles per number, before → after:
 | `ADL-P`, Core i7-12650H | 4.00 → 3.32 | 4.04 → 3.26 | 4.69 → 4.01 |
 | `ZEN3`, Ryzen 7 7735U | 4.00 → 3.49 | 4.54 → 4.01 | 5.01 → 2.76 |
 
-The change makes the loop 2.4 times faster on the Xeon, where each load has to wait for the store of the previous iteration,
-and 13 to 24 % faster on the other two. wuica predicts that from the assembly, before anything is measured; llvm-mca does
-not see the Xeon's slow loop.
+Without `restrict`, each load on the Xeon has to wait for the store of the previous iteration. The Core i7 and the Ryzen
+forward the stored value without that delay. So the change makes the loop 2.4 times faster on the Xeon and 13 to 24 % faster
+on the other two. wuica predicts this from the assembly alone; llvm-mca misses the slowdown on the Xeon.
 
-wuica is not exact here: it is 12 % low on the Ryzen, and for the Xeon's slow loop its report gives the number but names no
-bottleneck.
+wuica is not exact here: it is 12 to 13 % low on the Ryzen, and on the Xeon without `restrict` its report gives the cycle
+count but names no bottleneck.
 
-[Open the comparison on the page](https://wuica.jacen.li/#v=1&m=asm&s=att&a=ICX&as=ICX,ADL-P,ZEN3&c=LkwzOgoJbW92cQkoJXJkaSksICVyY3gKCW1vdnEJOCglcmRpKSwgJXJkeAoJYWRkcQkkOCwgJXI4Cgltb3ZxCTE2KCVyZGkpLCAlcjkKCW1vdnEJMjQoJXJkaSksICVyYXgKCW1vdnEJJXJkeCwgJXIxMAoJeG9ycQklcmN4LCAlcjkKCW1vdnEJJXJheCwgJXJzaQoJYWRkcQklcmN4LCAlcmF4Cgl4b3JxCSVyOSwgJXIxMAoJeG9ycQklcmR4LCAlcnNpCglyb2xxCSQyMywgJXJheAoJbW92cQklcjEwLCA4KCVyZGkpCglzYWxxCSQxNywgJXJkeAoJbW92cQklcmN4LCAlcjEwCglhZGRxCSVyY3gsICVyYXgKCXhvcnEJJXJzaSwgJXIxMAoJeG9ycQklcjksICVyZHgKCXJvcnEJJDE5LCAlcnNpCgltb3ZxCSVyMTAsICglcmRpKQoJbW92cQklcmR4LCAxNiglcmRpKQoJbW92cQklcnNpLCAyNCglcmRpKQoJbW92cQklcmF4LCAtOCglcjgpCgljbXBxCSVyOCwgJXIxMQoJam5lCS5MMwo&ab=1&bm=asm&bs=att&bc=Lkw4OgoJbGVhcQkoJXJheCwlcmRpKSwgJXJkeAoJbW92cQklcjgsICVyOQoJeG9ycQklcmRpLCAlcmN4Cgl4b3JxCSVyOCwgJXJheAoJcm9scQkkMjMsICVyZHgKCXNhbHEJJDE3LCAlcjkKCWFkZHEJJDgsICVyc2kKCXhvcnEJJXJjeCwgJXI4CglhZGRxCSVyZGksICVyZHgKCXhvcnEJJXI5LCAlcmN4Cgl4b3JxCSVyYXgsICVyZGkKCXJvcnEJJDE5LCAlcmF4Cgltb3ZxCSVyZHgsIC04KCVyc2kpCgljbXBxCSVyc2ksICVyMTEKCWpuZQkuTDgK), or see [the sources, the method and a second case](docs/worked-example/README.md).
+[Open this comparison in the browser](https://wuica.jacen.li/#v=1&m=asm&s=att&a=ICX&as=ICX,ADL-P,ZEN3&c=LkwzOgoJbW92cQkoJXJkaSksICVyY3gKCW1vdnEJOCglcmRpKSwgJXJkeAoJYWRkcQkkOCwgJXI4Cgltb3ZxCTE2KCVyZGkpLCAlcjkKCW1vdnEJMjQoJXJkaSksICVyYXgKCW1vdnEJJXJkeCwgJXIxMAoJeG9ycQklcmN4LCAlcjkKCW1vdnEJJXJheCwgJXJzaQoJYWRkcQklcmN4LCAlcmF4Cgl4b3JxCSVyOSwgJXIxMAoJeG9ycQklcmR4LCAlcnNpCglyb2xxCSQyMywgJXJheAoJbW92cQklcjEwLCA4KCVyZGkpCglzYWxxCSQxNywgJXJkeAoJbW92cQklcmN4LCAlcjEwCglhZGRxCSVyY3gsICVyYXgKCXhvcnEJJXJzaSwgJXIxMAoJeG9ycQklcjksICVyZHgKCXJvcnEJJDE5LCAlcnNpCgltb3ZxCSVyMTAsICglcmRpKQoJbW92cQklcmR4LCAxNiglcmRpKQoJbW92cQklcnNpLCAyNCglcmRpKQoJbW92cQklcmF4LCAtOCglcjgpCgljbXBxCSVyOCwgJXIxMQoJam5lCS5MMwo&ab=1&bm=asm&bs=att&bc=Lkw4OgoJbGVhcQkoJXJheCwlcmRpKSwgJXJkeAoJbW92cQklcjgsICVyOQoJeG9ycQklcmRpLCAlcmN4Cgl4b3JxCSVyOCwgJXJheAoJcm9scQkkMjMsICVyZHgKCXNhbHEJJDE3LCAlcjkKCWFkZHEJJDgsICVyc2kKCXhvcnEJJXJjeCwgJXI4CglhZGRxCSVyZGksICVyZHgKCXhvcnEJJXI5LCAlcmN4Cgl4b3JxCSVyYXgsICVyZGkKCXJvcnEJJDE5LCAlcmF4Cgltb3ZxCSVyZHgsIC04KCVyc2kpCgljbXBxCSVyc2ksICVyMTEKCWpuZQkuTDgK), or see [the source files, the method and a second case](docs/worked-example/README.md).
 
 ## CPU models and accuracy
 
