@@ -163,9 +163,6 @@ function wuicaAssembler(instance) {
 }
 ```
 
-(This snippet, with the instance from `WebAssembly.instantiate(bytes, {})`, was run in Node 22 against the module
-and printed the results shown in the comments.)
-
 Rules:
 
 * Call `_initialize()` exactly once after instantiating and before anything else. It runs the C++ static
@@ -278,8 +275,8 @@ Options: `--limit N`, `--corpus DIR`, `--wasm FILE`, `--min-corpus N`. Environme
 
 * **The corpus's `{load}`/`{store}` hints are rejected.** The corpus was written for GNU as, and LLVM 22's
   assembler does not know these hints (`error: unknown prefix`). So 2907 of the 3000 corpus files fail as they are,
-  natively and in the module alike. If the page is to accept such text, it has to strip `{load} `/`{store} ` at
-  the start of a line before calling the module. With the hints removed, all 2980 files that assemble match
+  natively and in the module alike. The page and the package strip `{load} `/`{store} ` at the start of a line
+  before calling the module. With the hints removed, all 2980 files that assemble match
   `llvm-mc` byte for byte, but they do **not** always match what GNU as produces *with* the hints. Compared with
   `as` (binutils on aethia), 94 files are identical, 2857 have the same length but different bytes, and
   **29 differ in length**, by a few bytes each. The hints pick the opcode direction of a register-to-register
@@ -288,13 +285,11 @@ Options: `--limit N`, `--corpus DIR`, `--wasm FILE`, `--min-corpus N`. Environme
   analysis depends on instruction lengths, these inputs give LLVM's lengths, not GNU as's.
 * 20 corpus files use mnemonics that only GNU as accepts (`pcmpestriq`, `vpcmpestrmq`, ...). They fail in the module
   as they do in `llvm-mc`.
-* Output is `.text` only. There is no symbol table, no relocations and no listing.
-* A trap (out of memory) leaves the instance unusable, so it has to be re-instantiated (see Rules).
+* There is no symbol table, no relocations and no listing.
 * The build script runs only on x86_64 Linux, because the pinned wasi-sdk is the x86_64 Linux build.
 * Two code paths of `build.sh` have not been run: `WASM_OPT=1`, and building `llvm-tblgen` when no 22.1.2 one is
   installed. The `wasm-opt` output was only measured for size; it was not run through `test.mjs`.
   A full rebuild in a fresh directory has not been compared for bit-identical output; only a relink was.
-* The extra export `wuica_fatal_message` is not in the original interface sketch.
 
 ## License
 
