@@ -208,7 +208,7 @@ It reproduces the tables of `docs/ACCURACY.md` exactly and fails when a share wi
 or the MAPE by more than 0.02 (`crates/wuica/tests/accuracy_expected.json`). It takes about 2 s. The remaining errors and
 the explanations that measurements ruled out are in `docs/ACCURACY.md`, "Known errors and what was ruled out".
 
-Method (`docs/ACCURACY.md`, "Method of round 10", "Method of round 6"): `perf stat` user-mode cycles, pinned to one core, best
+Method (`docs/ACCURACY-HISTORY.md`, "Method of round 10", "Method of round 6"): `perf stat` user-mode cycles, pinned to one core, best
 of three runs, nothing else on the machine; loops whose two fastest runs differ by more than 2 % are dropped. Random loops
 come from the fork's `microbench/fuzz/fuzz_gen.py`; real-code blocks from BHive, run as loop bodies. Development used other
 sets (`dev13`, earlier hold-outs, hand-written loops) and 21 "dogfood" loops from real use (ZEN3 within 10 %: 47.6 % → 57.1 %
@@ -242,8 +242,7 @@ site sent with `Accept-Encoding: br, gzip` (`curl -s -o /dev/null -w '%{size_dow
 | HTML + `uarch.json` + all JS, CSS, fonts | | | | 340,482 |
 
 - Of the analyzer's 1,876,261 bytes of function bodies, 1,021,456 are XED's C functions (`xed3_phash*` 707,472,
-  `xed3_capture*` 254,593), by the function names in the name section. The content of the 1.13 MB data section is not
-  attributed yet (an audit is in progress, section 9).
+  `xed3_capture*` 254,593), by the function names in the name section.
 - First visit in assembly mode, before the first result: analyzer + assembler + SKL table + shell (HTML, `uarch.json`, all JS,
   CSS, fonts) = 2,190,673 bytes served (866,526 + 941,580 + 42,085 + 340,482); the same files at brotli q11 are 1,639,934
   bytes (629,775 + 687,897 + 28,369 + 293,893), so the host's compression costs 551 kB (+34 %). The other 14 tables
@@ -365,25 +364,12 @@ Check this table before suggesting an optimization. "Identical results" means ru
 | More threads for `-arch all` | 12 or 15 threads slower than 4–8; on a small block 15 threads 12 % slower than none | `docs/PORTING.md`, "Speed" |
 | A V8 code cache for the module in Node | Not available: `v8.serialize` of a module is empty in Node 22 and 26; in Chrome `compileStreaming`'s cache sped up compilation, not the first analysis | `docs/PORTING.md`, "Speed" |
 | Early stop of the simulation once it is periodic | The owner reports it was measured and not kept; **no numbers are recorded in the repository** | — |
-| Model changes (each round): e.g. ZEN3 fused CMP/TEST+Jcc on branch ports, ALU uops dispatched to any free ALU, steering to the producer's port, a `vpermd` throughput limit; others per round | Each fixed its target and made held-out or hand-written sets worse; in round 10 eight port-assignment policies and the reviewer's hypotheses were ruled out by measurement | `docs/ACCURACY.md`, "Known errors and what was ruled out", "Tried and not kept" (rounds 7 and 8) |
+| Model changes (each round): e.g. ZEN3 fused CMP/TEST+Jcc on branch ports, ALU uops dispatched to any free ALU, steering to the producer's port, a `vpermd` throughput limit; others per round | Each fixed its target and made held-out or hand-written sets worse; in round 10 eight port-assignment policies and the reviewer's hypotheses were ruled out by measurement | `docs/ACCURACY.md`, "Known errors and what was ruled out"; `docs/ACCURACY-HISTORY.md`, "Tried and not kept" (rounds 7 and 8) |
 
-### 8.3 Measured, gain available, deliberately not taken
+## 9. Earlier state
 
-| Idea | Gain | Why not | Source |
-|---|---|---|---|
-| Strip the analyzer's `name` section (`llvm-objcopy --remove-section=name`) | 4.24 → 3.03 MB raw, 616 → 556 kB brotli (−60 kB), no change in compile time | Kept on purpose (`build-wasm.sh`: "the names are kept"); the profiling method of `docs/PORTING.md` reads function names from it | `build-wasm.sh` comment; `docs/PORTING.md`, "Speed" |
-
-## 9. In progress for 0.1.9 (not released; on branches, may change)
-
-- Several inputs per CLI run.
-- Thread count chosen by the workload, and one compiled module shared across worker threads.
-- The shipped JSON tables replaced by a build-time binary form (JSON stays the export format).
-- Object files as CLI input.
-- A redesigned trace view (a compact port strip, long waits for operands shortened to their length, A and B's differences
-  marked, the legend behind "?") and a fixed-frame layout: from 1200 × 700 the window does not scroll, only its sections
-  (editors, table rows, trace rows, a view's content).
-- A model round on the two known ZEN3 errors (section 10.1).
-- An audit of what the WebAssembly modules contain.
+What was in progress at 0.1.8, the questions then put to reviewers (the old sections 8.3, 9, 10.7 and 11) and the weaknesses
+fixed since are in [SPEC-HISTORY.md](SPEC-HISTORY.md).
 
 ## 10. Known weaknesses and open questions
 
@@ -412,7 +398,6 @@ Check this table before suggesting an optimization. "Identical results" means ru
   the fly at a lower ratio than the package's precompressed brotli q11: 867 kB vs 630 kB for the analyzer, 942 kB vs 688 kB
   for the assembler, 1.28 MB vs 0.68 MB for the tables (section 7.1).
 - XED's decoder accounts for 54 % of the analyzer's code bytes; the 1.13 MB data section is unattributed.
-- The JSON tables are parsed with `serde_json` on every load (2–15 ms each, 80 ms for all); the 0.1.9 binary form targets this.
 - 61 unbundled JavaScript modules (no build step); their load order and request count have not been measured.
 
 ### 10.3 Memory
@@ -420,8 +405,6 @@ Check this table before suggesting an optimization. "Identical results" means ru
 - The analyzer declares no memory maximum; memory never shrinks. Hosts work around it by capping and recycling (section 7.4).
 - Several CPUs at once multiply memory: `-arch all` on SHA-256 peaks at 670 MB with default threads vs 310 MB on one thread,
   for a 27 % shorter run (section 7.3). Each thread holds its own instance, tables and V8 state.
-- A `wbinvd` block (about 10^6 uops in the tables) is rejected, takes minutes, or runs out of memory depending on the CPU
-  (`docs/WASM-API.md`, "Failures and traps").
 
 ### 10.4 Interfaces
 
@@ -439,7 +422,6 @@ Check this table before suggesting an optimization. "Identical results" means ru
 - CI does not run the optional `more` fixture set, and does not rebuild the assembler or llvm-mca.
 - Browser suites contain wall-clock bounds (a trace draw within 16 ms locally, 48 ms on CI; long-task bound 200 ms;
   `tests-js/cdp.mjs` `FRAME_MS`, `TIMING_SLACK`); one failed once on a shared runner (commit `c5862d7`).
-- `engines.node` is `>=20` but CI runs Node 22 only.
 - No test of the deployed site in CI.
 - The package copies in `packages/wuica/lib/web/` are refreshed by hand (`cp`); a test catches drift.
 
@@ -461,38 +443,6 @@ Check this table before suggesting an optimization. "Identical results" means ru
   copy, which has no injected script (checked on the live 0.1.11 page: the cached `index.html` and a reload). The host chooses the script and its version: run the capture again before each release, and when the injected
   `src` changes. It is not part of `check.sh`, since it needs the live page and a script the host can change.
 - The CSP is a `<meta>` tag and, with `frame-ancestors 'none'` added, a response header (`web/_headers`).
-
-### 10.7 Where the docs and the code disagree (the code wins)
-
-| Doc | Says | Code / logs |
-|---|---|---|
-| `Cargo.toml` | Workspace version 0.1.0 (the crates are not published) | Package and server 0.1.8 |
-| `packages/wuica/README.md` | Describes 0.1.8 (`-example`, …) | At the time of writing the registry's latest is 0.1.7, so `npx wuica-cli` does not have 0.1.8's features yet |
-
-## 11. Feedback wanted
-
-Answer any of these; cite the file and function.
-
-1. **Exactness strategy.** Is three-boundary fixture testing on 18,791 cases, plus a fuzzer for panics, enough to trust
-   exactness on inputs outside the corpus? Which reference paths are likely unexercised (e.g. options combined, ZMM code
-   beyond the extra set, very long blocks)? Are there float-ordering or `round` risks in `crates/wuica-core/src/facile.rs`
-   or `sim/` that the fixtures would not catch?
-2. **Model design for the open ZEN3 errors** (section 10.1): what mechanism explains a prefix sum at 1.00 cycles with one
-   load, one store and a 1-cycle add chain, given that "dispatch to any free ALU" fixed it but cost 1.4–2.4 points on random
-   loops? What would explain `vpermd` at 1.33 cycles only when two or more are present?
-3. **Payload and cold start**: given section 7.1, what would cut the first-visit 2.2 MB without breaking rules 1, 4 and 5
-   (e.g. serving the precompressed brotli files, splitting XED's decoder tables, loading the assembler later, stripping the
-   name section)? Is the trade in section 8.3 right?
-4. **API design for agents**: are the CLI's `-json` shapes, the MCP tools' schemas and the compact form
-   (`packages/wuica/lib/{mcp,core,insights}.js`, `index.d.ts`) what an agent needs? What is missing (e.g. several inputs,
-   a diff of two blocks, source-line mapping)?
-5. **UI clarity**: is the default result readable without the docs, given rule 9? (Use the live page.)
-6. **Test strategy**: which gap in section 10.5 matters most? How would you test accuracy continuously without a hardware
-   lab in CI? Are the timing-bound browser checks worth their flakiness?
-
-**Not wanted**: rewrites that break a hard rule (a different decoder, "approximately equal" results, server-side analysis for
-the page, a runtime dependency in the package); suggestions already in section 8 without new evidence; style changes to the
-docs' wording.
 
 ## 12. How to review
 
