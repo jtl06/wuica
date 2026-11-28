@@ -15,7 +15,7 @@ This is **not the official uiCA** (that is [uiCA.uops.info](https://uiCA.uops.in
 [uiCA repository](https://github.com/andreas-abel/uiCA)). The instruction data (latencies, throughputs, port usage) comes
 from [uops.info](https://www.uops.info). Besides uiCA's Intel models (Sandy Bridge to Rocket Lake), wuica includes the
 experimental models of the fork [jtl06/uiCA](https://github.com/jtl06/uiCA): **AMD Zen 3 (ZEN3), Alder Lake P-core
-(ADL-P) and Ice Lake server (ICX)**. They are marked `prototype` and are less validated than the Intel models.
+(ADL-P) and Ice Lake server (ICX)**. They are marked `prototype` and are less validated than the models from uiCA.
 
 Everything runs offline. The two WebAssembly modules (the analyzer, and LLVM's x86 assembler for assembly input) and the
 instruction tables are shipped brotli-compressed. A table is loaded the first time its microarchitecture is used.
@@ -43,25 +43,26 @@ objdump -d dot.o | wuica                       # objdump output: the loop's real
 perf annotate --stdio -s dot | wuica           # a profile: the hottest loop, samples and source lines per instruction
 ```
 
-On an Arm Mac, give clang `--target=x86_64-linux-gnu` (wuica analyzes x86-64 code; Apple's clang knows no
-`-march=haswell` for arm64).
+On an Arm Mac, add `--target=x86_64-linux-gnu` to the clang command: wuica analyzes x86-64 code, and Apple's clang does
+not accept `-march=haswell` for arm64.
 
-- **Syntax.** Intel (noprefix) or AT&T is detected from the text (`%rdx`, `$8`, `(%rdi,%rcx,4)` are AT&T);
-  stderr says which (`analyzed: loop .LBB0_9 (lines 28-47, in dot), AT&T syntax (detected)`). `-att` or `-intel`
-  force one.
-- **Per iteration.** `tp` is cycles per iteration of the loop as the compiler wrote it. Compilers unroll and vectorize
-  (×8, ×16, ×32 elements per iteration), so compare per element: `-per N` prints `Per element: … cycles` (JSON
-  `perElement`; under 0.1 with 3 significant digits, `0.0625`); without it, stderr shows the loop's step when it can,
-  in the register's units: `rcx += 8 per iteration (index; ×4 bytes in [rdi+rcx*4])` is 8 elements of 4 bytes,
-  `r13 += 64 per iteration (bytes; the base of [r13+0x20])` is 64 bytes (16 floats: `-per 16`), `(register step)` a
-  counter no address uses.
-- **Which loop.** A whole function or file is analyzed at one loop, by default (`auto`):
+- **Syntax.** wuica detects Intel (noprefix) or AT&T syntax from the text (`%rdx`, `$8`, `(%rdi,%rcx,4)` are AT&T) and
+  names it on stderr (`analyzed: loop .LBB0_9 (lines 28-47, in dot), AT&T syntax (detected)`). `-att` or `-intel`
+  forces one.
+- **Per iteration.** `tp` is the cycle count per iteration of the loop as the compiler wrote it. Compilers unroll and
+  vectorize (×8, ×16, ×32 elements per iteration), so compare cycles per element. `-per N` prints `Per element: …
+  cycles` (JSON `perElement`; values under 0.1 get 3 significant digits, `0.0625`). Without `-per`, stderr shows the
+  loop's step when it can, in the register's units: `rcx += 8 per iteration (index; ×4 bytes in [rdi+rcx*4])` is 8
+  elements of 4 bytes, `r13 += 64 per iteration (bytes; the base of [r13+0x20])` is 64 bytes (16 floats: `-per 16`),
+  and `(register step)` marks a counter that no address uses.
+- **Which loop.** For a whole function or file, wuica analyzes one loop. By default (`auto`) it picks:
   1. only the innermost loops at the greatest depth (clang's `# =>This Inner Loop Header` notes count), and of those
-     only the ones in the function of the first of them: in a file with several functions the default stays in that
-     function (`-func` picks another); and not a remainder of another of them: a loop that continues the counter of an
-     earlier loop toward the same bound register after that loop stopped (the earlier loop's only exit is that compare,
-     and the counter comes from the register it compares), so it runs less than one of its steps: clang's scalar tail
-     of an unrolled loop, even when it has more instructions;
+     only the ones in the function of the first of them. In a file with several functions, the default therefore stays
+     in that function (`-func` picks another). A loop that is the remainder of another of these loops is left out: it
+     continues the counter of an earlier loop toward the same bound register after that loop stopped (the earlier
+     loop's only exit is that compare, and the counter comes from the register it compares), so it runs less than one
+     of its steps. clang's scalar tail of an unrolled loop is such a remainder, and is left out even when it has more
+     instructions;
   2. among those, the one whose vector instructions use the widest registers (zmm, then ymm, then xmm, then none), then
      the one with more vector instructions;
   3. then the one with more instructions, then the first in the text.
@@ -73,68 +74,73 @@ On an Arm Mac, give clang `--target=x86_64-linux-gnu` (wuica analyzes x86-64 cod
   `movq`, `pinsr*`, `pextr*`, `insertps`, `extractps`, `movlpd`, `movhpd`), zero idioms (`vxorps xmm0, xmm0, xmm0`),
   register-to-register copies (`movaps xmm1, xmm0`), and `andps`/`andnps`/`orps`/`xorps` (and `pd`) on xmm registers,
   which compilers use for `fabs`, negation and `copysign` of scalars. So a vectorized loop is picked over its scalar
-  remainder or peel loop wherever the compiler put them, and a scalar float loop does not beat a larger integer loop for
-  touching xmm. The rule can still miss: a vectorized loop with a fixed, small trip count (merging sub-histograms)
-  beats the scalar main loop (a small constant trip count is not used against it: in an 8x8 transform the 8-iteration
-  loops are the work), a cleanup loop the compiler vectorized and unrolled with a counter of its own can beat a
-  hand-written intrinsics loop or a loop unrolled by hand, gcc's vectorized peel loop (`-O3`) can
-  beat the main loop, and clang's conversion of a `uint64_t` to `double` without AVX-512 (`vunpcklps`, `vsubpd`, `vshufpd` around a
-  `vaddsd`) makes a scalar loop look like a 128-bit vector loop. Without clang's notes (objdump output) a loop with
-  several back edges can be found as overlapping loops, so `-S` and objdump of it may differ. Stderr says what was
-  picked and how many others there are;
-  `-loops` lists them (index, label, function, lines, instructions, depth, auto; for a loop three or more deep in
-  clang's notes the list keeps the place it had when only the notes' first two lines were read), `-loop N` (0-based) or
-  `-loop LABEL` picks one, `-func NAME` keeps one function's loops, `-loop whole` analyzes the whole text. A label
-  that names loops in several functions (`1:` … `jnz 1b`) is an error that lists them; `-func` or the index picks one.
-- **Branches inside the loop.** uiCA runs the analyzed code straight through: in a loop with an if/else (or two back
-  edges, as clang's remainder loops often have), both sides of the branch are simulated, one after the other, while a
+  remainder or peel loop wherever the compiler put them, and a scalar float loop does not beat a larger integer loop only
+  because it uses xmm registers. The rule can still pick the wrong loop. A vectorized loop with a fixed, small trip count
+  (merging sub-histograms) beats the scalar main loop; a small constant trip count is not held against a loop, because
+  in an 8x8 transform the 8-iteration loops are the work. A cleanup loop that the compiler vectorized and unrolled with
+  a counter of its own can beat a hand-written intrinsics loop or a loop unrolled by hand. gcc's vectorized peel loop
+  (`-O3`) can beat the main loop. clang's conversion of a `uint64_t` to `double` without AVX-512 (`vunpcklps`, `vsubpd`,
+  `vshufpd` around a `vaddsd`) makes a scalar loop look like a 128-bit vector loop. Without clang's notes (objdump
+  output), a loop with several back edges can be found as overlapping loops, so the loops found in the `-S` and objdump
+  outputs of the same code may differ. Stderr says which loop was picked and how many others there are. `-loops` lists
+  them (index, label, function, lines, instructions, depth, auto); a loop three or more deep in clang's notes keeps the
+  place in that list it had when only the notes' first two lines were read. `-loop N` (0-based) or `-loop LABEL` picks
+  one, `-func NAME` keeps one function's loops, and `-loop whole` analyzes the whole text. A label that names loops in
+  several functions (`1:` … `jnz 1b`) is an error that lists them; `-func` or the index picks one.
+- **Branches inside the loop.** uiCA runs the analyzed code straight through. In a loop with an if/else (or two back
+  edges, as clang's remainder loops often have), it simulates both sides of the branch, one after the other, while a
   real iteration takes one. A `Not modelled: both paths: both sides of the branch at line N …` line (table note
-  `both paths`; JSON caveat `paths`) says so. To analyze one side, put `# wuica-begin` and `# wuica-end` around it.
+  `both paths`; JSON caveat `paths`) reports this. To analyze one side, put `# wuica-begin` and `# wuica-end` around it.
 - **Inputs**: a file (assembly, objdump output, or an object file), `-` or nothing for stdin, a hex argument, `-hex` or
   `-raw FILE` (bare machine code).
-- **Object files.** An ELF or Mach-O x86-64 object, executable or shared object is read directly: its code as
-  `llvm-objdump -d` prints it (decoded by the analyzer), so `wuica dot.o` and `objdump -d dot.o | wuica` pick the same
-  loop and give the same numbers. `-func NAME` takes the symbol, without Mach-O's `_`, or a unique part of it, and
-  analyzes that function alone (its loop, or its body if it has none); `-funcs` lists the functions; `-loops` gives the
-  loops' addresses; `-ffunction-sections` objects work. A name the file gives several functions (static functions of
-  different source files, gcc's `.cold` parts: any static executable has them) is listed as `NAME.0xADDR`, with its
-  address; `-func NAME` then lists them, and `-func NAME.0xADDR` picks one. Give a large executable a `-func`: with it
-  a 2.6 MB static executable takes 0.2 s, without it the whole file is read, which takes minutes and can fail. An
-  arm64 object (what a Mac compiles by default) says so and how to compile for x86-64 (`clang -arch x86_64 -c`, or
-  `--target=x86_64-linux-gnu`); COFF is not supported yet (`llvm-objdump -d f.obj | wuica`).
+- **Object files.** wuica reads an ELF or Mach-O x86-64 object, executable or shared object directly. The analyzer
+  decodes its code into the text `llvm-objdump -d` prints, so `wuica dot.o` and `objdump -d dot.o | wuica` pick the
+  same loop and give the same numbers. `-func NAME` takes the symbol (without Mach-O's `_`) or a unique part of it, and
+  analyzes that function alone: its loop, or its body if it has none. `-funcs` lists the functions, `-loops` gives the
+  loops' addresses, and objects built with `-ffunction-sections` work. When the file gives one name to several
+  functions (static functions of different source files, gcc's `.cold` parts: any static executable has them), each
+  is listed with its address as `NAME.0xADDR`; `-func NAME` then lists them, and `-func NAME.0xADDR` picks one. Give a
+  large executable a `-func`: with it, a 2.6 MB static executable takes 0.2 s; without it, the whole file is read, which
+  takes minutes and can fail. For an arm64 object (what a Mac compiles by default), wuica says so and how to compile for
+  x86-64 (`clang -arch x86_64 -c`, or `--target=x86_64-linux-gnu`). COFF is not supported yet; use
+  `llvm-objdump -d f.obj | wuica`.
 - **Several inputs** (`wuica a.s b.s c.o`, a glob, or `-files LIST` with one name per line, `-files -` from stdin):
-  one process for all of them, the analyses spread over the threads. One CPU: a row per file (file, loop, TP,
-  bottlenecks, notes); several: a row per file and CPU (grouped by file, a CPU column: any number of CPUs fits in 80
-  columns). `-TPonly`: `file<TAB>[CPU<TAB>]cycles` lines; `-report` adds uiCA's report of each file, `-whatif` the
-  what-if tables, after a `==> FILE <==` line. A file that fails does not stop the others: its row says why, and the
-  exit status is the largest of the files' statuses. One input prints exactly what it printed before.
-- **Tables.** `-arch A,B,C` prints one row per CPU; `-` means unknown (uiCA names no single bottleneck; the notes
-  give the nearest limit), `5.00*` that the CPU could not decode some instructions (they are left out), and the notes
-  column the caveats (what the model does not simulate, such as store forwarding through an indexed address).
-- **After the report** come what uiCA's text leaves out: the nearest limit when the bottleneck is unknown, the next
-  limit, and `Not modelled:` lines.
+  one process analyzes all of them, spread over the threads. With one CPU, the table has a row per file (file, loop,
+  TP, bottlenecks, notes). With several, it has a row per file and CPU, grouped by file, with a CPU column, so any
+  number of CPUs fits in 80 columns. `-TPonly` prints `file<TAB>[CPU<TAB>]cycles` lines. `-report` adds uiCA's report
+  of each file and `-whatif` the what-if tables, each after a `==> FILE <==` line. A file that fails does not stop the
+  others: its row says why, and the exit status is the largest of the files' statuses. One input prints exactly what
+  it printed before.
+- **Tables.** `-arch A,B,C` prints one row per CPU. `-` means unknown (uiCA names no single bottleneck; the notes give
+  the nearest limit), and `5.00*` means that the CPU could not decode some instructions, which are left out. The notes
+  column gives the caveats (what the model does not simulate, such as store forwarding through an indexed address).
+- **After the report**, wuica prints what uiCA's text leaves out: the nearest limit when the bottleneck is unknown, the
+  next limit, and `Not modelled:` lines.
 - **Exit status**: 0 ok, 1 bad request or usage, 2 assembler error, 3 the analysis failed; with several CPUs, the
   largest of their codes, which is also the JSON's `code`. A reader that closes the pipe (`| head`) does not change it.
 - **What if** (`-whatif`): a table per CPU, in cycles per original iteration, or per element with `-per N`. With
-  `-TPonly`, one `variant cycles` line per variant after the throughput (`acc2 16.00`; with `-per`, `acc2 16.00
-  2.00`; with several CPUs, each line starts with the CPU). Estimates (`>=` in the table) are printed as plain numbers.
-- **Markdown** (`-md`): GitHub-flavoured Markdown on stdout instead of the text report, for an issue, a review or a
-  chat: one CPU gives the headline (cycles per iteration, or per element with `-per N`; the CPU; the bottleneck or
-  `unknown · nearest X`), the limits, the next limit, the `not modelled` caveats, the critical chain, the uop table
-  (branch targets as the labels in the text) and the analyzed code; `-arch A,B,C` the CPU table; several files the
-  files × CPUs table (`-report`: each file's report); `-whatif` and `-loops` their tables. Columns are padded to read
-  in a monospace font. Not with `-json` or `-TPonly`; diagnostics and the exit status are as without it.
+  `-TPonly`, it prints one `variant cycles` line per variant after the throughput (`acc2 16.00`; with `-per`, `acc2
+  16.00 2.00`; with several CPUs, each line starts with the CPU). In these lines, estimates (`>=` in the table) are
+  plain numbers.
+- **Markdown** (`-md`): GitHub-flavored Markdown on stdout instead of the text report, for an issue, a review or a
+  chat. With one CPU it gives the headline (cycles per iteration, or per element with `-per N`; the CPU; the bottleneck
+  or `unknown · nearest X`), the limits, the next limit, the `not modelled` caveats, the critical chain, the uop table
+  (branch targets as the labels in the text) and the analyzed code. `-arch A,B,C` gives the CPU table, several files the
+  files × CPUs table (with `-report`, each file's report too), and `-whatif` and `-loops` their tables. Columns are
+  padded to line up in a monospace font. `-md` does not work with `-json` or `-TPonly`; diagnostics and the exit status
+  are the same as without it.
 - **JSON** (`-json`): one CPU gives the analyze response (`tp`, `bottlenecks`, `limits`, `rows`, `criticalPath`,
   `insights`, `loop`, `syntax`, and `perElement` / `whatIf` when asked); several give `{code, hex, loop, stderr,
-  results: [{arch, tp, bottlenecks, limits, decodeErrors, perElement?, caveats?}]}`. The shapes are the same for one
-  CPU and several: `whatIf` is keyed by CPU (`{SKL: {tp, variants: [{id, tp, …, perElement?}], perElement?}}`), and a
-  caveat is `{id, text, title, instructions}` (in `insights.caveats` with one CPU, `results[].caveats` with several).
-  Types: `CliAnalyzeJson`, `CliCompareJson`, `CliWhatIf` in index.d.ts. Several inputs give `{code, files: [{file,
-  ...}]}`: each entry is what a single run prints for that file, with its name (`CliBatchJson`). `--version -json` gives `{wuica, uiCA:
-  {repository, commit, branch}, node}`: the uiCA commit whose data and model the package has.
+  results: [{arch, tp, bottlenecks, limits, decodeErrors, perElement?, caveats?}]}`. Both use the same shapes for
+  `whatIf`, which is keyed by CPU (`{SKL: {tp, variants: [{id, tp, …, perElement?}], perElement?}}`), and for a caveat,
+  `{id, text, title, instructions}` (in `insights.caveats` with one CPU, `results[].caveats` with several). The types
+  are `CliAnalyzeJson`, `CliCompareJson` and `CliWhatIf` in index.d.ts. Several inputs give `{code, files: [{file,
+  ...}]}`, where each entry is what a single run prints for that file, plus its name (`CliBatchJson`). `--version
+  -json` gives `{wuica, uiCA: {repository, commit, branch}, node}`, where `uiCA` names the uiCA commit whose data and
+  model the package has.
 - **Syntax mistakes.** When the assembler fails, a `hint:` line names a line with the other syntax's operands (mixed
   AT&T and Intel lines, a `.intel_syntax` directive over AT&T code, `mov rdx, $8` in Intel code) and the flag to try.
-- No colours and no links, on a terminal or not (`-md` is plain text too).
+- The output has no colors and no links, on a terminal or not (`-md` is plain text too).
 
 ## What the numbers mean
 
@@ -174,20 +180,22 @@ markdown.report(r, { insights: w.insights(r) });          // Markdown, as wuica 
 ```
 
 Methods never throw for bad input: they resolve to a failure `{code, error, stderr}` (see the contract below).
-`createWuica({ dataDir })` reads the tables from another directory (`uarch.json` and the binary `arch/<NAME>.bin`,
-plain or `.br`; a uiCA export's `arch/<NAME>.json` is converted by `tools/encode-tables.sh IN_DIR OUT_DIR` of the
-repository: the analyzer that ships reads no JSON tables). `w.disassemble(bytes)` turns an object file into the text `analyze` reads (`{func}`: of that function alone). TypeScript declarations are included (`index.d.ts`).
+`createWuica({ dataDir })` reads the tables from another directory: `uarch.json` and the binary `arch/<NAME>.bin`,
+plain or `.br`. The analyzer that ships reads no JSON tables; the repository's `tools/encode-tables.sh IN_DIR OUT_DIR`
+converts a uiCA export's `arch/<NAME>.json`. `w.disassemble(bytes)` turns an object file into the text `analyze` reads
+(with `{func}`, the text of that function alone). TypeScript declarations are included (`index.d.ts`).
 
-`compare`, `analyzeMany(arch, requests)` and `compareMany(requests, {archs})` analyze on worker threads when the work
-is worth it: by default the number of threads comes from the work (the tables to load, the analyses and their
-instructions): none when it would take less than about 0.3 s on one thread (a thread's start, its table and its first,
-not yet optimized analysis cost more than they save; `-arch all` on a small block stays on one thread), else one per
-0.15 s of work, from 2 to 8, at most the cores but one. `createWuica({ threads: N })` or the environment variable
-`WUICA_THREADS=N` uses up to N threads (one per job at most); 1 runs everything on the calling thread. The response is
-the same either way. The threads share one compiled module and take jobs from one queue; each loads the tables of the
-jobs it takes and keeps them for the next call; idle threads do not keep the process alive and stop after 30 s
-(`w.close()` stops them at once). A thread's WebAssembly memory has a lower limit (a quarter
-of the RAM shared by the threads, 256 MB to 1 GB each); an analysis that exceeds it is done again on the calling thread.
+`compare`, `analyzeMany(arch, requests)` and `compareMany(requests, {archs})` use worker threads when the work is large
+enough. By default the number of threads comes from the amount of work (the tables to load, the analyses and their
+instructions). Work that would take less than about 0.3 s on one thread gets no threads, because a thread's start, its
+table and its first, not yet optimized analysis cost more than they save (`-arch all` on a small block stays on one
+thread). Larger work gets one thread per 0.15 s, from 2 to 8, and at most the number of cores minus one.
+`createWuica({ threads: N })` or the environment variable `WUICA_THREADS=N` uses up to N threads (at most one per job);
+1 runs everything on the calling thread. The response is the same either way. The threads share one compiled module
+and take jobs from one queue. Each thread loads the tables of the jobs it takes and keeps them for the next call. Idle
+threads do not keep the process alive and stop after 30 s (`w.close()` stops them at once). A thread's WebAssembly
+memory has a lower limit than the calling thread's: a quarter of the RAM, shared by the threads, from 256 MB to 1 GB
+each. An analysis that exceeds it is run again on the calling thread.
 
 Inputs on which the original uiCA fails can make the WebAssembly module trap. In that case the call resolves to
 `{code: 3, error, trapped: true}`. The module is then re-instantiated and its tables are reloaded, so the next call works.
@@ -223,23 +231,24 @@ wuica --version
 ```
 
 The simulation options are uiCA's: `-alignmentOffset N`, `-initPolicy diff|same|stack`, `-simpleFrontEnd`,
-`-noMicroFusion`, `-noMacroFusion`, `-minIterations N`, `-minCycles N`, and `-trace` (with `-json`). Every flag also
-takes `--flag` and `--flag=value`, in any case (`--tponly`, `--arch=zen3`). With several microarchitectures or files,
-the threads are chosen by the amount of work (see Library); `-threads N` uses at most N threads (`-threads 1`: one
-after another).
-Diagnostics go to stderr. The exit status is the result code: 0 ok, 1 bad request or usage, 2 assembler error, 3 analysis failed.
-`wuica -h` lists everything.
+`-noMicroFusion`, `-noMacroFusion`, `-minIterations N`, `-minCycles N`, and `-trace` (with `-json`). Every flag can
+also be written `--flag` or `--flag=value`, in any letter case (`--tponly`, `--arch=zen3`). With several
+microarchitectures or files, the number of threads depends on the amount of work (see Library); `-threads N` uses at
+most N threads (`-threads 1` runs the analyses one after another).
+Diagnostics go to stderr. The exit status is the result code (see Exit status above).
+`wuica -h` lists all options.
 
 ## MCP server
 
-`wuica mcp` (or the `wuica-mcp` binary) is a Model Context Protocol server on stdio, written without an MCP library:
-newline-delimited JSON-RPC 2.0 with the `initialize` handshake of the protocol revisions 2025-11-25, 2025-06-18,
-2025-03-26 and 2024-11-05 (the client's revision if it is one of these, else 2025-11-25; batches only under 2025-03-26),
-`ping`, `tools/list` and `tools/call`. Arguments are checked against the tools' JSON Schemas; a mismatch is a tool error
-(`isError`) that says what is wrong, an unknown tool a JSON-RPC error. The server ends with its stdin, and writes only
-protocol messages to stdout. `wuica mcp --help` prints the usage. The tool table itself (names, descriptions, JSON
-Schemas, handlers) is exported as `mcpTools(w)` from `wuica-cli/mcp`, with `callTool` and `validate`; the remote server
-(`server/`) serves the same table over HTTP. Its tools:
+`wuica mcp` (or the `wuica-mcp` binary) is a Model Context Protocol server on stdio, written without an MCP library.
+It speaks newline-delimited JSON-RPC 2.0 and handles `initialize`, `ping`, `tools/list` and `tools/call`. The
+`initialize` handshake supports the protocol revisions 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05: the server
+uses the client's revision if it is one of these, else 2025-11-25, and accepts batches only under 2025-03-26.
+Arguments are checked against the tools' JSON Schemas; a mismatch gives a tool error (`isError`) that says what is
+wrong, and an unknown tool gives a JSON-RPC error. The server exits when its stdin closes, and writes only protocol
+messages to stdout. `wuica mcp --help` prints the usage. The tool table itself (names, descriptions, JSON Schemas,
+handlers) is exported as `mcpTools(w)` from `wuica-cli/mcp`, with `callTool` and `validate`; the remote server
+(`server/`) serves the same table over HTTP. The tools:
 
 | Tool | What it does |
 |---|---|
@@ -399,74 +408,74 @@ Request:
 
 - Give exactly one of `source` (assembly; the library also accepts `asm`) and `hex` (machine code, `"4801d8..."`;
   spaces, commas and `0x` are allowed).
-- `source` is read as the web page reads pasted assembly. `loop` (optional) says what of it is analyzed:
+- `source` is read as the web page reads pasted assembly. `loop` (optional) selects the part of it that is analyzed:
   - `"auto"` (the default): a whole function (`gcc -S`, `clang -S`, `objdump -d` lines with addresses, with or
-    without the bytes, Intel or AT&T) is analyzed at its default loop ("Which loop" above: among the deepest innermost
-    loops, in the function of the first of them, the widest vector loop, then the one with the most vector instructions,
-    then the largest, then the first). A span that holds a `ret` or another function's label is not a loop (a tail
-    call jumping back). A compiler's function without a loop (it has a function label, directives or a
-    prologue/epilogue, and ends in `ret`) is analyzed at its body, without prologue, epilogue and `ret`; a bare snippet
-    such as `add rax, 1` / `ret` is analyzed as typed. A text that is one loop already, or has region markers, is
-    analyzed as it is.
-  - `"whole"`: the whole text, never a pick; a number: that loop (0-based, in the order `listLoops` and `-loops` list
-    them: the deepest innermost first, then in code order; the default need not be 0); any
-    other string: the loop with that label (`".LBB0_12"`, `"0x10"`). `func` (optional) keeps one function's loops.
-- `syntax` is `"auto"` (the default: detected from the text), `"intel"` or `"att"`; the response's `syntax` says
-  which was used.
+    without the bytes, Intel or AT&T) is analyzed at its default loop (see "Which loop" above). A span that holds a
+    `ret` or another function's label is not a loop (a tail call jumping back). A compiler's function
+    without a loop (it has a function label, directives or a prologue/epilogue, and ends in `ret`) is analyzed at its
+    body, without prologue, epilogue and `ret`; a bare snippet such as `add rax, 1` / `ret` is analyzed as typed. A
+    text that is one loop already, or has region markers, is analyzed as it is.
+  - `"whole"`: the whole text, with no loop picked. A number picks that loop (0-based, in the order `listLoops` and
+    `-loops` list them: the deepest innermost first, then in code order; the default need not be 0). Any other string
+    picks the loop with that label (`".LBB0_12"`, `"0x10"`). `func` (optional) keeps one function's loops.
+- `syntax` is `"auto"` (the default: detected from the text), `"intel"` (noprefix) or `"att"`; the response's
+  `syntax` says which was used. The source may also switch syntax itself with `.intel_syntax noprefix` /
+  `.att_syntax`.
 
-  objdump text is recognised by a header line (`0000… <f>:`), a byte column or `<sym+off>` branch targets; without
-  those, only when every line is address-prefixed, there are at least three, and the steps between the addresses fit
-  the instructions (so `a: add rax, 1` / `b: dec rcx` / `jnz a` stays assembly). In objdump text a branch target is
-  always an address (`jne 1b <psum+0x1b>`); GNU numeric labels (`1:` … `jnz 1b`) keep working in assembly. Code in
-  `.text.*` sections (gcc's `main` in `.text.startup`, `-ffunction-sections`) is analyzed as `.text`. CRLF and lone CR
-  line ends are line feeds (REST, MCP, the library, the CLI).
+  objdump text is recognized by a header line (`0000… <f>:`), a byte column or `<sym+off>` branch targets. Without
+  those, text is read as objdump output only when every line has an address prefix, there are at least three lines,
+  and the steps between the addresses fit the instructions (so `a: add rax, 1` / `b: dec rcx` / `jnz a` stays
+  assembly). In objdump text a branch target is always an address (`jne 1b <psum+0x1b>`); GNU numeric labels (`1:` …
+  `jnz 1b`) keep working in assembly. Code in `.text.*` sections (gcc's `main` in `.text.startup`,
+  `-ffunction-sections`) is analyzed as `.text`. CRLF and lone CR line ends are read as line feeds (REST, MCP, the
+  library, the CLI).
 
-  Conditional branches to a symbol the text does not define (a loop's exits, `jae .Lout`, `.L` or not) are taken as
-  not taken: the symbol is defined right after the analyzed code, so they assemble as short jumps; a note says so in
-  `stderr`. An undefined target of a `jmp` gives a warning (it is encoded as a 32-bit jump to an external symbol).
+  Conditional branches to a symbol the text does not define (a loop's exits, `jae .Lout`, `.L` or not) are treated as
+  not taken: the symbol is defined right after the analyzed code, so they assemble as short jumps, and a note in
+  `stderr` says so. An undefined target of a `jmp` gives a warning (it is encoded as a 32-bit jump to an external
+  symbol).
   objdump lines with their bytes are assembled as those bytes. With addresses, the alignment offset is the analyzed
   code's address modulo 64, unless `options.alignmentOffset` is given. When something other than the whole text was
   analyzed, the response has `loop`: `{index, count, name, line, endLine, lines?, address?, alignmentOffset?}` (`name`:
   `"loop .L3"`, `"loop 0x10"`, `"body"`; `lines`: the source line of each instruction).
   Region markers (`# LLVM-MCA-BEGIN` … `# LLVM-MCA-END`, `# wuica-begin` … `# wuica-end`, IACA's byte markers) select
   the first marked region. A `;` that starts a line is a comment. After a statement, LLVM reads `;` as a separator. If
-  what follows assembles, it is assembled, with a note in `stderr` naming it (`';' separates statements: 'call helper'
+  what follows assembles, it is assembled, and a note in `stderr` names it (`';' separates statements: 'call helper'
   was assembled (use # for a comment)`), unless the `;` follows the statement without a space, as GNU as code chains
-  statements (`dec rcx; jnz 1b`). If it does not assemble, for any reason, it is a comment: nothing after a `;` makes a
-  valid line an error; a note says so when it starts with a mnemonic (`add the next element`), and nothing when it does
-  not (`sum += a[i]`). A line the assembler rejects inside the analyzed code is an error with its line number (objdump
-  lines outside the picked loop that the assembler rejects, such as padding, are left out).
-- `syntax` is `auto` (the default), `intel` (noprefix) or `att`. The source may also switch syntax itself with
-  `.intel_syntax noprefix` / `.att_syntax`.
+  statements (`dec rcx; jnz 1b`). If what follows does not assemble, for any reason, it is a comment, so nothing after
+  a `;` makes a valid line an error. A note says so when the comment starts with a mnemonic (`add the next element`),
+  and there is none when it does not (`sum += a[i]`). A line the assembler rejects inside the analyzed code is an error
+  with its line number (objdump lines outside the picked loop that the assembler rejects, such as padding, are left
+  out).
 - Every field of `options` is optional; the defaults are shown. Unknown options and unknown request fields are an
   error (code 1), not ignored. The library also accepts the options at the top level of the request
   (`{hex, arch, minIterations}`); `options` takes precedence. The MCP tools accept only the nested form.
 - The source must be 64-bit code: `.code16`, `.code16gcc` and `.code32` are an error (code 1), since the analyzer
   only models 64-bit mode. `assemble` alone accepts them.
-- `loop` exists in the library, REST (`/api/analyze`, `/api/compare`, `/api/what-if`, each block of `/api/diff`), the MCP
-  tools `analyze`, `what_if`, `compare_archs` and `diff_blocks` (per block), and the package's CLI (`wuica -loop
-  auto|whole|N`, also for `wuica diff`). The reference/test binary (`crates/wuica-cli`) reads
-  machine code only (hex or `-raw`), so it has no `-loop`. When the text has more than one loop, `otherLoops` lists the others (as `listLoops`
-  and `-loops` give them, without `auto`), in the analyze, summary and compare results.
+- `loop` is accepted by the library, REST (`/api/analyze`, `/api/compare`, `/api/what-if`, each block of `/api/diff`),
+  the MCP tools `analyze`, `what_if`, `compare_archs` and `diff_blocks` (per block), and the package's CLI (`wuica
+  -loop auto|whole|N`, also for `wuica diff`). The reference/test binary (`crates/wuica-cli`) reads machine code only
+  (hex or `-raw`), so it has no `-loop`. When the text has more than one loop, `otherLoops` lists the others (as
+  `listLoops` and `-loops` give them, without `auto`) in the analyze, summary and compare results.
 - Assembly input: each instruction row (and `instructions[]`, `insights.chain[]`, `insights.hot.instructions[]`) has
-  `line`, its 1-based line in the text, and `loc` ("file.c:12") when the text has `.file`/`.loc` directives: what the
-  loop finder and the assembler record, not a match of the text. Machine code has neither.
-- Profiles are read as they are: `objdump -dS` (or `-S`) output gives each instruction `source`, the interleaved source
-  line in force; `perf annotate --stdio` output gives `samples` (its percent of all the samples of the output: each
-  symbol's percentages weighted by its sample count; if a header has no count, each symbol's own percentages, said in a
-  note) and `source`, and when the text has several loops, the one whose
-  own instructions (not those of a loop nested in it) have the most samples is analyzed (`loop` still picks another).
-  `perf annotate --stdio2` output has no addresses: it is refused with a note to use `--stdio`. A text with `.rept`,
-  `.irp`, `.irpc`, `.macro` or `.if` has no `line` (its lines are not its instructions one to one) and is analyzed whole,
-  with a note; nor has code with a data directive (`.byte`, `.fill`, ...) among the analyzed instructions. A prefix alone
-  on its line (`lock`, then `add [rdi], eax`) is part of the next instruction.
+  `line`, its 1-based line in the text, and `loc` ("file.c:12") when the text has `.file`/`.loc` directives. Both come
+  from what the loop finder and the assembler record, not from matching the text. Machine code has neither.
+- Profiles are read without conversion. `objdump -dS` (or `-S`) output gives each instruction `source`, the
+  interleaved source line in force. `perf annotate --stdio` output gives `samples` and `source`. `samples` is the
+  instruction's percent of all the samples of the output: each symbol's percentages weighted by its sample count, or,
+  if a header has no count, each symbol's own percentages, which a note says. When perf output has several loops, the
+  one whose own instructions (not those of a loop nested in it) have the most samples is analyzed (`loop` can still
+  pick another). `perf annotate --stdio2` output has no addresses: it is refused with a note to use `--stdio`. A text
+  with `.rept`, `.irp`, `.irpc`, `.macro` or `.if` has no `line` (its lines are not its instructions one to one) and
+  is analyzed whole, with a note. Code with a data directive (`.byte`, `.fill`, ...) among the analyzed instructions
+  has no `line` either. A prefix alone on its line (`lock`, then `add [rdi], eax`) is part of the next instruction.
 
 ### Option ranges per interface
 
 The numeric options have the same range in the library, the CLI, the MCP tools and the REST API: any integer up to
-2^53 - 1 in magnitude (`alignmentOffset`: negative values and values above 63 are read modulo 64; the reference
-binary `crates/wuica-cli` refuses beyond ±2^62). Another value is refused (code 1, REST 400; the MCP tools' schema rejects
-it).
+2^53 - 1 in magnitude. Any other value is refused (code 1, REST 400; the MCP tools' schema rejects it).
+Negative values and values above 63 of `alignmentOffset` are read modulo 64; the reference binary `crates/wuica-cli`
+refuses an `alignmentOffset` beyond ±2^62.
 Everywhere, a block of more than 250,000 uops per iteration is refused (a work budget, code 3), and very large values run
 out of memory (code 3). The differences:
 
@@ -477,8 +486,8 @@ out of memory (code 3). The differences:
 | API server, its rate limit | per client, a token bucket (`rateBurst`, `ratePerMinute`); a request costs in proportion to the analyses it can start, as many as a compare of every microarchitecture costing `compareCost` (3): analyze 1 token, what-if `ceil(3 × analyses / 15)` with the base and one analysis per variant (`nochain` none, `align` 64): 3 for the default variants, 13 for `align` alone, 15 for both; diff 1; a compare `compareCost` whatever it lists, and at least one token per job it can run at once (a compare split over idle workers); at least 1 per request, at most the burst; the same in REST and `/mcp`. What-if and diff run all their analyses within one job's time limit and start none once the client has gone: a what-if returns the variants that finished and marks the others `not run: deadline` (`notRun` on the result); a diff fails and says which block was analyzed |
 | web page | clamps `alignmentOffset` to 0–63, `minIterations` to 1–10000, `minCycles` to 1–100000; at most 1 MiB of machine code |
 
-Microarchitecture ids are accepted the same way everywhere: exactly, or case-insensitively with `-` optional (`adlp`,
-`adl-p` → `ADL-P`). Hex may contain spaces, commas and `0x` / `\x` prefixes everywhere.
+Microarchitecture ids are matched the same way everywhere (see Microarchitectures above; `adlp`, `adl-p` → `ADL-P`).
+Hex may contain spaces, commas and `0x` / `\x` prefixes everywhere.
 
 Response (JSON), on success:
 
@@ -502,45 +511,46 @@ Response (JSON), on success:
 The fields from `arch` to `trace` are the analysis response of the WebAssembly module (`docs/WASM-API.md` in the wuica
 repository: `rows[].values[i]` belongs to `columns[i]`, and `notes` is `M` macro-fused, `J` JCC erratum or `X`
 unsupported). `hex` is present when `source` was given and holds the assembled bytes. `stderr` holds the assembler's
-warnings, the notes on exits taken as not taken, and the warning "N position(s) could not be decoded". `unsupported` is
-present only when the CPU cannot run the code: positions its decoder skipped (AVX-512 on SKL), or an instruction of an
-extension it lacks that its decoder accepts (AVX-512 on ZEN3, by the instruction's encoding). It holds the reason:
-`"needs AVX-512"` when the extension is known (from the instruction, or from the analyzed assembly text without its
-comments), else `"12 undecodable"`; `tp` is then the reference's number, which leaves that code out, and the text, the
-Markdown and the page do not present it as a result. `noData` is present only when the CPU can run the code but some of
-its instructions are not in its tables (the note X: x87 tbyte loads, syscall, CLWB on ICX): their count; the result
-stands, without their cost. compare's rows have both. `insights` (REST only; the library's `analyze()` result
-does not have it, `w.insights(r)` computes it) is the diagnosis described under the compact form below, with `portSet`
-and `issueSlots` when `options.details` is true.
+warnings, the notes on exits treated as not taken, and the warning "N position(s) could not be decoded". `unsupported`
+is present only when the CPU cannot run the code: its decoder skipped some positions (AVX-512 on SKL), or its decoder
+accepts an instruction of an extension the CPU lacks (AVX-512 on ZEN3, detected by the instruction's encoding). It
+holds the reason: `"needs AVX-512"` when the extension is known (from the instruction, or from the analyzed assembly
+text without its comments), else `"12 undecodable"`. `tp` is then the reference's number, which leaves that code out,
+and the text report, the Markdown and the web page do not present it as a result. `noData` is present only when the
+CPU can run the code but some of the instructions are not in its tables (the note X: x87 tbyte loads, syscall, CLWB on
+ICX). It holds their count; the result stands, without their cost. compare's rows can have both fields. `insights` is
+in REST responses only (the library's `analyze()` result does not have it; `w.insights(r)` computes it). It is the
+diagnosis described under the compact form below, with `portSet` and `issueSlots` when `options.details` is true.
 
 **Plain text** (CE's `Accept: text/plain`): the response is `text` (uiCA's report), or the `stderr` lines on failure.
-
-**Markdown** (`Accept: text/markdown`, analyze, compare, what-if and diff): what `wuica -md` prints (`markdown.report`, `markdown.cpuTable`), with the same status codes.
 In the library this is `r.text`; the MCP tool takes `format: "text"`.
+
+**Markdown** (`Accept: text/markdown`, analyze, compare, what-if and diff): what `wuica -md` prints
+(`markdown.report`, `markdown.cpuTable`), with the same status codes.
 
 **Compact form** (the MCP `analyze` JSON, `w.summarize(r)`): `{code, arch, name, year, prototype, tp, unit, mode,
 bottlenecks, limits, decodeErrors, hex?, loop?, stderr, instructions, insights}`. Each entry of `instructions` is
 `{instr, bytes, issued, executed, uopSource: {MITE|DSB|LSD|MS: n}, ports: {"Port 0": n, ...}, notes, uopsInfo}`
-(zero values omitted, numbers rounded to 2 decimals). `insights` is a diagnosis derived from the analysis (as the web
-page's "bound" view): `utilization` (each limit and port: cycles / tp), `binding` (the bottlenecks uiCA names: always
-the same as `bottlenecks`, `[]` when it names none), `largest` (only when `binding` is `[]`: the largest limit, the
-nearest bound, which alone does not reach tp; the web page shows "unknown · nearest Ports"), `next` (`{limit, tp,
-maxSpeedup}`: the next limit, and the speedup at most if the binding one went away), `unexplained` (cycles no single
-limit explains),
-`chain` (the critical loop-carried chain: `{index, instr, operand, latency, carried}`) and `hot` (`{resource, ports?,
-instructions: [{index, instr, share}]}`: the largest shares of the binding resource, or of the largest limit), and
-`caveats` (only if any: `[{id, text, title, instructions}]`, known blind spots of the model that the block meets:
-`rmw-index` a read-modify-write to an indexed address, whose store forwarding between iterations depends on the data;
-`paths` a conditional branch inside the block (an if/else, a second back edge), both of whose sides are simulated one
-after the other while a real iteration takes one (named by its source line); `exit` an exit before the loop's branch,
-whose mispredict is not modelled; `split` loads at an offset that is not a
-multiple of their width, which may cross a cache line: on the CPUs whose model charges line crossings (ZEN3, ADL-P,
-ICX: `splitLoadCycles` in uarch.json) only the loads whose address the model cannot follow (an address register written
-other than by adding an immediate); the web page shows them in one line under the throughput). With `options.details` (MCP:
-`details: true`), each instruction also has `allowedPorts` (`1*p0156+1*p23`), `uops`, `fusedUops`, `latencies`
-(`"RAX->RAX:1"`) and `frontEnd` (`length`, `offset`, `crosses`, `lcp`, `microcoded`, fusion), and `insights` has `portSet`
-(the ports behind the Ports limit, `cycles` = uops / ports, and the instructions that load them) and `issueSlots` (per
-iteration: issued, and lost to the front end, a full ROB or RS, or other).
+(zero values omitted, numbers rounded to 2 decimals). `insights` is a diagnosis derived from the analysis, like the web
+page's "bound" view. It has `utilization` (each limit and port: cycles / tp), `binding` (the bottlenecks uiCA names:
+always the same as `bottlenecks`, `[]` when it names none), `largest` (only when `binding` is `[]`: the largest limit,
+the nearest bound, which alone does not reach tp; the web page shows "unknown · nearest Ports"), `next` (`{limit, tp,
+maxSpeedup}`: the next limit, and the largest possible speedup if the binding limit went away), `unexplained` (cycles
+no single limit explains), `chain` (the critical loop-carried chain: `{index, instr, operand, latency, carried}`) and
+`hot` (`{resource, ports?, instructions: [{index, instr, share}]}`: the largest shares of the binding resource, or of
+the largest limit). It also has `caveats`, only if any apply: `[{id, text, title, instructions}]`, the known blind
+spots of the model that the block meets. The web page shows them in one line under the throughput. `rmw-index` marks a
+read-modify-write to an indexed address, whose store forwarding between iterations depends on the data. `paths` marks a
+conditional branch inside the block (an if/else, a second back edge), both of whose sides are simulated one after the
+other while a real iteration takes one (named by its source line). `exit` marks an exit before the loop's branch, whose
+mispredict is not modeled. `split` marks loads at an offset that is not a multiple of their width, which may cross a
+cache line; on the CPUs whose model charges line crossings (ZEN3, ADL-P, ICX: `splitLoadCycles` in uarch.json), it
+covers only the loads whose address the model cannot follow (an address register written other than by adding an
+immediate). With `options.details` (MCP: `details: true`), each instruction also has `allowedPorts`
+(`1*p0156+1*p23`), `uops`, `fusedUops`, `latencies` (`"RAX->RAX:1"`) and `frontEnd` (`length`, `offset`, `crosses`,
+`lcp`, `microcoded`, fusion), and `insights` has `portSet` (the ports behind the Ports limit, `cycles` = uops / ports,
+and the instructions that load them) and `issueSlots` (per iteration: issued, and lost to the front end, a full ROB or
+RS, or other).
 
 ### Failures
 
@@ -568,7 +578,9 @@ Every call can fail like a compiler run in Compiler Explorer, with a non-zero `c
 
 ### Compare: `POST /api/compare`
 
-The request is the same as for analyze, plus an optional `archs` (ids; missing or empty: all listed ones; a repeated id counts once) and `per` (elements per iteration: `elementsPerIteration` and each row's `perElement`, as `wuica -arch A,B -per N`). The response:
+The request is the same as for analyze, plus an optional `archs` and `per`. `archs` lists ids; when it is missing or
+empty, all listed microarchitectures are analyzed, and a repeated id counts once. `per` is the number of elements per
+iteration; it adds `elementsPerIteration` and each row's `perElement`, as `wuica -arch A,B -per N` does. The response:
 
 ```json
 {
@@ -586,22 +598,23 @@ reported in its row.
 
 ### What-if: `POST /api/what-if/<arch>`
 
-The request is analyze's plus `variants` (ids, default all: `unroll2`, `unroll4`, `unroll8`, `acc2`, `acc3`, `acc4`,
-`acc8`, `simpleFrontEnd`, `noMacroFusion`, `noMicroFusion`, `nochain`; also `align`, only when asked for: the block at
-each of the 64 alignment offsets, 64 analyses, `tp` the median and `alignment` {min, median, max, best, worst, spread,
-offset}) and `per` (elements per iteration: also cycles per element). The response is the MCP tool's and `wuica -whatif -json`'s (`WhatIfResult`): the base `tp` and per variant
-`tp` per original iteration, `delta`, `speedup`, or `error`; `accumulators.best`. `text/plain` gives the CLI's table,
-`text/markdown` the Markdown one. Each variant is one analysis (`nochain` none, `align` 64), and the request costs tokens
-in proportion (the rate limit above).
+The request is analyze's plus `variants` and `per`. `variants` lists variant ids; the default is all of `unroll2`,
+`unroll4`, `unroll8`, `acc2`, `acc3`, `acc4`, `acc8`, `simpleFrontEnd`, `noMacroFusion`, `noMicroFusion` and `nochain`.
+`align` runs only when asked for: it analyzes the block at each of the 64 alignment offsets (64 analyses), its `tp` is
+the median, and it adds `alignment` {min, median, max, best, worst, spread, offset}. `per` (elements per iteration)
+adds cycles per element. The response is the same as the MCP tool's and `wuica -whatif -json`'s (`WhatIfResult`): the
+base `tp`; per variant, `tp` per original iteration, `delta` and `speedup`, or `error`; and `accumulators.best`.
+`text/plain` gives the CLI's table, `text/markdown` the Markdown one. Each variant is one analysis (`nochain` none,
+`align` 64), and the request costs tokens in proportion (see the rate limit above).
 
 ### Diff: `POST /api/diff/<arch>`
 
-`{a: block, b: block, options?, per?}`: each block as analyze's request; `options` for both; `per` elements per iteration
-(N for both, or [A, B]). The response (`DiffResult` in index.d.ts; `wuica diff -json`): `a` and `b` (`tp`,
-`bottlenecks`, `perElement`), `delta`, `speedup`, `verdict`, `perElement`, `bottlenecks` (`gone`, `new`), `limits`,
-`ports` (uops per iteration before and after) and `instructions` (`counts`; `changes`: `changed`, `modified`, `added`,
-`removed`, with the change of their uops). A failure of one block has an `error` that starts with `A: ` or `B: `. `text/plain` gives the
-CLI's text, `text/markdown` the page's A–B tables.
+The request is `{a: block, b: block, options?, per?}`. Each block is an analyze request; `options` applies to both;
+`per` is the number of elements per iteration (N for both, or [A, B]). The response (`DiffResult` in index.d.ts;
+`wuica diff -json`): `a` and `b` (`tp`, `bottlenecks`, `perElement`), `delta`, `speedup`, `verdict`, `perElement`,
+`bottlenecks` (`gone`, `new`), `limits`, `ports` (uops per iteration before and after) and `instructions` (`counts`;
+`changes`: `changed`, `modified`, `added`, `removed`, with the change of their uops). A failure of one block has an
+`error` that starts with `A: ` or `B: `. `text/plain` gives the CLI's text, `text/markdown` the web page's A–B tables.
 
 ### Assemble: `POST /api/assemble`
 
@@ -610,7 +623,7 @@ markers; `;` comments as above). Response: `{"code": 0, "hex": "4801d8", "length
 the library also returns `bytes` (a `Uint8Array`). On failure: `{code: 2, error, stderr}` as above. The assembler is
 LLVM 22.1.2's (the same bytes as `llvm-mc`). Only `.text` is returned. `.include`/`.incbin` always fail. GNU as's
 `{load}`/`{store}` hints, which LLVM rejects, are removed at the start of a line, clang 23's `.prefalign` is read as
-`.p2align`, and the line table (`.loc`, numbered `.file`) is not assembled (gcc 11+ `-g` output assembles).
+`.p2align`, and the line table (`.loc`, numbered `.file`) is not assembled (so gcc 11+ `-g` output assembles).
 
 ## Building from the repository
 
@@ -623,10 +636,9 @@ npm pack                         # wuica-cli-<version>.tgz
 `build.sh` uses `target/wasm32-unknown-unknown/release/wuica_wasm.wasm` (it runs `./build-wasm.sh` if the file is
 missing), `assembler/dist/wuica_asm.wasm` and `data/`. The instruction tables are shipped in a binary form
 (`dist/data/arch/<NAME>.bin.br`, written from `data/arch/*.json` by `tools/encode-tables.sh`; 6.4 MB instead of
-14.6 MB, and loaded about 40% faster); the analyzer module is built without the JSON table loader (the Cargo feature
-`json-tables` of `crates/wuica`, which the native tools and tests use). `dist/manifest.json` records
-the size and SHA-256 of each
-uncompressed file.
+14.6 MB, and loaded about 40 % faster); the analyzer module is built without the JSON table loader (the Cargo feature
+`json-tables` of `crates/wuica`, which the native tools and tests use). `dist/manifest.json` records the size and
+SHA-256 of each uncompressed file.
 
 ## Licenses
 
